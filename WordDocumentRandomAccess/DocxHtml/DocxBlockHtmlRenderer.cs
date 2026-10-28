@@ -365,15 +365,24 @@ public sealed class DocxBlockHtmlRenderer
         html.Append("</sup>");
     }
 
+    /// <summary>
+    /// w:sym (§17.3.3.30): the character in its own font, as LibreOffice does (DomainMapper LN_EG_RunInnerContent_sym: the run
+    /// font becomes w:font with the symbol character set and the character is kept as written). Symbol fonts map their glyphs
+    /// at U+F020-F0FF, so a code written without the F0 high byte is moved there. Without w:font the private-use offset is
+    /// dropped (the plain character is the best guess).
+    /// </summary>
     private static string RenderSymbol(XElement symbol)
     {
         string? code = (string?)symbol.Attribute(W + "char");
-        if (code is { Length: 4 } && int.TryParse(code, NumberStyles.HexNumber, null, out int value))
+        if (code is not { Length: > 0 and <= 4 } || !int.TryParse(code, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int value) || value == 0) return "";
+        string? font = (string?)symbol.Attribute(W + "font");
+        if (string.IsNullOrEmpty(font))
         {
-            if (value >= 0xF000) value -= 0xF000;          // symbol fonts live in the private-use area
+            if (value >= 0xF000) value -= 0xF000;
             return WordHtmlText.Encode(((char)value).ToString());
         }
-        return "";
+        if (value < 0x100) value += 0xF000;
+        return "<span style=\"font-family:'" + WordHtmlText.CssFontName(font!) + "'\">" + WordHtmlText.Encode(((char)value).ToString()) + "</span>";
     }
 
     // ── tables ───────────────────────────────────────────────────────────────────────
