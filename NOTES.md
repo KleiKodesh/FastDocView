@@ -106,7 +106,7 @@ Deliberately not done yet:
 
 - **Images** — `[image]` placeholder. Needs the rels part + a blob endpoint.
 - **Fields** — `w:fldSimple`/`instrText` show their result text only.
-- **Word 6/95, encrypted, RTF-as-.doc, MHTML-as-.doc** — rejected with a clear message.
+- **Word 6/95, encrypted, MHTML-as-.doc** — rejected with a clear message (RTF, also when saved as .doc, opens as RTF).
 
 ## Coverage plan — "full flow-preview coverage" (estimate 2–3 weeks, not months)
 
@@ -262,7 +262,7 @@ document model (LibreOffice builds a full SwDoc; we keep only the semantics).
 3. ~~**FODT**~~ — done with ODT. Same scanner over the plain file: offsets only, no checkpoints — the fastest format. (S after ODT)
 4. **Flat OPC** — docx parts as byte ranges inside one XML; feeds the docx pipeline via a part-source abstraction. (S–M)
 5. **Word 2003 XML** — close to docx element names; inline footnotes. (M)
-6. **RTF** — byte-offset blocks at `\par` / `\row`, with a formatting-state snapshot per block (state carries across paragraphs). (L)
+6. ~~**RTF**~~ — done 2026-10-28, see "RTF (Rtf/)" below. byte-offset blocks at `\par` / `\row`, with a formatting-state snapshot per block (state carries across paragraphs). (L)
 7. HTML/MHTML-as-.doc, `.txt` — low priority. (S–M)
 Unverified against source (from memory, check before implementing): ODF note import, ODF package
 encryption rules, RTF / Word 2003 importer paths, .doc list-table details.
@@ -441,3 +441,62 @@ Corpus sample (largest 200 + random 300 of 11,276 txt): 0 crashes; windows-1255 
 
 Open: uchardet-equivalent statistics (other languages / visual Hebrew); a Word table as one block is not
 bounded (one huge table = one big block); EstimatedTextLength counts bytes (UTF-8) or units (UTF-16).
+## RTF (Rtf/, 2026-10-28)
+
+.rtf behind the same `IWordWindowedDocument` contract. Detected by the `{\` signature (any extension).
+RTF is plain bytes, so like .fodt the file itself is the random-access view: no checkpoints.
+
+- **One streaming pass** (`RtfParser` + `RtfRandomAccessIndexBuilder`): a byte-level tokenizer with a
+  group-state stack; no document model. Blocks: a paragraph ends at `\par` / `\sect` outside a table; a
+  table row (`\trowd` … `\cell` … `\row`) is one block (`TableRow`, like .doc rows — a whole table would
+  be unbounded). A block's range starts right after the previous terminator (or after the last header
+  group at the root), and the parser's **group-state stack at that point is stored with it** (plain
+  `RtfGroupState` structs as bytes, interned: the 300k-block synthetic has 25 distinct stacks, the
+  largest real file 6). A window restores the stack and parses only its own bytes — a block that ends
+  inside a group (`{\i … \par}`) and the next one that starts with the `}` both render right.
+- **Header tables** read once by the pass into the index (`RtfDocumentTables`): fonts (name, `\fcharset` /
+  `\cpg` / name suffix → code page), colors, paragraph styles (name + `\outlinelevel`), list table +
+  overrides (only for counting; labels are stored per block), note formats, `\ansicpg`, `\deff`.
+  In a window the header destinations are skipped.
+- **Text**: 8-bit text and `\'hh` decode through the run's code page — set by `\f` from the font's
+  charset (LibreOffice: only `\f`, not `\af`, changes it), `\plain` → the `\deff` font's, `\rtlch` →
+  1255 when `\ansicpg1255` (LibreOffice). Bytes are decoded per run so double-byte code pages work;
+  runs of `\'hh` are gathered in one go (Hebrew is written that way). `\uN` + `\ucN`: N chars skipped,
+  where a byte, a `\'hh`, a control word and `\binN` + data each count one and a brace ends the skip
+  (RTF 1.5 spec). Code pages come from `CodePagesEncodingProvider` (net10) / the framework (net48).
+- **Fonts / RTL**: `\f \fs \b \i` and `\af \afs \ab \ai` go to the Latin or complex-script slot by
+  LibreOffice's run-type rule (after `\rtlch`, or `\ltrch` then `\rtlch` → complex). A run's slot is
+  picked by its characters' script (Hebrew/Arabic → complex) — but a complex slot never set since
+  `\plain` falls back to the Latin value, because RichEdit writes Hebrew with `\f`/`\fs` only (our
+  choice, not from a source). `\ql`/`\qr` are physical sides: Hebrew paragraphs in the 115 real files
+  are `\rtlpar\qr` 2,147 times vs `\ql` 3, so `\qr` in an RTL paragraph is the start side (corpus
+  evidence; the spec is silent). `\li`/`\ri` physical, `\lin`/`\rin` logical (preferred when given).
+- **Lists**: labels counted at index time from `\listtable` / `\listoverridetable` (`\levelnfc` →
+  LibreOffice's getNumberFormat map, `\leveltext` first char = length, placeholders at `\levelnumbers`
+  positions, `\levelnorestart`, `\lfolevel` start-at once per override); when the paragraph carries
+  `\listtext` / `\pntext` (Word's flat label) that text is rendered instead and no label is stored.
+- **Notes**: `{\footnote …}` inline; `\ftnalt` → endnote; auto-numbered when the body had `\chftn`
+  since the previous note (else a custom mark: number 0, label "*"), per kind, in body order,
+  formats from `\ftnn*` / `\aftnn*` (default decimal for both — the spec is silent on the endnote
+  default), `\ftnstart` / `\aftnstart`. The reference `<sup class="note-reference">` is written where
+  the note group ends; the body is a `WordDocumentNoteHtml` with the block; note text is not counted
+  in the block's text length or heading text.
+- **Headings**: `\outlinelevel` 0-8 on the paragraph, else the style's (`\outlinelevel` in the style
+  sheet or a "heading N" name); `\outlinelevel9` = body text.
+- **Skipped** (whole group, fast brace scan honouring `\bin`): every LibreOffice DESTINATION we don't
+  render (header/footer, info, bookmarks, fldinst, pict data, themedata, datastore, …) and any `\*`
+  destination we don't know. Pictures / objects / equations → `[image]` / `[object]` / `[equation]`.
+  `\upr` shows its `\ud` half. Fields show `\fldrslt`. Nested tables: `\itap`, `\nestcell`, and the
+  `\nestrow` inside `{\*\nesttableprops}` (its `\trowd`/`\cellx` are not applied to the outer row).
+- **Audit** (`--rtf-audit`, and the corpus pass): control words outside skipped destinations that the
+  reader does not act on; each ignored one is listed with its reason in `RtfFormattingAudit.IgnoredByDesign`.
+  The 115 readable real RTF files on the dev machine (118 listed; 3 OneDrive placeholders): 0
+  crashes, 0 unhandled, 0 first windows that look mis-decoded (Latin-1 letters where Hebrew was meant).
+- **Measured** (busy machine, JIT warm): largest real file 6.8 MB / 15,110 blocks — index pass
+  ~105-150 ms, sidecar cold open 140-175 ms, reopen 17-20 ms, 40-block window in the middle 14 ms.
+  Synthetic 23 MB / 300,016 blocks: full index 230-330 ms (parser alone ~135-200 ms), sidecar cold
+  open ~410 ms, reopen ~46 ms, random 40-block windows <= 9 ms.
+- **Not done**: paragraph borders/shading, tab stops, cell merges (`\clmgf` / `\clvmgf`), row heights
+  and table borders, text boxes / shape text (`\shp` skipped whole), hyperlink targets, style
+  formatting not repeated in the paragraph (Word always repeats it), `\pn` (Word 6) numbering without
+  `\pntext`, Shift-JIS lead bytes that are `\`/`{`/`}`, the Chicago note format (from memory).

@@ -271,3 +271,26 @@ Append-only. Date, what we learned, what it changed.
 - **Transfer-encoded HTML needs no decoder snapshot** when block starts are mapped to token starts:
   quoted-printable has no state across tokens, base64 only a 4-character alignment (encoded offset + skip).
 - `UnicodeEncoding(bigEndian, byteOrderMark: false).GetPreamble()` is empty: a fixture "with BOM" had none.
+## 2026-10-28 — RTF reader
+
+- **The group-state stack is the whole resume point.** RTF has no random access of its own, but every
+  property lives in the group state, so "state at block start" = the stack (plus the current row
+  definition and three open-context depths). Stored as raw structs and interned, it costs almost
+  nothing: real files have a handful of distinct stacks.
+- **Sources disagree on `\highlightN`**: the RTF 1.5 spec gives a fixed 16-color palette, LibreOffice's
+  importer reads it as a color-table index, LibreOffice's own exporter writes the palette number
+  (`TransColToIco`). Spec + exporter win.
+- **`\qr` is the start side of a Hebrew paragraph** — not stated anywhere we could read; the corpus
+  settles it (2,147 `\rtlpar\qr` vs 3 `\rtlpar\ql`).
+- **RichEdit Hebrew has no `\rtlch`**: font and size come only via `\f`/`\fs` (Latin slot), so a strict
+  "Hebrew uses the complex-script slot" rule renders it in the default 12 pt. The complex slot wins
+  only when it was set since `\plain`.
+- **Hebrew text is a run of `\'hh` escapes**: handling them one token at a time halved the parser's
+  speed on the real files; gathering the run in one go fixed it.
+- The RTF 1.9.1 spec download is NetFree-blocked; the 1.5 spec (biblioscape mirror) plus LibreOffice's
+  rtftok sources (raw.githubusercontent.com works) covered everything implemented.
+- Tooling trap: the file-writing tool turns a backslash-u followed by four hex digits into that
+  character — RTF test strings like `\uN` with a 4-digit N silently became other characters. Write
+  such strings with escaped backslashes or check with `grep -P "[^\x00-\x7F]"` after writing.
+- Corpus files on OneDrive can be placeholders: opening succeeds, the first read throws "The cloud
+  file provider is not running". The corpus pass counts them as unreadable, not as crashes.

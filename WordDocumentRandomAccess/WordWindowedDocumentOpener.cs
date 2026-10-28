@@ -2,19 +2,20 @@ using WordDocumentRandomAccess.DocBinary;
 using WordDocumentRandomAccess.Docx;
 using WordDocumentRandomAccess.Markup;
 using WordDocumentRandomAccess.Odt;
+using WordDocumentRandomAccess.Rtf;
 
 namespace WordDocumentRandomAccess;
 
 /// <summary>
 /// File-system entry point. Picks the format by signature (zip → .docx family, or OpenDocument text
-/// when its `mimetype` entry says so; OLE compound file → .doc; XML rooted in office:document → .fodt),
+/// when its `mimetype` entry says so; OLE compound file → .doc; XML rooted in office:document → .fodt; `{\rtf` → RTF),
 /// never by extension, and lets the <see cref="WordIndexPolicy"/> decide whether an index
 /// is worth building. <see cref="Decide"/> answers the same question without opening the document,
 /// for the host's "which files to index" picker.
 /// </summary>
 public static class WordWindowedDocumentOpener
 {
-    public static readonly string[] SupportedExtensions = [".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot", ".odt", ".ott", ".fodt", ".mht", ".mhtml", ".txt"];
+    public static readonly string[] SupportedExtensions = [".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot", ".odt", ".ott", ".fodt", ".mht", ".mhtml", ".txt", ".rtf"];
 
     public enum WordFileFormat { Docx, DocBinary, WebArchive, RichText, OpenDocument, FlatOpenDocument, Unknown, PlainText }
 
@@ -48,7 +49,7 @@ public static class WordWindowedDocumentOpener
             WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Open(filePath, isFlat: true, policy, progress, cancellation),
             WordFileFormat.WebArchive => MarkupWindowedDocument.Open(filePath, MarkupSourceKind.WebArchive, policy, progress, cancellation),
             WordFileFormat.PlainText => MarkupWindowedDocument.Open(filePath, MarkupSourceKind.PlainText, policy, progress, cancellation),
-            WordFileFormat.RichText => throw new NotSupportedException("This is an RTF file saved with a Word extension; RTF is not supported."),
+            WordFileFormat.RichText => RtfWindowedDocument.Open(filePath, policy, progress, cancellation),
             _ => throw new InvalidDataException("Not a Word or OpenDocument text (neither a zip package, an OLE compound file nor a flat OpenDocument)."),
         };
     }
@@ -65,6 +66,7 @@ public static class WordWindowedDocumentOpener
             WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Decide(filePath, policy, isFlat: true),
             WordFileFormat.WebArchive => MarkupWindowedDocument.Decide(filePath, policy, MarkupSourceKind.WebArchive),
             WordFileFormat.PlainText => MarkupWindowedDocument.Decide(filePath, policy, MarkupSourceKind.PlainText),
+            WordFileFormat.RichText => RtfWindowedDocument.Decide(filePath, policy),
             var format => new WordIndexDecision(filePath, WordIndexMode.InMemory, false, 0, 0, $"unsupported ({format})"),
         };
     }
