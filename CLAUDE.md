@@ -77,6 +77,13 @@ view over SQLite.
 
 ## Rules
 
+- **Always double-check against the source; never rely on memory alone** (user, 2026-10-28).
+  Format facts (sprm opcodes, element semantics, FIB offsets, LibreOffice behaviour) must be
+  verified in the spec or the real upstream code before they are implemented — a remembered
+  opcode already cost us silently dropped raised/lowered text (0x4840 vs 0x4845). Research
+  reports must say which facts were read from source and which came from memory; the
+  from-memory ones are checked before use.
+
 - Every new format feature needs a harness check (synthetic or real file) and a NOTES.md update.
 - Long runs report progress per step (`IProgress<WordDocumentIndexProgress>`, every 100 files in
   corpus mode) and stay light: below-normal priority, one file at a time, bounded memory.

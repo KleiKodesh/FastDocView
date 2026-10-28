@@ -234,3 +234,7 @@ document model (LibreOffice builds a full SwDoc; we keep only the semantics).
 7. HTML/MHTML-as-.doc, `.txt` — low priority. (S–M)
 Unverified against source (from memory, check before implementing): ODF note import, ODF package
 encryption rules, RTF / Word 2003 importer paths, .doc list-table details.
+
+**Rule: always double-check against the source, never rely on memory alone.** Every format fact
+above is verified in the spec ([MS-DOC], [MS-CFB], ECMA-376, ODF 1.3) or the real upstream code
+(LibreOffice sprmids.hxx / ww8par6.cxx / DomainMapper.cxx / xmloff) before it is implemented.
