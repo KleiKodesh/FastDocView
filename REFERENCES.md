@@ -56,6 +56,16 @@ The test file and the observed result go into the harness.
 | **Apache POI** (HWPF / XWPF) | a second .doc / .docx reading of the same structures | https://github.com/apache/poi |
 | **Open XML SDK** (Microsoft) | schema-level .docx reading/validation only — no rendering logic | https://github.com/dotnet/Open-XML-SDK |
 
+## 4b. Other renderers worth reading (found 2026-10-28)
+
+| Project | Why | Link |
+|---|---|---|
+| **Oxi** (Rust + Wasm; MPL-2.0 core) | Measures itself against real Word page by page (SSIM at 150 DPI, one fresh Word process per document, frozen *blind* benchmarks never used as fix targets). Published finding: Word's layout uses GDI integer-pixel font metrics. Its scores: ONLYOFFICE 0.909, Oxi 0.903, LibreOffice 0.864 on 50 English docs. The method is the model for a fidelity harness of our own. | https://gitlab.com/Ryujiyasu/oxi · https://oxi-dd65f4.gitlab.io/ |
+| **ONLYOFFICE sdkjs** (AGPL — read for behaviour, never copy) | Scored closest to Word in Oxi's blind benchmark; its `word/` engine is a full open implementation of Word's model (styles, numbering, tables, fields, bidi). | https://github.com/ONLYOFFICE/sdkjs |
+| **docx-preview (docxjs)** (Apache-2.0) | Browser docx → HTML, the closest to our output model; a second reading of numbering, fields, tables, `lastRenderedPageBreak`. | https://github.com/VolodymyrBaydalka/docxjs |
+| **Open-Xml-PowerTools** (MIT) | FormattingAssembler (style cascade, toggle XOR, table conditional formatting), ListItemRetriever, RevisionProcessor, WmlToHtmlConverter. Ideas only — it loads whole documents. Analysis: NOTES/LEARNINGS 2026-10-28. | https://github.com/Codeuctivity/OpenXmlPowerTools |
+| **docx4java ECMA-376 reference: compat settings** | Every `w:compat` / `w:compatSetting` option with the spec text (e.g. `doNotExpandShiftReturn`, `overrideTableStyleFontSizeAndJustification`, `compatibilityMode` 11/12/14/15). We do not read `settings.xml` compat options yet — a fidelity gap to audit. | https://webapp.docx4java.org/OnlineDemo/ecma376/WordML/compat.html |
+
 ## 5. Readable mirrors (convenience, not authority)
 
 - docx4java's HTML rendering of the ECMA-376 WordprocessingML reference (element pages with the
