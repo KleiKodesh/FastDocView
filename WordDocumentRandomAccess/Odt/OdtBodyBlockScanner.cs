@@ -1,3 +1,4 @@
+using System.Xml;
 using System.Net;
 using System.Text;
 using System.Xml.Linq;
@@ -489,8 +490,13 @@ internal sealed class OdtBodyBlockScanner
     public static XElement ParseSection(string rootOpenTag, string section)
     {
         string rootName = OdtXmlFragment.RootElementName(rootOpenTag);
-        XElement root = XElement.Parse(rootOpenTag + section + "</" + rootName + ">", LoadOptions.None);
-        return root.Elements().First();
+        using var text = new StringReader(rootOpenTag + section + "</" + rootName + ">");
+        try
+        {
+            using XmlReader reader = WordDocumentXml.CreateReader(text, tolerateUndeclaredPrefixes: true, ignoreWhitespace: true);
+            return XElement.Load(reader).Elements().First();
+        }
+        catch (XmlException exception) { throw WordDocumentXml.Malformed("OpenDocument styles", exception); }
     }
 
     // ── attributes and names ──────────────────────────────────────────────────────────

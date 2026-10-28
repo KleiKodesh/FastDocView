@@ -16,6 +16,8 @@ public sealed class DocxDocumentParts
     public DocxNoteNumberFormats NoteNumberFormats { get; }
     /// <summary>theme1.xml fonts and colors with settings.xml's clrSchemeMapping / themeFontLang; always present (empty without a theme part).</summary>
     public DocxTheme Theme { get; }
+    /// <summary>Where the main document, notes, styles… live — from the package relationships.</summary>
+    public DocxPackagePartNames PartNames { get; }
 
     /// <summary>
     /// numbering.xml is only needed by the index pass (list labels are stored in the index), so it
@@ -29,16 +31,17 @@ public sealed class DocxDocumentParts
     public DocxDocumentParts(Stream package)
     {
         _package = package;
+        PartNames = DocxPackagePartNames.Resolve(package);
         using var zip = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
-        Theme = new DocxTheme(LoadPart(zip, ThemePartName(zip)), LoadPart(zip, "word/settings.xml"));
-        Styles = new DocxStyleCascade(LoadStyles(zip), Theme);
-        NoteNumberFormats = new DocxNoteNumberFormats(zip);
+        Theme = new DocxTheme(LoadPart(zip, PartNames.Theme), LoadPart(zip, PartNames.Settings));
+        Styles = new DocxStyleCascade(LoadStyles(zip, PartNames.Styles), Theme);
+        NoteNumberFormats = new DocxNoteNumberFormats(zip, PartNames.Settings);
     }
 
     private DocxNumberingDefinitions LoadNumbering()
     {
         using var zip = new ZipArchive(_package, ZipArchiveMode.Read, leaveOpen: true);
-        return new DocxNumberingDefinitions(LoadPart(zip, "word/numbering.xml"));
+        return new DocxNumberingDefinitions(LoadPart(zip, PartNames.Numbering));
     }
 
     /// <summary>The scanner's hook: paragraph style / direct numPr → the next label of that list.</summary>
@@ -59,9 +62,15 @@ public sealed class DocxDocumentParts
     /// w:latentStyles (often most of the part — hundreds of built-in style switches) is skipped
     /// without building nodes. Same XDocument shape for DocxStyleCascade, a fraction of the cost.
     /// </summary>
-    private static XDocument? LoadStyles(ZipArchive zip)
+    private static XDocument? LoadStyles(ZipArchive zip, string? name)
     {
-        ZipArchiveEntry? entry = zip.GetEntry("word/styles.xml");
+        try { return ReadStyles(zip, name); }
+        catch (XmlException exception) { throw WordDocumentXml.Malformed(name!, exception); }
+    }
+
+    private static XDocument? ReadStyles(ZipArchive zip, string? name)
+    {
+        ZipArchiveEntry? entry = name is null ? null : zip.GetEntry(name);
         if (entry is null) return null;
         using Stream stream = entry.Open();
         using XmlReader reader = XmlReader.Create(stream, new XmlReaderSettings { IgnoreWhitespace = true, IgnoreComments = true, DtdProcessing = DtdProcessing.Ignore });
@@ -80,21 +89,12 @@ public sealed class DocxDocumentParts
         return new XDocument(root);
     }
 
-    /// <summary>Word writes word/theme/theme1.xml; any other single theme part under word/theme/ is accepted too.</summary>
-    private static string ThemePartName(ZipArchive zip)
+    private static XDocument? LoadPart(ZipArchive zip, string? name)
     {
-        if (zip.GetEntry("word/theme/theme1.xml") is not null) return "word/theme/theme1.xml";
-        foreach (ZipArchiveEntry entry in zip.Entries)
-            if (entry.FullName.StartsWith("word/theme/", StringComparison.OrdinalIgnoreCase) && entry.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
-                return entry.FullName;
-        return "word/theme/theme1.xml";
-    }
-
-    private static XDocument? LoadPart(ZipArchive zip, string name)
-    {
-        ZipArchiveEntry? entry = zip.GetEntry(name);
+        ZipArchiveEntry? entry = name is null ? null : zip.GetEntry(name);
         if (entry is null) return null;
         using Stream stream = entry.Open();
-        return XDocument.Load(stream);
+        try { return XDocument.Load(stream); }
+        catch (XmlException exception) { throw WordDocumentXml.Malformed(name!, exception); }
     }
 }

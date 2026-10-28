@@ -36,7 +36,7 @@ public sealed class DocxNoteXmlReader : IDisposable
                 _rootElementName = DocxXmlFragment.RootElementName(tag);
             }
             byte[] bytes = DocxXmlFragment.ReadRange(View, range.start, range.end);
-            return DocxXmlFragment.Parse(_rootOpenTagBytes, _rootElementName!, bytes, 0, bytes.Length);
+            return DocxXmlFragment.Parse(_rootOpenTagBytes, _rootElementName!, bytes, 0, bytes.Length, $"Note {noteId}");
         }
     }
 

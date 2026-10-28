@@ -30,6 +30,7 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
     private string? _rootOpenTag;
 
     public ZipEntryLocation BodyEntry { get; }
+    private readonly string _documentPartName;
     public IReadOnlyList<DeflateCheckpoint> BodyCheckpoints => _bodyCursor.Checkpoints;
     public DocxIncrementalNotesPart? Footnotes => _footnotes;
     public DocxIncrementalNotesPart? Endnotes => _endnotes;
@@ -44,9 +45,10 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
         _sourceLength = sourceLength;
         _sourceLastWriteTicksUtc = sourceLastWriteTicksUtc;
         _progress = progress;
-        BodyEntry = DocxRandomAccessIndexBuilder.LocateDocumentEntry(package);
-        ZipEntryLocation? footnotes = DocxRandomAccessIndexBuilder.LocateTextEntry(package, DocxRandomAccessIndexBuilder.FootnotesEntryName);
-        ZipEntryLocation? endnotes = DocxRandomAccessIndexBuilder.LocateTextEntry(package, DocxRandomAccessIndexBuilder.EndnotesEntryName);
+        _documentPartName = parts.PartNames.Document;
+        BodyEntry = DocxRandomAccessIndexBuilder.LocateDocumentEntry(package, parts.PartNames);
+        ZipEntryLocation? footnotes = DocxRandomAccessIndexBuilder.LocateTextEntry(package, parts.PartNames.Footnotes);
+        ZipEntryLocation? endnotes = DocxRandomAccessIndexBuilder.LocateTextEntry(package, parts.PartNames.Endnotes);
         _totalBytes = BodyEntry.UncompressedSize + (footnotes?.UncompressedSize ?? 0) + (endnotes?.UncompressedSize ?? 0);
         _bodyCursor = new DocxEntryInflationCursor(package, BodyEntry, checkpointSpanBytes);
         _scanner = new DocxBodyBlockScanner(parts.CreateListLabelResolver(), parts.Styles.HeadingLevelOf);
@@ -118,7 +120,7 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
         if (read == 0)
         {
             _scanner.Finish();
-            if (_scanner.BodyEndOffset < 0) throw new InvalidDataException("word/document.xml has no closing <w:body>.");
+            if (_scanner.BodyEndOffset < 0) throw new InvalidDataException($"{_documentPartName} has no closing <w:body>.");
             _isBodyScanned = true;
             return;
         }

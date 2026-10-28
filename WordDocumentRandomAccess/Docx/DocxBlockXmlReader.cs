@@ -71,7 +71,7 @@ public sealed class DocxBlockXmlReader : IDisposable
         {
             int start = (int)(table.BlockStartOffset(blockIndex) - rangeStart);
             int end = (int)(table.BlockEndOffset(blockIndex) - rangeStart);
-            result.Add((blockIndex, DocxXmlFragment.Parse(_rootOpenTagBytes, _rootElementName!, bytes, start, end - start)));
+            result.Add((blockIndex, DocxXmlFragment.Parse(_rootOpenTagBytes, _rootElementName!, bytes, start, end - start, $"Body block {blockIndex}")));
         }
         return result;
     }

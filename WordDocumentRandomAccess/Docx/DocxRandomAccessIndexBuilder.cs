@@ -3,7 +3,7 @@ using SeekableDeflate;
 namespace WordDocumentRandomAccess.Docx;
 
 /// <summary>
-/// The one sequential pass over a .docx's text parts: word/document.xml through
+/// The one sequential pass over a .docx's text parts: the main document part (word/document.xml) through
 /// <see cref="DocxBodyBlockScanner"/>, then footnotes.xml and endnotes.xml through
 /// <see cref="DocxNotesPartScanner"/>. In sidecar mode each part gets deflate checkpoints roughly
 /// every <see cref="DefaultCheckpointSpanBytes"/> and nothing is kept (memory stays at a few MB
@@ -12,9 +12,6 @@ namespace WordDocumentRandomAccess.Docx;
 /// </summary>
 public static class DocxRandomAccessIndexBuilder
 {
-    public const string DocumentEntryName = "word/document.xml";
-    public const string FootnotesEntryName = "word/footnotes.xml";
-    public const string EndnotesEntryName = "word/endnotes.xml";
     public const long DefaultCheckpointSpanBytes = 1 << 20;
 
     /// <summary>The inflated text parts of a small document, kept for its session (in-memory mode).</summary>
@@ -38,17 +35,23 @@ public static class DocxRandomAccessIndexBuilder
         return (index, new InMemoryParts(copies[0]!.ToArray(), copies[1]?.ToArray(), copies[2]?.ToArray()));
     }
 
-    public static ZipEntryLocation LocateDocumentEntry(Stream package)
-        => LocateTextEntry(package, DocumentEntryName) ?? throw new InvalidDataException("Not a Word document (no word/document.xml).");
+    public static ZipEntryLocation LocateDocumentEntry(Stream package) => LocateDocumentEntry(package, DocxPackagePartNames.Resolve(package));
+
+    public static ZipEntryLocation LocateDocumentEntry(Stream package, DocxPackagePartNames names)
+        => LocateTextEntry(package, names.Document) ?? throw new InvalidDataException($"Not a Word document (no main document part {names.Document}).");
 
     /// <summary>The uncompressed size of everything a reader inflates: body + footnotes + endnotes — what the index policy weighs.</summary>
     public static long TextPartsBytes(Stream package)
-        => LocateDocumentEntry(package).UncompressedSize
-         + (LocateTextEntry(package, FootnotesEntryName)?.UncompressedSize ?? 0)
-         + (LocateTextEntry(package, EndnotesEntryName)?.UncompressedSize ?? 0);
-
-    internal static ZipEntryLocation? LocateTextEntry(Stream package, string name)
     {
+        DocxPackagePartNames names = DocxPackagePartNames.Resolve(package);
+        return LocateDocumentEntry(package, names).UncompressedSize
+             + (LocateTextEntry(package, names.Footnotes)?.UncompressedSize ?? 0)
+             + (LocateTextEntry(package, names.Endnotes)?.UncompressedSize ?? 0);
+    }
+
+    internal static ZipEntryLocation? LocateTextEntry(Stream package, string? name)
+    {
+        if (name is null) return null;
         ZipEntryLocation? entry = ZipEntryLocator.Locate(package, name);
         if (entry is not null && !entry.IsDeflate && !entry.IsStored)
             throw new InvalidDataException($"Unsupported zip compression method {entry.CompressionMethod} for {name}.");
@@ -60,9 +63,9 @@ public static class DocxRandomAccessIndexBuilder
                                               IProgress<WordDocumentIndexProgress>? progress, long checkpointSpanBytes,
                                               MemoryStream?[]? copies, CancellationToken cancellation)
     {
-        ZipEntryLocation body = LocateDocumentEntry(package);
-        ZipEntryLocation? footnotes = LocateTextEntry(package, FootnotesEntryName);
-        ZipEntryLocation? endnotes = LocateTextEntry(package, EndnotesEntryName);
+        ZipEntryLocation body = LocateDocumentEntry(package, parts.PartNames);
+        ZipEntryLocation? footnotes = LocateTextEntry(package, parts.PartNames.Footnotes);
+        ZipEntryLocation? endnotes = LocateTextEntry(package, parts.PartNames.Endnotes);
         long totalBytes = body.UncompressedSize + (footnotes?.UncompressedSize ?? 0) + (endnotes?.UncompressedSize ?? 0);
         long done = 0;
 
@@ -76,7 +79,7 @@ public static class DocxRandomAccessIndexBuilder
             progress?.Report(new WordDocumentIndexProgress(done, totalBytes, scanner.BlockStartOffsets.Count));
         }, checkpointSpanBytes, cancellation);
         scanner.Finish();
-        if (scanner.BodyEndOffset < 0) throw new InvalidDataException("word/document.xml has no closing <w:body>.");
+        if (scanner.BodyEndOffset < 0) throw new InvalidDataException($"{parts.PartNames.Document} has no closing <w:body>.");
 
         DocxNotesPartIndex? ScanNotes(ZipEntryLocation? entry, int copyIndex)
         {
