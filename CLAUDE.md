@@ -123,6 +123,9 @@ view over SQLite.
   the implementation is bad; fix the algorithm / data structure / allocations. No extra threads,
   producer–consumer pipelines or parallel loops to mask a slow pass. (A two-thread inflate/scan
   hand-off was tried and reverted for this reason.)
+- **Test runs take a few minutes at most** (user, 2026-10-28): iterate and QA on samples — the files
+  relevant to the change plus a fixed-seed random sample (~300) of `test-data/` / real files. Never
+  block on full-corpus runs.
 - **No hacks — fix the bug** (user, 2026-10-28): when a test file breaks the system, fix the cause,
   never paper over it with a cap, limit, cut-off or fallback that hides the input. Stress files
   (5,000 nested tables, huge lines, deep tags) exist to prove the design holds. Example: deep
