@@ -106,7 +106,9 @@ app.MapGet("/api/documents/{id:int}/blocks", (int id, int first, int count, Http
 {
     if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
     var watch = Stopwatch.StartNew();
-    IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(first, Math.Min(count, 500));
+    IReadOnlyList<WordDocumentBlockHtml> blocks;
+    try { blocks = document.RenderBlocks(first, Math.Min(count, 500)); }
+    catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }   // the demo reopens
     response.Headers["X-Render-Milliseconds"] = watch.Elapsed.TotalMilliseconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Known-Block-Count"] = document.KnownBlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Estimated-Block-Count"] = document.BlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);

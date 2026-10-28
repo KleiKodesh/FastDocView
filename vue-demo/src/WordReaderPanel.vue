@@ -5,7 +5,7 @@ import WindowedScroller from '@/components/WindowedScroller.vue'
 import type { WindowedScrollerApi } from '@/components/windowedScrollerTypes'
 import WordNotesPane from './WordNotesPane.vue'
 import {
-  closeDocument, fetchBlocks, fetchHeadings, fetchServerMemory, fetchWeights, openDocument,
+  closeDocument, fetchBlocks, fetchHeadings, fetchServerMemory, fetchWeights, openDocument, WordSourceChangedError,
   type WordDocumentSummary, type WordHeading, type WordIndexState, type WordNote, type WordServerMemory, type WordVisibleNote,
 } from './wordDemoApi'
 
@@ -108,7 +108,19 @@ async function ensureBlocks(start: number, end: number): Promise<void> {
   let last = end
   while (last > first && blockHtmlByIndex.has(last - 1)) last--
   if (first >= last) return
-  const { blocks, renderMilliseconds, roundTripMilliseconds, indexState } = await fetchBlocks(document.id, first, last - first)
+  let fetched: Awaited<ReturnType<typeof fetchBlocks>>
+  try {
+    fetched = await fetchBlocks(document.id, first, last - first)
+  } catch (exception) {
+    // Word saved the file: reopen (re-index) and stay where the reader is.
+    if (exception instanceof WordSourceChangedError && summary.value === document && currentPath) {
+      status.value = 'The document changed on disk — reopening…'
+      void open(currentPath, { keepPosition: true })
+      return
+    }
+    throw exception
+  }
+  const { blocks, renderMilliseconds, roundTripMilliseconds, indexState } = fetched
   if (summary.value !== document) return
   if (indexState) applyIndexState(document, indexState)
   for (const block of blocks) {
@@ -123,9 +135,11 @@ async function ensureBlocks(start: number, end: number): Promise<void> {
 
 /** Takes the count / completion a blocks response reports; refetches headings + weights once the scan is complete. */
 function applyIndexState(document: WordDocumentSummary, state: WordIndexState) {
+  // the scan only moves forward: a response older than one already applied (or any after completion) is stale
+  if (isIndexComplete.value || state.knownBlockCount < knownBlockCount.value) return
   knownBlockCount.value = state.knownBlockCount
   if (blockCount.value !== state.estimatedBlockCount) blockCount.value = state.estimatedBlockCount
-  if (isIndexComplete.value || !state.isIndexComplete) return
+  if (!state.isIndexComplete) return
   isIndexComplete.value = true
   void Promise.all([fetchWeights(document.id), fetchHeadings(document.id)]).then(([fetchedWeights, fetchedHeadings]) => {
     if (summary.value !== document) return

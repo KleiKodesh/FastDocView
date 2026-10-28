@@ -18,7 +18,7 @@ public static class WordWindowedDocumentOpener
     public static WordFileFormat DetectFormat(string filePath)
     {
         var header = new byte[4];
-        using (var file = File.OpenRead(filePath)) _ = file.Read(header, 0, 4);
+        using (FileStream file = WordDocumentFileStream.OpenShared(filePath)) _ = file.Read(header, 0, 4);
         if (header[0] == (byte)'P' && header[1] == (byte)'K') return WordFileFormat.Docx;
         if (header[0] == 0xD0 && header[1] == 0xCF && header[2] == 0x11 && header[3] == 0xE0) return WordFileFormat.DocBinary;
         if (header[0] == (byte)'M' && header[1] == (byte)'I' && header[2] == (byte)'M' && header[3] == (byte)'E') return WordFileFormat.WebArchive;

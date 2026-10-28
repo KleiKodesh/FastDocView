@@ -52,7 +52,11 @@ check(Math.abs((atMiddle.firstVisible?.index ?? -1) - middle) <= 2, `first visib
 
 step('scroll to the end - completes the index')
 started = Date.now()
-await page.evaluate(i => window.__wordDemo.scrollToBlock(i), atMiddle.document.blockCount - 1)
+// the estimate can be low: keep going to the current last row until the server reports completion
+for (let attempt = 0; attempt < 20 && !(await state()).document.isIndexComplete; attempt++) {
+  await page.evaluate(() => window.__wordDemo.scrollToBlock(window.__wordDemo.state().document.blockCount - 1))
+  await page.waitForTimeout(1500)
+}
 await page.waitForFunction(() => window.__wordDemo.state().document.isIndexComplete, null, { timeout: 180_000 })
 await page.waitForFunction(() => window.__wordDemo.state().hasWeights, null, { timeout: 30_000 })
 await page.waitForTimeout(500)    // headings + weights refetch lands

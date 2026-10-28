@@ -56,6 +56,7 @@ if (incrementalOpen)
     DocxIncrementalOpenTest.Run(incrementalBlocks, realPaths.Where(path => File.Exists(path) && path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)));
 if (notesStreamingBlocks > 0) DocxNotesStreamingTest.Run(notesStreamingBlocks, noteFillerCharacters: 60_000);
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));
+if (realPaths.Count > 0) WordCoexistenceTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Any(path => path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)))
     DocBinaryListLabelsTest.Run(realPaths.Where(path => File.Exists(path) && path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)), listLabelsFallback ?? corpusList);
 if (auditPaths.Count > 0) WordFormattingAudit.Run(auditPaths.Where(File.Exists));

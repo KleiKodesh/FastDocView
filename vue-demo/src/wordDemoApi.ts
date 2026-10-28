@@ -86,9 +86,13 @@ export function fetchHeadings(id: number): Promise<WordHeading[]> {
   return fetch(`/api/documents/${id}/headings`).then(readJson<WordHeading[]>)
 }
 
+/** Thrown when the file changed on disk (Word saved it): the caller reopens the document. */
+export class WordSourceChangedError extends Error {}
+
 export async function fetchBlocks(id: number, first: number, count: number): Promise<{ blocks: WordBlock[]; renderMilliseconds: number; roundTripMilliseconds: number; indexState: WordIndexState | null }> {
   const started = performance.now()
   const response = await fetch(`/api/documents/${id}/blocks?first=${first}&count=${count}`)
+  if (response.status === 409) throw new WordSourceChangedError('The document changed on disk')
   const blocks = await readJson<WordBlock[]>(response)
   const estimated = response.headers.get('X-Estimated-Block-Count')
   return {

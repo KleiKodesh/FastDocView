@@ -72,6 +72,13 @@ public interface IWordWindowedDocument : IDisposable
     /// <summary>How many footnotes and endnotes the main text references (index-time counts).</summary>
     (int footnotes, int endnotes) NoteCounts { get; }
 
+    /// <summary>
+    /// True when the file on disk changed since it was opened (Word saved it): the host should
+    /// reopen it, which re-indexes. The document never holds the file open between windows, so
+    /// Word can always open and save it.
+    /// </summary>
+    bool HasSourceChanged { get; }
+
     /// <summary>Every note reference in body order with the block it sits in — for "next footnote" navigation. No file access.</summary>
     IReadOnlyList<WordDocumentNoteReference> NoteReferences { get; }
 }

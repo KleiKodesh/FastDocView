@@ -28,13 +28,13 @@ public sealed class CompoundFileReader : IDisposable
 
     public static bool HasSignature(string path)
     {
-        using var file = File.OpenRead(path);
+        using FileStream file = WordDocumentFileStream.OpenShared(path);
         var header = new byte[8];
         return file.Read(header, 0, 8) == 8 && header.AsSpan().SequenceEqual(Signature);
     }
 
     public CompoundFileReader(string path)
-        : this(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16)) { }
+        : this(new WordDocumentFileStream(path)) { }
 
     /// <summary>Over any seekable stream (owned by this reader); what a WASM host passes in.</summary>
     public CompoundFileReader(Stream file)
