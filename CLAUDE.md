@@ -118,6 +118,12 @@ view over SQLite.
   the implementation is bad; fix the algorithm / data structure / allocations. No extra threads,
   producer–consumer pipelines or parallel loops to mask a slow pass. (A two-thread inflate/scan
   hand-off was tried and reverted for this reason.)
+- **No hacks — fix the bug** (user, 2026-10-28): when a test file breaks the system, fix the cause,
+  never paper over it with a cap, limit, cut-off or fallback that hides the input. Stress files
+  (5,000 nested tables, huge lines, deep tags) exist to prove the design holds. Example: deep
+  nesting overflowing the stack is fixed by walking with an explicit stack, not by flattening
+  content past depth N. Limits are only legitimate when the format or Word itself defines them
+  (cite the source).
 - **A failed build stops the commit**: never chain `build | grep … && git commit` — grep
   succeeds even when the build fails. Check the build's exit status, both targets (net48 + net10).
 - Commits: author KleiKodesh, **no Co-Authored-By trailer**; push freely to this repo.

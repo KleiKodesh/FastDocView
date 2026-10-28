@@ -41,7 +41,7 @@ public sealed class DocxBlockHtmlRenderer
         var html = new StringBuilder(1024);
         _listLabel = listLabel;
         _previousStyleKey = previousStyleKey;
-        RenderBlock(block, html);
+        Run(RenderBlock(block, html));
         _listLabel = null;
         return html.ToString();
     }
@@ -53,7 +53,7 @@ public sealed class DocxBlockHtmlRenderer
         _currentNoteLabel = label;
         _currentNoteKind = kind;
         _previousStyleKey = null;
-        foreach (XElement child in note.Elements()) RenderBlock(child, html);
+        Run(RenderBlocks(note.Elements(), html));
         _currentNoteLabel = null;
         return html.ToString();
     }
@@ -70,19 +70,44 @@ public sealed class DocxBlockHtmlRenderer
         return text.ToString().Trim();
     }
 
-    private void RenderBlock(XElement block, StringBuilder html)
+    // ── the walk ─────────────────────────────────────────────────────────────────────
+    // Block content nests without bound (tables in cells, text boxes in runs, tables in text boxes…), so
+    // the walk keeps its own stack instead of the call stack: each render step is an iterator that
+    // writes its HTML in document order and yields a nested step where the nested content goes; Run
+    // finishes that step before resuming the outer one. Any nesting depth renders in order.
+
+    private readonly record struct RenderStep(IEnumerable<RenderStep> Steps);
+
+    private static void Run(IEnumerable<RenderStep> root)
     {
-        if (block.Name == W + "p") RenderParagraph(block, html);
-        else if (block.Name == W + "tbl") RenderTable(block, html);
+        var stack = new Stack<IEnumerator<RenderStep>>();
+        stack.Push(root.GetEnumerator());
+        while (stack.Count > 0)
+        {
+            IEnumerator<RenderStep> top = stack.Peek();
+            if (top.MoveNext()) stack.Push(top.Current.Steps.GetEnumerator());
+            else stack.Pop().Dispose();
+        }
+    }
+
+    private IEnumerable<RenderStep> RenderBlocks(IEnumerable<XElement> blocks, StringBuilder html)
+    {
+        foreach (XElement block in blocks) yield return new(RenderBlock(block, html));
+    }
+
+    private IEnumerable<RenderStep> RenderBlock(XElement block, StringBuilder html)
+    {
+        if (block.Name == W + "p") yield return new(RenderParagraph(block, html));
+        else if (block.Name == W + "tbl") yield return new(RenderTable(block, html));
         else if (block.Name == W + "sdt")
         {
             XElement? content = block.Element(W + "sdtContent");
-            if (content is not null) foreach (XElement child in content.Elements()) RenderBlock(child, html);
+            if (content is not null) yield return new(RenderBlocks(content.Elements(), html));
         }
         // w:sectPr, bookmarks, proofing marks and other body children render nothing.
     }
 
-    private void RenderParagraph(XElement paragraph, StringBuilder html)
+    private IEnumerable<RenderStep> RenderParagraph(XElement paragraph, StringBuilder html)
     {
         XElement? pPr = paragraph.Element(W + "pPr");
         string? styleId = (string?)pPr?.Element(W + "pStyle")?.Attribute(W + "val");
@@ -97,7 +122,7 @@ public sealed class DocxBlockHtmlRenderer
             html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(label)).Append("</span> ");
             _listLabel = null;                                      // only the block's first paragraph carries it
         }
-        RenderInlineChildren(paragraph, html, formatting.RunFormatting);
+        yield return new(RenderInlineChildren(paragraph, html, formatting.RunFormatting));
         html.Append("</").Append(tag).Append('>');
         _previousStyleKey = formatting.StyleKey;
 
@@ -105,20 +130,20 @@ public sealed class DocxBlockHtmlRenderer
         if (pPr?.Element(W + "sectPr") is not null && _textBoxDepth == 0) html.Append("<hr class=\"section-break\">");
     }
 
-    private void RenderInlineChildren(XElement container, StringBuilder html, WordRunFormatting paragraphBase)
+    private IEnumerable<RenderStep> RenderInlineChildren(XElement container, StringBuilder html, WordRunFormatting paragraphBase)
     {
         foreach (XElement child in container.Elements())
         {
             string name = child.Name.LocalName;
             switch (name)
             {
-                case "r": RenderRun(child, html, paragraphBase); break;
+                case "r": yield return new(RenderRun(child, html, paragraphBase)); break;
                 case "hyperlink": case "ins": case "moveTo": case "smartTag": case "sdt": case "customXml": case "fldSimple": case "dir": case "bdo":
                     XElement inner = name == "sdt" ? child.Element(W + "sdtContent") ?? child : child;
-                    RenderInlineChildren(inner, html, paragraphBase);
+                    yield return new(RenderInlineChildren(inner, html, paragraphBase));
                     break;
                 case "AlternateContent":
-                    if (ChosenAlternative(child) is { } chosen) RenderInlineChildren(chosen, html, paragraphBase);
+                    if (ChosenAlternative(child) is { } chosen) yield return new(RenderInlineChildren(chosen, html, paragraphBase));
                     break;
                 // Tracked changes show as Word's "final" view: w:del / w:moveFrom hidden, w:ins / w:moveTo shown.
                 // w:pPr, bookmarks, proofErr, commentRange, move ranges… render nothing.
@@ -126,18 +151,18 @@ public sealed class DocxBlockHtmlRenderer
         }
     }
 
-    private void RenderRun(XElement run, StringBuilder html, WordRunFormatting paragraphBase)
+    private IEnumerable<RenderStep> RenderRun(XElement run, StringBuilder html, WordRunFormatting paragraphBase)
     {
         XElement? rPr = run.Element(W + "rPr");
         WordRunFormatting formatting = _styles.ResolveRun(paragraphBase, rPr);
         string css = formatting.ToCss(paragraphBase);
         bool hasSpan = css.Length > 0;
         if (hasSpan) html.Append("<span style=\"").Append(css).Append("\">");
-        RenderRunChildren(run, html);
+        yield return new(RenderRunChildren(run, html));
         if (hasSpan) html.Append("</span>");
     }
 
-    private void RenderRunChildren(XElement run, StringBuilder html)
+    private IEnumerable<RenderStep> RenderRunChildren(XElement run, StringBuilder html)
     {
         foreach (XElement child in run.Elements())
         {
@@ -160,15 +185,12 @@ public sealed class DocxBlockHtmlRenderer
                         html.Append("<span class=\"note-mark\">").Append(WordHtmlText.Encode(_currentNoteLabel)).Append("</span>");
                     break;
                 case "drawing": case "pict": case "object":
-                    AppendDrawing(html, child);
+                    yield return new(AppendDrawing(html, child));
                     break;
                 case "AlternateContent":
                     // mc:AlternateContent: the first choice this renderer can show, else the fallback — never both.
-                    if (ChosenAlternative(child) is { } chosen)
-                    {
-                        var wrapper = new XElement(W + "r", chosen.Elements());
-                        RenderRunChildren(wrapper, html);
-                    }
+                    // The chosen branch's children are run children: walked in place, not copied (a copy clones recursively).
+                    if (ChosenAlternative(child) is { } chosen) yield return new(RenderRunChildren(chosen, html));
                     break;
                 case "pgNum": case "commentReference": case "annotationRef": break;   // no pages; comments are not shown in a reading view
                 // separator lines of the notes part, field codes, layout hints: nothing to show
@@ -181,21 +203,41 @@ public sealed class DocxBlockHtmlRenderer
     /// A drawing's text boxes (kept by <see cref="Docx.DocxDrawingStripper"/>) render as framed inline
     /// blocks; a drawing without text is an image placeholder.
     /// </summary>
-    private void AppendDrawing(StringBuilder html, XElement drawing)
+    private IEnumerable<RenderStep> AppendDrawing(StringBuilder html, XElement drawing)
     {
-        List<XElement> textBoxes = drawing.Descendants(W + "txbxContent").Where(box => !box.Ancestors(W + "txbxContent").Any()).ToList();
-        if (textBoxes.Count == 0) { html.Append("<span class=\"unsupported\">[image]</span>"); return; }
+        List<XElement> textBoxes = OutermostTextBoxes(drawing);
+        if (textBoxes.Count == 0) { html.Append("<span class=\"unsupported\">[image]</span>"); yield break; }
         string? previous = _previousStyleKey;
         _textBoxDepth++;
         foreach (XElement textBox in textBoxes)
         {
             html.Append("<span class=\"text-box\">");
             _previousStyleKey = null;
-            foreach (XElement child in textBox.Elements()) RenderBlock(child, html);
+            yield return new(RenderBlocks(textBox.Elements(), html));
             html.Append("</span>");
         }
         _textBoxDepth--;
         _previousStyleKey = previous;
+    }
+
+    /// <summary>
+    /// The drawing's w:txbxContent elements that are not inside another one (nested ones render with their
+    /// outer box). One walk with its own stack that does not enter a text box: linear in the drawing's size.
+    /// </summary>
+    private static List<XElement> OutermostTextBoxes(XElement drawing)
+    {
+        var textBoxes = new List<XElement>();
+        var pending = new Stack<XElement>();
+        pending.Push(drawing);
+        while (pending.Count > 0)
+        {
+            XElement element = pending.Pop();
+            if (element.Name == W + "txbxContent") { textBoxes.Add(element); continue; }
+            // pushed last child first so boxes come out in document order
+            for (XNode? node = element.LastNode; node is not null; node = node.PreviousNode)
+                if (node is XElement child) pending.Push(child);
+        }
+        return textBoxes;
     }
 
     /// <summary>mc:AlternateContent → the first mc:Choice (all its requirements are WordprocessingML extensions we degrade gracefully), else mc:Fallback.</summary>
@@ -228,14 +270,14 @@ public sealed class DocxBlockHtmlRenderer
 
     // ── tables ───────────────────────────────────────────────────────────────────────
 
-    private void RenderTable(XElement table, StringBuilder html)
+    private IEnumerable<RenderStep> RenderTable(XElement table, StringBuilder html)
     {
         XElement? tblPr = table.Element(W + "tblPr");
         string? tableStyleId = (string?)tblPr?.Element(W + "tblStyle")?.Attribute(W + "val");
         // The table style's tblPr first, the table's own tblPr last: the later one wins per property.
         var tablePropertyLayers = _styles.TableStyleProperties(tableStyleId, "tblPr").ToList();
         if (tblPr is not null) tablePropertyLayers.Add(tblPr);
-        XElement? Last(string name) => tablePropertyLayers.Select(layer => layer.Element(W + name)).LastOrDefault(element => element is not null);
+        XElement? Last(string name) => LastTableProperty(tablePropertyLayers, name);
 
         bool isRightToLeft = Last("bidiVisual") is { } bidi && DocxStyleCascade.IsOn(bidi.Attribute(W + "val"));
         var tableCss = new StringBuilder();
@@ -274,7 +316,7 @@ public sealed class DocxBlockHtmlRenderer
                 html.Append('>');
                 string? previous = _previousStyleKey;
                 _previousStyleKey = null;
-                foreach (XElement child in cell.Elements()) RenderBlock(child, html);
+                yield return new(RenderBlocks(cell.Elements(), html));
                 _previousStyleKey = previous;
                 html.Append("</td>");
                 column += span;
@@ -284,6 +326,9 @@ public sealed class DocxBlockHtmlRenderer
         html.Append("</table>");
         _tableStyleId = outerTableStyle;
     }
+
+    private static XElement? LastTableProperty(List<XElement> layers, string name)
+        => layers.Select(layer => layer.Element(W + name)).LastOrDefault(element => element is not null);
 
     private static int CountVerticalMergeSpan(List<XElement> rows, int startRow, int targetColumn)
     {

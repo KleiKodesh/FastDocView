@@ -189,8 +189,9 @@ public static class WordFormattingAudit
                 if (reader.NodeType == XmlNodeType.EndElement) { if (parents.Count > 0) parents.Pop(); continue; }
                 if (reader.NodeType != XmlNodeType.Element) continue;
                 string name = reader.LocalName;
-                string parent = parents.Count > 0 ? parents.Peek() : "";
-                bool isHandled = IgnoredByDesign.Contains(name) || parent switch
+                string parent = EffectiveParent(parents);
+                // mc:Choice / mc:Fallback are wrappers whose Word children are audited in the surrounding context.
+                bool isHandled = IgnoredByDesign.Contains(name) || reader.NamespaceURI == MarkupCompatibility || parent switch
                 {
                     "rPr" => HandledRunProperties.Contains(name),
                     "pPr" => HandledParagraphProperties.Contains(name),
@@ -198,13 +199,41 @@ public static class WordFormattingAudit
                     "r" => HandledRunChildren.Contains(name),
                     "p" => HandledParagraphChildren.Contains(name),
                     "body" => HandledBodyChildren.Contains(name),
-                    "tbl" or "tr" or "tc" or "tcPr" or "tblPr" or "tblGrid" => HandledTableParts.Contains(name),
+                    "tbl" or "tr" or "tc" or "tcPr" or "tblPr" or "tblGrid" or "trPr" => HandledTableParts.Contains(name),
+                    "txbxContent" => HandledBodyChildren.Contains(name),
                     _ => true,       // deeper contexts (drawing internals, style definitions…) are not rendered element by element
                 };
                 if (!isHandled) tally.Add($"{parent}/{(reader.Prefix.Length > 0 ? reader.Prefix + ":" : "")}{name}");
-                if (!reader.IsEmptyElement) parents.Push(name);
+                // Only WordprocessingML elements set the context: DrawingML's a:p / a:r inside a shape are not Word paragraphs.
+                if (!reader.IsEmptyElement) parents.Push(reader.NamespaceURI == WordprocessingMain ? name : "#" + name);
             }
         }
+    }
+
+    // Wrappers that pass their children through to the context around them (a run inside a hyperlink
+    // or a tracked insertion is a paragraph child; a paragraph inside a block content control or a
+    // table cell is a cell child) — audited as that context, not skipped.
+    private static readonly HashSet<string> TransparentInParagraph =
+        ["hyperlink", "ins", "del", "moveTo", "moveFrom", "smartTag", "fldSimple", "dir", "bdo"];
+
+    private const string MarkupCompatibility = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    private const string WordprocessingMain = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    private static string EffectiveParent(Stack<string> parents)
+    {
+        bool isInsideContentControl = false;
+        foreach (string parent in parents)
+        {
+            // mc:AlternateContent / mc:Choice / mc:Fallback pass their Word children through to the context around them.
+            if (parent is "#AlternateContent" or "#Choice" or "#Fallback") continue;
+            if (parent.StartsWith("#", StringComparison.Ordinal)) return parent;   // inside a non-Word element: not audited
+            if (parent == "sdtContent") { isInsideContentControl = true; continue; }
+            if (parent == "sdt" && isInsideContentControl) { isInsideContentControl = false; continue; }
+            if (parent == "customXml") continue;            // resolved by what encloses it (p, body, tc, tr)
+            if (TransparentInParagraph.Contains(parent)) return "p";
+            return parent;
+        }
+        return "";
     }
 
     // ── .doc ───────────────────────────────────────────────────────────────────────────
