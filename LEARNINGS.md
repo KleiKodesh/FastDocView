@@ -73,3 +73,21 @@ Append-only. Date, what we learned, what it changed.
   Expected for table-heavy halachic compilations; reassembling `.doc` tables would fold those.
 - OneDrive placeholder files throw "cloud file provider is not running" — surface as a clear
   "file is not downloaded" message rather than a failure.
+
+## 2026-10-28 — live rig (C# localhost + Vite + the app's WindowedScroller)
+
+- **Screenshots are out; the rig is the truth.** `vue-demo` runs the app's own `WindowedScroller`
+  over `/api/documents/{id}/blocks`, Playwright reads `__wordDemo.state()` (rendered range,
+  first visible, cache size, last fetch) and the console. First live run found what no harness
+  or screenshot had: a jump into a run of empty `.doc` paragraphs (cell marks → zero-height
+  rows) lands ~9 rows early (`scrollToIndex(104608)` → firstVisible 104599). Empty blocks need a
+  minimum height in the row, or the `.doc` reader should fold cell-mark-only paragraphs.
+- Live numbers through the browser: 40 MB `.doc` reopen 92 ms server / 630 ms wall (headings 250
+  ms, weights 50 ms); 87 MB-body `.docx` reopen 710 ms server / 2.1 s wall — headings (1 s, reads
+  every heading block) and the 123k-int weights array are now the biggest costs, not the index.
+  Both belong in the index (heading text at scan time; weights as a binary endpoint or omitted).
+- Block round trips are 15–90 ms, render 4–70 ms; the scroller keeps 36–105 rows mounted and the
+  block cache stays in the low hundreds. Server heap 5–17 MB after GC with a document open.
+- Playwright in a side project must pin the app's version (1.59.1) — its browsers are already in
+  `%LOCALAPPDATA%\ms-playwright`; a newer package wants a download. Vite binds `localhost`, not
+  `127.0.0.1`, and its ready line carries ANSI codes — don't grep for `Local:`.

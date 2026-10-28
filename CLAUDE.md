@@ -31,7 +31,13 @@ one concept one name, no `utils`).
 | `…/Html`, `…/DocxHtml` | format-neutral formatting models + CSS; styles.xml cascade; block → HTML |
 | `…/DocBinary` | compound file, FIB, piece table, FKPs, style sheet, sprms, `DocBinaryWindowedDocument` |
 | `WordDocumentRandomAccess.Tests` | console harness (`dotnet run -c Release -- --real <files>`); must print ALL PASSED |
-| `WordDocumentRandomAccess.Viewer` | WebView2 viewer (`-- <file> --screenshot out.png` for a headless check) |
+| `WordDocumentRandomAccess.DevServer` | C# localhost JSON host on 5188 (dev only; the real host is the KitveiHakodesh service) |
+| `vue-demo` | **the live rig** — Vite on 5189 + the app's `WindowedScroller` (copied from `KitveiHakodesh/vue-frontend/src/components`, keep in sync); `window.__wordDemo` hooks; `playwright/liveCheck.mjs` |
+| `WordDocumentRandomAccess.Viewer` | old WinForms viewer — superseded, do not extend |
+
+**Debugging is live only**: `npm run dev` in `vue-demo`, then Playwright against `localhost:5189`
+(DOM + console + `__wordDemo.state()`). Never screenshots. Demo UI stays plain — it is a rig,
+not the product; the product is the app's book-view.
 
 ## Rules
 

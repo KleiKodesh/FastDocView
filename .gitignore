@@ -4,3 +4,6 @@ obj/
 .vs/
 *.wordindex
 TestOutput/
+node_modules/
+vue-demo/dist/
+vue-demo/*.log

@@ -21,10 +21,13 @@ public sealed class ViewerMainForm : Form
     private IWordWindowedDocument? _document;
     private string? _pendingFilePath;
 
-    public ViewerMainForm(string? filePath, string? screenshotPath)
+    private readonly int _gotoBlock;
+
+    public ViewerMainForm(string? filePath, string? screenshotPath, int gotoBlock = 0)
     {
         _pendingFilePath = filePath;
         _screenshotPath = screenshotPath;
+        _gotoBlock = gotoBlock;
         Text = "Word random-access viewer";
         Width = 1100;
         Height = 800;
@@ -148,7 +151,12 @@ public sealed class ViewerMainForm : Form
     private async void OnFirstWindowRendered()
     {
         if (_screenshotPath is null) return;
-        await Task.Delay(1500);
+        if (_gotoBlock > 0)
+        {
+            await Task.Delay(500);
+            await _webView.CoreWebView2.ExecuteScriptAsync($"scrollToBlock({_gotoBlock})");
+        }
+        await Task.Delay(2500);
         using var file = File.Create(_screenshotPath);
         await _webView.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, file);
         Close();

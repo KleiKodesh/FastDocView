@@ -1,0 +1,10 @@
+/* Demo chrome only. The CSS variables are the ones the copied WindowedScrollerBar reads in the app. */
+:root {
+  --bar-thumb: #b9b9b9;
+  --bar-thumb-hover: #8f8f8f;
+  --bar-thumb-active: #6f6f6f;
+  --bar-glide-ms: 120ms;
+  --text-secondary: #666;
+}
+html, body, #app { margin: 0; height: 100%; font-family: Segoe UI, sans-serif; background: #f3f3f3; color: #111; }
+button { font: inherit; }
