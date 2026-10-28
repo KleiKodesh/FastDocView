@@ -21,6 +21,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
 
     public string FilePath { get; }
     public int BlockCount => _index.BlockCount;
+    public bool IsIndexComplete => true;
+    public int KnownBlockCount => _index.BlockCount;
     public bool IsRightToLeft { get; }
     public string Stylesheet { get; }
     public WordIndexDecision Decision { get; }
