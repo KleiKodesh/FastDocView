@@ -41,6 +41,16 @@ public static class WordWindowedDocumentOpener
                                              IProgress<WordDocumentIndexProgress>? progress = null,
                                              CancellationToken cancellation = default)
     {
+        try { return OpenByFormat(filePath, policy, progress, cancellation); }
+        catch (IOException exception) when (exception is not WordDocumentSourceChangedException && IsNotFullyLocal(filePath))
+        {
+            throw OnlineOnly(filePath, exception);
+        }
+    }
+
+    private static IWordWindowedDocument OpenByFormat(string filePath, WordIndexPolicy? policy,
+                                                      IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
+    {
         return DetectFormat(filePath) switch
         {
             WordFileFormat.Docx => DocxWindowedDocument.Open(filePath, policy, progress, cancellation),
@@ -53,6 +63,22 @@ public static class WordWindowedDocumentOpener
             _ => throw DescribeUnknown(filePath),
         };
     }
+
+    // Windows file attributes of a cloud placeholder (WinNT.h, learn.microsoft.com "File Attribute Constants"):
+    // RECALL_ON_DATA_ACCESS 0x00400000 (not all data is local), RECALL_ON_OPEN 0x00040000, OFFLINE 0x00001000.
+    private const int NotFullyLocalAttributes = 0x00400000 | 0x00040000 | 0x00001000;
+
+    /// <summary>True for a file whose data is (partly) in the cloud only, e.g. OneDrive "Files On-Demand".</summary>
+    private static bool IsNotFullyLocal(string filePath)
+    {
+        try { return ((int)File.GetAttributes(filePath) & NotFullyLocalAttributes) != 0; }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    private static IOException OnlineOnly(string filePath, IOException cause) => new(
+        $"\"{Path.GetFileName(filePath)}\" is stored online only (for example OneDrive Files On-Demand) and could not be downloaded: "
+        + $"{cause.Message} Make it available offline, or start the cloud app, then open it again.", cause);
 
     /// <summary>
     /// The error for a file no reader takes, naming what it is when its first bytes tell: Word 2003
@@ -79,6 +105,12 @@ public static class WordWindowedDocumentOpener
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy? policy = null)
     {
         policy ??= WordIndexPolicy.Default;
+        try { return DecideByFormat(filePath, policy); }
+        catch (IOException exception) when (IsNotFullyLocal(filePath)) { throw OnlineOnly(filePath, exception); }
+    }
+
+    private static WordIndexDecision DecideByFormat(string filePath, WordIndexPolicy policy)
+    {
         return DetectFormat(filePath) switch
         {
             WordFileFormat.Docx => DocxWindowedDocument.Decide(filePath, policy),
