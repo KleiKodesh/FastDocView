@@ -1,25 +1,31 @@
 using WordDocumentRandomAccess.DocBinary;
 using WordDocumentRandomAccess.Docx;
+using WordDocumentRandomAccess.Odt;
 
 namespace WordDocumentRandomAccess;
 
 /// <summary>
-/// File-system entry point. Picks the format by signature (zip → .docx family, OLE compound file →
-/// .doc), never by extension, and lets the <see cref="WordIndexPolicy"/> decide whether an index
+/// File-system entry point. Picks the format by signature (zip → .docx family, or OpenDocument text
+/// when its `mimetype` entry says so; OLE compound file → .doc; XML rooted in office:document → .fodt),
+/// never by extension, and lets the <see cref="WordIndexPolicy"/> decide whether an index
 /// is worth building. <see cref="Decide"/> answers the same question without opening the document,
 /// for the host's "which files to index" picker.
 /// </summary>
 public static class WordWindowedDocumentOpener
 {
-    public static readonly string[] SupportedExtensions = [".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot"];
+    public static readonly string[] SupportedExtensions = [".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot", ".odt", ".ott", ".fodt"];
 
-    public enum WordFileFormat { Docx, DocBinary, WebArchive, RichText, Unknown }
+    public enum WordFileFormat { Docx, DocBinary, WebArchive, RichText, OpenDocument, FlatOpenDocument, Unknown }
 
     public static WordFileFormat DetectFormat(string filePath)
     {
         var header = new byte[4];
-        using (var file = File.OpenRead(filePath)) _ = file.Read(header, 0, 4);
-        if (header[0] == (byte)'P' && header[1] == (byte)'K') return WordFileFormat.Docx;
+        using var file = File.OpenRead(filePath);
+        _ = file.Read(header, 0, 4);
+        if (header[0] == (byte)'P' && header[1] == (byte)'K')
+            return OdtPackage.IsOpenDocumentTextPackage(file) ? WordFileFormat.OpenDocument : WordFileFormat.Docx;
+        if ((header[0] == (byte)'<' || (header[0] == 0xEF && header[1] == 0xBB && header[2] == 0xBF)) && OdtPackage.IsFlatOpenDocumentText(file))
+            return WordFileFormat.FlatOpenDocument;
         if (header[0] == 0xD0 && header[1] == 0xCF && header[2] == 0x11 && header[3] == 0xE0) return WordFileFormat.DocBinary;
         if (header[0] == (byte)'M' && header[1] == (byte)'I' && header[2] == (byte)'M' && header[3] == (byte)'E') return WordFileFormat.WebArchive;
         if (header[0] == (byte)'{' && header[1] == (byte)'\\') return WordFileFormat.RichText;
@@ -34,9 +40,11 @@ public static class WordWindowedDocumentOpener
         {
             WordFileFormat.Docx => DocxWindowedDocument.Open(filePath, policy, progress, cancellation),
             WordFileFormat.DocBinary => DocBinaryWindowedDocument.Open(filePath, policy, progress, cancellation),
+            WordFileFormat.OpenDocument => OdtWindowedDocument.Open(filePath, isFlat: false, policy, progress, cancellation),
+            WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Open(filePath, isFlat: true, policy, progress, cancellation),
             WordFileFormat.WebArchive => throw new NotSupportedException("This is a Word web archive (MHTML saved with a .doc extension), not a binary Word file."),
             WordFileFormat.RichText => throw new NotSupportedException("This is an RTF file saved with a Word extension; RTF is not supported."),
-            _ => throw new InvalidDataException("Not a Word document (neither a zip package nor an OLE compound file)."),
+            _ => throw new InvalidDataException("Not a Word or OpenDocument text (neither a zip package, an OLE compound file nor a flat OpenDocument)."),
         };
     }
 
@@ -48,6 +56,8 @@ public static class WordWindowedDocumentOpener
         {
             WordFileFormat.Docx => DocxWindowedDocument.Decide(filePath, policy),
             WordFileFormat.DocBinary => DocBinaryWindowedDocument.Decide(filePath, policy),
+            WordFileFormat.OpenDocument => OdtWindowedDocument.Decide(filePath, policy, isFlat: false),
+            WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Decide(filePath, policy, isFlat: true),
             var format => new WordIndexDecision(filePath, WordIndexMode.InMemory, false, 0, 0, $"unsupported ({format})"),
         };
     }

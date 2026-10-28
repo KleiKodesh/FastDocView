@@ -8,6 +8,8 @@
 //   dotnet run -c Release -- --huge 1000000        instant reload + flat heap on a ~350 MB body
 //   dotnet run -c Release -- --notes-streaming 20000   notes read on demand from a 100 MB+ footnotes part
 //   dotnet run -c Release -- --audit <path>...     formatting constructs the renderers do not handle
+//   dotnet run -c Release -- --odt [N]             synthetic .odt/.fodt (N repeating blocks, default 20000); with LibreOffice installed,
+//                                                  every --real .docx is also converted to .odt (TestOutput) and smoke-tested + audited
 //   dotnet run -c Release -- --skip-synthetic --corpus <list.txt>   the same over a whole file list, aggregated + open/render crash check
 using WordDocumentRandomAccess.Tests;
 
@@ -20,6 +22,7 @@ var indexProfilePaths = new List<string>();
 string? corpusList = null;
 string? listLabelsFallback = null;
 int corpusMax = int.MaxValue;
+int odtBlocks = 0;
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -34,6 +37,10 @@ for (int i = 0; i < args.Length; i++)
         case "--profile-open": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) profilePaths.Add(args[++i]); break;
         case "--profile-index": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) indexProfilePaths.Add(args[++i]); break;
         case "--corpus": corpusList = args[++i]; break;            // a text file with one Word file path per line
+        case "--odt":
+            odtBlocks = 20_000;
+            if (i + 1 < args.Length && int.TryParse(args[i + 1], out int odtCount)) { odtBlocks = odtCount; i++; }
+            break;
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
         case "--list-labels-fallback": listLabelsFallback = args[++i]; break;   // a path list to scan for a .doc with lists when the --real ones have none
     }
@@ -54,6 +61,16 @@ if (auditPaths.Count > 0) WordFormattingAudit.Run(auditPaths.Where(File.Exists))
 if (profilePaths.Count > 0) OpenTimingProfile.Run(profilePaths.Where(File.Exists));
 if (indexProfilePaths.Count > 0) IndexPassProfile.Run(indexProfilePaths.Where(File.Exists));
 if (corpusList is not null) WordFormattingAudit.RunCorpus(corpusList, corpusMax);
+if (odtBlocks > 0)
+{
+    OdtIndexAndRenderTest.Run(odtBlocks);
+    List<string> converted = LibreOfficeConversion.ConvertToOdt(realPaths.Where(path => File.Exists(path) && path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)));
+    if (converted.Count > 0)
+    {
+        RealDocumentSmokeTest.Run(converted);
+        OdtFormattingAudit.Run(converted);
+    }
+}
 
 Console.WriteLine();
 Console.WriteLine(TestReport.FailureCount == 0 ? "ALL PASSED" : $"{TestReport.FailureCount} FAILURE(S)");

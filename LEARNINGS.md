@@ -208,3 +208,17 @@ Append-only. Date, what we learned, what it changed.
 - Measured on the 91.6 MB XML: ours ~225–305 MB/s, .NET zlib ~830 MB/s, random 64 KB read ~2.2 ms.
   The path forward is our own inflater rebuilt on zlib's inflate_fast ideas (combined
   length/distance table entries, fewer bounds checks), one managed code path for every target.
+
+## 2026-10-28 — OpenDocument text
+
+- **A LibreOffice conversion of a Word file carries every Word list definition as a list style**:
+  the sample's styles.xml is 15 MB, 14.5 MB of it 3058 `text:list-style`s. List styles are only
+  needed while counting labels, so the index keeps a reduced style table (handled attributes only);
+  reopen went from ~830 ms to ~150 ms.
+- **ODF lists number the first paragraph of an item only**, and the restart / continue rules live in
+  the importer (XMLTextListBlockContext.cxx), not in the element alone — continue-numbering looks at
+  the *last processed list* and its style.
+- **Footnote "start-value" is an offset** in LibreOffice's importer (`StartAt`); whether the first
+  note shows offset+1 was not verified — the citation text the producer wrote is shown instead.
+- Converting the 12 MB sample with headless LibreOffice took ~7 minutes; the converted file is
+  cached in TestOutput (gitignored) and reused while newer than its source.

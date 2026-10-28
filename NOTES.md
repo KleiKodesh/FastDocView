@@ -253,13 +253,13 @@ document model (LibreOffice builds a full SwDoc; we keep only the semantics).
 
 **Open formats (design: OdtBodyBlockScanner etc., same IWordWindowedDocument contract):**
 1. `.docm/.dotx/.dotm` — opener only (S).
-2. **ODT/OTT** — content.xml checkpointed like document.xml; automatic styles + font faces come
+2. ~~**ODT/OTT**~~ — done 2026-10-28, see "OpenDocument text (Odt/)" below. content.xml checkpointed like document.xml; automatic styles + font faces come
    before office:body and are captured during the index pass into the sidecar; lists flattened to
    blocks with labels per XMLTextListBlockContext rules (xml:id, continue-list, continue-numbering,
    start-value); notes are inline `text:note` — their body byte ranges recorded at index time and
    rendered separately; property map from txtprmap (per-script font/size variants, text-position,
    writing-mode for RTL). Split huge tables into row blocks. (M–L)
-3. **FODT** — same scanner over the plain file: offsets only, no checkpoints — the fastest format. (S after ODT)
+3. ~~**FODT**~~ — done with ODT. Same scanner over the plain file: offsets only, no checkpoints — the fastest format. (S after ODT)
 4. **Flat OPC** — docx parts as byte ranges inside one XML; feeds the docx pipeline via a part-source abstraction. (S–M)
 5. **Word 2003 XML** — close to docx element names; inline footnotes. (M)
 6. **RTF** — byte-offset blocks at `\par` / `\row`, with a formatting-state snapshot per block (state carries across paragraphs). (L)
@@ -311,3 +311,52 @@ overloads. Every rule below was read from the source named, not from memory:
 - Test: `DocxThemeAndUnderlineTest` over `SyntheticDocxGenerator.Write(..., withThemeSamples: true)`
   (paragraphs 45–49); the audit's handled run properties now include `em`.
 
+
+## OpenDocument text (Odt/, 2026-10-28)
+
+.odt / .ott (zip) and .fodt (flat XML) behind the same `IWordWindowedDocument` contract.
+
+- **Detection** by content, never extension: a zip whose stored `mimetype` entry is
+  `application/vnd.oasis.opendocument.text` (or `-template`) → `WordFileFormat.OpenDocument`;
+  XML whose root is `office:document` with that mimetype → `FlatOpenDocument`. A manifest
+  `encryption-data` on content.xml → `NotSupportedException("password-protected OpenDocument is not supported")`.
+- **Index pass** (`OdtBodyBlockScanner`): byte-level like the docx scanner (vectorised text skip,
+  quote-to-quote tag jumps, names compared as bytes bucketed by length, prefixes mapped through the
+  root's xmlns declarations). Before the body it captures the root tag and the font-face / styles /
+  automatic-styles sections and feeds them to the cascade. Blocks: `text:p`, `text:h`, whole
+  `table:table`; lists flattened to one block per list paragraph — the block's byte range is the
+  paragraph alone. `text:section`, `text:numbered-paragraph`, index elements (only their
+  `text:index-body`) are transparent; `text:soft-page-break`, `text:tracked-changes`, `*-source`
+  templates, declarations are skipped.
+- **List labels** counted at index time (`OdtListNumbering`), rules read in LibreOffice
+  (XMLTextListBlockContext / XMLTextListItemContext / txtlists / txtimp SetStyleAndAttrs):
+  root `xml:id` = list id; `continue-list` follows the continue chain to the master;
+  `continue-numbering="true"` without continue-list continues the last processed list of the same
+  style; nested lists inherit id/style/restart, the 2nd+ sub-list of an item restarts; only the first
+  paragraph of a list-item is numbered (list-header and paragraphs after a nested list are not);
+  item `start-value`. Level formats from `text:list-style` (xmlnumi.cxx defaults: format "1",
+  start 1, display-levels 1). NOT from source: deeper counters are cleared when a level is numbered
+  (Writer's usual behaviour); `text:style-override`, the OOo-1.x default-list-id path and the
+  MS-Office "continue by style" path are not implemented.
+- **Notes** are inline (`text:note`): number per class in body order (+ notes-configuration
+  start-value — the offset semantics are NOT source-verified), label = the citation text the producer
+  wrote (else `text:label`, else the configured format). The note-body byte range is stored; the body
+  is rendered from the parsed block and delivered as `WordDocumentNoteHtml`; note text is excluded
+  from the block's text length and heading text. Counting per page/chapter is shown document-wide
+  (flow view).
+- **Styles** (`OdtStyleCascade`): default-style → parent chain → style; property names from
+  txtprmap.cxx (text, paragraph) and sw xmlitemm.cxx (table, column, cell). Complex-script variants
+  (`*-complex`) win in RTL paragraphs (no per-character script detection). The index stores the
+  sections reduced to what rendering reads (no list styles, no unmapped attributes): the LibreOffice
+  conversion of the sample has 14.5 MB of `office:styles`, 3058 list styles — a reopen would parse
+  them every time otherwise.
+- **Modes**: package in-memory (content.xml kept, small files), package sidecar (deflate
+  checkpoints over content.xml), flat (the file is the view; the sidecar only saves the pass).
+- **Measured** (dor-hamelaktim-shabbat.docx converted by LibreOffice 25.x headless: content.xml 55.8 MB,
+  121,650 blocks, 183 headings, 234 footnotes): cold index 1.76 s (the .docx with an 87 MB body:
+  1.9 s), reopen 151 ms (docx 111 ms), 30-block windows 4–19 ms. Synthetic 100k blocks: .odt cold
+  ~290 ms, reopen 47 ms; .fodt (17 MB) reopen 6–8 ms; random 40-block windows ≤ 28 ms.
+- **Not done**: huge tables are one block (no row split — no table near 2 MB seen yet); lists inside
+  table cells and notes get a plain bullet, not their counted label; heading outline numbering
+  (`text:outline-style`) is not shown except where the producer wrote `text:number`; tab stops,
+  images (placeholder), list-level indents (a fixed 18 pt per level) are approximations.

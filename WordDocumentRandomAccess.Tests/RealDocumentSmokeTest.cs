@@ -40,6 +40,13 @@ public static class RealDocumentSmokeTest
                 Console.WriteLine($"   notes: {footnotes} footnotes, {endnotes} endnotes; sampled blocks carry {referencesInSample} references and {notesInSample} note bodies");
                 TestReport.Check(referencesInSample == notesInSample, "every sampled note reference comes with its note body");
                 TestReport.Check(first.Concat(mid).Concat(last).SelectMany(b => b.Notes).All(n => n.Html.Length > 0), "no empty note bodies");
+                if (document.NoteReferences.Count > 0)
+                {
+                    WordDocumentNoteReference firstReference = document.NoteReferences[0];
+                    WordDocumentBlockHtml noted = TestReport.Timed("render the first noted block", () => document.RenderBlocks(firstReference.BlockIndex, 1)[0]);
+                    TestReport.Check(noted.Notes.Any(n => n.Kind == firstReference.Kind && n.Number == firstReference.Number && n.Html.Length > 0),
+                                     $"the block of the first {firstReference.Kind} reference (block {firstReference.BlockIndex}) delivers its body");
+                }
                 Console.WriteLine($"   first text: {Truncate(StripTags(string.Concat(first.Select(b => b.Html))))}");
 
                 var html = new StringBuilder();
