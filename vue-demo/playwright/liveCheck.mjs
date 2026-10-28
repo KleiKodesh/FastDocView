@@ -27,7 +27,11 @@ await page.evaluate(() => fetch('/api/documents', { method: 'DELETE' }))   // le
 step(`open document ${filePath}`)
 const openStarted = Date.now()
 await page.evaluate(path => window.__wordDemo.open(path), filePath)
-await page.waitForSelector('[data-test="scroller"]', { timeout: 180_000 })
+// The document view, or the demo's "Failed: …" status when the server refuses the file.
+await page.waitForFunction(() => document.querySelector('[data-test="scroller"]')
+  || document.querySelector('[data-test="status"]')?.textContent?.startsWith('Failed'), null, { timeout: 180_000 })
+const openFailure = await page.$eval('[data-test="status"]', el => el.textContent).catch(() => '')
+if (openFailure?.startsWith('Failed')) { console.log(`  FAIL  open: ${openFailure}`); await browser.close(); process.exit(1) }
 await page.waitForSelector('[data-block]', { timeout: 60_000 })
 const state0 = await page.evaluate(() => window.__wordDemo.state())
 console.log(`  opened in ${Date.now() - openStarted} ms wall, server open ${state0.document.openMilliseconds.toFixed(0)} ms, ${state0.document.blockCount.toLocaleString()} blocks, ${state0.document.mode}`)
@@ -54,7 +58,15 @@ for (const fraction of [0.5, 0.98, 0.1]) {
   const state = await page.evaluate(() => window.__wordDemo.state())
   const rows = await renderedRows()
   console.log(`  landed in ${Date.now() - started} ms: firstVisible ${state.firstVisible?.index}, rendered ${rows.length} rows (${rows[0]?.index}–${rows.at(-1)?.index}), cached ${state.cachedBlocks}, ${state.lastFetch}`)
-  check(Math.abs((state.firstVisible?.index ?? -1) - target) <= 2, `first visible row is ${target} (±2)`)
+  // Near the end of a document the target cannot reach the top: the last screenful is shown instead,
+  // so there the target only has to be on screen with the viewport scrolled to the bottom.
+  const endOfDocument = await page.$eval('[data-test="scroller"]', (el, index) => {
+    const row = el.querySelector(`[data-block="${index}"]`)
+    const view = el.getBoundingClientRect(), rect = row?.getBoundingClientRect()
+    return el.scrollTop + el.clientHeight >= el.scrollHeight - 2 && !!rect && rect.bottom > view.top && rect.top < view.bottom
+  }, target)
+  check(Math.abs((state.firstVisible?.index ?? -1) - target) <= 2 || endOfDocument,
+    `first visible row is ${target} (±2), or the target is on screen at the end of the document`)
   check(rows.length < 400, 'window stays bounded after a jump')
   check(state.cachedBlocks <= 3200, `block cache bounded (${state.cachedBlocks})`)
 }

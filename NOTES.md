@@ -515,6 +515,9 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
 
 - Not supported, precise NotSupportedException: Word 6.0/95 (.doc wIdent 0xA5DC / 0xA697-0xA699),
   Word for Windows 1.x/2.0, Word 2003 XML, HTML saved as .doc, encrypted .doc/.docx/.odt.
+- **Live demo check of every format (2026-10-28):** .odt (121,650 blocks), .fodt, .rtf, .txt (ToratEmet),
+  .mhtml and .docx all pass liveCheck.mjs. **Speed gap:** a cold .odt open shows text only after the
+  whole index is built (2.6 s on the 121k-block sample) — .odt has no on-demand index like .docx yet.
 - **GAP — older Word formats (open, to do):** Word 6.0/95, Word for Windows 1.x/2.0 and Word 2003
   XML (.doc that is XML) are rejected, not read. test-data holds 37 Word 6/95 files (nFib 101 / 104,
   wIdent 0xA5DC; 0xA697–0xA699), 10 Word 1/2 files and 1 Word 2003 XML. None of the user's 3,470 real
