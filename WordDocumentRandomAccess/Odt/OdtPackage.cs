@@ -168,7 +168,8 @@ public static class OdtPackage
                 reader.Read();
             }
         }
-        catch (XmlException exception) { throw WordDocumentXml.Malformed(StylesEntryName, exception); }
+        // Malformed styles.xml: keep the sections read before the first error, as for .docx parts.
+        catch (XmlException) { }
         return sections;
     }
 }

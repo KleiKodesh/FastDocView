@@ -15,7 +15,7 @@ internal static class OdtXmlFragment
         wrapped.Write(bytes, start, length);
         wrapped.Write(closeTag, 0, closeTag.Length);
         wrapped.Position = 0;
-        return WordDocumentXml.ReadFirstChildElement(wrapped, LoadOptions.PreserveWhitespace, tolerateUndeclaredPrefixes: true, "OpenDocument body");
+        return WordDocumentXml.ReadFirstChildElement(wrapped, LoadOptions.PreserveWhitespace, tolerateUndeclaredPrefixes: true, "OpenDocument body", keepContentBeforeFirstError: true);
     }
 
     public static string RootElementName(string rootOpenTag) => DocxXmlFragment.RootElementName(rootOpenTag);

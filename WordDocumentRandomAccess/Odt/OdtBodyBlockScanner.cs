@@ -79,6 +79,34 @@ internal sealed class OdtBodyBlockScanner
     public List<OdtNoteReference> NoteReferences { get; } = new();
     public bool IsBodyComplete { get; private set; }
 
+    /// <summary>
+    /// A body that ends before its closing tag (a truncated or malformed content.xml): keeps the blocks that
+    /// were complete, the way a .docx part keeps what precedes its first error, and drops a block left open
+    /// at the end with its headings and note references. False when no block was complete.
+    /// </summary>
+    public bool KeepCompleteBlocks()
+    {
+        int complete = BlockEndOffsets.Count;
+        while (complete > 0 && BlockEndOffsets[complete - 1] < 0) complete--;
+        if (complete == 0) return false;
+        int extra = BlockEndOffsets.Count - complete;
+        if (extra > 0)
+        {
+            // Labels are appended in block order: the dropped blocks' labels are the tail of ListLabels.
+            int firstDroppedLabel = BlockListLabelIds.Skip(complete).Where(id => id >= 0).DefaultIfEmpty(ListLabels.Count).Min();
+            ListLabels.RemoveRange(firstDroppedLabel, ListLabels.Count - firstDroppedLabel);
+            BlockStartOffsets.RemoveRange(complete, extra);
+            BlockEndOffsets.RemoveRange(complete, extra);
+            BlockKinds.RemoveRange(complete, extra);
+            BlockTextLengths.RemoveRange(complete, extra);
+            BlockListLevels.RemoveRange(complete, extra);
+            BlockListLabelIds.RemoveRange(complete, extra);
+            Headings.RemoveAll(heading => heading.BlockIndex >= complete);
+            NoteReferences.RemoveAll(reference => reference.BlockIndex >= complete);
+        }
+        return true;
+    }
+
     /// <summary>Block-level elements skipped because no rule handles them (element name → count) — for the audit.</summary>
     public Dictionary<string, int> SkippedBlockElements { get; } = new(StringComparer.Ordinal);
 
@@ -496,7 +524,13 @@ internal sealed class OdtBodyBlockScanner
             using XmlReader reader = WordDocumentXml.CreateReader(text, tolerateUndeclaredPrefixes: true, ignoreWhitespace: true);
             return XElement.Load(reader).Elements().First();
         }
-        catch (XmlException exception) { throw WordDocumentXml.Malformed("OpenDocument styles", exception); }
+        catch (XmlException)
+        {
+            // Malformed: keep what precedes the first error, as for .docx (only after the strict parse failed).
+            using var again = new StringReader(rootOpenTag + section + "</" + rootName + ">");
+            using XmlReader reader = WordDocumentXml.CreateReader(again, tolerateUndeclaredPrefixes: true, ignoreWhitespace: true);
+            return WordDocumentXml.LoadUntilFirstError(reader)?.Elements().FirstOrDefault() ?? new XElement("empty");
+        }
     }
 
     // ── attributes and names ──────────────────────────────────────────────────────────

@@ -55,7 +55,8 @@ public static class OdtRandomAccessIndexBuilder
     private static OdtRandomAccessIndex Finish(OdtBodyBlockScanner scanner, OdtStyleCascade styles, long sourceLength, long sourceLastWriteTicksUtc, bool isFlat,
                                                ZipEntryLocation? content, List<DeflateCheckpoint> checkpoints)
     {
-        if (!scanner.IsBodyComplete) throw new InvalidDataException("OpenDocument: no complete office:text body.");
+        if (!scanner.IsBodyComplete && !scanner.KeepCompleteBlocks())
+            throw new InvalidDataException("OpenDocument: no complete office:text body.");
         return new OdtRandomAccessIndex(sourceLength, sourceLastWriteTicksUtc, isFlat, content, checkpoints, scanner.RootOpenTag,
                                         styles.SectionsForRendering(), scanner.BlockStartOffsets.ToArray(), scanner.BlockEndOffsets.ToArray(),
                                         scanner.BlockKinds.ToArray(), scanner.BlockTextLengths.ToArray(), scanner.BlockListLevels.ToArray(),
