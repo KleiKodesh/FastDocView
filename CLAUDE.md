@@ -126,6 +126,10 @@ view over SQLite.
 - **Test runs take a few minutes at most** (user, 2026-10-28): iterate and QA on samples — the files
   relevant to the change plus a fixed-seed random sample (~300) of `test-data/` / real files. Never
   block on full-corpus runs.
+- **Book view is NEVER FastDocView** (user, 2026-10-28): the app's book view (library books) and the
+  FastDocView page (local document files) are different things — own feature folder, route, stores and
+  names. FastDocView only borrows the book view's design and the shared components (WindowedScroller,
+  SplitPane, TreeView, useZoom…). Never call this work "book-view integration".
 - **No hacks — fix the bug** (user, 2026-10-28): when a test file breaks the system, fix the cause,
   never paper over it with a cap, limit, cut-off or fallback that hides the input. Stress files
   (5,000 nested tables, huge lines, deep tags) exist to prove the design holds. Example: deep
