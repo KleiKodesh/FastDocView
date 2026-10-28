@@ -187,3 +187,11 @@ Append-only. Date, what we learned, what it changed.
 - Prm0 isprm → sprm: the spec names the sprms (§2.9.215) but not their opcodes; each name was
   resolved against §2.6.1/§2.6.2 and cross-checked with LibreOffice `ww8scan.cxx` `aSprmId`
   (which uses sprmPJc80 0x2403 where the spec names sprmPJc 0x2461 — both are handled alike here).
+
+## 2026-10-28 — every sprm opcode checked against sprmids.hxx
+
+- After the 0x4845 slip, all 70 .doc opcodes the renderer interprets were looked up in LibreOffice's
+  sw/source/filter/ww8/sprmids.hxx. Two more were wrong, both written from memory:
+  0x0868 is CFUsePgsuSettings (we hid the text — 7,399 runs in 34 corpus files), web-hidden is 0x0811;
+  0x245B is PFDyaBeforeAuto, contextual spacing is 0x246D. The other 68 matched.
+- Lesson kept in CLAUDE.md: an opcode table is looked up, never recalled.
