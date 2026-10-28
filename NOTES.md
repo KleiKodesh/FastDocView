@@ -194,3 +194,43 @@ SQLite; footnotes as commentary links.
 - [MS-CFB] compound file — https://learn.microsoft.com/openspecs/windows_protocols/ms-cfb/
 - RFC 1951 deflate; zlib `examples/zran.c` — https://github.com/madler/zlib/blob/develop/examples/zran.c
 - PKWARE APPNOTE (zip, Zip64) — https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
+
+## Roadmap from the LibreOffice research (2026-10-28)
+
+Two read-only research passes over LibreOffice master (writerfilter DomainMapper, ww8par6 sprm
+dispatcher, sprmids.hxx, xmloff txtprmap / XMLTextListBlockContext / txtparai, sw xmltbli).
+Everything below fits the paradigm: index-time counters/state, render-time per block, no whole-
+document model (LibreOffice builds a full SwDoc; we keep only the semantics).
+
+**.docx / .doc gaps, ranked (impact for Hebrew books × cheapness):**
+1. ~~.doc sprmCHpsPos is 0x4845~~ — fixed (we had 0x4840 and listed 0x4845 as kerning).
+2. Theme fonts (`csTheme`/`minorBidi` → theme1.xml) — Hebrew text can get the wrong font today. Index-time theme parse.
+3. .doc list labels (PlcfLst / PlfLfo / LVL) — biggest .doc gap; reuse the index-time counter.
+4. Numbering `suff`, `lvlJc`, `lvlRestart`, `isLgl`, `numStyleLink`, picture bullets — index-time.
+5. Theme colors (`themeColor` / tint / shade, `clrSchemeMapping`) — render-time.
+6. Hyperlinks: docx rels + HYPERLINK fields, .doc PlcfFld; open-field state per block at index time.
+7. .doc fast-saved files: per-piece Prm / Prc sprms — render-time.
+8. Inline images (docx rels, .doc PICF) through a blob endpoint — render-time.
+9. .doc text boxes (txbx story) after the anchoring paragraph — index-time map.
+10. `w:sym` / CSymbol glyph with its font (Wingdings bullets).
+11. Table-style conditional formatting (`tblStylePr` firstRow / banding) — render-time per row; row count per table at index time.
+12. Emphasis marks (`em` / sprmCKcd) → `text-emphasis`.
+13. Underline styles + underline color (`u@val`, `u@color`, sprmCCvUl).
+14. Drop caps as a floated first letter (`framePr@dropCap`, sprmPDcs 0x442C).
+15. .doc field-code hiding check (CFFldVanish).
+
+**Open formats (design: OdtBodyBlockScanner etc., same IWordWindowedDocument contract):**
+1. `.docm/.dotx/.dotm` — opener only (S).
+2. **ODT/OTT** — content.xml checkpointed like document.xml; automatic styles + font faces come
+   before office:body and are captured during the index pass into the sidecar; lists flattened to
+   blocks with labels per XMLTextListBlockContext rules (xml:id, continue-list, continue-numbering,
+   start-value); notes are inline `text:note` — their body byte ranges recorded at index time and
+   rendered separately; property map from txtprmap (per-script font/size variants, text-position,
+   writing-mode for RTL). Split huge tables into row blocks. (M–L)
+3. **FODT** — same scanner over the plain file: offsets only, no checkpoints — the fastest format. (S after ODT)
+4. **Flat OPC** — docx parts as byte ranges inside one XML; feeds the docx pipeline via a part-source abstraction. (S–M)
+5. **Word 2003 XML** — close to docx element names; inline footnotes. (M)
+6. **RTF** — byte-offset blocks at `\par` / `\row`, with a formatting-state snapshot per block (state carries across paragraphs). (L)
+7. HTML/MHTML-as-.doc, `.txt` — low priority. (S–M)
+Unverified against source (from memory, check before implementing): ODF note import, ODF package
+encryption rules, RTF / Word 2003 importer paths, .doc list-table details.
