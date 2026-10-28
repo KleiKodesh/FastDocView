@@ -1,6 +1,5 @@
 using System.Text;
-using WordDocumentRandomAccess.Deflate;
-using WordDocumentRandomAccess.Zip;
+using SeekableDeflate;
 
 namespace WordDocumentRandomAccess.Docx;
 

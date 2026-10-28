@@ -47,7 +47,6 @@ for (int i = 0; i < args.Length; i++)
 
 if (!skipSynthetic)
 {
-    DeflateInflaterRoundTripTest.Run(deflateMegabytes);
     DocxNumberingAndPolicyTest.Run();
     DocxThemeAndUnderlineTest.Run();
     DocxIndexAndRenderTest.Run(blocks);

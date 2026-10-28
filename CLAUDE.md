@@ -51,8 +51,7 @@ view over SQLite.
 
 | Folder | Owns |
 |---|---|
-| `WordDocumentRandomAccess/Deflate` | managed RFC 1951 inflater with zran checkpoints, seekable stream |
-| `…/Zip` | central directory → entry data offsets (Zip64) |
+| `..\SeekableDeflate` (own repo, sibling folder) | managed RFC 1951 inflater with zran checkpoints, seekable stream, zip-entry location — referenced as a `ProjectReference`, no NuGet. Clone it next to this repo. |
 | `…/Docx` | body + notes scanners, index (format v4) + builder, block / note readers, drawing stripper, `DocxWindowedDocument` |
 | `…/Html`, `…/DocxHtml` | format-neutral formatting models + CSS; styles / table styles cascade; block, table, note → HTML |
 | `…/DocBinary` | compound file, FIB, piece table, FKPs (+ huge PAPX), styles, fonts, sprms, notes, block index, `DocBinaryWindowedDocument` |

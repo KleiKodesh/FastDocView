@@ -1,7 +1,6 @@
 using System.Text;
 using System.Xml.Linq;
-using WordDocumentRandomAccess.Deflate;
-using WordDocumentRandomAccess.Zip;
+using SeekableDeflate;
 
 namespace WordDocumentRandomAccess.Docx;
 

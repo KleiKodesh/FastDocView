@@ -5,7 +5,7 @@ namespace WordDocumentRandomAccess.Docx;
 
 /// <summary>
 /// Reads one footnote or endnote on demand: looks its byte range up in the part's index, reads just
-/// that range through a seekable view of the part (a <see cref="Deflate.DeflateRandomAccessStream"/>
+/// that range through a seekable view of the part (a <see cref="SeekableDeflate.DeflateRandomAccessStream"/>
 /// over the package in sidecar mode, the inflated bytes in in-memory mode) and parses it alone.
 /// The notes parts are never held whole.
 /// </summary>
