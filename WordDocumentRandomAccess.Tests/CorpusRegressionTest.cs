@@ -32,12 +32,25 @@ public static class CorpusRegressionTest
         (@"apache-poi\clusterfuzz-testcase-POIHWPFFuzzer-5696094627495936.doc", typeof(InvalidDataException), "name length"),
         (@"libreoffice\sw\qa\core\data\ww8\pass\crash-2.doc", typeof(InvalidDataException), "piece table"),
         (@"libreoffice\sw\qa\core\data\ww8\fail\hang-2.doc", typeof(InvalidDataException), "piece table"),
-        (@"libreoffice\sw\qa\extras\ooxmlimport\data\math-malformed_xml.docx", typeof(InvalidDataException), "not well-formed"),
         (@"libreoffice\sw\qa\core\data\odt\fail\tdf102018.odt", typeof(InvalidDataException), "styles.xml"),
         (@"apache-poi\52117.doc", typeof(NotSupportedException), "Word 6.0 / Word 95"),
         (@"apache-poi\word2.doc", typeof(NotSupportedException), "Word for Windows 2.0"),
         (@"apache-tika\testWORDML_tableInsideParagraph.doc", typeof(NotSupportedException), "Word 2003 XML"),
         (@"libreoffice\sw\qa\extras\ooxmlexport\data\Encrypted_MSO2007_abc.docx", typeof(NotSupportedException), "Encrypted"),
+    ];
+
+    /// <summary>
+    /// Malformed .docx parts keep what precedes the first error (WordDocumentXml.LoadUntilFirstError —
+    /// LibreOffice's repair mode); each file: (relative path, text the first block must show, text it must not).
+    /// </summary>
+    private static readonly (string file, string mustShow, string? mustNotShow)[] MalformedDocxKeepContentBeforeError =
+    [
+        // <m:t>a</m:sPre>: the paragraph and its math up to "a" are kept (math itself is not rendered yet)
+        (@"libreoffice\sw\qa\extras\ooxmlimport\data\math-malformed_xml.docx", "<p", null),
+        // duplicate w:val on w:jc inside w:pPr: the paragraph exists, its run "test" comes after the error
+        (@"libreoffice\sw\qa\extras\ooxmlimport\data\tdf165348_broken_package.docx", "<p", "test"),
+        // <!DOCTYPE> with an external entity: the scanner steps over it; &testent; is never resolved
+        (@"apache-poi\ExternalEntityInText.docx", "<p", "poi.apache.org"),
     ];
 
     public static void Run(string testDataFolder)
@@ -56,6 +69,19 @@ public static class CorpusRegressionTest
             catch (Exception exception) { error = $"{exception.GetType().Name}: {exception.Message}"; }
             TestReport.Check(error is null, $"opens + renders: {relative}{(error is null ? "" : "  — " + error)}");
         }
+        foreach ((string relative, string mustShow, string? mustNotShow) in MalformedDocxKeepContentBeforeError)
+        {
+            string path = Path.Combine(testDataFolder, relative);
+            string? html = null, error = null;
+            try
+            {
+                using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+                html = string.Concat(document.RenderBlocks(0, 40).Select(block => block.Html));
+            }
+            catch (Exception exception) { error = $"{exception.GetType().Name}: {exception.Message}"; }
+            TestReport.Check(html is not null && html.Contains(mustShow) && (mustNotShow is null || !html.Contains(mustNotShow)),
+                             $"malformed XML keeps the content before the error: {relative}{(error is null ? "  — " + Shorten(html) : "  — " + error)}");
+        }
         foreach ((string relative, Type expected, string messagePart) in MustFailClearly)
         {
             string path = Path.Combine(testDataFolder, relative);
@@ -66,4 +92,6 @@ public static class CorpusRegressionTest
                              $"fails with {expected.Name} \"{messagePart}\": {relative}{(caught is null ? "  — opened" : "  — " + caught.GetType().Name + ": " + caught.Message)}");
         }
     }
+
+    private static string Shorten(string? html) => html is null ? "" : html.Length > 300 ? html.Substring(0, 300) + "…" : html;
 }

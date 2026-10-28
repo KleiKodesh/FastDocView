@@ -88,6 +88,7 @@ if (!skipSynthetic)
 {
     DocxNumberingAndPolicyTest.Run();
     DocxThemeAndUnderlineTest.Run();
+    MalformedXmlRecoveryTest.Run();
     DocxIndexAndRenderTest.Run(blocks);
 }
 if (hugeBlocks > 0) HugeDocumentMemoryTest.Run(hugeBlocks);

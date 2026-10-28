@@ -529,3 +529,46 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
   small streaming reader of its own (WordprocessingML 2003 schema).
 - Malformed XML in any part → InvalidDataException naming the part (LibreOffice opens some of these,
   e.g. math-malformed_xml.docx, with a recovering parser — not done here).
+- Malformed XML: see "Malformed XML (repair mode)" below — .docx keeps the content before the
+  first error; .odt/.fodt content.xml/styles.xml still fail with InvalidDataException naming the part.
+
+## Malformed XML (repair mode, 2026-10-28)
+
+What LibreOffice does (read in source, master + libxml2 2.15.4 from download.lst):
+- sax/source/fastparser/fastparser.cxx: libxml2 push parser, options only `XML_PARSE_NOENT |
+  XML_PARSE_HUGE` — **no XML_PARSE_RECOVER**. libxml2 parserInternals.c `xmlCtxtVErr`: a fatal
+  error with `recovery == 0` sets `disableSAX = 1`, so no event follows it; `xmlParseChunk` returns
+  the error and fastparser throws SAXParseException.
+- .docx (sw/source/writerfilter/ooxml/OOXMLDocumentImpl.cxx `resolve`): the SAXException is
+  rethrown unless `SfxObjectShell::IsContinueImportOnFilterExceptions` (sfx2 objmisc.cxx) — the
+  user approved the repair prompt (or repair mode is on). Then the document keeps what was imported
+  before the error. Without approval the load fails: ooxmlimport.cxx testMathMalformedXml asserts
+  the component is null.
+- .odt/.fodt (sw/source/filter/xml/swxml.cxx ReadThroughComponent): a SAXParseException in
+  styles.xml / content.xml is ERR_FORMAT_FILE_ROWCOL — the load fails (odfimport testForcepoint108,
+  uiwriter testThreadedException assert failure). meta.xml / settings.xml errors are warnings.
+- Error classes (libxml2 parser.c 2.15): mismatched end tag XML_ERR_TAG_NAME_MISMATCH, duplicate
+  attribute xmlErrAttributeDup, undeclared entity xmlHandleUndeclaredEntity (fastparser's getEntity
+  callback returns only predefined/char entities and userData != ctxt, so DTD-declared entities are
+  never looked up), illegal character, premature end — all XML_ERR_FATAL: everything stops there.
+  (With XML_PARSE_RECOVER, which LibreOffice does not set, an end tag closes the innermost open
+  element whatever its name — xmlParseEndTag2 — and duplicate attributes are reported but parsing
+  goes on.)
+
+What we do:
+- Strict XmlReader / XDocument parsing stays the normal path, unchanged. Only when it throws
+  XmlException is that block / note / part re-read by `WordDocumentXml.LoadUntilFirstError`: the
+  tree of every node delivered before the first error, open elements closed there. Same reader
+  settings (DtdProcessing.Ignore — nothing external is ever fetched or expanded).
+- Applies to .docx body blocks, notes, styles, theme, settings, numbering. ODF is unchanged (fails,
+  as LibreOffice does).
+- The body / notes scanners step over `<!DOCTYPE … [internal subset]>` (DocxDocumentTypeDeclarationSkipper);
+  it was taken for an unterminated comment, which swallowed the body.
+- Differences from LibreOffice: (1) recovery is per block — LibreOffice drops everything after the
+  first error in the part, we drop the rest of the failing block only (knowing the part-wide first
+  error needs a whole-part strict parse at index time); (2) text in the same text node before an
+  undeclared entity is lost (XmlReader throws for the whole node; libxml2 delivers the characters
+  before '&'); (3) we open without a repair prompt.
+- Corpus: math-malformed_xml.docx, tdf165348_broken_package.docx, ExternalEntityInText.docx and
+  clusterfuzz POIXWPFFuzzer-6733884933668864.docx (theme1.xml) now open. Speed on well-formed input:
+  index build / scanner on the 87 MB sample within run-to-run noise (scanner 187–233 MB/s both).

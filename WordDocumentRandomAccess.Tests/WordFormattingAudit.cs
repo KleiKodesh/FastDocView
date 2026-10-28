@@ -224,7 +224,7 @@ public static class WordFormattingAudit
             using XmlReader reader = XmlReader.Create(stream, new XmlReaderSettings { IgnoreWhitespace = true, DtdProcessing = DtdProcessing.Ignore });
             var parents = new Stack<string>();
             try { AuditPart(reader, parents, tally); }
-            catch (XmlException exception) { throw WordDocumentXml.Malformed(part, exception); }     // a damaged part, same classification as the reader's
+            catch (XmlException) { }     // a damaged part: audited up to its first error, the content the reader keeps (WordDocumentXml.LoadUntilFirstError)
         }
     }
 

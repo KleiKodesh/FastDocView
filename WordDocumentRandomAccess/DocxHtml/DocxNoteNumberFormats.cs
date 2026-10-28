@@ -19,13 +19,7 @@ public sealed class DocxNoteNumberFormats
     {
         ZipArchiveEntry? entry = settingsPartName is null ? null : package.GetEntry(settingsPartName);
         if (entry is null) return;
-        XElement? settings;
-        try
-        {
-            using Stream stream = entry.Open();
-            settings = XDocument.Load(stream).Root;
-        }
-        catch (System.Xml.XmlException exception) { throw WordDocumentXml.Malformed(settingsPartName!, exception); }
+        XElement? settings = WordDocumentXml.LoadPartKeepingContentBeforeFirstError(entry.Open)?.Root;
         FootnoteNumberFormat = (string?)settings?.Element(W + "footnotePr")?.Element(W + "numFmt")?.Attribute(W + "val") ?? FootnoteNumberFormat;
         EndnoteNumberFormat = (string?)settings?.Element(W + "endnotePr")?.Element(W + "numFmt")?.Attribute(W + "val") ?? EndnoteNumberFormat;
     }

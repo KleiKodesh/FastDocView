@@ -6,7 +6,8 @@ namespace WordDocumentRandomAccess.Docx;
 /// <summary>
 /// Parses one element cut out of a part (a body block, a note): wraps its bytes in the part's root
 /// opening tag (for the namespace declarations) and a closing tag, strips drawings first
-/// (<see cref="DocxDrawingStripper"/>), and returns the element.
+/// (<see cref="DocxDrawingStripper"/>), and returns the element. A malformed element keeps what
+/// precedes its first error (<see cref="WordDocumentXml.LoadUntilFirstError"/>).
 /// </summary>
 internal static class DocxXmlFragment
 {
@@ -19,7 +20,7 @@ internal static class DocxXmlFragment
         wrapped.Write(element.Array!, element.Offset, element.Count);
         wrapped.Write(closeTag, 0, closeTag.Length);
         wrapped.Position = 0;
-        return WordDocumentXml.ReadFirstChildElement(wrapped, LoadOptions.None, tolerateUndeclaredPrefixes: false, partName);
+        return WordDocumentXml.ReadFirstChildElement(wrapped, LoadOptions.None, tolerateUndeclaredPrefixes: false, partName, keepContentBeforeFirstError: true);
     }
 
     /// <summary>"w:document" from "&lt;w:document xmlns:w=…&gt;".</summary>

@@ -10,7 +10,7 @@ namespace WordDocumentRandomAccess.Docx;
 /// </summary>
 internal sealed class DocxNotesPartScanner
 {
-    private enum State { Text, Tag, Quote, Comment, ProcessingInstruction }
+    private enum State { Text, Tag, Quote, Comment, ProcessingInstruction, DocumentType }
 
     private State _state = State.Text;
     private long _offset;
@@ -21,6 +21,7 @@ internal sealed class DocxNotesPartScanner
     private bool _isFirstTagByte;
     private byte _previous;
     private int _markerMatched;
+    private readonly DocxDocumentTypeDeclarationSkipper _documentType = new();
     private readonly MemoryStream _tag = new();       // the current tag's bytes (only kept while at depth ≤ 1)
     private long _noteStart = -1;
     private int _noteId;
@@ -67,10 +68,15 @@ internal sealed class DocxNotesPartScanner
                     break;
 
                 case State.Comment:
-                    if (b == (byte)'-') _markerMatched = Math.Min(2, _markerMatched + 1);
+                    if (_markerMatched == 0 && b == (byte)'D' && _previous == (byte)'!') { _state = State.DocumentType; _documentType.Reset(); }
+                    else if (b == (byte)'-') _markerMatched = Math.Min(2, _markerMatched + 1);
                     else if (b == (byte)'>' && _markerMatched == 2) _state = State.Text;
-                    else if (b == (byte)'>' && _markerMatched == 0) _state = State.Text;    // <!DOCTYPE …>
+                    else if (b == (byte)'>' && _markerMatched == 0) _state = State.Text;    // <![CDATA[ … ]]>
                     else _markerMatched = 0;
+                    break;
+
+                case State.DocumentType:
+                    if (_documentType.Feed(b)) _state = State.Text;
                     break;
 
                 case State.ProcessingInstruction:
