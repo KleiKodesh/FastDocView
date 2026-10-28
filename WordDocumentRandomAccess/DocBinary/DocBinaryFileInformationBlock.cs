@@ -64,6 +64,8 @@ public sealed class DocBinaryFileInformationBlock
         HeaderCharacterCount = BitConverter.ToInt32(fib, 0x54);
         CommentCharacterCount = BitConverter.ToInt32(fib, 0x5C);
         EndnoteCharacterCount = BitConverter.ToInt32(fib, 0x60);
+        if (MainTextCharacterCount < 0 || FootnoteCharacterCount < 0 || HeaderCharacterCount < 0 || CommentCharacterCount < 0 || EndnoteCharacterCount < 0)
+            throw new InvalidDataException("Damaged Word document: the FIB gives a negative character count.");
 
         _fcLcbCount = BitConverter.ToUInt16(fib, 0x98);
         StyleSheet = FcLcb(fib, 1);

@@ -37,10 +37,8 @@ public sealed class DocBinaryPieceTable
             _pieces = [ContiguousPiece(fib)];
             return;
         }
-        var bytes = new byte[clx.length];
-        tableStream.Position = clx.offset;
-        int read = 0;
-        while (read < bytes.Length) { int n = tableStream.Read(bytes, read, bytes.Length - read); if (n <= 0) break; read += n; }
+        byte[] bytes = DocBinaryStructureReader.TryRead(tableStream, clx)
+                       ?? throw new InvalidDataException($"Damaged Word document: the piece table (Clx at {clx.offset}, {clx.length} bytes) lies outside the {fib.TableStreamName} stream ({tableStream.Length} bytes).");
 
         // Clx = Prc* (clxt 0x01: PrcData = cbGrpprl + grpprl, §2.9.209/§2.9.210) followed by one Pcdt (clxt 0x02: lcb + PlcPcd).
         // The Prc grpprls are kept: a Prm1 names one by index (fast-saved files).
@@ -64,9 +62,11 @@ public sealed class DocBinaryPieceTable
         if (position < 0) { _pieces = [ContiguousPiece(fib)]; return; }
         int plcLength = BitConverter.ToInt32(bytes, position + 1);
         int plcStart = position + 5;
-        int pieceCount = (plcLength - 4) / 12;
+        int pcdStart = plcStart + 4 * ((plcLength - 4) / 12 + 1);
+        // CPs out of order end the usable table (LibreOffice WW8PLCFpcd::TruncToSortedRange).
+        int pieceCount = DocBinaryStructureReader.SortedEntryCount(i => BitConverter.ToInt32(bytes, plcStart + i * 4), (plcLength - 4) / 12);
+        if (pieceCount == 0) throw new InvalidDataException("Damaged Word document: the piece table's character positions are out of order from the first piece.");
         _pieces = new Piece[pieceCount];
-        int pcdStart = plcStart + 4 * (pieceCount + 1);
         for (int i = 0; i < pieceCount; i++)
         {
             int cpStart = BitConverter.ToInt32(bytes, plcStart + i * 4);
@@ -226,12 +226,19 @@ public sealed class DocBinaryPieceTable
     /// <summary>Reads the text of a CP range (control characters included, as Word stores them).</summary>
     public string ReadText(int cpStart, int cpEnd)
     {
-        var text = new StringBuilder(Math.Max(0, cpEnd - cpStart));
+        if (cpEnd <= cpStart) return "";                 // an empty (or, from a damaged PLC, reversed) range has no text
+        var text = new StringBuilder();
         foreach ((Piece piece, int start, int end) in SegmentsOf(cpStart, cpEnd))
         {
-            int byteCount = (end - start) * piece.BytesPerCharacter;
+            // Only the bytes the WordDocument stream holds: a damaged piece table or note PLC can name
+            // CP ranges whose text would lie far past the stream's end (LibreOffice's
+            // CurrentPieceStartCp2Fc likewise drops "broken offset"s it cannot compute).
+            long fileOffset = piece.FileOffset + ((long)start - piece.CpStart) * piece.BytesPerCharacter;
+            long available = Math.Max(0, _wordDocument.Length - fileOffset);
+            int byteCount = (int)Math.Min(((long)end - start) * piece.BytesPerCharacter, available);
+            if (byteCount <= 0) continue;
             var bytes = new byte[byteCount];
-            _wordDocument.Position = piece.FileOffsetOf(start);
+            _wordDocument.Position = fileOffset;
             int read = 0;
             while (read < byteCount) { int n = _wordDocument.Read(bytes, read, byteCount - read); if (n <= 0) break; read += n; }
             DocBinaryTextDecoder.Append(text, bytes, read, piece.IsCompressed);
@@ -242,19 +249,21 @@ public sealed class DocBinaryPieceTable
     /// <summary>Streams the raw characters of a CP range in chunks, for the paragraph-boundary scan.</summary>
     public void ScanCharacters(int cpStart, int cpEnd, Action<char[], int, int> onChunk, int chunkCharacters = 1 << 16)
     {
+        if (cpEnd <= cpStart) return;
         var characters = new char[chunkCharacters];
         var bytes = new byte[chunkCharacters * 2];
         foreach ((Piece piece, int start, int end) in SegmentsOf(cpStart, cpEnd))
         {
-            for (int cp = start; cp < end; cp += chunkCharacters)
+            for (long cp = start; cp < end; cp += chunkCharacters)
             {
-                int count = Math.Min(chunkCharacters, end - cp);
+                int count = (int)Math.Min(chunkCharacters, end - cp);
                 int byteCount = count * piece.BytesPerCharacter;
-                _wordDocument.Position = piece.FileOffsetOf(cp);
+                _wordDocument.Position = piece.FileOffset + (cp - piece.CpStart) * piece.BytesPerCharacter;
                 int read = 0;
                 while (read < byteCount) { int n = _wordDocument.Read(bytes, read, byteCount - read); if (n <= 0) break; read += n; }
+                if (read == 0) break;                    // the rest of this piece lies past the stream's end (damaged piece table): no text there
                 int decoded = DocBinaryTextDecoder.Decode(bytes, read, piece.IsCompressed, characters);
-                onChunk(characters, decoded, cp);
+                onChunk(characters, decoded, (int)cp);
             }
         }
     }

@@ -14,6 +14,8 @@ public sealed class CompoundFileReader : IDisposable
     private const uint EndOfChain = 0xFFFFFFFE;
     private const uint FreeSector = 0xFFFFFFFF;
     private const int DirectoryEntrySize = 128;
+    private const int DirectoryEntryNameBytes = 64;
+    private const byte UnallocatedEntryType = 0;
 
     private readonly Stream _file;
     private readonly int _sectorSize;
@@ -43,8 +45,13 @@ public sealed class CompoundFileReader : IDisposable
         var header = new byte[512];
         ReadAt(_file, 0, header, 512);
         if (!header.AsSpan(0, 8).SequenceEqual(Signature)) throw new InvalidDataException("Not an OLE compound file.");
-        _sectorSize = 1 << BitConverter.ToUInt16(header, 0x1E);
-        _miniSectorSize = 1 << BitConverter.ToUInt16(header, 0x20);
+        // [MS-CFB] §2.2: Sector Shift MUST be 0x0009 (version 3, 512-byte sectors) or 0x000C (version 4,
+        // 4096-byte sectors); Mini Sector Shift MUST be 0x0006 (64-byte mini sectors).
+        ushort sectorShift = BitConverter.ToUInt16(header, 0x1E), miniSectorShift = BitConverter.ToUInt16(header, 0x20);
+        if (sectorShift is not (9 or 12) || miniSectorShift != 6)
+            throw new InvalidDataException($"Damaged compound file: sector shift {sectorShift} / mini sector shift {miniSectorShift} (MS-CFB allows 9 or 12 / 6).");
+        _sectorSize = 1 << sectorShift;
+        _miniSectorSize = 1 << miniSectorShift;
         uint fatSectorCount = BitConverter.ToUInt32(header, 0x2C);
         uint firstDirectorySector = BitConverter.ToUInt32(header, 0x30);
         _miniStreamCutoff = BitConverter.ToUInt32(header, 0x38);
@@ -55,6 +62,7 @@ public sealed class CompoundFileReader : IDisposable
 
         _fat = LoadFat(header, fatSectorCount, firstDifatSector, difatSectorCount);
         ReadDirectory(firstDirectorySector);
+        if (_entries.Count == 0) throw new InvalidDataException("Damaged compound file: its directory chain is empty (no root entry).");
         _miniFat = LoadChainedTable(firstMiniFatSector, miniFatSectorCount);
         DirectoryEntry root = _entries[0];
         _miniStream = new SectorChainStream(_file, _sectorSize, ChainOf(_fat, root.StartSector), root.Size, SectorOffset);
@@ -103,7 +111,8 @@ public sealed class CompoundFileReader : IDisposable
         }
         uint difatSector = firstDifatSector;
         var difatBuffer = new byte[_sectorSize];
-        for (uint n = 0; n < difatSectorCount && difatSector < 0xFFFFFFFA; n++)
+        long sectorsInFile = _file.Length / _sectorSize;     // a DIFAT chain longer than the file is a cycle in a damaged file
+        for (uint n = 0; n < difatSectorCount && n <= sectorsInFile && difatSector < 0xFFFFFFFA; n++)
         {
             ReadAt(_file, SectorOffset(difatSector), difatBuffer, _sectorSize);
             int entriesPerSector = _sectorSize / 4 - 1;
@@ -151,9 +160,17 @@ public sealed class CompoundFileReader : IDisposable
             for (int offset = 0; offset + DirectoryEntrySize <= _sectorSize; offset += DirectoryEntrySize, id++)
             {
                 int nameLength = BitConverter.ToUInt16(buffer, offset + 64);
+                byte type = buffer[offset + 66];
+                // The name field is the entry's first 64 bytes ([MS-CFB] §2.6.1: name length counts the
+                // UTF-16 name plus its terminating null, so it is even and at most 64).
+                if (nameLength > DirectoryEntryNameBytes || nameLength % 2 != 0)
+                {
+                    if (type != UnallocatedEntryType) throw new InvalidDataException($"Damaged compound file: directory entry {id} has a name length of {nameLength} bytes (at most 64).");
+                    nameLength = 0;                       // an unused entry's name is never looked at
+                }
                 string name = nameLength >= 2 ? Encoding.Unicode.GetString(buffer, offset, nameLength - 2) : "";
                 _entries.Add(new DirectoryEntry(
-                    id, name, buffer[offset + 66], BitConverter.ToUInt32(buffer, offset + 116),
+                    id, name, type, BitConverter.ToUInt32(buffer, offset + 116),
                     BitConverter.ToUInt32(buffer, offset + 120),
                     BitConverter.ToInt32(buffer, offset + 68), BitConverter.ToInt32(buffer, offset + 72), BitConverter.ToInt32(buffer, offset + 76)));
             }

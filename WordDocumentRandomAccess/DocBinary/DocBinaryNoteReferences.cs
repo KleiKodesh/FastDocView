@@ -55,29 +55,23 @@ public sealed class DocBinaryNoteReferences
     {
         // PlcffndRef: (n + 1) CPs then n FRDs (2 bytes) → n = (lcb - 4) / 6.
         if (referencePlc.length < 10 || textPlc.length < 8) return 0;
-        byte[] referenceBytes = ReadBytes(tableStream, referencePlc);
-        byte[] textBytes = ReadBytes(tableStream, textPlc);
-        int count = (int)((referencePlc.length - 4) / 6);
-        int textCpCount = textBytes.Length / 4;
+        // Outside the table stream: no notes of this kind (LibreOffice: an empty PLCF).
+        if (DocBinaryStructureReader.TryRead(tableStream, referencePlc) is not { } referenceBytes
+            || DocBinaryStructureReader.TryRead(tableStream, textPlc) is not { } textBytes) return 0;
+        int frdsAt = (int)((referencePlc.length - 4) / 6 + 1) * 4;
+        // CPs out of order end each PLC (LibreOffice TruncToSortedRange).
+        int count = DocBinaryStructureReader.SortedEntryCount(i => BitConverter.ToInt32(referenceBytes, i * 4), (int)((referencePlc.length - 4) / 6));
+        int textCpCount = DocBinaryStructureReader.SortedEntryCount(i => BitConverter.ToInt32(textBytes, i * 4), textBytes.Length / 4 - 1) + 1;
         int autoNumber = 0;
         for (int i = 0; i < count; i++)
         {
             int referenceCp = BitConverter.ToInt32(referenceBytes, i * 4);
-            short nAuto = BitConverter.ToInt16(referenceBytes, (count + 1) * 4 + i * 2);
+            short nAuto = BitConverter.ToInt16(referenceBytes, frdsAt + i * 2);
             int number = nAuto != 0 ? ++autoNumber : 0;
             int textStart = i < textCpCount ? BitConverter.ToInt32(textBytes, i * 4) : 0;
             int textEnd = i + 1 < textCpCount ? BitConverter.ToInt32(textBytes, (i + 1) * 4) : textStart;
             into.Add(new NoteReference(referenceCp, kind, number, storyStart + textStart, storyStart + textEnd));
         }
         return count;
-    }
-
-    private static byte[] ReadBytes(Stream stream, (uint offset, uint length) location)
-    {
-        var bytes = new byte[location.length];
-        stream.Position = location.offset;
-        int read = 0;
-        while (read < bytes.Length) { int n = stream.Read(bytes, read, bytes.Length - read); if (n <= 0) break; read += n; }
-        return bytes;
     }
 }

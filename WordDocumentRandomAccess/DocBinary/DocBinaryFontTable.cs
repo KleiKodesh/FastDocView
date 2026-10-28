@@ -23,11 +23,7 @@ public sealed class DocBinaryFontTable
 
     public static DocBinaryFontTable Read(Stream tableStream, (uint offset, uint length) location)
     {
-        if (location.length < 4) return Empty;
-        var bytes = new byte[location.length];
-        tableStream.Position = location.offset;
-        int read = 0;
-        while (read < bytes.Length) { int n = tableStream.Read(bytes, read, bytes.Length - read); if (n <= 0) break; read += n; }
+        if (location.length < 4 || DocBinaryStructureReader.TryRead(tableStream, location) is not { } bytes) return Empty;   // none, or outside the table stream
 
         int count = BitConverter.ToUInt16(bytes, 0);
         int position = 4;                                     // cData, cbExtra
