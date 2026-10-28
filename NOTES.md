@@ -110,7 +110,7 @@ Parsing is the cheap part; each item below is mostly the semantics → CSS table
 Ordered by value for text-heavy Hebrew documents:
 
 1. Footnotes/endnotes (deferred by user) — bodies from footnotes.xml, shown like commentary.
-2. Themes — `theme1.xml` fonts (`asciiTheme`/`csTheme` → minor/major, by script) and colors (`themeColor`).
+2. ~~Themes — `theme1.xml` fonts and colors~~ — done (.docx).
 3. Tables, properly — `tblGrid`/`tcW` widths, borders (`tblBorders`/`tcBorders`), row heights, `tblInd`, nested tables, `.doc` rows reassembled from cell marks into `<table>`.
 4. Images — `drawing`/`pict` → rels → blob endpoint (inline only; floating as inline).
 5. Text boxes / shapes — `mc:AlternateContent` → `w:txbxContent` rendered inline after the paragraph.
@@ -204,18 +204,18 @@ document model (LibreOffice builds a full SwDoc; we keep only the semantics).
 
 **.docx / .doc gaps, ranked (impact for Hebrew books × cheapness):**
 1. ~~.doc sprmCHpsPos is 0x4845~~ — fixed (we had 0x4840 and listed 0x4845 as kerning).
-2. Theme fonts (`csTheme`/`minorBidi` → theme1.xml) — Hebrew text can get the wrong font today. Index-time theme parse.
+2. ~~Theme fonts (`csTheme`/`minorBidi` → theme1.xml)~~ — done 2026-10-28 (see "Theme, underline, emphasis" below).
 3. .doc list labels (PlcfLst / PlfLfo / LVL) — biggest .doc gap; reuse the index-time counter.
 4. Numbering `suff`, `lvlJc`, `lvlRestart`, `isLgl`, `numStyleLink`, picture bullets — index-time.
-5. Theme colors (`themeColor` / tint / shade, `clrSchemeMapping`) — render-time.
+5. ~~Theme colors (`themeColor` / tint / shade, `clrSchemeMapping`)~~ — done 2026-10-28.
 6. Hyperlinks: docx rels + HYPERLINK fields, .doc PlcfFld; open-field state per block at index time.
 7. .doc fast-saved files: per-piece Prm / Prc sprms — render-time.
 8. Inline images (docx rels, .doc PICF) through a blob endpoint — render-time.
 9. .doc text boxes (txbx story) after the anchoring paragraph — index-time map.
 10. `w:sym` / CSymbol glyph with its font (Wingdings bullets).
 11. Table-style conditional formatting (`tblStylePr` firstRow / banding) — render-time per row; row count per table at index time.
-12. Emphasis marks (`em` / sprmCKcd) → `text-emphasis`.
-13. Underline styles + underline color (`u@val`, `u@color`, sprmCCvUl).
+12. Emphasis marks (`em` → `text-emphasis`) — .docx done 2026-10-28; .doc sprmCKcd still open.
+13. Underline styles + color (`u@val`, `u@color` + theme) — .docx done 2026-10-28; .doc sprmCKul patterns / sprmCCvUl still open.
 14. Drop caps as a floated first letter (`framePr@dropCap`, sprmPDcs 0x442C).
 15. .doc field-code hiding check (CFFldVanish).
 
@@ -238,3 +238,44 @@ encryption rules, RTF / Word 2003 importer paths, .doc list-table details.
 **Rule: always double-check against the source, never rely on memory alone.** Every format fact
 above is verified in the spec ([MS-DOC], [MS-CFB], ECMA-376, ODF 1.3) or the real upstream code
 (LibreOffice sprmids.hxx / ww8par6.cxx / DomainMapper.cxx / xmloff) before it is implemented.
+
+## Theme, underline, emphasis (.docx, 2026-10-28)
+
+`DocxTheme` (DocxHtml) loads `word/theme/theme1.xml` and `word/settings.xml` once per document in
+`DocxDocumentParts` (both are a few KB) and the style cascade resolves through it; the renderer's
+static `ApplyRunProperties` / `ApplyParagraphProperties` keep their signatures and gained theme-aware
+overloads. Every rule below was read from the source named, not from memory:
+
+- **Theme fonts** — `rFonts` `asciiTheme` / `hAnsiTheme` / `cstheme` win over `ascii` / `hAnsi` / `cs`
+  (ECMA-376 §17.3.2.26: "If the asciiTheme attribute is also specified, then this attribute shall be
+  ignored"; LibreOffice DomainMapper.cxx `LN_CT_Fonts_asciiTheme` overwrites even with an empty theme
+  face, "apparently what Word 2013 does"). `minorBidi` / `majorBidi` first take the supplemental
+  `a:font script="Hebr"` face selected by `settings.xml` `w:themeFontLang/@bidi` (he-IL → Hebr), then
+  `a:cs` — the order of LibreOffice `ThemeHandler::getFontNameForTheme`; Word's Office theme has an
+  empty `a:cs`, so without this step Hebrew would fall back to the Latin face. Our one deliberate
+  deviation: a theme slot that resolves to nothing falls back to the explicit attribute instead of
+  overwriting with "" (keeps the docDefaults' David rather than losing the font). `eastAsiaTheme` is
+  parsed but the model has no East-Asian font slot.
+- **Theme colors** — `w:color`, `w:shd` (`themeFill*`), `w:u`, `w:bdr`, `w:pBdr` edges:
+  `themeColor` → `clrSchemeMapping` (background1 → bg1 → light1, text2 → t2 → dark2; spec defaults
+  when the mapping is absent, §17.15.1.20) → `a:clrScheme` entry (`srgbClr/@val` or
+  `sysClr/@lastClr`). The theme supersedes the explicit value when it resolves (§17.3.2.6 "If the
+  themeColor attribute is specified, then the val attribute is ignored"; the same sentence on shd
+  §17.3.2.32 and bdr §17.3.2.4); without a theme part the explicit `val` — Word's precomputed
+  fallback, which LibreOffice uses directly — is kept.
+- **Tint / shade formula** — per RGB component, tint `C' = 255 − (255 − C)·T/255`, shade
+  `C' = C·S/255` (T, S the hex byte). The spec's prose formula is an image in every copy we could
+  reach, so it was reconstructed from the spec's worked examples (accent1 C0504D tint 99 → D99694,
+  accent6 F79646 shade 80 → 7B4B23) which it reproduces to the unit. LibreOffice scales HSL
+  luminance by the same factor (`Color::ApplyTintOrShade`, tools/color.cxx); Word's own palette
+  rounds slightly differently (accent1 4472C4 tint 99: ours 8FAADC, Word writes 8EAADB).
+- **Underline** — `u/@val` (ST_Underline §17.18.99) → `text-decoration-style` (double / dotted /
+  dashed / wavy; single, words, thick solid), thick and `*Heavy` → `text-decoration-thickness:0.15em`,
+  `u/@color` (+ theme) → `text-decoration-color`; `none` keeps the underline off. `words` (skip
+  spaces) has no CSS equivalent and renders as a plain underline — same as LibreOffice's WORD_MODE.
+- **Emphasis marks** — `w:em` (ST_Em §17.18.24): dot / underDot → `text-emphasis: filled dot`,
+  comma → `filled sesame`, circle → `open circle`; underDot adds `text-emphasis-position: under right`.
+  LibreOffice maps the same four (DomainMapper::getEmphasisValue).
+- Test: `DocxThemeAndUnderlineTest` over `SyntheticDocxGenerator.Write(..., withThemeSamples: true)`
+  (paragraphs 45–49); the audit's handled run properties now include `em`.
+

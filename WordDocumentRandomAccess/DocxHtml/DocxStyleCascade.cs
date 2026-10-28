@@ -18,17 +18,22 @@ public sealed class DocxStyleCascade
     private readonly Dictionary<string, WordParagraphFormatting> _resolvedParagraphStyles = new(StringComparer.Ordinal);
     private readonly string? _defaultParagraphStyleId;
     private readonly string? _defaultCharacterStyleId;
+    private readonly DocxTheme? _theme;
 
     public WordParagraphFormatting DocumentDefaults { get; } = new();
 
-    public DocxStyleCascade(XDocument? stylesDocument)
+    /// <summary>The document theme (fonts + colors) the cascade resolves theme references through; null = no theme part.</summary>
+    public DocxTheme? Theme => _theme;
+
+    public DocxStyleCascade(XDocument? stylesDocument, DocxTheme? theme = null)
     {
+        _theme = theme;
         XElement? root = stylesDocument?.Root;
         if (root is null) return;
 
         XElement? documentDefaults = root.Element(W + "docDefaults");
-        ApplyRunProperties(DocumentDefaults.RunFormatting, documentDefaults?.Element(W + "rPrDefault")?.Element(W + "rPr"));
-        ApplyParagraphProperties(DocumentDefaults, documentDefaults?.Element(W + "pPrDefault")?.Element(W + "pPr"));
+        ApplyRunProperties(DocumentDefaults.RunFormatting, documentDefaults?.Element(W + "rPrDefault")?.Element(W + "rPr"), _theme);
+        ApplyParagraphProperties(DocumentDefaults, documentDefaults?.Element(W + "pPrDefault")?.Element(W + "pPr"), _theme);
 
         foreach (XElement style in root.Elements(W + "style"))
         {
@@ -52,8 +57,8 @@ public sealed class DocxStyleCascade
         WordParagraphFormatting formatting = DocumentDefaults.Clone();
         foreach (XElement style in StyleChain(key))
         {
-            ApplyParagraphProperties(formatting, style.Element(W + "pPr"));
-            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"));
+            ApplyParagraphProperties(formatting, style.Element(W + "pPr"), _theme);
+            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme);
         }
         _resolvedParagraphStyles[key] = formatting;
         return formatting;
@@ -71,13 +76,13 @@ public sealed class DocxStyleCascade
         WordParagraphFormatting formatting = DocumentDefaults.Clone();
         foreach (XElement style in StyleChain(tableStyleId))
         {
-            ApplyParagraphProperties(formatting, style.Element(W + "pPr"));
-            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"));
+            ApplyParagraphProperties(formatting, style.Element(W + "pPr"), _theme);
+            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme);
         }
         foreach (XElement style in StyleChain(styleId ?? _defaultParagraphStyleId))
         {
-            ApplyParagraphProperties(formatting, style.Element(W + "pPr"));
-            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"));
+            ApplyParagraphProperties(formatting, style.Element(W + "pPr"), _theme);
+            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme);
         }
         _resolvedParagraphStyles[key] = formatting;
         return formatting;
@@ -94,7 +99,7 @@ public sealed class DocxStyleCascade
     public WordParagraphFormatting ResolveParagraph(string? styleId, XElement? directParagraphProperties, string? tableStyleId = null)
     {
         WordParagraphFormatting formatting = ResolveParagraphStyleInTable(tableStyleId, styleId).Clone();
-        ApplyParagraphProperties(formatting, directParagraphProperties);
+        ApplyParagraphProperties(formatting, directParagraphProperties, _theme);
         formatting.StyleKey = styleId ?? _defaultParagraphStyleId ?? "";
         return formatting;
     }
@@ -104,8 +109,8 @@ public sealed class DocxStyleCascade
     {
         WordRunFormatting formatting = paragraphBase.Clone();
         string? characterStyleId = (string?)directRunProperties?.Element(W + "rStyle")?.Attribute(W + "val") ?? _defaultCharacterStyleId;
-        foreach (XElement style in StyleChain(characterStyleId)) ApplyRunProperties(formatting, style.Element(W + "rPr"));
-        ApplyRunProperties(formatting, directRunProperties);
+        foreach (XElement style in StyleChain(characterStyleId)) ApplyRunProperties(formatting, style.Element(W + "rPr"), _theme);
+        ApplyRunProperties(formatting, directRunProperties, _theme);
         return formatting;
     }
 
@@ -147,7 +152,9 @@ public sealed class DocxStyleCascade
 
     // ── property application (shared with the block renderer for direct formatting) ─────
 
-    public static void ApplyParagraphProperties(WordParagraphFormatting formatting, XElement? pPr)
+    public static void ApplyParagraphProperties(WordParagraphFormatting formatting, XElement? pPr) => ApplyParagraphProperties(formatting, pPr, null);
+
+    public static void ApplyParagraphProperties(WordParagraphFormatting formatting, XElement? pPr, DocxTheme? theme)
     {
         if (pPr is null) return;
         if (pPr.Element(W + "bidi") is { } bidi) { formatting.IsRightToLeft = IsOn(bidi.Attribute(W + "val")); formatting.RunFormatting.IsRightToLeft = formatting.IsRightToLeft; }
@@ -179,13 +186,13 @@ public sealed class DocxStyleCascade
         if (TwipsAttribute(pPr.Element(W + "outlineLvl"), "val") is { } outline) formatting.OutlineLevel = outline;
         if (pPr.Element(W + "pBdr") is { } borders)
         {
-            formatting.BorderTopCss = DocxTableFormatting.BorderCss(borders.Element(W + "top")) ?? formatting.BorderTopCss;
-            formatting.BorderBottomCss = DocxTableFormatting.BorderCss(borders.Element(W + "bottom")) ?? formatting.BorderBottomCss;
-            formatting.BorderStartCss = DocxTableFormatting.BorderCss(borders.Element(W + "start") ?? borders.Element(W + "left")) ?? formatting.BorderStartCss;
-            formatting.BorderEndCss = DocxTableFormatting.BorderCss(borders.Element(W + "end") ?? borders.Element(W + "right")) ?? formatting.BorderEndCss;
+            formatting.BorderTopCss = DocxTableFormatting.BorderCss(borders.Element(W + "top"), theme) ?? formatting.BorderTopCss;
+            formatting.BorderBottomCss = DocxTableFormatting.BorderCss(borders.Element(W + "bottom"), theme) ?? formatting.BorderBottomCss;
+            formatting.BorderStartCss = DocxTableFormatting.BorderCss(borders.Element(W + "start") ?? borders.Element(W + "left"), theme) ?? formatting.BorderStartCss;
+            formatting.BorderEndCss = DocxTableFormatting.BorderCss(borders.Element(W + "end") ?? borders.Element(W + "right"), theme) ?? formatting.BorderEndCss;
         }
         if (pPr.Element(W + "contextualSpacing") is { } contextual) formatting.IsContextualSpacing = IsOn(contextual.Attribute(W + "val"));
-        if (pPr.Element(W + "shd") is { } shading) formatting.ShadingHex = FillHex(shading);
+        if (pPr.Element(W + "shd") is { } shading) formatting.ShadingHex = FillHex(shading, theme);
         if (pPr.Element(W + "tabs") is { } tabs)
         {
             // Flow view has no ruler; the first explicit stop (relative to the indent) becomes tab-size.
@@ -199,10 +206,12 @@ public sealed class DocxStyleCascade
             formatting.NumberingId = TwipsAttribute(numPr.Element(W + "numId"), "val") ?? -1;
             formatting.NumberingLevel = TwipsAttribute(numPr.Element(W + "ilvl"), "val") ?? 0;
         }
-        ApplyRunProperties(formatting.RunFormatting, pPr.Element(W + "rPr"));
+        ApplyRunProperties(formatting.RunFormatting, pPr.Element(W + "rPr"), theme);
     }
 
-    public static void ApplyRunProperties(WordRunFormatting formatting, XElement? rPr)
+    public static void ApplyRunProperties(WordRunFormatting formatting, XElement? rPr) => ApplyRunProperties(formatting, rPr, null);
+
+    public static void ApplyRunProperties(WordRunFormatting formatting, XElement? rPr, DocxTheme? theme)
     {
         if (rPr is null) return;
         foreach (XElement property in rPr.Elements())
@@ -212,7 +221,13 @@ public sealed class DocxStyleCascade
             {
                 case "b": case "bCs": formatting.IsBold = IsOn(property.Attribute(W + "val")); break;
                 case "i": case "iCs": formatting.IsItalic = IsOn(property.Attribute(W + "val")); break;
-                case "u": formatting.IsUnderlined = ((string?)property.Attribute(W + "val") ?? "single") != "none"; break;
+                case "u": ApplyUnderline(formatting, property, theme); break;
+                case "em":
+                    // ST_Em (§17.18.24): dot / comma / circle above the glyphs, underDot below; CSS text-emphasis draws the same marks.
+                    string? emphasis = (string?)property.Attribute(W + "val");
+                    formatting.EmphasisMarkCss = emphasis switch { "dot" or "underDot" => "filled dot", "comma" => "filled sesame", "circle" => "open circle", _ => null };
+                    formatting.IsEmphasisMarkBelow = emphasis == "underDot";
+                    break;
                 case "strike": case "dstrike": formatting.IsStrikethrough = IsOn(property.Attribute(W + "val")); break;
                 case "vanish": case "webHidden": formatting.IsHidden = IsOn(property.Attribute(W + "val")); break;
                 case "smallCaps": formatting.IsSmallCaps = IsOn(property.Attribute(W + "val")); break;
@@ -221,7 +236,7 @@ public sealed class DocxStyleCascade
                 case "shadow": formatting.IsShadow = property.Name.Namespace == W ? IsOn(property.Attribute(W + "val")) : true; break;
                 case "emboss": formatting.IsEmboss = IsOn(property.Attribute(W + "val")); break;
                 case "imprint": formatting.IsImprint = IsOn(property.Attribute(W + "val")); break;
-                case "bdr": formatting.BorderCss = DocxTableFormatting.BorderCss(property); break;
+                case "bdr": formatting.BorderCss = DocxTableFormatting.BorderCss(property, theme); break;
                 case "textFill":
                     // Word 2010 text fill (w14): a solid fill is just a color; gradients fall back to their first stop.
                     string? fillColor = property.Descendants().FirstOrDefault(e => e.Name.LocalName == "srgbClr")?.Attributes()
@@ -239,27 +254,52 @@ public sealed class DocxStyleCascade
                 case "sz": formatting.FontSizeHalfPoints = TwipsAttribute(property, "val") ?? formatting.FontSizeHalfPoints; break;
                 case "szCs": formatting.ComplexScriptFontSizeHalfPoints = TwipsAttribute(property, "val") ?? formatting.ComplexScriptFontSizeHalfPoints; break;
                 case "color":
-                    string? color = (string?)property.Attribute(W + "val");
-                    formatting.ColorHex = color is null || color.Equals("auto", StringComparison.OrdinalIgnoreCase) || color.Length != 6 ? null : color;
+                    // themeColor (+ tint / shade) supersedes val when the theme resolves it (§17.3.2.6); val is Word's precomputed fallback.
+                    formatting.ColorHex = DocxTheme.ResolveColorHex(property, "val", theme);
                     break;
                 case "highlight": formatting.HighlightCssColor = WordHtmlText.HighlightCss((string?)property.Attribute(W + "val")); break;
                 case "shd":
-                    string? fill = (string?)property.Attribute(W + "fill");
-                    if (fill is { Length: 6 } && !fill.Equals("auto", StringComparison.OrdinalIgnoreCase)) formatting.HighlightCssColor = "#" + fill;
+                    if (DocxTheme.ResolveColorHex(property, "fill", theme, "themeFill", "themeFillTint", "themeFillShade") is { } fill) formatting.HighlightCssColor = "#" + fill;
                     break;
                 case "rFonts":
-                    formatting.FontName = (string?)property.Attribute(W + "ascii") ?? (string?)property.Attribute(W + "hAnsi") ?? formatting.FontName;
-                    formatting.ComplexScriptFontName = (string?)property.Attribute(W + "cs") ?? formatting.ComplexScriptFontName;
+                    // The theme attribute wins over the explicit one (rFonts §17.3.2.26: "If the asciiTheme attribute is also
+                    // specified, then this attribute shall be ignored"); a theme slot that resolves to nothing falls back to the explicit face.
+                    formatting.FontName = theme?.FontFor((string?)property.Attribute(W + "asciiTheme")) ?? (string?)property.Attribute(W + "ascii")
+                                       ?? theme?.FontFor((string?)property.Attribute(W + "hAnsiTheme")) ?? (string?)property.Attribute(W + "hAnsi") ?? formatting.FontName;
+                    formatting.ComplexScriptFontName = theme?.FontFor((string?)property.Attribute(W + "cstheme")) ?? (string?)property.Attribute(W + "cs") ?? formatting.ComplexScriptFontName;
                     break;
             }
         }
     }
 
-    /// <summary>A w:shd's fill as "RRGGBB", or null for auto / clear.</summary>
-    public static string? FillHex(XElement shading)
+    /// <summary>
+    /// w:u (§17.3.2.40): the pattern → CSS text-decoration-style, thick / *Heavy → a thicker line; color (+ theme) →
+    /// text-decoration-color. "none" switches the underline off; the pattern list is ST_Underline (§17.18.99).
+    /// </summary>
+    private static void ApplyUnderline(WordRunFormatting formatting, XElement underline, DocxTheme? theme)
     {
-        string? fill = (string?)shading.Attribute(W + "fill");
-        return fill is { Length: 6 } && !fill.Equals("auto", StringComparison.OrdinalIgnoreCase) && !fill.Equals("FFFFFF", StringComparison.OrdinalIgnoreCase) ? fill : null;
+        string pattern = (string?)underline.Attribute(W + "val") ?? "single";
+        formatting.IsUnderlined = pattern != "none";
+        if (!formatting.IsUnderlined) { formatting.UnderlineStyleCss = null; formatting.IsUnderlineThick = false; formatting.UnderlineColorHex = null; return; }
+        formatting.UnderlineStyleCss = pattern switch
+        {
+            "double" => "double",
+            "dotted" or "dottedHeavy" => "dotted",
+            "dash" or "dashedHeavy" or "dashLong" or "dashLongHeavy" or "dotDash" or "dashDotHeavy" or "dotDotDash" or "dashDotDotHeavy" => "dashed",
+            "wave" or "wavyHeavy" or "wavyDouble" => "wavy",
+            _ => null,                                        // single, words, thick
+        };
+        formatting.IsUnderlineThick = pattern is "thick" or "dottedHeavy" or "dashedHeavy" or "dashLongHeavy" or "dashDotHeavy" or "dashDotDotHeavy" or "wavyHeavy";
+        formatting.UnderlineColorHex = DocxTheme.ResolveColorHex(underline, "color", theme);
+    }
+
+    /// <summary>A w:shd's fill as "RRGGBB" (themeFill + tint / shade first, then fill), or null for auto / clear / white.</summary>
+    public static string? FillHex(XElement shading) => FillHex(shading, null);
+
+    public static string? FillHex(XElement shading, DocxTheme? theme)
+    {
+        string? fill = DocxTheme.ResolveColorHex(shading, "fill", theme, "themeFill", "themeFillTint", "themeFillShade");
+        return fill is not null && !fill.Equals("FFFFFF", StringComparison.OrdinalIgnoreCase) ? fill : null;
     }
 
     public static bool IsOn(XAttribute? value)

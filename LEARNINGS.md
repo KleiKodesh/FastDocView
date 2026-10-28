@@ -152,3 +152,18 @@ Append-only. Date, what we learned, what it changed.
 - Inflater: 7-byte refills, mask instead of modulo, bulk + chunk-doubling match copies took it
   from ~35 to ~100+ MB/s. zlib is still 4–5× faster; a progressive first open (text before the
   index finishes) matters more than closing that gap, since reopen already reads no body.
+## 2026-10-28 — theme fonts and colors
+
+- **Word's Office theme has an empty `a:cs` face.** `cstheme="minorBidi"` only yields a Hebrew font
+  through the supplemental `a:font script="Hebr"` entry, picked by `settings.xml`
+  `w:themeFontLang/@bidi` (he-IL). Resolving `minorBidi` to `a:cs` alone — the obvious reading of
+  the spec — gives "" and Hebrew falls back to Calibri. LibreOffice does the supplemental lookup
+  first (ThemeHandler.cxx); so do we.
+- **The spec's tint/shade formula is an image.** Every HTML rendering of ECMA-376 §17.3.2.6 loses
+  it; the worked examples (C0504D tint 99 → D99694) pin it down as a per-component linear blend
+  toward white / black. Verify formulas against the examples, not the prose.
+- **Theme vs explicit value is spelled out per attribute** — theme wins for fonts and colors alike
+  ("shall be ignored" / "is ignored"). LibreOffice still uses the explicit `val` for the character
+  color (and keeps the theme reference beside it), because Word writes the precomputed value; we
+  follow the spec when a theme part exists and fall back to `val` when it does not.
+

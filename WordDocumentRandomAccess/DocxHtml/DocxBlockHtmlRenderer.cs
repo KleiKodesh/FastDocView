@@ -245,7 +245,7 @@ public sealed class DocxBlockHtmlRenderer
         if (DocxStyleCascade.TwipsAttribute(Last("tblCellSpacing"), "w") is { } spacing and > 0)
             tableCss.Append("border-collapse:separate;border-spacing:").Append(WordParagraphFormatting.TwipsToPt(spacing * 2)).Append("pt;");
         if ((string?)Last("tblLayout")?.Attribute(W + "type") == "fixed") tableCss.Append("table-layout:fixed;");
-        DocxTableFormatting.Borders tableBorders = DocxTableFormatting.ReadBorders(Last("tblBorders"));
+        DocxTableFormatting.Borders tableBorders = DocxTableFormatting.ReadBorders(Last("tblBorders"), _styles.Theme);
         string cellPadding = DocxTableFormatting.CellMarginCss(Last("tblCellMar"));
         string? outerTableStyle = _tableStyleId;
         _tableStyleId = tableStyleId;
@@ -267,7 +267,7 @@ public sealed class DocxBlockHtmlRenderer
                 html.Append("<td");
                 if (span > 1) html.Append(" colspan=\"").Append(span).Append('"');
                 if (rowSpan > 1) html.Append(" rowspan=\"").Append(rowSpan).Append('"');
-                string cellCss = DocxTableFormatting.CellCss(tcPr, tableBorders)
+                string cellCss = DocxTableFormatting.CellCss(tcPr, tableBorders, _styles.Theme)
                                + (DocxTableFormatting.CellMarginCss(tcPr?.Element(W + "tcMar")) is { Length: > 0 } ownMargins ? ownMargins : cellPadding)
                                + (tcPr?.Element(W + "noWrap") is { } noWrap && DocxStyleCascade.IsOn(noWrap.Attribute(W + "val")) ? "white-space:nowrap;" : "");
                 if (cellCss.Length > 0) html.Append(" style=\"").Append(cellCss).Append('"');

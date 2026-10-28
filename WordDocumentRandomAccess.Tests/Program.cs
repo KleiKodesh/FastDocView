@@ -41,6 +41,7 @@ if (!skipSynthetic)
 {
     DeflateInflaterRoundTripTest.Run(deflateMegabytes);
     DocxNumberingAndPolicyTest.Run();
+    DocxThemeAndUnderlineTest.Run();
     DocxIndexAndRenderTest.Run(blocks);
 }
 if (hugeBlocks > 0) HugeDocumentMemoryTest.Run(hugeBlocks);
