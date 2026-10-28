@@ -14,7 +14,7 @@ namespace WordDocumentRandomAccess.Docx;
 /// </summary>
 internal sealed class DocxBodyBlockScanner
 {
-    private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData }
+    private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData, DocumentType }
 
     private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference }
 
@@ -49,6 +49,7 @@ internal sealed class DocxBodyBlockScanner
     private bool _previousWasSlash;
     private byte _quoteChar;
     private int _markerMatched;                 // progress through "-->" / "?>" / "]]>"
+    private readonly DocxDocumentTypeDeclarationSkipper _documentType = new();
 
     private readonly byte[] _tagName = new byte[MaxTagNameBytes];
     private int _tagNameLength;
@@ -191,9 +192,11 @@ internal sealed class DocxBodyBlockScanner
                 case State.Comment:
                 {
                     // Entered on "<!": "<![CDATA[" ends with "]]>", "<!--" ends with "-->"; both end on '>'
-                    // after their marker. The byte after '!' tells CDATA ("[") from a comment ("-").
+                    // after their marker. The byte after '!' tells CDATA ("[") from a comment ("-") and
+                    // from a <!DOCTYPE …> ("D"), whose internal subset may hold '>' and "-->".
                     byte b = span[position++];
                     if (_markerMatched == 0 && b == (byte)'[') { _state = State.CData; _markerMatched = 0; break; }
+                    if (_markerMatched == 0 && b == (byte)'D') { _state = State.DocumentType; _documentType.Reset(); break; }
                     if (b == (byte)'-') _markerMatched = Math.Min(2, _markerMatched + 1);
                     else if (b == (byte)'>' && _markerMatched == 2) _state = State.Text;
                     else _markerMatched = 0;
@@ -208,6 +211,10 @@ internal sealed class DocxBodyBlockScanner
                     else _markerMatched = 0;
                     break;
                 }
+
+                case State.DocumentType:
+                    if (_documentType.Feed(span[position++])) _state = State.Text;
+                    break;
 
                 case State.ProcessingInstruction:
                 {

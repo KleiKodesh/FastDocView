@@ -65,7 +65,13 @@ public sealed class DocxDocumentParts
     private static XDocument? LoadStyles(ZipArchive zip, string? name)
     {
         try { return ReadStyles(zip, name); }
-        catch (XmlException exception) { throw WordDocumentXml.Malformed(name!, exception); }
+        catch (XmlException)
+        {
+            // malformed: what precedes the first error, the same elements the streaming path keeps
+            XDocument? whole = WordDocumentXml.LoadPartKeepingContentBeforeFirstError(() => zip.GetEntry(name!)!.Open());
+            if (whole?.Root is not { } root || root.Name != DocxStyleCascade.W + "styles") return null;
+            return new XDocument(new XElement(root.Name, root.Elements().Where(element => element.Name == DocxStyleCascade.W + "docDefaults" || element.Name == DocxStyleCascade.W + "style")));
+        }
     }
 
     private static XDocument? ReadStyles(ZipArchive zip, string? name)
@@ -93,8 +99,6 @@ public sealed class DocxDocumentParts
     {
         ZipArchiveEntry? entry = name is null ? null : zip.GetEntry(name);
         if (entry is null) return null;
-        using Stream stream = entry.Open();
-        try { return XDocument.Load(stream); }
-        catch (XmlException exception) { throw WordDocumentXml.Malformed(name!, exception); }
+        return WordDocumentXml.LoadPartKeepingContentBeforeFirstError(entry.Open);
     }
 }
