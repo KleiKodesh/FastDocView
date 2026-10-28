@@ -18,6 +18,7 @@ internal sealed class RtfParser
 {
     private const int BufferSize = 1 << 16;
     private const int MaxWordLength = 32;
+    private const int MaxDepth = 200;
 
     private readonly RtfSink _sink;
     private readonly RtfDocumentTables _tables;
@@ -154,6 +155,8 @@ internal sealed class RtfParser
         _isIgnorableNext = false;
         _skipCount = 0;
         _textByteCount = 0;
+        _pendingCellShading = 0;
+        _isEndnote = false;
     }
 
     private static void WriteInt(Span<byte> bytes, ref int at, int value)
@@ -230,6 +233,7 @@ internal sealed class RtfParser
                 case (byte)'{':
                     _position++;
                     FlushText();
+                    if (_depth >= MaxDepth) { SkipGroupBody(); break; }     // pathological nesting: bounded stack and snapshots
                     Push();
                     break;
                 case (byte)'}':
@@ -319,7 +323,7 @@ internal sealed class RtfParser
                 int value = HexValue(high);
                 int next = PeekByte();
                 if (next >= 0 && HexValue(next) >= 0) { _position++; value = value * 16 + HexValue(next); }
-                if (value < 0) value = 0;
+                if (value < 0) return;                     // 'zz: not a byte (LibreOffice treats junk alike); dropped
                 if (_skipCount > 0) { _skipCount--; return; }
                 // Hebrew / Arabic text is written as long runs of 'hh: decode the whole run in one go
                 Span<byte> run = stackalloc byte[256];
@@ -773,6 +777,13 @@ internal sealed class RtfParser
     {
         if (_readsHeaderTables) _tables.AnsiCodePage = codePage;
         state.CodePage = (ushort)codePage;
+    }
+
+    /// <summary>Skips a group whose '{' was just read without pushing it.</summary>
+    private void SkipGroupBody()
+    {
+        Push();
+        SkipGroup(default);
     }
 
     /// <summary>Skips to the end of the current group (braces counted, escapes and \binN data stepped over) and closes it.</summary>

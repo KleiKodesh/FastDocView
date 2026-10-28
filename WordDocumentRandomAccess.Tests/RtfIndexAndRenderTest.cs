@@ -24,6 +24,7 @@ public static class RtfIndexAndRenderTest
         Console.WriteLine($"   .rtf {new FileInfo(path).Length >> 10} KB");
         TestReport.Check(WordWindowedDocumentOpener.DetectFormat(path) == WordWindowedDocumentOpener.WordFileFormat.RichText, ".rtf detected by its {\\rtf signature");
 
+        Malformed();
         string[] reference;
         using (var trickle = new TrickleStream(File.ReadAllBytes(path)))
         using (RtfWindowedDocument trickled = RtfWindowedDocument.OpenFromStream(trickle, path,
@@ -174,5 +175,23 @@ public static class RtfIndexAndRenderTest
         }
         Console.WriteLine($"   sidecar: cold open {cold:0} ms, reopen {reopen:0.#} ms, 40-block window at the middle {window:0.#} ms");
         Console.WriteLine($"   parser only {parseOnly:0} ms ({bytes.Length / 1048576.0 / (parseOnly / 1000):0} MB/s), full index {build:0} ms ({bytes.Length / 1048576.0 / (build / 1000):0} MB/s)");
+    }
+
+    /// <summary>Malformed input never crashes, never merges the rest of the file into one block, nesting is bounded.</summary>
+    private static void Malformed()
+    {
+        static int Blocks(string rtf)
+        {
+            byte[] bytes = System.Text.Encoding.ASCII.GetBytes(rtf);
+            using var document = RtfWindowedDocument.OpenFromStream(new MemoryStream(bytes), "malformed.rtf",
+                new WordIndexDecision("m", WordIndexMode.InMemory, false, bytes.Length, 0, "test"), null, 0, 0);
+            document.RenderBlocks(0, int.MaxValue);
+            return document.BlockCount;
+        }
+        TestReport.Check(Blocks("{XXrtf1 a XXcell b XXpar c XXpar d XXpar}".Replace("XX", "\\")) == 3, "stray cell mark: the next paragraphs are blocks again");
+        TestReport.Check(Blocks("{XXrtf1}".Replace("XX", "\\")) == 0 && Blocks("") == 0 && Blocks("}}{XXrtf1 a".Replace("XX", "\\")) <= 1, "empty, stray braces, truncated: no crash");
+        TestReport.Check(Blocks("{XXrtf1 XX'zz x XXpar}".Replace("XX", "\\")) == 1, "bad hex escape: no crash");
+        string deep = "{\\rtf1 " + string.Concat(Enumerable.Repeat("{a\\par", 5000)) + "}";
+        TestReport.Check(Blocks(deep.Replace("\\", "\\")) <= 400, "5000 nested groups: depth bounded");
     }
 }

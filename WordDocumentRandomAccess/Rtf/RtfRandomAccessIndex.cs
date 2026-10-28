@@ -167,9 +167,9 @@ public sealed class RtfRandomAccessIndex
             RtfRandomAccessIndex index = Read(reader.BaseStream);
             return index.MatchesSource(documentPath) ? index : null;
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or EndOfStreamException)
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            return null;
+            return null;                                     // a corrupt sidecar is only a cache miss
         }
     }
 }

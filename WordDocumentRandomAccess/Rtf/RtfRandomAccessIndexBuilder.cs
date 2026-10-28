@@ -13,6 +13,7 @@ namespace WordDocumentRandomAccess.Rtf;
 internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 {
     private const int HeadingTextLimit = 200;
+    private const long MaxRowBytes = 4L << 20;
 
     private readonly RtfParser _parser;
     private readonly RtfDocumentTables _tables = new();
@@ -196,7 +197,9 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         if (_parser.IsInFootnote || _parser.IsInListText) return;
         _hasContent = true;
         string? label = CountList(state, out bool hasListParagraph);
-        if (state.IsInTable || _rowCells > 0)
+        // in a row until the row mark; a stray cell mark or in-table flag without one must not swallow the rest of the file
+        bool isStray = (!state.IsInTable && _rowCells > 0) || _parser.Position - _start > MaxRowBytes;
+        if ((state.IsInTable || _rowCells > 0) && !isStray)
         {
             _isRow = true;
             _paragraphText.Clear();

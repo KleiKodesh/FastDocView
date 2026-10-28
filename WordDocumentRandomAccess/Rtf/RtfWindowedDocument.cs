@@ -95,7 +95,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             try
             {
                 int first = Math.Max(0, firstBlockIndex);
-                int end = Math.Min(_index.BlockCount, firstBlockIndex + Math.Max(0, count));
+                int end = (int)Math.Min(_index.BlockCount, (long)firstBlockIndex + Math.Max(0, count));
                 var result = new List<WordDocumentBlockHtml>(Math.Max(0, end - first));
                 for (int blockIndex = first; blockIndex < end; blockIndex++)
                 {
