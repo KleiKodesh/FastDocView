@@ -185,7 +185,9 @@ public sealed class DocxStyleCascade
     public static void ApplyParagraphProperties(WordParagraphFormatting formatting, XElement? pPr, DocxTheme? theme)
     {
         if (pPr is null) return;
-        if (pPr.Element(W + "bidi") is { } bidi) { formatting.IsRightToLeft = IsOn(bidi.Attribute(W + "val")); formatting.RunFormatting.IsRightToLeft = formatting.IsRightToLeft; }
+        // w:bidi sets the paragraph's direction only: it does not make its runs complex script (Word 16 draws a bidi paragraph's
+        // run without w:rtl with the ascii font / b / sz — PDF export check, 2026-10-28).
+        if (pPr.Element(W + "bidi") is { } bidi) formatting.IsRightToLeft = IsOn(bidi.Attribute(W + "val"));
         if ((string?)pPr.Element(W + "jc")?.Attribute(W + "val") is { } jc)
             formatting.Alignment = jc switch
             {
@@ -278,6 +280,8 @@ public sealed class DocxStyleCascade
                 case "caps": formatting.Toggles.Set(layer, WordToggleProperty.Caps, IsOn(property.Attribute(W + "val"))); break;
                 case "spacing": formatting.CharacterSpacingTwips = TwipsAttribute(property, "val") ?? formatting.CharacterSpacingTwips; break;
                 case "rtl": formatting.IsRightToLeft = IsOn(property.Attribute(W + "val")); break;
+                // w:cs (§17.3.2.7): use the complex-script properties for this run's text whatever its characters (Word 16: like w:rtl, without the direction).
+                case "cs": formatting.IsComplexScript = IsOn(property.Attribute(W + "val")); break;
                 case "vertAlign":
                     string? vertical = (string?)property.Attribute(W + "val");
                     formatting.IsSuperscript = vertical == "superscript";
@@ -299,6 +303,7 @@ public sealed class DocxStyleCascade
                     formatting.FontName = theme?.FontFor((string?)property.Attribute(W + "asciiTheme")) ?? (string?)property.Attribute(W + "ascii")
                                        ?? theme?.FontFor((string?)property.Attribute(W + "hAnsiTheme")) ?? (string?)property.Attribute(W + "hAnsi") ?? formatting.FontName;
                     formatting.ComplexScriptFontName = theme?.FontFor((string?)property.Attribute(W + "cstheme")) ?? (string?)property.Attribute(W + "cs") ?? formatting.ComplexScriptFontName;
+                    formatting.EastAsianFontName = theme?.FontFor((string?)property.Attribute(W + "eastAsiaTheme")) ?? (string?)property.Attribute(W + "eastAsia") ?? formatting.EastAsianFontName;
                     break;
             }
         }

@@ -158,17 +158,34 @@ public sealed class DocxBlockHtmlRenderer
         string css = formatting.ToCss(paragraphBase);
         bool hasSpan = css.Length > 0;
         if (hasSpan) html.Append("<span style=\"").Append(css).Append("\">");
-        yield return new(RenderRunChildren(run, html));
+        yield return new(RenderRunChildren(run, html, formatting));
         if (hasSpan) html.Append("</span>");
     }
 
-    private IEnumerable<RenderStep> RenderRunChildren(XElement run, StringBuilder html)
+    /// <summary>Run text; CJK characters switch to the run's eastAsia face when it differs (see <see cref="WordRunFormatting.EastAsianFontSwitch"/>).</summary>
+    private static void AppendRunText(StringBuilder html, string text, WordRunFormatting formatting)
+    {
+        string? eastAsianFont = formatting.EastAsianFontSwitch;
+        if (eastAsianFont is null) { html.Append(WordHtmlText.Encode(text)); return; }
+        for (int start = 0; start < text.Length;)
+        {
+            bool isEastAsian = WordRunFormatting.IsEastAsianCharacter(text[start]);
+            int end = start + 1;
+            while (end < text.Length && WordRunFormatting.IsEastAsianCharacter(text[end]) == isEastAsian) end++;
+            string piece = WordHtmlText.Encode(text.Substring(start, end - start));
+            if (isEastAsian) html.Append("<span style=\"font-family:'").Append(WordHtmlText.CssFontName(eastAsianFont)).Append("'\">").Append(piece).Append("</span>");
+            else html.Append(piece);
+            start = end;
+        }
+    }
+
+    private IEnumerable<RenderStep> RenderRunChildren(XElement run, StringBuilder html, WordRunFormatting formatting)
     {
         foreach (XElement child in run.Elements())
         {
             switch (child.Name.LocalName)
             {
-                case "t": case "delText": html.Append(WordHtmlText.Encode(child.Value)); break;
+                case "t": case "delText": AppendRunText(html, child.Value, formatting); break;
                 case "tab": case "ptab": html.Append('\t'); break;
                 case "br":
                     html.Append(((string?)child.Attribute(W + "type")) == "page" ? "<span class=\"page-break\"></span>" : "<br>");
@@ -190,7 +207,7 @@ public sealed class DocxBlockHtmlRenderer
                 case "AlternateContent":
                     // mc:AlternateContent: the first choice this renderer can show, else the fallback — never both.
                     // The chosen branch's children are run children: walked in place, not copied (a copy clones recursively).
-                    if (ChosenAlternative(child) is { } chosen) yield return new(RenderRunChildren(chosen, html));
+                    if (ChosenAlternative(child) is { } chosen) yield return new(RenderRunChildren(chosen, html, formatting));
                     break;
                 case "pgNum": case "commentReference": case "annotationRef": break;   // no pages; comments are not shown in a reading view
                 // separator lines of the notes part, field codes, layout hints: nothing to show

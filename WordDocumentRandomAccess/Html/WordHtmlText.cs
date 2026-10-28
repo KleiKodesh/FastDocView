@@ -18,6 +18,14 @@ public static class WordHtmlText
         html.Append('>');
     }
 
+    /// <summary>A font face for a quoted CSS font-family inside a style attribute: quotes and markup characters dropped.</summary>
+    public static string CssFontName(string face)
+    {
+        var name = new StringBuilder(face.Length);
+        foreach (char c in face) if (c is not ('\'' or '"' or '<' or '>' or '&' or ';' or '\\')) name.Append(c);
+        return name.ToString();
+    }
+
     public static string HeadingTagFor(int outlineLevel) => outlineLevel is >= 0 and <= 5 ? "h" + (outlineLevel + 1) : "p";
 
     /// <summary>Maps Word highlight names (and the .doc ico palette through them) to CSS.</summary>

@@ -39,6 +39,8 @@ public sealed class WordRunFormatting
     public string? HighlightCssColor;
     public string? FontName;
     public string? ComplexScriptFontName;
+    public bool IsComplexScript;            // .docx w:cs: complex-script properties without right-to-left direction
+    public string? EastAsianFontName;       // .docx rFonts eastAsia: the face Word draws CJK characters with
     public bool IsWebHidden;                // w:webHidden: hidden in a web view (not a toggle property)
     /// <summary>.docx only: the toggle properties per style layer; <c>DocxStyleCascade</c> resolves them into the flags above.</summary>
     public WordToggleLayers Toggles;
@@ -76,7 +78,23 @@ public sealed class WordRunFormatting
         => EmphasisMarkCss is null ? "" : "text-emphasis:" + EmphasisMarkCss + ";" + (IsEmphasisMarkBelow ? "text-emphasis-position:under right;" : "");
 
     /// <summary>Whether the complex-script set (bold / italic / size / font) applies to this run.</summary>
-    public bool UsesComplexScriptProperties => IsRightToLeft;
+    public bool UsesComplexScriptProperties => IsRightToLeft || IsComplexScript;
+
+    /// <summary>
+    /// The font for East Asian characters when it differs from the run's own (null = no switch needed). Word 16 draws
+    /// CJK characters of a run without w:rtl / w:cs in the rFonts eastAsia face and every other character — Hebrew and
+    /// Arabic letters included — in the ascii face (PDF export check, 2026-10-28); w:hint did not change that.
+    /// </summary>
+    public string? EastAsianFontSwitch
+        => !UsesComplexScriptProperties && !string.IsNullOrEmpty(EastAsianFontName) && EastAsianFontName != EffectiveFontName ? EastAsianFontName : null;
+
+    /// <summary>
+    /// CJK ideographs, kana, Hangul, CJK symbols / compatibility / full-width forms — the ranges Word gives the eastAsia font.
+    /// The block list is Unicode's (Blocks.txt); which blocks Word treats as East Asian beyond the ideographs is not specified.
+    /// </summary>
+    public static bool IsEastAsianCharacter(char c)
+        => (int)c is (>= 0x1100 and <= 0x11FF) or (>= 0x2E80 and <= 0x9FFF) or (>= 0xA960 and <= 0xA97F)
+             or (>= 0xAC00 and <= 0xD7AF) or (>= 0xF900 and <= 0xFAFF) or (>= 0xFE30 and <= 0xFE4F) or (>= 0xFF00 and <= 0xFFEF);
 
     public int EffectiveFontSizeHalfPoints
         => UsesComplexScriptProperties && ComplexScriptFontSizeHalfPoints > 0 ? ComplexScriptFontSizeHalfPoints
@@ -129,7 +147,7 @@ public sealed class WordRunFormatting
         if (HighlightCssColor is not null && (baseline is null || HighlightCssColor != baseline.HighlightCssColor)) css.Append("background-color:").Append(HighlightCssColor).Append(';');
 
         string? font = EffectiveFontName;
-        if (font is not null && (baseline is null || font != baseline.EffectiveFontName)) css.Append("font-family:'").Append(font.Replace("'", "")).Append("';");
+        if (font is not null && (baseline is null || font != baseline.EffectiveFontName)) css.Append("font-family:'").Append(WordHtmlText.CssFontName(font)).Append("';");
         return css.ToString();
     }
 }

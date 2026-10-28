@@ -21,6 +21,7 @@ public static partial class DocxFidelityTest
     private static IEnumerable<Action> Checks()
     {
         yield return ToggleProperties;
+        yield return ScriptProperties;
     }
 
     /// <summary>Writes a minimal package and returns every block's HTML.</summary>
@@ -104,5 +105,26 @@ public static partial class DocxFidelityTest
         List<string> defaults = RenderAll("toggles-defaults", Paragraph("P1", "<w:rStyle w:val=\"C1\"/>", "x"),
                                           "<w:docDefaults><w:rPrDefault><w:rPr><w:b/></w:rPr></w:rPrDefault></w:docDefaults>" + styles);
         TestReport.Check(!defaults[0].Contains("font-weight:normal") && IsBold(defaults[0]), "toggle: bold in docDefaults stays on (paragraph XOR character style does not turn it off)");
+    }
+
+    /// <summary>
+    /// Which property set a run uses (Word 16 PDF export, 2026-10-28): w:rtl or w:cs → cs font / szCs / bCs for the
+    /// whole run; neither → ascii / sz / b even for Hebrew letters and in a bidi paragraph; CJK → the eastAsia face.
+    /// </summary>
+    private static void ScriptProperties()
+    {
+        const string fonts = "<w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" w:eastAsia=\"MS Mincho\" w:cs=\"Times New Roman\"/><w:sz w:val=\"40\"/><w:szCs w:val=\"20\"/>";
+        const string hebrew = "שלום";
+        List<string> html = RenderAll("scripts",
+            Paragraph(null, fonts + "<w:b/>", "abc " + hebrew)                                  // 0 ascii, 20pt, bold
+          + Paragraph(null, fonts + "<w:rtl/><w:bCs/>", "abc " + hebrew)                        // 1 cs, 10pt, bold
+          + Paragraph(null, fonts + "<w:cs/>", "abc " + hebrew)                                 // 2 cs, 10pt
+          + Paragraph(null, fonts + "<w:b/>", "abc " + hebrew, "<w:bidi/>")                     // 3 bidi paragraph: still ascii, 20pt, bold
+          + Paragraph(null, fonts, "abc 漢字 " + hebrew));                               // 4 CJK in MS Mincho
+        TestReport.Check(html[0].Contains("font-family:'Courier New'") && html[0].Contains("font-size:20pt") && IsBold(html[0]), "no rtl / cs: Hebrew text uses the ascii font, sz and b");
+        TestReport.Check(html[1].Contains("font-family:'Times New Roman'") && html[1].Contains("font-size:10pt") && IsBold(html[1]), "w:rtl: cs font, szCs, bCs");
+        TestReport.Check(html[2].Contains("font-family:'Times New Roman'") && html[2].Contains("font-size:10pt"), "w:cs: cs font and szCs");
+        TestReport.Check(html[3].Contains("font-family:'Courier New'") && html[3].Contains("font-size:20pt") && IsBold(html[3]), "w:bidi paragraph alone does not switch runs to the cs set");
+        TestReport.Check(html[4].Contains("<span style=\"font-family:'MS Mincho'\">漢字</span>"), "CJK characters switch to the eastAsia face");
     }
 }

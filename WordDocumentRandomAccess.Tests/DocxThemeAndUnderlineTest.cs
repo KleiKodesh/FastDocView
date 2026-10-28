@@ -21,7 +21,7 @@ public static class DocxThemeAndUnderlineTest
         // cstheme="minorBidi" + themeFontLang bidi=he-IL → the minor font's "Hebr" face (Arial), not the explicit cs="David" and not the a:cs (empty)
         string themeFont = Html(document, SyntheticDocxGenerator.ThemeFontParagraph);
         TestReport.Check(themeFont.Contains("font-family:'Arial'"), "cstheme=minorBidi resolves to the theme's Hebrew face (Arial)");
-        TestReport.Check(Regex.IsMatch(themeFont, "<span style=\"font-family:'Arial';\">") && !Regex.IsMatch(themeFont, "<span[^>]*David"), "the theme attribute wins over the explicit cs face (the paragraph base keeps the docDefaults' David)");
+        TestReport.Check(Regex.IsMatch(themeFont, "<span style=\"[^\"]*font-family:'Arial';\">") && !Regex.IsMatch(themeFont, "<span[^>]*David"), "the theme attribute wins over the explicit cs face (the w:rtl run takes szCs and the theme's Hebrew face)");
 
         // accent1 4472C4 with tint 99 → 8FAADC (val FF0000 is ignored); shd themeFill accent6 70AD47 shade 80 → 385724
         string themeColor = Html(document, SyntheticDocxGenerator.ThemeColorParagraph);
