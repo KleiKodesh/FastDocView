@@ -14,6 +14,8 @@ public sealed class DocxDocumentParts
 {
     public DocxStyleCascade Styles { get; }
     public DocxNoteNumberFormats NoteNumberFormats { get; }
+    /// <summary>settings.xml w:compat options the renderer follows.</summary>
+    public DocxCompatibilitySettings Compatibility { get; }
     /// <summary>theme1.xml fonts and colors with settings.xml's clrSchemeMapping / themeFontLang; always present (empty without a theme part).</summary>
     public DocxTheme Theme { get; }
     /// <summary>Where the main document, notes, styles… live — from the package relationships.</summary>
@@ -33,9 +35,11 @@ public sealed class DocxDocumentParts
         _package = package;
         PartNames = DocxPackagePartNames.Resolve(package);
         using var zip = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
-        Theme = new DocxTheme(LoadPart(zip, PartNames.Theme), LoadPart(zip, PartNames.Settings));
-        Styles = new DocxStyleCascade(LoadStyles(zip, PartNames.Styles), Theme);
-        NoteNumberFormats = new DocxNoteNumberFormats(zip, PartNames.Settings);
+        XDocument? settings = LoadPart(zip, PartNames.Settings);          // parsed once: theme mapping, note formats, compatibility
+        Theme = new DocxTheme(LoadPart(zip, PartNames.Theme), settings);
+        Compatibility = new DocxCompatibilitySettings(settings);
+        Styles = new DocxStyleCascade(LoadStyles(zip, PartNames.Styles), Theme) { Compatibility = Compatibility };
+        NoteNumberFormats = new DocxNoteNumberFormats(settings);
     }
 
     private DocxNumberingDefinitions LoadNumbering()

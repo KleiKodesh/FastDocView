@@ -30,7 +30,7 @@ public sealed class DocxBlockHtmlRenderer
     private int _textBoxDepth;
 
     /// <summary>settings.xml compatibility option w:ulTrailSpace: underline the spaces that end a paragraph too.</summary>
-    public bool UnderlinesTrailingSpaces { get; set; }            // inside a text box paragraphs become block spans (a <p> may not hold a <p>)
+    private bool UnderlinesTrailingSpaces => _styles.Compatibility.UnderlinesTrailingSpaces;            // inside a text box paragraphs become block spans (a <p> may not hold a <p>)
 
     public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null)
     {

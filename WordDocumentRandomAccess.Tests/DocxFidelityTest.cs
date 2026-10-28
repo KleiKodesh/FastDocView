@@ -27,6 +27,7 @@ public static partial class DocxFidelityTest
         yield return ListLabelsAndParagraphMark;
         yield return ShadingPatterns;
         yield return Symbols;
+        yield return CompatibilitySettings;
     }
 
     /// <summary>Writes a minimal package and returns every block's HTML.</summary>

@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using System.IO.Compression;
 using System.Xml;
 using WordDocumentRandomAccess.DocBinary;
@@ -213,11 +214,45 @@ public static class WordFormattingAudit
 
     private static string Shorten(string message) => message.Length > 90 ? message.Substring(0, 90) + "…" : message;
 
+    // settings.xml w:compat options (children and compatSetting names) the renderer follows (DocxCompatibilitySettings).
+    private static readonly HashSet<string> HandledCompatibilityOptions =
+        ["compatibilityMode", "overrideTableStyleFontSizeAndJustification", "doNotExpandShiftReturn", "doNotUseHTMLParagraphAutoSpacing", "ulTrailSpace"];
+    // Ignored on purpose, with the reason:
+    private static readonly HashSet<string> IgnoredCompatibilityOptions =
+        [// hyphenation: a flow view does not hyphenate
+         "useWord2013TrackBottomHyphenation", "allowHyphenationAtTrackBottom", "doNotHyphenateCaps",
+         // OpenType features / font metrics / kerning: the browser shapes the text
+         "enableOpenTypeFeatures", "usePrinterMetrics", "useAnsiKerningPairs", "noLeading", "spaceForUL", "balanceSingleByteDoubleByteWidth", "displayHangulFixedWidth",
+         // mirrored indents: only mean something on facing pages
+         "doNotFlipMirrorIndents",
+         // East Asian line breaking and layout: the browser breaks lines
+         "useFELayout", "doNotLeaveBackslashAlone", "doNotWrapTextWithPunct", "doNotUseEastAsianBreakRules", "doNotSnapToGridInCell", "useWord97LineBreakRules",
+         // pagination, columns, floating objects: there are no pages
+         "splitPgBreakAndParaMark", "doNotBreakWrappedTables", "noColumnBalance", "cachedColBalance", "allowTextAfterFloatingTableBreak", "doNotVertAlignInTxbx",
+         "doNotUseLongFileNames", "doNotBreakConstrainedForcedTable", "layoutRawTableWidth", "layoutTableRowsApart", "doNotLayoutInCell",
+         "differentiateMultirowTableHeaders", "footnoteLayoutLikeWW8", "shapeLayoutLikeWW8", "useAltKinsokuLineBreakRules",
+         // table autofit / cell metrics: the browser lays the table out
+         "alignTablesRowByRow", "doNotVertAlignCellWithSp", "adjustLineHeightInTable", "growAutofit", "doNotAutofitConstrainedTables", "autofitToFirstFixedWidthCell",
+         // editing behaviour, nothing to draw
+         "selectFldWithFirstOrLastChar" ];
+
+    private static void AuditCompatibility(ZipArchive zip, AuditTally tally)
+    {
+        ZipArchiveEntry? entry = zip.GetEntry("word/settings.xml");
+        if (entry is null) return;
+        XDocument? settings;
+        try { using Stream stream = entry.Open(); settings = XDocument.Load(stream); }
+        catch (XmlException) { return; }
+        foreach (string option in new WordDocumentRandomAccess.DocxHtml.DocxCompatibilitySettings(settings).PresentOptions)
+            if (!HandledCompatibilityOptions.Contains(option) && !IgnoredCompatibilityOptions.Contains(option)) tally.Add("compat/" + option);
+    }
+
     // ── .docx ──────────────────────────────────────────────────────────────────────────
 
     private static void AuditDocx(string path, AuditTally tally, bool printParts)
     {
         using var zip = ZipFile.OpenRead(path);
+        AuditCompatibility(zip, tally);
         foreach (string part in new[] { "word/document.xml", "word/footnotes.xml", "word/endnotes.xml", "word/styles.xml", "word/numbering.xml" })
         {
             ZipArchiveEntry? entry = zip.GetEntry(part);

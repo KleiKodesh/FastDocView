@@ -22,6 +22,9 @@ public sealed class DocxStyleCascade
 
     public WordParagraphFormatting DocumentDefaults { get; } = new();
 
+    /// <summary>settings.xml compatibility options that change the cascade (table style vs default paragraph style).</summary>
+    public DocxCompatibilitySettings Compatibility { get; init; } = DocxCompatibilitySettings.Default;
+
     /// <summary>The document theme (fonts + colors) the cascade resolves theme references through; null = no theme part.</summary>
     public DocxTheme? Theme => _theme;
 
