@@ -68,7 +68,8 @@ public static class SyntheticDocxGenerator
 
     public static int ExpectedBlockCount(int blockCount) => blockCount + 1;   // + the trailing w:sectPr
 
-    public static void Write(string path, int blockCount)
+    /// <param name="noteFillerCharacters">Extra text per note — makes the notes parts as large as a test needs (streamed, never built in memory).</param>
+    public static void Write(string path, int blockCount, int noteFillerCharacters = 0)
     {
         using var file = File.Create(path);
         using var zip = new ZipArchive(file, ZipArchiveMode.Create);
@@ -77,8 +78,8 @@ public static class SyntheticDocxGenerator
         AddText(zip, "word/_rels/document.xml.rels", DocumentRelsXml);
         AddText(zip, "word/styles.xml", StylesXml);
         AddText(zip, "word/numbering.xml", NumberingXml);
-        AddText(zip, "word/footnotes.xml", NotesXml("footnotes", "footnote", blockCount, FootnoteEvery, "הערה"));
-        AddText(zip, "word/endnotes.xml", NotesXml("endnotes", "endnote", blockCount, EndnoteEvery, "הערת סיום"));
+        WriteNotes(zip, "word/footnotes.xml", "footnotes", "footnote", blockCount, FootnoteEvery, "הערה", noteFillerCharacters);
+        WriteNotes(zip, "word/endnotes.xml", "endnotes", "endnote", blockCount, EndnoteEvery, "הערת סיום", noteFillerCharacters);
 
         ZipArchiveEntry document = zip.CreateEntry("word/document.xml", CompressionLevel.Optimal);
         using var writer = new StreamWriter(document.Open(), new UTF8Encoding(false), 1 << 16);
@@ -105,18 +106,34 @@ public static class SyntheticDocxGenerator
     /// <summary>Note ids are not their numbers in a real file either: offset so the test catches a mix-up.</summary>
     private static int NoteId(int paragraphIndex) => 1000 + paragraphIndex;
 
-    /// <summary>footnotes.xml / endnotes.xml with Word's two separator notes and one note per referencing paragraph.</summary>
-    private static string NotesXml(string root, string element, int blockCount, int every, string text)
+    /// <summary>footnotes.xml / endnotes.xml with Word's two separator notes and one note per referencing paragraph, streamed into the entry.</summary>
+    private static void WriteNotes(ZipArchive zip, string entryName, string root, string element, int blockCount, int every, string text, int fillerCharacters)
     {
-        var xml = new StringBuilder();
-        xml.Append($"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:{root} xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">");
-        xml.Append($"<w:{element} w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:{element}>");
-        xml.Append($"<w:{element} w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:{element}>");
+        ZipArchiveEntry entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
+        using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false), 1 << 16);
+        writer.Write($"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:{root} xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">");
+        writer.Write($"<w:{element} w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:{element}>");
+        writer.Write($"<w:{element} w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:{element}>");
         int offset = element == "footnote" ? 1 : 2;
+        var random = new Random(offset);
         for (int i = offset; i < blockCount; i += every)
-            xml.Append($"<w:{element} w:id=\"{NoteId(i)}\"><w:p><w:r><w:{element}Ref/></w:r><w:r><w:t xml:space=\"preserve\"> {text} של פסקה {i}</w:t></w:r></w:p></w:{element}>");
-        xml.Append($"</w:{root}>");
-        return xml.ToString();
+        {
+            writer.Write($"<w:{element} w:id=\"{NoteId(i)}\"><w:p><w:r><w:{element}Ref/></w:r><w:r><w:t xml:space=\"preserve\"> {text} של פסקה {i}</w:t></w:r></w:p>");
+            for (int written = 0; written < fillerCharacters;)
+            {
+                // filler as separate paragraphs of mixed words, so it compresses like real text, not like a run of one letter
+                writer.Write("<w:p><w:r><w:t xml:space=\"preserve\">");
+                for (int word = 0; word < 60 && written < fillerCharacters; word++)
+                {
+                    string sample = SampleWords[random.Next(SampleWords.Length)];
+                    writer.Write(sample); writer.Write(' ');
+                    written += sample.Length + 1;
+                }
+                writer.Write("</w:t></w:r></w:p>");
+            }
+            writer.Write($"</w:{element}>");
+        }
+        writer.Write($"</w:{root}>");
     }
 
     private static void WriteParagraph(TextWriter writer, int index, Random random)

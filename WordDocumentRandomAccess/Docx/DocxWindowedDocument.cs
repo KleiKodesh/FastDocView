@@ -17,7 +17,12 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private readonly DocxBlockXmlReader _blockReader;
     private readonly DocxStyleCascade _styles;
     private readonly DocxBlockHtmlRenderer _renderer;
-    private readonly DocxNoteBodies _notes;
+    private readonly DocxNoteXmlReader _noteReader;
+    private readonly DocxNoteNumberFormats _noteFormats;
+    private readonly object _readLock = new();          // one package stream is shared by the block and note readers
+    private readonly Dictionary<(WordDocumentNoteKind kind, int id), string> _noteHtmlCache = new();
+    private long _noteHtmlCacheCharacters;
+    private const long NoteHtmlCacheCharacterLimit = 2_000_000;   // bounded: a few MB of rendered notes, never the part
     private readonly Dictionary<(WordDocumentNoteKind kind, int id), int> _noteNumbers = new();
     private readonly int _footnoteCount;
     private readonly int _endnoteCount;
@@ -32,9 +37,9 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
     {
         using FileStream file = OpenRead(filePath);
-        long bodyBytes = DocxRandomAccessIndexBuilder.LocateDocumentEntry(file).UncompressedSize;
+        long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(file);       // body + footnotes + endnotes
         bool hasCachedIndex = DocxRandomAccessIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
-        return policy.Decide(filePath, bodyBytes, hasCachedIndex);
+        return policy.Decide(filePath, textBytes, hasCachedIndex);
     }
 
     public static DocxWindowedDocument Open(string filePath, WordIndexPolicy? policy = null,
@@ -48,8 +53,8 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         FileStream package = OpenRead(filePath);
         try
         {
-            long bodyBytes = cached?.DocumentEntry.UncompressedSize ?? DocxRandomAccessIndexBuilder.LocateDocumentEntry(package).UncompressedSize;
-            WordIndexDecision decision = policy.Decide(filePath, bodyBytes, cached is not null);
+            long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(package);
+            WordIndexDecision decision = policy.Decide(filePath, textBytes, cached is not null);
             DocxWindowedDocument document = OpenFromStream(package, filePath, decision, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
             if (decision.Mode == WordIndexMode.Sidecar && cached is null) document._index.Save(indexPath);
             return document;
@@ -73,26 +78,35 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     {
         var parts = new DocxDocumentParts(package);
         if (cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc))
-            return new DocxWindowedDocument(displayPath, cachedIndex, DocxBlockXmlReader.OverPackage(package, cachedIndex), parts, decision);
+            return OverPackage(displayPath, package, cachedIndex, parts, decision);
 
         if (decision.Mode == WordIndexMode.InMemory)
         {
-            (DocxRandomAccessIndex index, byte[] body) = DocxRandomAccessIndexBuilder.BuildInMemory(package, parts, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
+            (DocxRandomAccessIndex index, DocxRandomAccessIndexBuilder.InMemoryParts inflated) =
+                DocxRandomAccessIndexBuilder.BuildInMemory(package, parts, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
             package.Dispose();
-            return new DocxWindowedDocument(displayPath, index, DocxBlockXmlReader.OverBody(body, index), parts, decision);
+            return new DocxWindowedDocument(displayPath, index, DocxBlockXmlReader.OverBody(inflated.Body, index),
+                                            DocxNoteXmlReader.OverBytes(inflated.Footnotes, index.FootnotesPart, inflated.Endnotes, index.EndnotesPart),
+                                            parts, decision);
         }
 
         DocxRandomAccessIndex built = DocxRandomAccessIndexBuilder.Build(package, parts, sourceLength, sourceLastWriteTicksUtc, progress, cancellation: cancellation);
-        return new DocxWindowedDocument(displayPath, built, DocxBlockXmlReader.OverPackage(package, built), parts, decision);
+        return OverPackage(displayPath, package, built, parts, decision);
     }
 
-    private DocxWindowedDocument(string filePath, DocxRandomAccessIndex index, DocxBlockXmlReader blockReader, DocxDocumentParts parts, WordIndexDecision decision)
+    private static DocxWindowedDocument OverPackage(string displayPath, Stream package, DocxRandomAccessIndex index, DocxDocumentParts parts, WordIndexDecision decision)
+        => new(displayPath, index, DocxBlockXmlReader.OverPackage(package, index),
+               DocxNoteXmlReader.OverPackage(package, index.FootnotesPart, index.EndnotesPart), parts, decision);
+
+    private DocxWindowedDocument(string filePath, DocxRandomAccessIndex index, DocxBlockXmlReader blockReader, DocxNoteXmlReader noteReader,
+                                 DocxDocumentParts parts, WordIndexDecision decision)
     {
         FilePath = filePath;
         _index = index;
         _blockReader = blockReader;
+        _noteReader = noteReader;
         _styles = parts.Styles;
-        _notes = parts.Notes;
+        _noteFormats = parts.NoteNumberFormats;
         foreach (DocxNoteReference reference in index.NoteReferences)
         {
             _noteNumbers[(reference.Kind, reference.NoteId)] = reference.Number;
@@ -107,6 +121,11 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     public int EstimatedTextLength(int blockIndex) => _index.BlockTextLengths[blockIndex];
 
     public IReadOnlyList<WordDocumentBlockHtml> RenderBlocks(int firstBlockIndex, int count)
+    {
+        lock (_readLock) return RenderBlocksLocked(firstBlockIndex, count);
+    }
+
+    private List<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count)
     {
         var result = new List<WordDocumentBlockHtml>(count);
         foreach ((int blockIndex, XElement element) in _blockReader.ReadBlocks(firstBlockIndex, count))
@@ -126,16 +145,26 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         var notes = new List<WordDocumentNoteHtml>(references.Length);
         foreach (DocxNoteReference reference in references)
         {
-            string label = reference.Number > 0 ? _notes.FormatNumber(reference.Kind, reference.Number) : "*";
-            XElement? body = _notes.Find(reference.Kind, reference.NoteId);
-            string html = body is null ? "" : _renderer.RenderNote(body, reference.Kind, label);
-            notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, html));
+            string label = reference.Number > 0 ? _noteFormats.Format(reference.Kind, reference.Number) : "*";
+            notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, RenderNoteBody(reference, label)));
         }
         return notes;
     }
 
+    /// <summary>One note read on demand from its part (never the whole part), rendered, kept in a size-bounded cache.</summary>
+    private string RenderNoteBody(DocxNoteReference reference, string label)
+    {
+        if (_noteHtmlCache.TryGetValue((reference.Kind, reference.NoteId), out string? cached)) return cached;
+        XElement? body = _noteReader.Read(reference.Kind, reference.NoteId);
+        string html = body is null ? "" : _renderer.RenderNote(body, reference.Kind, label);
+        if (_noteHtmlCacheCharacters + html.Length > NoteHtmlCacheCharacterLimit) { _noteHtmlCache.Clear(); _noteHtmlCacheCharacters = 0; }
+        _noteHtmlCache[(reference.Kind, reference.NoteId)] = html;
+        _noteHtmlCacheCharacters += html.Length;
+        return html;
+    }
+
     private (int number, string label)? ResolveNoteLabel(WordDocumentNoteKind kind, int noteId)
-        => _noteNumbers.TryGetValue((kind, noteId), out int number) ? (number, number > 0 ? _notes.FormatNumber(kind, number) : "*") : null;
+        => _noteNumbers.TryGetValue((kind, noteId), out int number) ? (number, number > 0 ? _noteFormats.Format(kind, number) : "*") : null;
 
     /// <summary>From the index — captured during the scan, so a reopen reads no blocks for the TOC.</summary>
     public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
@@ -148,5 +177,9 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
 
     private static FileStream OpenRead(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
 
-    public void Dispose() => _blockReader.Dispose();
+    public void Dispose()
+    {
+        _noteReader.Dispose();
+        _blockReader.Dispose();
+    }
 }

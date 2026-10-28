@@ -5,9 +5,12 @@
 //   dotnet run -c Release -- --deflate-mb 64       bigger deflate round trip
 //   dotnet run -c Release -- --real <path>...      real .docx/.doc files to smoke-test (repeatable)
 //   dotnet run -c Release -- --skip-synthetic      only real files
+//   dotnet run -c Release -- --huge 1000000        instant reload + flat heap on a ~350 MB body
+//   dotnet run -c Release -- --notes-streaming 20000   notes read on demand from a 100 MB+ footnotes part
+//   dotnet run -c Release -- --audit <path>...     formatting constructs the renderers do not handle
 using WordDocumentRandomAccess.Tests;
 
-int blocks = 50_000, deflateMegabytes = 8, hugeBlocks = 0;
+int blocks = 50_000, deflateMegabytes = 8, hugeBlocks = 0, notesStreamingBlocks = 0;
 bool skipSynthetic = false;
 var realPaths = new List<string>();
 var auditPaths = new List<string>();
@@ -16,7 +19,8 @@ for (int i = 0; i < args.Length; i++)
     switch (args[i])
     {
         case "--blocks": blocks = int.Parse(args[++i]); break;
-        case "--huge": hugeBlocks = int.Parse(args[++i]); break;       // e.g. 1000000 → ~350 MB document.xml
+        case "--huge": hugeBlocks = int.Parse(args[++i]); break;                       // e.g. 1000000 → ~350 MB document.xml
+        case "--notes-streaming": notesStreamingBlocks = int.Parse(args[++i]); break;  // e.g. 20000 → 1000 footnotes, ~113 MB footnotes.xml
         case "--deflate-mb": deflateMegabytes = int.Parse(args[++i]); break;
         case "--skip-synthetic": skipSynthetic = true; break;
         case "--real": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) realPaths.Add(args[++i]); break;
@@ -31,6 +35,7 @@ if (!skipSynthetic)
     DocxIndexAndRenderTest.Run(blocks);
 }
 if (hugeBlocks > 0) HugeDocumentMemoryTest.Run(hugeBlocks);
+if (notesStreamingBlocks > 0) DocxNotesStreamingTest.Run(notesStreamingBlocks, noteFillerCharacters: 60_000);
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));
 if (auditPaths.Count > 0) WordFormattingAudit.Run(auditPaths.Where(File.Exists));
 

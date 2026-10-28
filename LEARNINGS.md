@@ -111,3 +111,14 @@ Append-only. Date, what we learned, what it changed.
   (not JSON) took reopen-to-text to 74 ms (.doc) / 147 ms (.docx 87 MB body) in the browser.
 - **Drawing XML is skipped before parsing** (byte-level strip of w:drawing / w:pict / w:object):
   a drawing-heavy block no longer costs its DrawingML in XElement parsing.
+
+## 2026-10-28 — notes streamed like the body
+
+- **"Small part" is an assumption, not a fact.** footnotes.xml was 330 KB in the sample, so loading
+  it whole looked harmless — but commentary-style seforim can have notes bigger than the text.
+  The notes parts now get the same treatment as document.xml: scanned once (id → byte range),
+  checkpointed, read one note at a time. Proven on a 113 MB footnotes part: heap +5 MB at open.
+- **The policy must weigh every part a reader inflates**, not just document.xml — otherwise a
+  small body with huge notes is opened "in memory" and inflates the notes whole.
+- One package stream is shared by the block and note readers; their views re-seat the file
+  position on every read, but concurrent requests still need a lock around rendering.

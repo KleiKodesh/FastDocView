@@ -31,7 +31,7 @@ public sealed class WordIndexPolicy
 
     public static WordIndexPolicy Default { get; } = new();
 
-    /// <summary>Uncompressed body size (document.xml bytes, or .doc text bytes) from which a sidecar index is built.</summary>
+    /// <summary>Uncompressed text size (.docx: document.xml + footnotes.xml + endnotes.xml; .doc: text bytes) from which a sidecar index is built.</summary>
     public long SidecarThresholdBytes { get; init; } = DefaultSidecarThresholdBytes;
 
     /// <summary>Forces a mode regardless of size (null = decide by size).</summary>
@@ -48,8 +48,8 @@ public sealed class WordIndexPolicy
         if (ForcedMode is { } forced)
             return new WordIndexDecision(filePath, forced, false, bodyBytes, estimatedIndexBytes, "forced by settings");
         return bodyBytes >= SidecarThresholdBytes
-            ? new WordIndexDecision(filePath, WordIndexMode.Sidecar, false, bodyBytes, estimatedIndexBytes, $"body {bodyBytes >> 20} MB ≥ {SidecarThresholdBytes >> 20} MB")
-            : new WordIndexDecision(filePath, WordIndexMode.InMemory, false, bodyBytes, 0, $"body {Math.Max(1, bodyBytes >> 10)} KB < {SidecarThresholdBytes >> 20} MB — one pass is cheaper than an index");
+            ? new WordIndexDecision(filePath, WordIndexMode.Sidecar, false, bodyBytes, estimatedIndexBytes, $"text {bodyBytes >> 20} MB ≥ {SidecarThresholdBytes >> 20} MB")
+            : new WordIndexDecision(filePath, WordIndexMode.InMemory, false, bodyBytes, 0, $"text {Math.Max(1, bodyBytes >> 10)} KB < {SidecarThresholdBytes >> 20} MB — one pass is cheaper than an index");
     }
 
     public string IndexPathFor(string filePath) => WordDocumentIndexCacheLocation.IndexPathFor(filePath, CacheDirectory);

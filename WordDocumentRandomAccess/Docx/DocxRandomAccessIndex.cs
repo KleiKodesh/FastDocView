@@ -7,14 +7,15 @@ namespace WordDocumentRandomAccess.Docx;
 /// <summary>
 /// The index of one .docx body: where word/document.xml sits in the zip, the deflate checkpoints
 /// (none in in-memory mode), and every body-level block's uncompressed offset + kind + style +
-/// list label + text length. Serialised to/from a <see cref="Stream"/> (the sidecar file on disk,
+/// list label + text length — plus the same random-access index for footnotes.xml and endnotes.xml
+/// (<see cref="DocxNotesPartIndex"/>), so notes are read on demand like blocks. Serialised to/from a <see cref="Stream"/> (the sidecar file on disk,
 /// or whatever store a WASM host provides); about 3 % of the uncompressed XML at the default 1 MB
 /// checkpoint spacing.
 /// </summary>
 public sealed class DocxRandomAccessIndex
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 3;
+    private const int FormatVersion = 4;
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -31,6 +32,8 @@ public sealed class DocxRandomAccessIndex
     public string[] ListLabels { get; }
     public WordDocumentHeading[] Headings { get; }
     public DocxNoteReference[] NoteReferences { get; }      // in body order
+    public DocxNotesPartIndex? FootnotesPart { get; }
+    public DocxNotesPartIndex? EndnotesPart { get; }
 
     public int BlockCount => BlockStartOffsets.Length;
 
@@ -38,7 +41,8 @@ public sealed class DocxRandomAccessIndex
                                  string rootOpenTag, long bodyEndOffset, IReadOnlyList<DeflateCheckpoint> checkpoints,
                                  long[] blockStartOffsets, WordDocumentBlockKind[] blockKinds, int[] blockTextLengths,
                                  short[] blockStyleIds, string[] styleIdTable, int[] blockListLabelIds, string[] listLabels,
-                                 WordDocumentHeading[] headings, DocxNoteReference[] noteReferences)
+                                 WordDocumentHeading[] headings, DocxNoteReference[] noteReferences,
+                                 DocxNotesPartIndex? footnotesPart, DocxNotesPartIndex? endnotesPart)
     {
         SourceFileLength = sourceFileLength;
         SourceLastWriteTicksUtc = sourceLastWriteTicksUtc;
@@ -55,6 +59,8 @@ public sealed class DocxRandomAccessIndex
         ListLabels = listLabels;
         Headings = headings;
         NoteReferences = noteReferences;
+        FootnotesPart = footnotesPart;
+        EndnotesPart = endnotesPart;
     }
 
     /// <summary>The note references inside blocks [first, last] — a slice of the body-ordered array.</summary>
@@ -108,25 +114,10 @@ public sealed class DocxRandomAccessIndex
         writer.Write(FormatVersion);
         writer.Write(SourceFileLength);
         writer.Write(SourceLastWriteTicksUtc);
-        writer.Write(DocumentEntry.Name);
-        writer.Write(DocumentEntry.DataOffset);
-        writer.Write(DocumentEntry.CompressedSize);
-        writer.Write(DocumentEntry.UncompressedSize);
-        writer.Write(DocumentEntry.CompressionMethod);
-        writer.Write(DocumentEntry.Crc32);
+        WriteEntry(writer, DocumentEntry);
         writer.Write(RootOpenTag);
         writer.Write(BodyEndOffset);
-
-        writer.Write(Checkpoints.Count);
-        foreach (DeflateCheckpoint checkpoint in Checkpoints)
-        {
-            writer.Write(checkpoint.CompressedBytePosition);
-            writer.Write((byte)checkpoint.LeftoverBitCount);
-            writer.Write((byte)checkpoint.LeftoverBits);
-            writer.Write(checkpoint.UncompressedOffset);
-            writer.Write(checkpoint.Window.Length);
-            writer.Write(checkpoint.Window);
-        }
+        WriteCheckpoints(writer, Checkpoints);
 
         writer.Write(StyleIdTable.Length);
         foreach (string styleId in StyleIdTable) writer.Write(styleId);
@@ -147,6 +138,11 @@ public sealed class DocxRandomAccessIndex
         {
             writer.Write(reference.BlockIndex); writer.Write((byte)reference.Kind); writer.Write(reference.NoteId); writer.Write(reference.Number);
         }
+        foreach (DocxNotesPartIndex? part in new[] { FootnotesPart, EndnotesPart })
+        {
+            writer.Write(part is not null);
+            part?.Write(writer);
+        }
         writer.Flush();
     }
 
@@ -157,22 +153,10 @@ public sealed class DocxRandomAccessIndex
         if (reader.ReadInt32() != FormatVersion) throw new InvalidDataException("Word index: unsupported version.");
         long sourceLength = reader.ReadInt64();
         long sourceTicks = reader.ReadInt64();
-        var entry = new ZipEntryLocation(reader.ReadString(), reader.ReadInt64(), reader.ReadInt64(), reader.ReadInt64(),
-                                         reader.ReadUInt16(), reader.ReadUInt32());
+        ZipEntryLocation entry = ReadEntry(reader);
         string rootOpenTag = reader.ReadString();
         long bodyEnd = reader.ReadInt64();
-
-        int checkpointCount = reader.ReadInt32();
-        var checkpoints = new List<DeflateCheckpoint>(checkpointCount);
-        for (int i = 0; i < checkpointCount; i++)
-        {
-            long compressedPosition = reader.ReadInt64();
-            int leftoverBitCount = reader.ReadByte();
-            int leftoverBits = reader.ReadByte();
-            long uncompressedOffset = reader.ReadInt64();
-            byte[] window = reader.ReadBytes(reader.ReadInt32());
-            checkpoints.Add(new DeflateCheckpoint(compressedPosition, leftoverBitCount, leftoverBits, uncompressedOffset, window));
-        }
+        List<DeflateCheckpoint> checkpoints = ReadCheckpoints(reader);
 
         var styleIdTable = new string[reader.ReadInt32()];
         for (int i = 0; i < styleIdTable.Length; i++) styleIdTable[i] = reader.ReadString();
@@ -196,9 +180,57 @@ public sealed class DocxRandomAccessIndex
         var noteReferences = new DocxNoteReference[reader.ReadInt32()];
         for (int i = 0; i < noteReferences.Length; i++)
             noteReferences[i] = new DocxNoteReference(reader.ReadInt32(), (WordDocumentNoteKind)reader.ReadByte(), reader.ReadInt32(), reader.ReadInt32());
+        DocxNotesPartIndex? footnotesPart = reader.ReadBoolean() ? DocxNotesPartIndex.Read(reader) : null;
+        DocxNotesPartIndex? endnotesPart = reader.ReadBoolean() ? DocxNotesPartIndex.Read(reader) : null;
 
         return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints,
-                                         starts, kinds, textLengths, styleIds, styleIdTable, labelIds, listLabels, headings, noteReferences);
+                                         starts, kinds, textLengths, styleIds, styleIdTable, labelIds, listLabels, headings, noteReferences,
+                                         footnotesPart, endnotesPart);
+    }
+
+    // ── shared record layouts (also used by DocxNotesPartIndex) ───────────────────────
+
+    internal static void WriteEntry(BinaryWriter writer, ZipEntryLocation entry)
+    {
+        writer.Write(entry.Name);
+        writer.Write(entry.DataOffset);
+        writer.Write(entry.CompressedSize);
+        writer.Write(entry.UncompressedSize);
+        writer.Write(entry.CompressionMethod);
+        writer.Write(entry.Crc32);
+    }
+
+    internal static ZipEntryLocation ReadEntry(BinaryReader reader)
+        => new(reader.ReadString(), reader.ReadInt64(), reader.ReadInt64(), reader.ReadInt64(), reader.ReadUInt16(), reader.ReadUInt32());
+
+    internal static void WriteCheckpoints(BinaryWriter writer, IReadOnlyList<DeflateCheckpoint> checkpoints)
+    {
+        writer.Write(checkpoints.Count);
+        foreach (DeflateCheckpoint checkpoint in checkpoints)
+        {
+            writer.Write(checkpoint.CompressedBytePosition);
+            writer.Write((byte)checkpoint.LeftoverBitCount);
+            writer.Write((byte)checkpoint.LeftoverBits);
+            writer.Write(checkpoint.UncompressedOffset);
+            writer.Write(checkpoint.Window.Length);
+            writer.Write(checkpoint.Window);
+        }
+    }
+
+    internal static List<DeflateCheckpoint> ReadCheckpoints(BinaryReader reader)
+    {
+        int count = reader.ReadInt32();
+        var checkpoints = new List<DeflateCheckpoint>(count);
+        for (int i = 0; i < count; i++)
+        {
+            long compressedPosition = reader.ReadInt64();
+            int leftoverBitCount = reader.ReadByte();
+            int leftoverBits = reader.ReadByte();
+            long uncompressedOffset = reader.ReadInt64();
+            byte[] window = reader.ReadBytes(reader.ReadInt32());
+            checkpoints.Add(new DeflateCheckpoint(compressedPosition, leftoverBitCount, leftoverBits, uncompressedOffset, window));
+        }
+        return checkpoints;
     }
 
     // ── sidecar file helpers (file-system hosts) ───────────────────────────────────────

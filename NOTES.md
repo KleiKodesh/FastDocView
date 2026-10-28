@@ -133,8 +133,13 @@ so the host lists the notes of the visible blocks without a second round trip.
   `w:footnoteReference` / `w:endnoteReference` per kind in body order (`customMarkFollows` → no
   number, the following run is the mark), formats from settings.xml `footnotePr`/`endnotePr`
   (defaults decimal / lowerRoman). .doc — PlcffndRef/PlcfendRef order, FRD.nAuto ≠ 0 → numbered.
-- **Bodies**: .docx footnotes.xml / endnotes.xml loaded whole (small; separators skipped), rendered
-  by the same block renderer with `w:footnoteRef` showing the label. .doc: the CP ranges from
+- **Bodies are streamed like blocks.** .docx: the index pass also scans footnotes.xml / endnotes.xml
+  (`DocxNotesPartScanner`: note id → byte range, separators dropped) with deflate checkpoints
+  (`DocxNotesPartIndex`, persisted in the sidecar, format v4); a note is read on demand from its
+  range (`DocxNoteXmlReader`) and its rendered HTML kept in a cache bounded to ~2 M characters.
+  The policy weighs body + notes, so a small body with huge notes still gets a sidecar.
+  Proven by `--notes-streaming 20000`: 113 MB footnotes part → open +5 MB heap, reopen 53 ms,
+  141 notes read across random windows, heap +2 MB. .doc: the CP ranges from
   PlcffndTxt / PlcfendTxt in the footnote / endnote stories (story starts from ccpText, ccpFtn,
   ccpHdd, ccpAtn), rendered paragraph by paragraph; the leading 0x02 shows the label.
 - `NoteReferences` (kind, number, block) for "next footnote" navigation; `NoteCounts`.
