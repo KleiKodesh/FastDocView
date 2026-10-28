@@ -49,7 +49,7 @@ public static class DocBinaryPropertyModifiers
                 case 0x260A: formatting.NumberingLevel = grpprl[operandAt]; break;
                 case 0x460B: formatting.NumberingId = BitConverter.ToUInt16(grpprl, operandAt); break;
                 case 0x2640: formatting.OutlineLevel = grpprl[operandAt] is var level && level <= 8 ? level : -1; break;
-                case 0x245B: formatting.IsContextualSpacing = grpprl[operandAt] != 0; break;
+                case 0x246D: formatting.IsContextualSpacing = grpprl[operandAt] != 0; break;                     // sprmPFContextualSpacing (sprmids.hxx)
                 case 0xC64D: formatting.ShadingHex = ShadingBackground(grpprl, operandAt + 4, operandLength); break;      // SHDOperand: cvFore then cvBack
                 case 0x442D: formatting.ShadingHex = Shading80Background(BitConverter.ToUInt16(grpprl, operandAt)); break;
                 case 0xC60D: case 0xC615: formatting.FirstTabStopTwips = FirstAddedTabStop(grpprl, operandAt, operandLength, formatting.LeftIndentTwips) ?? formatting.FirstTabStopTwips; break;
@@ -98,7 +98,7 @@ public static class DocBinaryPropertyModifiers
                 case 0x083B: formatting.IsAllCaps = Toggle(grpprl[operandAt], formatting.IsAllCaps, styleBaseline?.IsAllCaps); break;
                 case 0x8840: formatting.CharacterSpacingTwips = BitConverter.ToInt16(grpprl, operandAt); break;
                 case 0x4845: formatting.PositionHalfPoints = BitConverter.ToInt16(grpprl, operandAt); break;                            // sprmCHpsPos (LibreOffice sprmids.hxx)
-                case 0x0868: formatting.IsHidden = Toggle(grpprl[operandAt], formatting.IsHidden, styleBaseline?.IsHidden); break;     // sprmCFWebHidden
+                case 0x0811: formatting.IsHidden = Toggle(grpprl[operandAt], formatting.IsHidden, styleBaseline?.IsHidden); break;     // sprmCFWebHidden (sprmids.hxx; 0x0868 is CFUsePgsuSettings)
                 case 0x2A53: formatting.IsStrikethrough = Toggle(grpprl[operandAt], formatting.IsStrikethrough, styleBaseline?.IsStrikethrough); break;   // double strike
                 case 0x0838: formatting.IsOutline = Toggle(grpprl[operandAt], formatting.IsOutline, styleBaseline?.IsOutline); break;
                 case 0x0839: formatting.IsShadow = Toggle(grpprl[operandAt], formatting.IsShadow, styleBaseline?.IsShadow); break;

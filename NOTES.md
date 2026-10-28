@@ -96,7 +96,7 @@ number is the count of earlier items, which a windowed renderer never sees. So t
 per-num `startOverride` honoured; style-inherited numPr via `DocxStyleCascade.NumberingOf`) and
 stores the finished label per block (`"3."`, `"2.a"`, `"ט״ו."`). Formats: decimal, letters,
 roman, hebrew1 (gematria with geresh/gershayim), hebrew2, bullets, `%1.%2` patterns. Not done:
-`w:lvlRestart`, legal numbering, `.doc` lists (LFO/LST tables).
+`w:lvlRestart`, legal numbering. `.doc` lists: see "Binary .doc" below (same counter idea, LSTF/LFO tables).
 
 Deliberately not done yet:
 
@@ -118,7 +118,7 @@ Ordered by value for text-heavy Hebrew documents:
 7. Fields — `fldSimple`/`fldChar` result text (done) + `HYPERLINK`, `REF`, `PAGEREF` targets as anchors; `TOC` left as text.
 8. Tracked changes toggle (show/hide `w:ins`/`w:del`), comments ignored.
 9. Math (`m:oMath`) → MathML (ECMA-376 §22.1 maps almost 1:1).
-10. `.doc`: fonts (Sttbfffn), lists (PlcfLst/LFO → the same label counter), footnotes (PlcffndRef/Txt), tables, the remaining common sprms.
+10. `.doc`: ~~fonts (Sttbfffn), lists (PlcfLst/LFO → the same label counter), footnotes (PlcffndRef/Txt), tables~~ done; the remaining common sprms.
 
 Out of scope on purpose: page layout, headers/footers, columns, exact Word metrics.
 
@@ -174,6 +174,32 @@ positions (CP) to file offsets, each piece either 8-bit cp1252 or UTF-16. So:
 - `DocBinaryStyleSheet` — STSH: names, base chain, sti (1–9 = Heading 1–9), UPX grpprls.
 - `DocBinaryPropertyModifiers` — the sprm subset that matters for HTML (jc, bidi, indents,
   spacing, bold/italic/underline/strike, size, color, highlight, super/sub, hidden, fSpec).
+- `DocBinaryListDefinitions` + `DocBinaryListCounter` — **list labels, counted at index time**
+  like the .docx side. PlfLst (FibRgFcLcb97 index 73: cLst + 28-byte LSTFs, then the LVL array
+  that `lcbPlfLst` does not count — one LVL per simple list, nine otherwise) and PlfLfo (index
+  74: lfoMac + 16-byte LFOs + LFODatas with LFOLVL overrides; extra 0xFFFFFFFF dwords before
+  the first LFOLVL are skipped as LibreOffice does). A paragraph's `sprmPIlfo` (0x460B) is a
+  1-based LFO index (0xF801 = none, 0xF802.. = negated index), `sprmPIlvl` (0x260A) the level
+  (0x0C = skipped). Label = the LVL's xst with the placeholders at `rgbxchNums` replaced by the
+  counters (a placeholder's char value is the level it shows), `nfc` (MSONFC, [MS-OSHARED]
+  §2.2.1.3) mapped onto `DocxNumberingDefinitions.FormatNumber`: 0 decimal, 1/2 roman, 3/4
+  letters, 0x16 decimalZero, 0x17 bullet, 0x2D hebrew1, 0x2F hebrew2, 0xFF none, others decimal.
+  Restarts: a deeper level resets when a more significant one than its restart limit appears
+  (`fNoRestart` / `ilvlRestartLim`); LFOLVL `fStartAt` applied the first time that LFO is met;
+  `fLegal` shows inherited numbers as decimal. Stored per block as `BlockListLabelIds` into an
+  interned `ListLabels` table (index format v4) and rendered as `<span class="list-marker">`.
+  Measured on the 40 MB sample: 407 LSTF / 447 LFO, 83,200 of 106,442 blocks labelled (the
+  .docx twin: 99,965 of 123,007), 536 distinct labels, cold open unchanged (1.6–1.9 s either way).
+  Not done: the LVL's own grpprlPapx/grpprlChpx (indent of the number, its font), `ixchFollow`
+  (a space always follows), list labels on the first paragraph of a table row, a list style
+  linked through `rgistdPara`.
+- **Fast-saved files**: each Pcd's `Prm` ([MS-DOC] §2.9.214) is expanded once when the piece
+  table is read — a Prm1's `igrpprl` picks one of the Clx's Prc grpprls (kept in
+  `DocBinaryPieceTable.PrcGrpprls`), a Prm0's `isprm` maps through the spec's §2.9.215 table
+  (names resolved against §2.6.1/§2.6.2) to a 3-byte grpprl. `Piece.PrmGrpprl` is applied after
+  the PAPX of each paragraph (`ResolveParagraph`, `ReadTableInfo`) and after the CHPX of each run
+  inside that piece (§2.4.6.1 / §2.4.6.2). The samples have no Prm (0 of 1,962 pieces); the
+  corpus pass is the only coverage so far.
 
 ## Integration plan (the app)
 
@@ -206,10 +232,12 @@ document model (LibreOffice builds a full SwDoc; we keep only the semantics).
 1. ~~.doc sprmCHpsPos is 0x4845~~ — fixed (we had 0x4840 and listed 0x4845 as kerning).
 2. ~~Theme fonts (`csTheme`/`minorBidi` → theme1.xml)~~ — done 2026-10-28 (see "Theme, underline, emphasis" below).
 3. .doc list labels (PlcfLst / PlfLfo / LVL) — biggest .doc gap; reuse the index-time counter.
+2. Theme fonts (`csTheme`/`minorBidi` → theme1.xml) — Hebrew text can get the wrong font today. Index-time theme parse.
+3. ~~.doc list labels (PlcfLst / PlfLfo / LVL)~~ — done (see "Binary .doc"); number-run formatting and `ixchFollow` remain.
 4. Numbering `suff`, `lvlJc`, `lvlRestart`, `isLgl`, `numStyleLink`, picture bullets — index-time.
 5. ~~Theme colors (`themeColor` / tint / shade, `clrSchemeMapping`)~~ — done 2026-10-28.
 6. Hyperlinks: docx rels + HYPERLINK fields, .doc PlcfFld; open-field state per block at index time.
-7. .doc fast-saved files: per-piece Prm / Prc sprms — render-time.
+7. ~~.doc fast-saved files: per-piece Prm / Prc sprms~~ — done (`Piece.PrmGrpprl`); no sample with a Prm yet.
 8. Inline images (docx rels, .doc PICF) through a blob endpoint — render-time.
 9. .doc text boxes (txbx story) after the anchoring paragraph — index-time map.
 10. `w:sym` / CSymbol glyph with its font (Wingdings bullets).

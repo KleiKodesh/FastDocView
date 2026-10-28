@@ -33,6 +33,8 @@ public sealed class DocBinaryFileInformationBlock
     public (uint offset, uint length) EndnoteReferences { get; }   // PlcfendRef
     public (uint offset, uint length) EndnoteTexts { get; }        // PlcfendTxt
     public (uint offset, uint length) FontTable { get; }           // SttbfFfn
+    public (uint offset, uint length) ListFormats { get; }         // PlfLst (FibRgFcLcb97 index 73; the LVL array follows, not counted by lcb)
+    public (uint offset, uint length) ListFormatOverrides { get; } // PlfLfo (index 74)
 
     /// <summary>Where each story starts in the CP space: main text, footnotes, headers, comments, endnotes ([MS-DOC] §2.3).</summary>
     public int FootnoteStoryStart => MainTextCharacterCount;
@@ -73,6 +75,8 @@ public sealed class DocBinaryFileInformationBlock
         FontTable = FcLcb(fib, 15);
         EndnoteReferences = FcLcb(fib, 46);
         EndnoteTexts = FcLcb(fib, 47);
+        ListFormats = FcLcb(fib, 73);
+        ListFormatOverrides = FcLcb(fib, 74);
     }
 
     private readonly int _fcLcbCount;
