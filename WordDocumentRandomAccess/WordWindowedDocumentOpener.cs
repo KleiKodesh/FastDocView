@@ -1,5 +1,6 @@
 using WordDocumentRandomAccess.DocBinary;
 using WordDocumentRandomAccess.Docx;
+using WordDocumentRandomAccess.Markup;
 using WordDocumentRandomAccess.Odt;
 
 namespace WordDocumentRandomAccess;
@@ -13,9 +14,9 @@ namespace WordDocumentRandomAccess;
 /// </summary>
 public static class WordWindowedDocumentOpener
 {
-    public static readonly string[] SupportedExtensions = [".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot", ".odt", ".ott", ".fodt"];
+    public static readonly string[] SupportedExtensions = [".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot", ".odt", ".ott", ".fodt", ".mht", ".mhtml", ".txt"];
 
-    public enum WordFileFormat { Docx, DocBinary, WebArchive, RichText, OpenDocument, FlatOpenDocument, Unknown }
+    public enum WordFileFormat { Docx, DocBinary, WebArchive, RichText, OpenDocument, FlatOpenDocument, Unknown, PlainText }
 
     public static WordFileFormat DetectFormat(string filePath)
     {
@@ -29,6 +30,9 @@ public static class WordWindowedDocumentOpener
         if (header[0] == 0xD0 && header[1] == 0xCF && header[2] == 0x11 && header[3] == 0xE0) return WordFileFormat.DocBinary;
         if (header[0] == (byte)'M' && header[1] == (byte)'I' && header[2] == (byte)'M' && header[3] == (byte)'E') return WordFileFormat.WebArchive;
         if (header[0] == (byte)'{' && header[1] == (byte)'\\') return WordFileFormat.RichText;
+        string extension = Path.GetExtension(filePath).ToLowerInvariant();
+        if (extension is ".mht" or ".mhtml") return WordFileFormat.WebArchive;        // archives may start with other headers (From:, Content-Type:)
+        if (extension == ".txt") return WordFileFormat.PlainText;                     // plain text has no signature
         return WordFileFormat.Unknown;
     }
 
@@ -42,7 +46,8 @@ public static class WordWindowedDocumentOpener
             WordFileFormat.DocBinary => DocBinaryWindowedDocument.Open(filePath, policy, progress, cancellation),
             WordFileFormat.OpenDocument => OdtWindowedDocument.Open(filePath, isFlat: false, policy, progress, cancellation),
             WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Open(filePath, isFlat: true, policy, progress, cancellation),
-            WordFileFormat.WebArchive => throw new NotSupportedException("This is a Word web archive (MHTML saved with a .doc extension), not a binary Word file."),
+            WordFileFormat.WebArchive => MarkupWindowedDocument.Open(filePath, MarkupSourceKind.WebArchive, policy, progress, cancellation),
+            WordFileFormat.PlainText => MarkupWindowedDocument.Open(filePath, MarkupSourceKind.PlainText, policy, progress, cancellation),
             WordFileFormat.RichText => throw new NotSupportedException("This is an RTF file saved with a Word extension; RTF is not supported."),
             _ => throw new InvalidDataException("Not a Word or OpenDocument text (neither a zip package, an OLE compound file nor a flat OpenDocument)."),
         };
@@ -58,6 +63,8 @@ public static class WordWindowedDocumentOpener
             WordFileFormat.DocBinary => DocBinaryWindowedDocument.Decide(filePath, policy),
             WordFileFormat.OpenDocument => OdtWindowedDocument.Decide(filePath, policy, isFlat: false),
             WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Decide(filePath, policy, isFlat: true),
+            WordFileFormat.WebArchive => MarkupWindowedDocument.Decide(filePath, policy, MarkupSourceKind.WebArchive),
+            WordFileFormat.PlainText => MarkupWindowedDocument.Decide(filePath, policy, MarkupSourceKind.PlainText),
             var format => new WordIndexDecision(filePath, WordIndexMode.InMemory, false, 0, 0, $"unsupported ({format})"),
         };
     }

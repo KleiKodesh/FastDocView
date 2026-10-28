@@ -11,6 +11,10 @@
 //   dotnet run -c Release -- --audit <path>...     formatting constructs the renderers do not handle
 //   dotnet run -c Release -- --odt [N]             synthetic .odt/.fodt (N repeating blocks, default 20000); with LibreOffice installed,
 //                                                  every --real .docx is also converted to .odt (TestOutput) and smoke-tested + audited
+//   dotnet run -c Release -- --text [N] / --mhtml [N]   synthetic .txt (every encoding / line ending) and MHTML (qp + base64), N filler blocks
+//   dotnet run -c Release -- --text-corpus <list> [--text-largest 200 --text-random 300]   .txt corpus sample: encoding mix, 0 crashes
+//   dotnet run -c Release -- --mime-scan <word-list>   Word files that start with 'MIME' (web archives): count, open + render each
+//   dotnet run -c Release -- --profile-markup <path>...  cold / reopen / window ms of .txt / .mht files
 //   dotnet run -c Release -- --skip-synthetic --corpus <list.txt>   the same over a whole file list, aggregated + open/render crash check
 using WordDocumentRandomAccess.Tests;
 
@@ -24,7 +28,9 @@ var indexProfilePaths = new List<string>();
 string? corpusList = null;
 string? listLabelsFallback = null;
 int corpusMax = int.MaxValue;
-int odtBlocks = 0;
+int odtBlocks = 0, textBlocks = 0, mhtmlBlocks = 0, textLargest = 200, textRandom = 300;
+string? textCorpus = null, mimeScan = null;
+var markupProfilePaths = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -47,6 +53,19 @@ for (int i = 0; i < args.Length; i++)
             odtBlocks = 20_000;
             if (i + 1 < args.Length && int.TryParse(args[i + 1], out int odtCount)) { odtBlocks = odtCount; i++; }
             break;
+        case "--text":
+            textBlocks = 20_000;
+            if (i + 1 < args.Length && int.TryParse(args[i + 1], out int textCount)) { textBlocks = textCount; i++; }
+            break;
+        case "--mhtml":
+            mhtmlBlocks = 20_000;
+            if (i + 1 < args.Length && int.TryParse(args[i + 1], out int mhtmlCount)) { mhtmlBlocks = mhtmlCount; i++; }
+            break;
+        case "--text-corpus": textCorpus = args[++i]; break;
+        case "--text-largest": textLargest = int.Parse(args[++i]); break;
+        case "--text-random": textRandom = int.Parse(args[++i]); break;
+        case "--mime-scan": mimeScan = args[++i]; break;
+        case "--profile-markup": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) markupProfilePaths.Add(args[++i]); break;
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
         case "--list-labels-fallback": listLabelsFallback = args[++i]; break;   // a path list to scan for a .doc with lists when the --real ones have none
     }
@@ -80,6 +99,16 @@ if (odtBlocks > 0)
         OdtFormattingAudit.Run(converted);
     }
 }
+
+if (textBlocks > 0) MarkupIndexAndRenderTest.RunText(textBlocks);
+if (mhtmlBlocks > 0) MarkupIndexAndRenderTest.RunMhtml(mhtmlBlocks);
+if (markupProfilePaths.Count > 0)
+{
+    TestReport.Step("Markup open timings");
+    foreach (string path in markupProfilePaths.Where(File.Exists)) MarkupIndexAndRenderTest.Profile(path);
+}
+if (textCorpus is not null) MarkupCorpusTest.RunText(textCorpus, textLargest, textRandom);
+if (mimeScan is not null) MarkupCorpusTest.RunMimeScan(mimeScan);
 
 Console.WriteLine();
 Console.WriteLine(TestReport.FailureCount == 0 ? "ALL PASSED" : $"{TestReport.FailureCount} FAILURE(S)");
