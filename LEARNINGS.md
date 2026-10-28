@@ -208,3 +208,18 @@ Append-only. Date, what we learned, what it changed.
 - Measured on the 91.6 MB XML: ours ~225–305 MB/s, .NET zlib ~830 MB/s, random 64 KB read ~2.2 ms.
   The path forward is our own inflater rebuilt on zlib's inflate_fast ideas (combined
   length/distance table entries, fewer bounds checks), one managed code path for every target.
+
+## 2026-10-28 — coexisting with Word
+
+- `File.OpenRead` / `FileShare.Read` deny other writers: with a document open in the reader, Word
+  would open the file read-only or fail to save. Word saves by writing a temp file and replacing
+  the original, so delete/rename must be shared too: every open is now `FileShare.ReadWrite |
+  FileShare.Delete`, through one helper.
+- Index-mode documents used to keep the file open for their whole life. Now the handle exists only
+  while a window is read (released after every render) — measured cost: none visible.
+- After Word saves, the old index's offsets point into a different file: rendering on would show
+  wrong text silently. Renders now check size + write time first (microseconds) and throw
+  `WordDocumentSourceChangedException`; the dev server answers 409 and the demo reopens in place.
+  An in-memory .docx keeps showing the version it read; it still reports the change.
+- A build in progress keeps its handle (shared) — if Word saves mid-build, the handle keeps reading
+  the old file object, and the saved index fails its size/time check on the next open (re-index).

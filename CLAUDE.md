@@ -76,6 +76,13 @@ view over SQLite.
 
 ## Rules
 
+- **Never get in Word's way** (user, 2026-10-28). Every file open goes through
+  `WordDocumentFileStream` (`OpenShared` = read access, sharing read + write + delete) — never
+  `File.OpenRead` / `FileShare.Read`, which block Word from saving. A document holds no handle
+  between windows (`Release()` after each render), notices a save (`HasSourceChanged`) and refuses
+  to render the new file with the old index (`WordDocumentSourceChangedException`) — the host
+  reopens. `WordCoexistenceTest` (exclusive open + save-by-replace while we read) must pass.
+
 - **Always double-check against the source; never rely on memory alone** (user, 2026-10-28).
   Format facts (sprm opcodes, element semantics, FIB offsets, LibreOffice behaviour) must be
   verified in the spec or the real upstream code before they are implemented — a remembered

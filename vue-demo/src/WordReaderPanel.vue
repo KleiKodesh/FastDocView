@@ -5,7 +5,7 @@ import WindowedScroller from '@/components/WindowedScroller.vue'
 import type { WindowedScrollerApi } from '@/components/windowedScrollerTypes'
 import WordNotesPane from './WordNotesPane.vue'
 import {
-  closeDocument, fetchBlocks, fetchHeadings, fetchServerMemory, fetchWeights, openDocument,
+  closeDocument, fetchBlocks, fetchHeadings, fetchServerMemory, fetchWeights, openDocument, WordSourceChangedError,
   type WordDocumentSummary, type WordHeading, type WordNote, type WordServerMemory, type WordVisibleNote,
 } from './wordDemoApi'
 
@@ -98,7 +98,19 @@ async function ensureBlocks(start: number, end: number): Promise<void> {
   let last = end
   while (last > first && blockHtmlByIndex.has(last - 1)) last--
   if (first >= last) return
-  const { blocks, renderMilliseconds, roundTripMilliseconds } = await fetchBlocks(document.id, first, last - first)
+  let fetched: Awaited<ReturnType<typeof fetchBlocks>>
+  try {
+    fetched = await fetchBlocks(document.id, first, last - first)
+  } catch (exception) {
+    // Word saved the file: reopen (re-index) and stay where the reader is.
+    if (exception instanceof WordSourceChangedError && summary.value === document && currentPath) {
+      status.value = 'The document changed on disk — reopening…'
+      void open(currentPath, { keepPosition: true })
+      return
+    }
+    throw exception
+  }
+  const { blocks, renderMilliseconds, roundTripMilliseconds } = fetched
   if (summary.value !== document) return
   for (const block of blocks) {
     blockHtmlByIndex.set(block.index, block.html)

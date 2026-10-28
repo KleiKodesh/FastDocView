@@ -100,7 +100,9 @@ app.MapGet("/api/documents/{id:int}/blocks", (int id, int first, int count, Http
 {
     if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
     var watch = Stopwatch.StartNew();
-    IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(first, Math.Min(count, 500));
+    IReadOnlyList<WordDocumentBlockHtml> blocks;
+    try { blocks = document.RenderBlocks(first, Math.Min(count, 500)); }
+    catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }   // the demo reopens
     response.Headers["X-Render-Milliseconds"] = watch.Elapsed.TotalMilliseconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
     return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, b.Html,
         b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())).ToList());

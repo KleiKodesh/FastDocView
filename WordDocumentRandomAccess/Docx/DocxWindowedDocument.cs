@@ -19,6 +19,8 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private readonly DocxBlockHtmlRenderer _renderer;
     private readonly DocxNoteXmlReader _noteReader;
     private readonly DocxNoteNumberFormats _noteFormats;
+    private WordDocumentFileStream? _releasableFile;   // set by Open(path): released after every window
+    private bool _isReadingFromFile;                    // false when the whole text was inflated in memory (small .docx)
     private readonly object _readLock = new();          // one package stream is shared by the block and note readers
     private readonly Dictionary<(WordDocumentNoteKind kind, int id), string> _noteHtmlCache = new();
     private long _noteHtmlCacheCharacters;
@@ -36,7 +38,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
 
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
     {
-        using FileStream file = OpenRead(filePath);
+        using FileStream file = WordDocumentFileStream.OpenShared(filePath);
         long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(file);       // body + footnotes + endnotes
         bool hasCachedIndex = DocxRandomAccessIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
         return policy.Decide(filePath, textBytes, hasCachedIndex);
@@ -50,13 +52,16 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         var info = new FileInfo(filePath);
         string indexPath = policy.IndexPathFor(filePath);
         DocxRandomAccessIndex? cached = DocxRandomAccessIndex.TryLoad(indexPath, filePath);
-        FileStream package = OpenRead(filePath);
+        var package = new WordDocumentFileStream(filePath);
         try
         {
             long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(package);
             WordIndexDecision decision = policy.Decide(filePath, textBytes, cached is not null);
             DocxWindowedDocument document = OpenFromStream(package, filePath, decision, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
             if (decision.Mode == WordIndexMode.Sidecar && cached is null) document._index.Save(indexPath);
+            document._releasableFile = package;
+            document._isReadingFromFile = decision.Mode == WordIndexMode.Sidecar || cached is not null;
+            package.Release();                                // no handle on the file between windows (Word must be able to save it)
             return document;
         }
         catch
@@ -122,7 +127,14 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
 
     public IReadOnlyList<WordDocumentBlockHtml> RenderBlocks(int firstBlockIndex, int count)
     {
-        lock (_readLock) return RenderBlocksLocked(firstBlockIndex, count);
+        lock (_readLock)
+        {
+            // Only documents that still read the file (index mode) are at risk; a stale in-memory body is still consistent.
+            if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
+                throw new WordDocumentSourceChangedException(FilePath);
+            try { return RenderBlocksLocked(firstBlockIndex, count); }
+            finally { _releasableFile?.Release(); }
+        }
     }
 
     private List<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count)
@@ -175,7 +187,8 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         => _noteReferences ??= _index.NoteReferences.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, r.BlockIndex)).ToArray();
     private WordDocumentNoteReference[]? _noteReferences;
 
-    private static FileStream OpenRead(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+
+    public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
 
     public void Dispose()
     {
