@@ -139,3 +139,24 @@ Append-only. Date, what we learned, what it changed.
   as LibreOffice does, opened the last failing file.
 - 145 files could not even be read (OneDrive placeholders / locked files): an OS state, not a
   parser bug — report it as "file not available", never as a format failure.
+
+## 2026-10-28 — .doc list labels and fast-saved Prm
+
+- **`lcbPlfLst` lies by design.** The LVL array that gives every list its levels follows the PlfLst
+  but is not counted by its lcb; its size is only known by walking it (one LVL per simple list,
+  nine otherwise, each with variable grpprls and an xst). Reading "offset .. offset + lcb" gets the
+  LSTFs and nothing else.
+- **A .doc list placeholder is a character whose value is the level.** The xst holds the number
+  text with 16-bit level indexes at the offsets `rgbxchNums` names (one-based); there is no `%1`
+  syntax. Bullets store the symbol-font code as 0xF0xx in the first char.
+- **The .doc sample is 78 % list paragraphs** (siman / seif numbering), the .docx twin 81 % — so
+  list labels are not a nicety for halachic compilations, they are most of the visible structure.
+  Interning the labels (536 distinct for 83k items) keeps the index small; the .docx index still
+  stores one string per item.
+- **Counting lists in the index pass costs nothing measurable** (cold open 1.6–1.9 s with or
+  without; the PAPX lookup per paragraph was already there for headings and table rows).
+- **`git checkout -- <file>` to undo a one-line experiment undoes the whole file.** Lost three
+  edits that way; use a targeted revert (sed back, or Edit) when the file carries uncommitted work.
+- Prm0 isprm → sprm: the spec names the sprms (§2.9.215) but not their opcodes; each name was
+  resolved against §2.6.1/§2.6.2 and cross-checked with LibreOffice `ww8scan.cxx` `aSprmId`
+  (which uses sprmPJc80 0x2403 where the spec names sprmPJc 0x2461 — both are handled alike here).

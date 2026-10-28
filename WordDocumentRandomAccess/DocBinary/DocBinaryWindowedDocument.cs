@@ -28,6 +28,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     public DocBinaryPieceTable PieceTable { get; }
     public DocBinaryFormattedDiskPages FormattedDiskPages { get; }
     public DocBinaryStyleSheet StyleSheet => _styles;
+    public DocBinaryListDefinitions ListDefinitions { get; }
+    public DocBinaryBlockIndex BlockIndex => _index;
 
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
     {
@@ -86,11 +88,12 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         FormattedDiskPages = new DocBinaryFormattedDiskPages(_wordDocument, _tableStream, FileInformationBlock, _dataStream);
         _notes = new DocBinaryNoteReferences(_tableStream, FileInformationBlock);
         _renderer = new DocBinaryParagraphHtmlRenderer(PieceTable, FormattedDiskPages, _styles, _notes);
+        ListDefinitions = DocBinaryListDefinitions.Read(_tableStream, FileInformationBlock.ListFormats, FileInformationBlock.ListFormatOverrides);
 
         bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc);
         Decision = policy.Decide(displayPath, (long)FileInformationBlock.MainTextCharacterCount * 2, isCacheValid);
         _index = isCacheValid ? cachedIndex!
-               : DocBinaryBlockIndex.Build(PieceTable, _renderer, _styles, FileInformationBlock.MainTextCharacterCount,
+               : DocBinaryBlockIndex.Build(PieceTable, _renderer, _styles, ListDefinitions, FileInformationBlock.MainTextCharacterCount,
                                            sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
 
         IsRightToLeft = DetectRightToLeft();
@@ -124,7 +127,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
             WordDocumentBlockKind kind = _index.BlockKinds[blockIndex];
             string html = kind == WordDocumentBlockKind.TableRow
                 ? _renderer.RenderRow(start, end)
-                : _renderer.Render(start, end, PreviousStyleKey(blockIndex));
+                : _renderer.Render(start, end, PreviousStyleKey(blockIndex), listLabel: _index.ListLabelOf(blockIndex));
             result.Add(new WordDocumentBlockHtml(blockIndex, kind, html, RenderNotesIn(start, end)));
         }
         return result;

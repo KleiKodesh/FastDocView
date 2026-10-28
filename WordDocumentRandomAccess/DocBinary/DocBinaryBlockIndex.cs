@@ -1,4 +1,5 @@
 using System.Text;
+using WordDocumentRandomAccess.Html;
 
 namespace WordDocumentRandomAccess.DocBinary;
 
@@ -13,7 +14,7 @@ namespace WordDocumentRandomAccess.DocBinary;
 public sealed class DocBinaryBlockIndex
 {
     private const string Magic = "KHDOCIDX";
-    private const int FormatVersion = 3;
+    private const int FormatVersion = 4;        // 4: list labels
     private const int MaxHeadingTextLength = 300;
 
     public long SourceFileLength { get; }
@@ -23,8 +24,18 @@ public sealed class DocBinaryBlockIndex
     public WordDocumentBlockKind[] BlockKinds { get; }
     public int[] BlockTextLengths { get; }
     public WordDocumentHeading[] Headings { get; }
+    /// <summary>Per block: an index into <see cref="ListLabels"/>, -1 when the block is not a list item. Counted at index time.</summary>
+    public int[] BlockListLabelIds { get; }
+    /// <summary>The distinct labels ("3.", "1.2", a bullet) — identical labels share one entry.</summary>
+    public string[] ListLabels { get; }
 
     public int BlockCount => BlockStartCps.Length;
+
+    public string? ListLabelOf(int blockIndex)
+    {
+        int labelIndex = BlockListLabelIds[blockIndex];
+        return labelIndex >= 0 ? ListLabels[labelIndex] : null;
+    }
 
     public int BlockEndCp(int blockIndex)
         => blockIndex + 1 < BlockStartCps.Length ? BlockStartCps[blockIndex + 1] : MainTextCharacterCount;
@@ -42,7 +53,8 @@ public sealed class DocBinaryBlockIndex
     }
 
     private DocBinaryBlockIndex(long sourceFileLength, long sourceLastWriteTicksUtc, int mainTextCharacterCount,
-                                int[] starts, WordDocumentBlockKind[] kinds, int[] lengths, WordDocumentHeading[] headings)
+                                int[] starts, WordDocumentBlockKind[] kinds, int[] lengths, WordDocumentHeading[] headings,
+                                int[] blockListLabelIds, string[] listLabels)
     {
         SourceFileLength = sourceFileLength;
         SourceLastWriteTicksUtc = sourceLastWriteTicksUtc;
@@ -51,9 +63,13 @@ public sealed class DocBinaryBlockIndex
         BlockKinds = kinds;
         BlockTextLengths = lengths;
         Headings = headings;
+        BlockListLabelIds = blockListLabelIds;
+        ListLabels = listLabels;
     }
 
+    /// <param name="lists">The document's list tables; <see cref="DocBinaryListDefinitions.Empty"/> when it has none.</param>
     public static DocBinaryBlockIndex Build(DocBinaryPieceTable pieces, DocBinaryParagraphHtmlRenderer renderer, DocBinaryStyleSheet styles,
+                                            DocBinaryListDefinitions lists,
                                             int mainTextCharacterCount, long sourceLength, long sourceLastWriteTicksUtc,
                                             IProgress<WordDocumentIndexProgress>? progress = null, CancellationToken cancellation = default)
     {
@@ -61,6 +77,10 @@ public sealed class DocBinaryBlockIndex
         var kinds = new List<WordDocumentBlockKind>();
         var lengths = new List<int>();
         var headings = new List<WordDocumentHeading>();
+        var blockListLabelIds = new List<int>();
+        var listLabels = new List<string>();
+        var listLabelIds = new Dictionary<string, int>(StringComparer.Ordinal);
+        var listCounter = new DocBinaryListCounter(lists);
         int paragraphStart = 0;
         int rowStart = -1;                     // first CP of the table row being collected, -1 outside a row
 
@@ -69,6 +89,13 @@ public sealed class DocBinaryBlockIndex
             starts.Add(start);
             kinds.Add(kind);
             lengths.Add(end - start);
+            blockListLabelIds.Add(-1);
+        }
+
+        void SetListLabel(string label)
+        {
+            if (!listLabelIds.TryGetValue(label, out int id)) { id = listLabels.Count; listLabels.Add(label); listLabelIds[label] = id; }
+            blockListLabelIds[blockListLabelIds.Count - 1] = id;
         }
 
         void OnParagraphEnd(int end, char mark)
@@ -76,16 +103,18 @@ public sealed class DocBinaryBlockIndex
             int start = paragraphStart;
             paragraphStart = end;
             DocBinaryParagraphHtmlRenderer.TableParagraphInfo table = renderer.ReadTableInfo(start, end);
+            (WordParagraphFormatting formatting, int styleIndex) = renderer.ResolveParagraph(start, end);
+            // Every list paragraph advances its counter, cell paragraphs included — a list that runs through a table keeps counting.
+            string? label = formatting.NumberingId > 0 ? listCounter.Next(formatting.NumberingId, formatting.NumberingLevel) : null;
             if (table.IsInTable || mark == '\u0007')
             {
                 if (rowStart < 0) rowStart = start;
                 if (table.IsRowEnd) { AddBlock(rowStart, end, WordDocumentBlockKind.TableRow); rowStart = -1; }
-                return;
+                return;                                    // a row is one block: its cell paragraphs' labels are not shown yet
             }
             if (rowStart >= 0) { AddBlock(rowStart, start, WordDocumentBlockKind.TableRow); rowStart = -1; }   // a row without its end mark
             AddBlock(start, end, WordDocumentBlockKind.Paragraph);
-
-            (_, int styleIndex) = renderer.ResolveParagraph(start, end);
+            if (label is { Length: > 0 }) SetListLabel(label);
             int level = styles.HeadingLevelOf(styleIndex);
             if (level > 0)
             {
@@ -106,7 +135,8 @@ public sealed class DocBinaryBlockIndex
         if (starts.Count == 0) AddBlock(0, mainTextCharacterCount, WordDocumentBlockKind.Paragraph);
 
         return new DocBinaryBlockIndex(sourceLength, sourceLastWriteTicksUtc, mainTextCharacterCount,
-                                       starts.ToArray(), kinds.ToArray(), lengths.ToArray(), headings.ToArray());
+                                       starts.ToArray(), kinds.ToArray(), lengths.ToArray(), headings.ToArray(),
+                                       blockListLabelIds.ToArray(), listLabels.ToArray());
     }
 
     public bool MatchesSource(long fileLength, long lastWriteTicksUtc)
@@ -134,6 +164,9 @@ public sealed class DocBinaryBlockIndex
             IndexBinaryArrays.Write(writer, BlockTextLengths);
             writer.Write(Headings.Length);
             foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
+            IndexBinaryArrays.Write(writer, BlockListLabelIds);
+            writer.Write(ListLabels.Length);
+            foreach (string label in ListLabels) writer.Write(label);
         }
         if (File.Exists(indexPath)) File.Delete(indexPath);
         File.Move(temporaryPath, indexPath);
@@ -153,7 +186,12 @@ public sealed class DocBinaryBlockIndex
             int[] lengths = IndexBinaryArrays.Read<int>(reader);
             var headings = new WordDocumentHeading[reader.ReadInt32()];
             for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
-            var index = new DocBinaryBlockIndex(length, ticks, mainText, starts, kinds, lengths, headings);
+            int[] blockListLabelIds = IndexBinaryArrays.Read<int>(reader);
+            var listLabels = new string[reader.ReadInt32()];
+            for (int i = 0; i < listLabels.Length; i++) listLabels[i] = reader.ReadString();
+            if (blockListLabelIds.Length != starts.Length) return null;
+            foreach (int id in blockListLabelIds) if (id >= listLabels.Length) return null;
+            var index = new DocBinaryBlockIndex(length, ticks, mainText, starts, kinds, lengths, headings, blockListLabelIds, listLabels);
             return index.MatchesSource(documentPath) ? index : null;
         }
         catch (Exception exception) when (exception is IOException or EndOfStreamException or InvalidDataException)

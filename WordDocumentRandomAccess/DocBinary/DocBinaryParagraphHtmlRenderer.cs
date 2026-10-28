@@ -48,8 +48,13 @@ public sealed class DocBinaryParagraphHtmlRenderer
             (byte[] grpprl, int start, int length) = _pages.ExpandHugePapx(direct.Page, direct.GrpprlStart + 2, direct.GrpprlLength - 2);
             DocBinaryPropertyModifiers.ApplyParagraphSprms(formatting, grpprl, start, length);
         }
+        // Fast-saved files: the piece's Prm applies after the PAPX ([MS-DOC] §2.4.6.1 step 4).
+        if (PrmGrpprlOfParagraph(cpStart, cpEnd) is { } prm) DocBinaryPropertyModifiers.ApplyParagraphSprms(formatting, prm, 0, prm.Length);
         return (formatting, styleIndex);
     }
+
+    /// <summary>The Prm grpprl of the piece holding the paragraph mark, or null (the common case).</summary>
+    private byte[]? PrmGrpprlOfParagraph(int cpStart, int cpEnd) => _pieces.PieceOf(Math.Max(cpStart, cpEnd - 1)).PrmGrpprl;
 
     /// <summary>sprmPFInTable / sprmPFTtp / sprmPFInnerTtp and sprmTDefTable of the paragraph ending at cpEnd.</summary>
     public TableParagraphInfo ReadTableInfo(int cpStart, int cpEnd)
@@ -59,9 +64,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
         int[]? widths = null;
         string?[]? shading = null;
         string? border = null;
-        if (run is { GrpprlLength: > 2 } papx)
+        void ReadSprms(byte[] grpprl, int start, int length)
         {
-            (byte[] grpprl, int start, int length) = _pages.ExpandHugePapx(papx.Page, papx.GrpprlStart + 2, papx.GrpprlLength - 2);
             foreach ((ushort opcode, int operandAt, int operandLength) in DocBinaryPropertyModifiers.Sprms(grpprl, start, length))
             {
                 switch (opcode)
@@ -75,6 +79,12 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 }
             }
         }
+        if (run is { GrpprlLength: > 2 } papx)
+        {
+            (byte[] grpprl, int start, int length) = _pages.ExpandHugePapx(papx.Page, papx.GrpprlStart + 2, papx.GrpprlLength - 2);
+            ReadSprms(grpprl, start, length);
+        }
+        if (PrmGrpprlOfParagraph(cpStart, cpEnd) is { } prm) ReadSprms(prm, 0, prm.Length);     // a Prm0 can carry sprmPFInTable / sprmPFTtp
         return new TableParagraphInfo(isInTable || isRowEnd, isRowEnd, widths, isRightToLeft, shading, border);
     }
 
@@ -120,20 +130,22 @@ public sealed class DocBinaryParagraphHtmlRenderer
 
     /// <param name="previousStyleKey">The style of the paragraph before (contextual spacing).</param>
     /// <param name="noteLabel">Inside a note body: the label its auto-number mark shows.</param>
-    public string Render(int cpStart, int cpEnd, string? previousStyleKey = null, string? noteLabel = null)
+    /// <param name="listLabel">The paragraph's list label from the index (counted at index time), shown before the text.</param>
+    public string Render(int cpStart, int cpEnd, string? previousStyleKey = null, string? noteLabel = null, string? listLabel = null)
     {
         var html = new StringBuilder(512);
-        AppendParagraph(html, cpStart, cpEnd, previousStyleKey, noteLabel);
+        AppendParagraph(html, cpStart, cpEnd, previousStyleKey, noteLabel, listLabel);
         return html.ToString();
     }
 
-    private string? AppendParagraph(StringBuilder html, int cpStart, int cpEnd, string? previousStyleKey, string? noteLabel)
+    private string? AppendParagraph(StringBuilder html, int cpStart, int cpEnd, string? previousStyleKey, string? noteLabel, string? listLabel = null)
     {
         (WordParagraphFormatting formatting, int styleIndex) = ResolveParagraph(cpStart, cpEnd);
         int headingLevel = _styles.HeadingLevelOf(styleIndex);
         string tag = headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
 
         WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(previousStyleKey), null, formatting.IsRightToLeft);
+        if (listLabel is { Length: > 0 }) html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(listLabel)).Append("</span> ");
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
         var fieldState = new FieldState();
         foreach ((WordRunFormatting runFormatting, string text, bool isSpecial, int runCp) in CharacterRuns(cpStart, cpEnd, formatting.RunFormatting, styleBase))
@@ -246,6 +258,12 @@ public sealed class DocBinaryParagraphHtmlRenderer
                     DocBinaryPropertyModifiers.ApplyCharacterSprms(formatting, direct.Page, direct.GrpprlStart, direct.GrpprlLength, styleBase, _styles.Fonts);
                     isSpecial = DocBinaryPropertyModifiers.HasSpecialCharacterFlag(direct.Page, direct.GrpprlStart, direct.GrpprlLength);
                     symbol = DocBinaryPropertyModifiers.SymbolCharacterIn(direct.Page, direct.GrpprlStart, direct.GrpprlLength);
+                }
+                if (piece.PrmGrpprl is { } prm)             // fast-saved files: the piece's Prm applies after the CHPX ([MS-DOC] §2.4.6.2)
+                {
+                    DocBinaryPropertyModifiers.ApplyCharacterSprms(formatting, prm, 0, prm.Length, styleBase, _styles.Fonts);
+                    isSpecial |= DocBinaryPropertyModifiers.HasSpecialCharacterFlag(prm, 0, prm.Length);
+                    symbol ??= DocBinaryPropertyModifiers.SymbolCharacterIn(prm, 0, prm.Length);
                 }
                 string runText = _pieces.ReadText(cp, runEndCp);
                 if (symbol is { } symbolCharacter) runText = new string(symbolCharacter, runText.Length);   // sprmCSymbol replaces the placeholder

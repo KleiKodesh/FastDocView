@@ -17,6 +17,7 @@ var realPaths = new List<string>();
 var auditPaths = new List<string>();
 var profilePaths = new List<string>();
 string? corpusList = null;
+string? listLabelsFallback = null;
 int corpusMax = int.MaxValue;
 for (int i = 0; i < args.Length; i++)
 {
@@ -32,6 +33,7 @@ for (int i = 0; i < args.Length; i++)
         case "--profile-open": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) profilePaths.Add(args[++i]); break;
         case "--corpus": corpusList = args[++i]; break;            // a text file with one Word file path per line
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
+        case "--list-labels-fallback": listLabelsFallback = args[++i]; break;   // a path list to scan for a .doc with lists when the --real ones have none
     }
 }
 
@@ -44,6 +46,8 @@ if (!skipSynthetic)
 if (hugeBlocks > 0) HugeDocumentMemoryTest.Run(hugeBlocks);
 if (notesStreamingBlocks > 0) DocxNotesStreamingTest.Run(notesStreamingBlocks, noteFillerCharacters: 60_000);
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));
+if (realPaths.Any(path => path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)))
+    DocBinaryListLabelsTest.Run(realPaths.Where(path => File.Exists(path) && path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)), listLabelsFallback ?? corpusList);
 if (auditPaths.Count > 0) WordFormattingAudit.Run(auditPaths.Where(File.Exists));
 if (profilePaths.Count > 0) OpenTimingProfile.Run(profilePaths.Where(File.Exists));
 if (corpusList is not null) WordFormattingAudit.RunCorpus(corpusList, corpusMax);
