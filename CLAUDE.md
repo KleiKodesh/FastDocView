@@ -90,5 +90,13 @@ view over SQLite.
 - Default sidecar threshold is 8 MB of text (body + notes); change it with a measurement.
 - Demo UI stays plain — it is a rig, not the product.
 - Clean up what you start (dev server, Vite, Word automation instances) — by PID, never by name.
+- **QA before each commit** (user, 2026-10-28): before every commit run the harness
+  (`dotnet run -c Release -- --real samples/…doc samples/…docx --audit <both>`), and when the
+  change touches rendering or the demo, the Playwright checks against the live rig. Then have a
+  fresh subagent review the staged diff for correctness (not style) and fix what it finds. A
+  commit that was not QA'd is not pushed.
+- **Work in parallel where pieces are independent** (user, 2026-10-28): separate formats,
+  speed vs coverage, research vs implementation go to parallel subagents with narrow briefs;
+  only sequential, shared-file work stays in the main thread.
 - Commits: author KleiKodesh, **no Co-Authored-By trailer**; push freely to this repo.
 - Don't build or verify unless asked; when asked, run the harness and the Playwright checks.
