@@ -247,7 +247,7 @@ Append-only. Date, what we learned, what it changed.
 - **Heap "bounded" means "no more than a sidecar reopen".** A 1M-block index itself is ~45 MB of
   managed arrays/strings; comparing against 1/8 of the body was the wrong yardstick.
 - Worktrees need `..\SeekableDeflate` next to them since the split: a junction
-  `WordDocumentRandomAccess-work\SeekableDeflate -> ..\SeekableDeflate` makes them build.
+  `FastDocView-work\SeekableDeflate -> ..\SeekableDeflate` makes them build.
 
 ## 2026-10-28 — on-demand index, live-checked
 

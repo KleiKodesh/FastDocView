@@ -10,7 +10,7 @@ import http from 'node:http'
 const DEV_SERVER_URL = 'http://127.0.0.1:5188'
 const DEV_SERVER_PROJECT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../WordDocumentRandomAccess.DevServer',
+  '../FastDocView.DevServer',
 )
 
 let devServerProcess: ChildProcess | null = null

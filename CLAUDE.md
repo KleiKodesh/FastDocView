@@ -1,6 +1,6 @@
-# WordDocumentRandomAccess
+# FastDocView
 
-Standalone library — its own **public** repo (github.com/KleiKodesh/WordDocumentRandomAccess),
+Standalone library — its own **public** repo (github.com/KleiKodesh/FastDocView),
 sibling folder of KitveiHakodesh; nothing of it lives in the KitveiHakodesh repo.
 
 **Goal: instant preview of .doc and .docx files.** Any window of paragraphs rendered to HTML in
@@ -62,7 +62,7 @@ view over SQLite.
 | Folder | Owns |
 |---|---|
 | `..\SeekableDeflate` (own repo, sibling folder) | managed RFC 1951 inflater with zran checkpoints, seekable stream, zip-entry location — referenced as a `ProjectReference`, no NuGet. Clone it next to this repo. |
-| `..\TextEncodingDetection` (own repo, sibling folder) | .txt encoding detection identical to Notepad++ (ported Notepad++ uchardet) — `ProjectReference`, no NuGet. Clone it next to this repo (worktrees: next to them, in `..\WordDocumentRandomAccess-work`). |
+| `..\TextEncodingDetection` (own repo, sibling folder) | .txt encoding detection identical to Notepad++ (ported Notepad++ uchardet) — `ProjectReference`, no NuGet. Clone it next to this repo (worktrees: next to them, in `..\FastDocView-work`). |
 | `…/Docx` | body + notes scanners, index (format v4) + builder, block / note readers, drawing stripper, `DocxWindowedDocument` |
 | `…/Html`, `…/DocxHtml` | format-neutral formatting models + CSS; styles / table styles cascade; block, table, note → HTML |
 | `…/Odt` | OpenDocument text (.odt/.ott/.fodt): package detection, body scanner, list numbering, index + builder, style cascade, block reader + renderer, `OdtWindowedDocument` |
@@ -70,10 +70,10 @@ view over SQLite.
 | `…/Rtf` | RTF (.rtf): streaming parser (group-state stack, control-word table), index + builder (byte ranges + interned start-state snapshots), header tables, list numbering, block renderer, `RtfWindowedDocument` |
 | `…/DocBinary` | compound file, FIB, piece table, FKPs (+ huge PAPX), styles, fonts, sprms, notes, block index, `DocBinaryWindowedDocument` |
 | `samples/` | the two real test files (דור המלקטים .doc 40 MB, .docx 87 MB body) — the demo's default |
-| `WordDocumentRandomAccess.Tests` | console harness; must print ALL PASSED. `--real`, `--audit`, `--odt [N]`, `--text [N]`, `--mhtml [N]`, `--text-corpus <list>`, `--mime-scan <list>`, `--rtf [N]` (with `--corpus <list>`: the RTF corpus pass), `--rtf-audit`, `--rtf-profile`, `--corpus <list>`, `--huge N`, `--notes-streaming N` |
-| `WordDocumentRandomAccess.DevServer` | C# localhost JSON host on 5188 (dev only; the real host will be the KitveiHakodesh service) |
+| `FastDocView.Tests` | console harness; must print ALL PASSED. `--real`, `--audit`, `--odt [N]`, `--text [N]`, `--mhtml [N]`, `--text-corpus <list>`, `--mime-scan <list>`, `--rtf [N]` (with `--corpus <list>`: the RTF corpus pass), `--rtf-audit`, `--rtf-profile`, `--corpus <list>`, `--huge N`, `--notes-streaming N` |
+| `FastDocView.DevServer` | C# localhost JSON host on 5188 (dev only; the real host will be the KitveiHakodesh service) |
 | `vue-demo` | **the live rig** — Vite on 5189 + the app's `WindowedScroller` (copied from `KitveiHakodesh/vue-frontend/src/components`, keep in sync — the copy carries one fix to port back: `landAt` re-lands on the new last row when fetching rows shrinks the count); `window.__wordDemo` hooks; `playwright/` checks |
-| `WordDocumentRandomAccess.Viewer` | old WinForms viewer — superseded, do not extend |
+| `FastDocView.Viewer` | old WinForms viewer — superseded, do not extend |
 
 ## Verifying
 
@@ -123,7 +123,7 @@ view over SQLite.
   speed vs coverage, research vs implementation go to parallel subagents with narrow briefs;
   only sequential, shared-file work stays in the main thread. **At most 2 agents at a time**
   in a session (user, 2026-10-28) — the machine must stay usable; queue the rest. Agents work
-  in their own worktree under `..\WordDocumentRandomAccess-work\<topic>` (branch `work/<topic>`),
+  in their own worktree under `..\FastDocView-work\<topic>` (branch `work/<topic>`),
   commit there, never push or merge; the main thread merges after QA.
 - **Commit as you go** (user, 2026-10-28): small commits after each verified step (a feature,
   a fix, a measured speed-up), not one big commit at the end — each QA'd per the rule above.

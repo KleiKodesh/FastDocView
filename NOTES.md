@@ -1,4 +1,4 @@
-# WordDocumentRandomAccess — design notes
+# FastDocView — design notes
 
 Goal: open huge Word files (.docx and old binary .doc) and render any window of paragraphs to
 HTML in milliseconds, without ever holding a decompressed copy of the document, so the app's
@@ -53,7 +53,7 @@ LEARNINGS 2026-10-28. The inflater stays ours; its speed work follows zlib's inf
 plus the root element's opening tag, whose namespace declarations wrap each block so it can be
 parsed in isolation (`DocxBlockXmlReader`).
 
-The index is saved to `%LOCALAPPDATA%\KitveiHakodesh\WordDocumentRandomAccess\<name>.<hash>.wordindex`
+The index is saved to `%LOCALAPPDATA%\KitveiHakodesh\FastDocView\<name>.<hash>.wordindex`
 keyed by path, validated by file length + last write time. Re-opening a 50 000-block file from
 the cached index: ~50 ms. Cold build runs at about 40 MB/s of XML with a few MB of RAM.
 
@@ -152,7 +152,7 @@ so the host lists the notes of the visible blocks without a second round trip.
 
 ## Formatting coverage — audited, not guessed
 
-`WordDocumentRandomAccess.Tests -- --audit <files>` streams every text-bearing part (.docx) or
+`FastDocView.Tests -- --audit <files>` streams every text-bearing part (.docx) or
 every PAPX/CHPX/style UPX (.doc) and lists constructs the renderers don't handle. On the
 דור המלקטים samples both read **0 unhandled**. Deliberately ignored (listed in the audit as such):
 pagination (widow/keep/page-break-before), proofing and language ids, revision ids (rsid), kerning,
