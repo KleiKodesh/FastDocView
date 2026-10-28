@@ -138,6 +138,7 @@ function applyIndexState(document: WordDocumentSummary, state: WordIndexState) {
   // the scan only moves forward: a response older than one already applied (or any after completion) is stale
   if (isIndexComplete.value || state.knownBlockCount < knownBlockCount.value) return
   knownBlockCount.value = state.knownBlockCount
+  // A shrinking estimate under an in-flight jump is handled by the scroller's landing (it re-lands on the new last row).
   if (blockCount.value !== state.estimatedBlockCount) blockCount.value = state.estimatedBlockCount
   if (!state.isIndexComplete) return
   isIndexComplete.value = true

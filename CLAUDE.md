@@ -60,7 +60,7 @@ view over SQLite.
 | `samples/` | the two real test files (דור המלקטים .doc 40 MB, .docx 87 MB body) — the demo's default |
 | `WordDocumentRandomAccess.Tests` | console harness; must print ALL PASSED. `--real`, `--audit`, `--corpus <list>`, `--huge N`, `--notes-streaming N` |
 | `WordDocumentRandomAccess.DevServer` | C# localhost JSON host on 5188 (dev only; the real host will be the KitveiHakodesh service) |
-| `vue-demo` | **the live rig** — Vite on 5189 + the app's `WindowedScroller` (copied from `KitveiHakodesh/vue-frontend/src/components`, keep in sync); `window.__wordDemo` hooks; `playwright/` checks |
+| `vue-demo` | **the live rig** — Vite on 5189 + the app's `WindowedScroller` (copied from `KitveiHakodesh/vue-frontend/src/components`, keep in sync — the copy carries one fix to port back: `landAt` re-lands on the new last row when fetching rows shrinks the count); `window.__wordDemo` hooks; `playwright/` checks |
 | `WordDocumentRandomAccess.Viewer` | old WinForms viewer — superseded, do not extend |
 
 ## Verifying

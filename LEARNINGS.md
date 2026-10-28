@@ -235,3 +235,14 @@ Append-only. Date, what we learned, what it changed.
   managed arrays/strings; comparing against 1/8 of the body was the wrong yardstick.
 - Worktrees need `..\SeekableDeflate` next to them since the split: a junction
   `WordDocumentRandomAccess-work\SeekableDeflate -> ..\SeekableDeflate` makes them build.
+
+## 2026-10-28 — on-demand index, live-checked
+
+- A cold first open of the 87 MB-body sample shows text after ~0.26 s in the browser (server
+  ~0.07 s) with ~440 of 123,007 blocks known; a jump to the middle pulls the scan there (~1.8 s);
+  reaching the end completes and saves the index (identical to a full build).
+- The live check caught what the harness could not: a jump to the *estimated* last row completed
+  the index, the real count shrank (154,146 → 123,007), and the scroller mounted an empty window
+  past the new end — a blank screen. Cause in the scroller's landing: its window was computed from
+  the count before the rows were fetched. `landAt` now re-checks after the fetch and re-lands on the
+  new last row. The app's own WindowedScroller has the same latent race when a count shrinks mid-landing.
