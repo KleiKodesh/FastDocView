@@ -6,13 +6,15 @@
 //   dotnet run -c Release -- --real <path>...      real .docx/.doc files to smoke-test (repeatable)
 //   dotnet run -c Release -- --skip-synthetic      only real files
 //   dotnet run -c Release -- --huge 1000000        instant reload + flat heap on a ~350 MB body
+//   dotnet run -c Release -- --incremental-open [N]  first open with the index built on demand (synthetic N blocks, default 1M, + --real .docx files)
 //   dotnet run -c Release -- --notes-streaming 20000   notes read on demand from a 100 MB+ footnotes part
 //   dotnet run -c Release -- --audit <path>...     formatting constructs the renderers do not handle
 //   dotnet run -c Release -- --skip-synthetic --corpus <list.txt>   the same over a whole file list, aggregated + open/render crash check
 using WordDocumentRandomAccess.Tests;
 
 int blocks = 50_000, deflateMegabytes = 8, hugeBlocks = 0, notesStreamingBlocks = 0;
-bool skipSynthetic = false;
+bool skipSynthetic = false, incrementalOpen = false;
+int incrementalBlocks = 1_000_000;
 var realPaths = new List<string>();
 var auditPaths = new List<string>();
 var profilePaths = new List<string>();
@@ -29,6 +31,10 @@ for (int i = 0; i < args.Length; i++)
         case "--notes-streaming": notesStreamingBlocks = int.Parse(args[++i]); break;  // e.g. 20000 → 1000 footnotes, ~113 MB footnotes.xml
         case "--deflate-mb": deflateMegabytes = int.Parse(args[++i]); break;
         case "--skip-synthetic": skipSynthetic = true; break;
+        case "--incremental-open":                                                     // optional block count, default 1000000
+            incrementalOpen = true;
+            if (i + 1 < args.Length && int.TryParse(args[i + 1], out int parsed)) { incrementalBlocks = parsed; i++; }
+            break;
         case "--real": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) realPaths.Add(args[++i]); break;
         case "--audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) auditPaths.Add(args[++i]); break;
         case "--profile-open": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) profilePaths.Add(args[++i]); break;
@@ -46,6 +52,8 @@ if (!skipSynthetic)
     DocxIndexAndRenderTest.Run(blocks);
 }
 if (hugeBlocks > 0) HugeDocumentMemoryTest.Run(hugeBlocks);
+if (incrementalOpen)
+    DocxIncrementalOpenTest.Run(incrementalBlocks, realPaths.Where(path => File.Exists(path) && path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)));
 if (notesStreamingBlocks > 0) DocxNotesStreamingTest.Run(notesStreamingBlocks, noteFillerCharacters: 60_000);
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Count > 0) WordCoexistenceTest.Run(realPaths.Where(File.Exists));

@@ -39,7 +39,17 @@ public interface IWordWindowedDocument : IDisposable
 {
     string FilePath { get; }
 
+    /// <summary>
+    /// Blocks in the document. While the index is still being built on demand (<see cref="IsIndexComplete"/>
+    /// false, .docx first open) this is an estimate that the reader corrects as the scan advances.
+    /// </summary>
     int BlockCount { get; }
+
+    /// <summary>False while a .docx first open is still extending its index on demand; .doc and cached/in-memory opens are always complete.</summary>
+    bool IsIndexComplete { get; }
+
+    /// <summary>Blocks whose position is known for sure (equals <see cref="BlockCount"/> once the index is complete).</summary>
+    int KnownBlockCount { get; }
 
     /// <summary>True when the document reads right-to-left by default (Hebrew documents).</summary>
     bool IsRightToLeft { get; }

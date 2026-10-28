@@ -223,3 +223,15 @@ Append-only. Date, what we learned, what it changed.
   An in-memory .docx keeps showing the version it read; it still reports the change.
 - A build in progress keeps its handle (shared) — if Word saves mid-build, the handle keeps reading
   the old file object, and the saved index fails its size/time check on the next open (re-index).
+## 2026-10-28 - on-demand index for the first open
+
+- **The scan is resumable for free.** The scanner was already chunk-fed and the inflater already
+  pauses between symbols, so "index on demand" is a pull loop in the reader's thread, not a
+  background pass. Checkpoints depend only on deflate block boundaries and output offsets, never on
+  read sizes, so the pulled index is byte-identical to the one-go build.
+- **A process-cold first render costs ~300-400 ms of JIT** (zip, XmlReader, the renderer) on top of
+  the scan. Timings in the harness are taken after a small warm-up file; a real host is long-lived.
+- **Heap "bounded" means "no more than a sidecar reopen".** A 1M-block index itself is ~45 MB of
+  managed arrays/strings; comparing against 1/8 of the body was the wrong yardstick.
+- Worktrees need `..\SeekableDeflate` next to them since the split: a junction
+  `WordDocumentRandomAccess-work\SeekableDeflate -> ..\SeekableDeflate` makes them build.

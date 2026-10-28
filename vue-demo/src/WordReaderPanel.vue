@@ -6,7 +6,7 @@ import type { WindowedScrollerApi } from '@/components/windowedScrollerTypes'
 import WordNotesPane from './WordNotesPane.vue'
 import {
   closeDocument, fetchBlocks, fetchHeadings, fetchServerMemory, fetchWeights, openDocument, WordSourceChangedError,
-  type WordDocumentSummary, type WordHeading, type WordNote, type WordServerMemory, type WordVisibleNote,
+  type WordDocumentSummary, type WordHeading, type WordIndexState, type WordNote, type WordServerMemory, type WordVisibleNote,
 } from './wordDemoApi'
 
 // The reader: the app's WindowedScroller over blocks fetched on demand from the C# host, the way
@@ -15,6 +15,13 @@ import {
 // open; headings and scrollbar weights arrive in parallel and are applied when they land.
 
 const BLOCK_CACHE_RADIUS = 1500
+
+// A .docx first open builds its index on demand: the server scans only as far as the blocks asked
+// for, so the block count starts as an estimate and every blocks response carries the corrected
+// one (no polling). When the scan completes, headings and weights are fetched again in full.
+const blockCount = ref(0)
+const isIndexComplete = ref(true)
+const knownBlockCount = ref(0)
 
 const summary = shallowRef<WordDocumentSummary | null>(null)
 const weights = shallowRef<Int32Array | null>(null)
@@ -69,6 +76,9 @@ async function open(path: string, options: { forceSidecar?: boolean; rebuildInde
     const opened = await openDocument(path, options)
     if (generation !== requestGeneration) { void closeDocument(opened.id); return }
     currentPath = path
+    blockCount.value = opened.blockCount
+    knownBlockCount.value = opened.knownBlockCount
+    isIndexComplete.value = opened.isIndexComplete
     summary.value = opened                       // text mounts now; weights + headings follow
     const textShownAt = performance.now()
     const [fetchedWeights, fetchedHeadings] = await Promise.all([fetchWeights(opened.id), fetchHeadings(opened.id)])
@@ -110,8 +120,9 @@ async function ensureBlocks(start: number, end: number): Promise<void> {
     }
     throw exception
   }
-  const { blocks, renderMilliseconds, roundTripMilliseconds } = fetched
+  const { blocks, renderMilliseconds, roundTripMilliseconds, indexState } = fetched
   if (summary.value !== document) return
+  if (indexState) applyIndexState(document, indexState)
   for (const block of blocks) {
     blockHtmlByIndex.set(block.index, block.html)
     if (block.notes.length) blockNotesByIndex.set(block.index, block.notes)
@@ -121,6 +132,24 @@ async function ensureBlocks(start: number, end: number): Promise<void> {
   lastFetch.value = `blocks ${first.toLocaleString()}–${(last - 1).toLocaleString()}: render ${renderMilliseconds} ms, round trip ${roundTripMilliseconds.toFixed(0)} ms, cached ${blockHtmlByIndex.size}`
   requestAnimationFrame(() => refreshVisibleNotes())
 }
+
+/** Takes the count / completion a blocks response reports; refetches headings + weights once the scan is complete. */
+function applyIndexState(document: WordDocumentSummary, state: WordIndexState) {
+  // the scan only moves forward: a response older than one already applied (or any after completion) is stale
+  if (isIndexComplete.value || state.knownBlockCount < knownBlockCount.value) return
+  knownBlockCount.value = state.knownBlockCount
+  if (blockCount.value !== state.estimatedBlockCount) blockCount.value = state.estimatedBlockCount
+  if (!state.isIndexComplete) return
+  isIndexComplete.value = true
+  void Promise.all([fetchWeights(document.id), fetchHeadings(document.id)]).then(([fetchedWeights, fetchedHeadings]) => {
+    if (summary.value !== document) return
+    weights.value = fetchedWeights
+    headings.value = fetchedHeadings
+  })
+}
+
+/** Weights only while they describe the current count (an estimate moves; the complete set is fetched on completion). */
+const rowWeights = computed(() => (weights.value && weights.value.length === blockCount.value ? weights.value : undefined))
 
 function trimCache(around: number) {
   if (blockHtmlByIndex.size <= BLOCK_CACHE_RADIUS * 2) return
@@ -193,7 +222,8 @@ function debugState() {
   const api = scroller()
   return {
     document: summary.value && {
-      id: summary.value.id, blockCount: summary.value.blockCount, mode: summary.value.mode, openMilliseconds: summary.value.openMilliseconds,
+      id: summary.value.id, blockCount: blockCount.value, mode: summary.value.mode, openMilliseconds: summary.value.openMilliseconds,
+      openedBlockCount: summary.value.blockCount, knownBlockCount: knownBlockCount.value, isIndexComplete: isIndexComplete.value,
       footnoteCount: summary.value.footnoteCount, endnoteCount: summary.value.endnoteCount,
     },
     hasWeights: weights.value !== null,
@@ -218,7 +248,8 @@ defineExpose({ open, reload, scrollToBlock, debugState })
       <button :disabled="!summary || isOpening" data-test="reload-button" @click="reload">Reload</button>
       <button :disabled="!summary || isOpening" @click="currentPath && open(currentPath, { rebuildIndex: true, forceSidecar: true, keepPosition: true })">Rebuild index</button>
       <button @click="refreshMemory(true)">Collect GC</button>
-      <label>Go to block <input type="number" min="0" :max="(summary?.blockCount ?? 1) - 1" data-test="goto-input" @change="scrollToBlock(Number(($event.target as HTMLInputElement).value))" /></label>
+      <label>Go to block <input type="number" min="0" :max="blockCount - 1" data-test="goto-input" @change="scrollToBlock(Number(($event.target as HTMLInputElement).value))" /></label>
+      <span v-if="summary && !isIndexComplete" data-test="index-state">indexing on demand: {{ knownBlockCount.toLocaleString() }} of ~{{ blockCount.toLocaleString() }} blocks known</span>
       <span v-if="serverMemory" class="memory" data-test="server-memory">
         server heap {{ serverMemory.managedHeapMegabytes }} MB · process {{ serverMemory.workingSetMegabytes }} MB
       </span>
@@ -242,12 +273,12 @@ defineExpose({ open, reload, scrollToBlock, debugState })
         <WindowedScroller
           ref="scrollerRef"
           class="scroller word-document"
-          :count="summary.blockCount"
+          :count="blockCount"
           :initial-index="restoreIndex"
           :initial-offset-px="restoreOffsetPx"
           :ensure-rows="ensureBlocks"
           :row-source-version="renderVersion"
-          :row-weights="weights ?? undefined"
+          :row-weights="rowWeights"
           :landmark-tiers="landmarkTiers"
           :dir="summary.isRightToLeft ? 'rtl' : 'ltr'"
           tabindex="0"

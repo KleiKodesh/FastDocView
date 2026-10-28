@@ -3,7 +3,10 @@
 //   POST /api/documents  { path, forceSidecar? }   opens (indexing if needed) → document summary
 //   GET  /api/documents/{id}/weights          estimated text length per block, raw little-endian Int32 (scrollbar weights)
 //   GET  /api/documents/{id}/headings         [{ blockIndex, level, text }] — from the index, no block reads
-//   GET  /api/documents/{id}/blocks?first&count    rendered blocks [{ index, kind, html, notes: [{ kind, number, label, html }] }]
+//   GET  /api/documents/{id}/blocks?first&count    rendered blocks [{ index, kind, html, notes: [{ kind, number, label, html }] }];
+//        headers X-Known-Block-Count / X-Estimated-Block-Count / X-Index-Complete: a .docx first open builds its index
+//        on demand (each request scans as far as it needs), so the reader corrects its count from every response.
+//        Headings / weights / note-references return what is known so far.
 //   DELETE /api/documents/{id}                closes
 //   GET  /api/progress                        the last index progress (polled while opening)
 //   GET  /api/memory                          managed heap / working set of this process
@@ -18,7 +21,7 @@ const string Url = "http://127.0.0.1:5188";
 
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.WebHost.UseUrls(Url);
-builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("X-Render-Milliseconds")));
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("X-Render-Milliseconds", "X-Known-Block-Count", "X-Estimated-Block-Count", "X-Index-Complete")));
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Insert(0, DevServerJsonContext.Default));
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
 
@@ -50,7 +53,8 @@ app.MapPost("/api/documents", (OpenRequest request) =>
 {
     request = request with { Path = ResolvePath(request.Path) };
     if (!File.Exists(request.Path)) return Results.NotFound(new ErrorBody($"File not found: {request.Path}"));
-    var policy = new WordIndexPolicy { CacheDirectory = cacheDirectory, ForcedMode = request.ForceSidecar == true ? WordIndexMode.Sidecar : null };
+    var policy = new WordIndexPolicy { CacheDirectory = cacheDirectory, ForcedMode = request.ForceSidecar == true ? WordIndexMode.Sidecar : null,
+                                 IndexesOnDemand = true };
     if (request.RebuildIndex == true && File.Exists(policy.IndexPathFor(request.Path))) File.Delete(policy.IndexPathFor(request.Path));
     var progress = new Progress<WordDocumentIndexProgress>(p => lastProgress = p);
     var watch = Stopwatch.StartNew();
@@ -72,7 +76,8 @@ app.MapPost("/api/documents", (OpenRequest request) =>
     (int footnotes, int endnotes) = document.NoteCounts;
     return Results.Ok(new DocumentSummary(id, Path.GetFileName(request.Path), request.Path, document.BlockCount, document.IsRightToLeft, document.Stylesheet,
                                           openMilliseconds, decision.Mode.ToString(), decision.HasCachedIndex, decision.Reason,
-                                          document.GetType().Name, document.Headings.Count, footnotes, endnotes));
+                                          document.GetType().Name, document.Headings.Count, footnotes, endnotes,
+                                          document.KnownBlockCount, document.IsIndexComplete));
 });
 
 app.MapGet("/api/documents/{id:int}/headings", (int id) =>
@@ -91,8 +96,9 @@ app.MapGet("/api/documents/{id:int}/weights", (int id) =>
 {
     if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
     // Raw Int32 little-endian: 123k blocks are 0.5 MB and parse in microseconds (JSON took ~200 ms).
-    var bytes = new byte[document.BlockCount * 4];
-    for (int i = 0; i < document.BlockCount; i++) BitConverter.TryWriteBytes(bytes.AsSpan(i * 4), document.EstimatedTextLength(i));
+    int blockCount = document.BlockCount;                   // one snapshot: an on-demand index may move it between calls
+    var bytes = new byte[blockCount * 4];
+    for (int i = 0; i < blockCount; i++) BitConverter.TryWriteBytes(bytes.AsSpan(i * 4), document.EstimatedTextLength(i));
     return Results.Bytes(bytes, "application/octet-stream");
 });
 
@@ -104,6 +110,9 @@ app.MapGet("/api/documents/{id:int}/blocks", (int id, int first, int count, Http
     try { blocks = document.RenderBlocks(first, Math.Min(count, 500)); }
     catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }   // the demo reopens
     response.Headers["X-Render-Milliseconds"] = watch.Elapsed.TotalMilliseconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+    response.Headers["X-Known-Block-Count"] = document.KnownBlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    response.Headers["X-Estimated-Block-Count"] = document.BlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    response.Headers["X-Index-Complete"] = document.IsIndexComplete ? "true" : "false";
     return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, b.Html,
         b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())).ToList());
 });
@@ -140,7 +149,7 @@ record FolderEntry(string Path, string FileName, long FileBytes, string Mode, bo
 record HeadingBody(int BlockIndex, int Level, string Text);
 record DocumentSummary(int Id, string FileName, string Path, int BlockCount, bool IsRightToLeft, string Stylesheet,
                        double OpenMilliseconds, string Mode, bool HasCachedIndex, string Reason, string ReaderType,
-                       int HeadingCount, int FootnoteCount, int EndnoteCount);
+                       int HeadingCount, int FootnoteCount, int EndnoteCount, int KnownBlockCount, bool IsIndexComplete);
 record NoteBody(string Kind, int Number, string Label, string Html);
 record NoteReferenceBody(string Kind, int Number, int BlockIndex);
 record BlockBody(int Index, int Kind, string Html, List<NoteBody> Notes);

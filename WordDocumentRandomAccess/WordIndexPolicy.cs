@@ -40,6 +40,13 @@ public sealed class WordIndexPolicy
     /// <summary>Where sidecar indexes live (null = <see cref="WordDocumentIndexCacheLocation.DefaultCacheDirectory"/>).</summary>
     public string? CacheDirectory { get; init; }
 
+    /// <summary>
+    /// .docx sidecar mode with no cached index: open after the first blocks are scanned and extend
+    /// the index as the reader asks for blocks (pulled, single-threaded); the sidecar is saved when
+    /// the scan reaches the end. False = build the whole index before the open returns.
+    /// </summary>
+    public bool IndexesOnDemand { get; init; }
+
     public WordIndexDecision Decide(string filePath, long bodyBytes, bool hasCachedIndex)
     {
         long estimatedIndexBytes = bodyBytes / 32 + 64;     // ~3 % windows + offsets
