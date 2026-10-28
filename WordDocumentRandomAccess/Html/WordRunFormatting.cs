@@ -20,6 +20,12 @@ public sealed class WordRunFormatting
     public bool IsSmallCaps;
     public bool IsAllCaps;
     public int CharacterSpacingTwips;
+    public int PositionHalfPoints;          // raised (+) / lowered (−) text, w:position / sprmCHpsPos
+    public bool IsOutline;
+    public bool IsShadow;
+    public bool IsEmboss;
+    public bool IsImprint;
+    public string? BorderCss;               // a border around the run (w:bdr / sprmCBrc)
     public bool IsRightToLeft;
     public int FontSizeHalfPoints;          // 0 = inherited/default
     public int ComplexScriptFontSizeHalfPoints;
@@ -29,6 +35,13 @@ public sealed class WordRunFormatting
     public string? ComplexScriptFontName;
 
     public WordRunFormatting Clone() => (WordRunFormatting)MemberwiseClone();
+
+    /// <summary>Shadow / emboss / imprint as CSS text-shadow (Word draws them as offset copies of the glyphs).</summary>
+    private string TextShadowCss()
+        => IsShadow ? "1px 1px 1px rgba(0,0,0,.45)"
+         : IsEmboss ? "-1px -1px 0 rgba(255,255,255,.8), 1px 1px 0 rgba(0,0,0,.35)"
+         : IsImprint ? "1px 1px 0 rgba(255,255,255,.8), -1px -1px 0 rgba(0,0,0,.35)"
+         : "";
 
     public int EffectiveFontSizeHalfPoints
         => IsRightToLeft && ComplexScriptFontSizeHalfPoints > 0 ? ComplexScriptFontSizeHalfPoints
@@ -55,6 +68,12 @@ public sealed class WordRunFormatting
         if (IsHidden) css.Append("display:none;");
         if (IsSmallCaps && (baseline is null || !baseline.IsSmallCaps)) css.Append("font-variant:small-caps;");
         if (IsAllCaps && (baseline is null || !baseline.IsAllCaps)) css.Append("text-transform:uppercase;");
+        if (PositionHalfPoints != 0 && (baseline is null || PositionHalfPoints != baseline.PositionHalfPoints))
+            css.Append("vertical-align:").Append((PositionHalfPoints / 2.0).ToString("0.#", CultureInfo.InvariantCulture)).Append("pt;");
+        string effects = TextShadowCss();
+        if (effects.Length > 0 && (baseline is null || effects != baseline.TextShadowCss())) css.Append("text-shadow:").Append(effects).Append(';');
+        if (IsOutline && (baseline is null || !baseline.IsOutline)) css.Append("-webkit-text-stroke:0.6px currentColor;color:transparent;");
+        if (BorderCss is not null && BorderCss != "none" && (baseline is null || BorderCss != baseline.BorderCss)) css.Append("border:").Append(BorderCss).Append(';');
         if (CharacterSpacingTwips != 0 && (baseline is null || CharacterSpacingTwips != baseline.CharacterSpacingTwips))
             css.Append("letter-spacing:").Append((CharacterSpacingTwips / 20.0).ToString("0.##", CultureInfo.InvariantCulture)).Append("pt;");
 

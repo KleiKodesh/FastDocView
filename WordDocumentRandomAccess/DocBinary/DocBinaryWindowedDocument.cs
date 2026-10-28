@@ -77,7 +77,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         FileInformationBlock = new DocBinaryFileInformationBlock(_wordDocument);
         _tableStream = _compoundFile.OpenRootStream(FileInformationBlock.TableStreamName)
                        ?? throw new InvalidDataException($"Table stream {FileInformationBlock.TableStreamName} is missing.");
-        PieceTable = new DocBinaryPieceTable(_wordDocument, _tableStream, FileInformationBlock.PieceTable);
+        PieceTable = new DocBinaryPieceTable(_wordDocument, _tableStream, FileInformationBlock);
         _styles = new DocBinaryStyleSheet(_tableStream, FileInformationBlock.StyleSheet)
         {
             Fonts = DocBinaryFontTable.Read(_tableStream, FileInformationBlock.FontTable),

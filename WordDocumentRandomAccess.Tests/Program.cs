@@ -8,12 +8,15 @@
 //   dotnet run -c Release -- --huge 1000000        instant reload + flat heap on a ~350 MB body
 //   dotnet run -c Release -- --notes-streaming 20000   notes read on demand from a 100 MB+ footnotes part
 //   dotnet run -c Release -- --audit <path>...     formatting constructs the renderers do not handle
+//   dotnet run -c Release -- --skip-synthetic --corpus <list.txt>   the same over a whole file list, aggregated + open/render crash check
 using WordDocumentRandomAccess.Tests;
 
 int blocks = 50_000, deflateMegabytes = 8, hugeBlocks = 0, notesStreamingBlocks = 0;
 bool skipSynthetic = false;
 var realPaths = new List<string>();
 var auditPaths = new List<string>();
+string? corpusList = null;
+int corpusMax = int.MaxValue;
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -25,6 +28,8 @@ for (int i = 0; i < args.Length; i++)
         case "--skip-synthetic": skipSynthetic = true; break;
         case "--real": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) realPaths.Add(args[++i]); break;
         case "--audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) auditPaths.Add(args[++i]); break;
+        case "--corpus": corpusList = args[++i]; break;            // a text file with one Word file path per line
+        case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
     }
 }
 
@@ -38,6 +43,7 @@ if (hugeBlocks > 0) HugeDocumentMemoryTest.Run(hugeBlocks);
 if (notesStreamingBlocks > 0) DocxNotesStreamingTest.Run(notesStreamingBlocks, noteFillerCharacters: 60_000);
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));
 if (auditPaths.Count > 0) WordFormattingAudit.Run(auditPaths.Where(File.Exists));
+if (corpusList is not null) WordFormattingAudit.RunCorpus(corpusList, corpusMax);
 
 Console.WriteLine();
 Console.WriteLine(TestReport.FailureCount == 0 ? "ALL PASSED" : $"{TestReport.FailureCount} FAILURE(S)");

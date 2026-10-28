@@ -22,10 +22,16 @@ public sealed class DocBinaryPieceTable
     public IReadOnlyList<Piece> Pieces => _pieces;
     public int TotalCharacterCount => _pieces.Length == 0 ? 0 : _pieces[_pieces.Length - 1].CpEnd;
 
-    public DocBinaryPieceTable(Stream wordDocument, Stream tableStream, (uint offset, uint length) clx)
+    public DocBinaryPieceTable(Stream wordDocument, Stream tableStream, DocBinaryFileInformationBlock fib)
     {
         _wordDocument = wordDocument;
-        if (clx.length == 0) throw new InvalidDataException("Word document has no piece table (Clx).");
+        (uint offset, uint length) clx = fib.PieceTable;
+        if (clx.length == 0)
+        {
+            // A non-complex file has no Clx: the text is one contiguous run from fcMin ([MS-DOC] §2.5.1; LibreOffice ww8scan does the same).
+            _pieces = [ContiguousPiece(fib)];
+            return;
+        }
         var bytes = new byte[clx.length];
         tableStream.Position = clx.offset;
         int read = 0;
@@ -38,7 +44,9 @@ public sealed class DocBinaryPieceTable
             int cb = BitConverter.ToUInt16(bytes, position + 1);
             position += 3 + cb;
         }
-        if (position >= bytes.Length || bytes[position] != 0x02) throw new InvalidDataException("Word piece table: Pcdt not found.");
+        if (position >= bytes.Length || bytes[position] != 0x02 || !IsPlausiblePcdt(bytes, position))
+            position = ScanForPcdt(bytes);           // tolerate junk before the Pcdt, as LibreOffice does
+        if (position < 0) { _pieces = [ContiguousPiece(fib)]; return; }
         int plcLength = BitConverter.ToInt32(bytes, position + 1);
         int plcStart = position + 5;
         int pieceCount = (plcLength - 4) / 12;
@@ -54,6 +62,30 @@ public sealed class DocBinaryPieceTable
             if (isCompressed) fc /= 2;
             _pieces[i] = new Piece(cpStart, cpEnd, fc, isCompressed);
         }
+    }
+
+    /// <summary>A 0x02 whose lcb fits the remaining bytes and describes a whole PlcPcd ((n + 1) CPs + n 8-byte PCDs).</summary>
+    private static bool IsPlausiblePcdt(byte[] bytes, int position)
+    {
+        if (position + 5 > bytes.Length) return false;
+        int length = BitConverter.ToInt32(bytes, position + 1);
+        return length >= 16 && position + 5 + length <= bytes.Length && (length - 4) % 12 == 0;
+    }
+
+    private static int ScanForPcdt(byte[] bytes)
+    {
+        for (int position = 0; position + 5 <= bytes.Length; position++)
+            if (bytes[position] == 0x02 && IsPlausiblePcdt(bytes, position)) return position;
+        return -1;
+    }
+
+    /// <summary>The whole text as one piece from fcMin to fcMac: 8-bit unless the FIB says extended (Unicode) characters.</summary>
+    private static Piece ContiguousPiece(DocBinaryFileInformationBlock fib)
+    {
+        bool isCompressed = !fib.HasExtendedCharacters;
+        int bytesPerCharacter = isCompressed ? 1 : 2;
+        int characterCount = (int)Math.Max(0, (fib.TextEndFileOffset - fib.TextStartFileOffset) / bytesPerCharacter);
+        return new Piece(0, characterCount, fib.TextStartFileOffset, isCompressed);
     }
 
     public int PieceIndexOf(int cp)

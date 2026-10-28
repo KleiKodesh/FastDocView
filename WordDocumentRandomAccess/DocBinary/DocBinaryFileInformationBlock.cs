@@ -15,6 +15,9 @@ public sealed class DocBinaryFileInformationBlock
     public ushort Version { get; }
     public bool IsComplex { get; }
     public bool IsEncrypted { get; }
+    public bool HasExtendedCharacters { get; }      // fExtChar: text is UTF-16 (only matters for non-complex files)
+    public uint TextStartFileOffset { get; }        // fcMin
+    public uint TextEndFileOffset { get; }          // fcMac
     public string TableStreamName { get; }
     public int MainTextCharacterCount { get; }      // ccpText
     public int FootnoteCharacterCount { get; }      // ccpFtn
@@ -48,6 +51,9 @@ public sealed class DocBinaryFileInformationBlock
         ushort flags = BitConverter.ToUInt16(fib, 0x0A);
         IsComplex = (flags & 0x0004) != 0;
         IsEncrypted = (flags & 0x0100) != 0;
+        HasExtendedCharacters = (flags & 0x1000) != 0;
+        TextStartFileOffset = BitConverter.ToUInt32(fib, 0x18);
+        TextEndFileOffset = BitConverter.ToUInt32(fib, 0x1C);
         if (IsEncrypted) throw new NotSupportedException("Encrypted (password-protected) Word documents are not supported.");
         TableStreamName = (flags & 0x0200) != 0 ? "1Table" : "0Table";
 

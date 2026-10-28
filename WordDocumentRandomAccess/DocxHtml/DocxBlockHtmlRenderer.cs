@@ -25,6 +25,8 @@ public sealed class DocxBlockHtmlRenderer
     private string? _previousStyleKey;    // the style of the paragraph rendered just before (contextual spacing)
     private string? _currentNoteLabel;    // inside a note body: the label its w:footnoteRef/w:endnoteRef shows
     private WordDocumentNoteKind _currentNoteKind;
+    private string? _tableStyleId;        // inside a table: its style, layered under paragraph styles
+    private int _textBoxDepth;            // inside a text box paragraphs become block spans (a <p> may not hold a <p>)
 
     public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null)
     {
@@ -84,11 +86,12 @@ public sealed class DocxBlockHtmlRenderer
     {
         XElement? pPr = paragraph.Element(W + "pPr");
         string? styleId = (string?)pPr?.Element(W + "pStyle")?.Attribute(W + "val");
-        WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr);
+        WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId);
         int headingLevel = formatting.OutlineLevel is >= 0 and <= 8 ? formatting.OutlineLevel + 1 : _styles.HeadingLevelOf(styleId);
-        string tag = headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
+        string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
+        string css = formatting.ToCss(_previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : "");
 
-        WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(_previousStyleKey), null, formatting.IsRightToLeft);
+        WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
         if (_listLabel is { Length: > 0 } label)
         {
             html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(label)).Append("</span> ");
@@ -99,7 +102,7 @@ public sealed class DocxBlockHtmlRenderer
         _previousStyleKey = formatting.StyleKey;
 
         // A w:sectPr inside pPr ends a section: in a flow view that is a rule, not a new page.
-        if (pPr?.Element(W + "sectPr") is not null) html.Append("<hr class=\"section-break\">");
+        if (pPr?.Element(W + "sectPr") is not null && _textBoxDepth == 0) html.Append("<hr class=\"section-break\">");
     }
 
     private void RenderInlineChildren(XElement container, StringBuilder html, WordRunFormatting paragraphBase)
@@ -110,11 +113,15 @@ public sealed class DocxBlockHtmlRenderer
             switch (name)
             {
                 case "r": RenderRun(child, html, paragraphBase); break;
-                case "hyperlink": case "ins": case "smartTag": case "sdt": case "customXml": case "fldSimple": case "dir": case "bdo":
+                case "hyperlink": case "ins": case "moveTo": case "smartTag": case "sdt": case "customXml": case "fldSimple": case "dir": case "bdo":
                     XElement inner = name == "sdt" ? child.Element(W + "sdtContent") ?? child : child;
                     RenderInlineChildren(inner, html, paragraphBase);
                     break;
-                // w:del (deleted text), w:pPr, bookmarks, proofErr, commentRange… render nothing.
+                case "AlternateContent":
+                    if (ChosenAlternative(child) is { } chosen) RenderInlineChildren(chosen, html, paragraphBase);
+                    break;
+                // Tracked changes show as Word's "final" view: w:del / w:moveFrom hidden, w:ins / w:moveTo shown.
+                // w:pPr, bookmarks, proofErr, commentRange, move ranges… render nothing.
             }
         }
     }
@@ -126,7 +133,12 @@ public sealed class DocxBlockHtmlRenderer
         string css = formatting.ToCss(paragraphBase);
         bool hasSpan = css.Length > 0;
         if (hasSpan) html.Append("<span style=\"").Append(css).Append("\">");
+        RenderRunChildren(run, html);
+        if (hasSpan) html.Append("</span>");
+    }
 
+    private void RenderRunChildren(XElement run, StringBuilder html)
+    {
         foreach (XElement child in run.Elements())
         {
             switch (child.Name.LocalName)
@@ -148,14 +160,48 @@ public sealed class DocxBlockHtmlRenderer
                         html.Append("<span class=\"note-mark\">").Append(WordHtmlText.Encode(_currentNoteLabel)).Append("</span>");
                     break;
                 case "drawing": case "pict": case "object":
-                    html.Append("<span class=\"unsupported\">[image]</span>");
+                    AppendDrawing(html, child);
                     break;
+                case "AlternateContent":
+                    // mc:AlternateContent: the first choice this renderer can show, else the fallback — never both.
+                    if (ChosenAlternative(child) is { } chosen)
+                    {
+                        var wrapper = new XElement(W + "r", chosen.Elements());
+                        RenderRunChildren(wrapper, html);
+                    }
+                    break;
+                case "pgNum": case "commentReference": case "annotationRef": break;   // no pages; comments are not shown in a reading view
                 // separator lines of the notes part, field codes, layout hints: nothing to show
                 case "separator": case "continuationSeparator": case "fldChar": case "instrText": case "rPr": case "lastRenderedPageBreak": break;
             }
         }
-        if (hasSpan) html.Append("</span>");
     }
+
+    /// <summary>
+    /// A drawing's text boxes (kept by <see cref="Docx.DocxDrawingStripper"/>) render as framed inline
+    /// blocks; a drawing without text is an image placeholder.
+    /// </summary>
+    private void AppendDrawing(StringBuilder html, XElement drawing)
+    {
+        List<XElement> textBoxes = drawing.Descendants(W + "txbxContent").Where(box => !box.Ancestors(W + "txbxContent").Any()).ToList();
+        if (textBoxes.Count == 0) { html.Append("<span class=\"unsupported\">[image]</span>"); return; }
+        string? previous = _previousStyleKey;
+        _textBoxDepth++;
+        foreach (XElement textBox in textBoxes)
+        {
+            html.Append("<span class=\"text-box\">");
+            _previousStyleKey = null;
+            foreach (XElement child in textBox.Elements()) RenderBlock(child, html);
+            html.Append("</span>");
+        }
+        _textBoxDepth--;
+        _previousStyleKey = previous;
+    }
+
+    /// <summary>mc:AlternateContent → the first mc:Choice (all its requirements are WordprocessingML extensions we degrade gracefully), else mc:Fallback.</summary>
+    private static XElement? ChosenAlternative(XElement alternateContent)
+        => alternateContent.Elements().FirstOrDefault(e => e.Name.LocalName == "Choice")
+        ?? alternateContent.Elements().FirstOrDefault(e => e.Name.LocalName == "Fallback");
 
     private void AppendNoteReference(StringBuilder html, WordDocumentNoteKind kind, XElement reference)
     {
@@ -185,13 +231,24 @@ public sealed class DocxBlockHtmlRenderer
     private void RenderTable(XElement table, StringBuilder html)
     {
         XElement? tblPr = table.Element(W + "tblPr");
-        bool isRightToLeft = tblPr?.Element(W + "bidiVisual") is { } bidi && DocxStyleCascade.IsOn(bidi.Attribute(W + "val"));
+        string? tableStyleId = (string?)tblPr?.Element(W + "tblStyle")?.Attribute(W + "val");
+        // The table style's tblPr first, the table's own tblPr last: the later one wins per property.
+        var tablePropertyLayers = _styles.TableStyleProperties(tableStyleId, "tblPr").ToList();
+        if (tblPr is not null) tablePropertyLayers.Add(tblPr);
+        XElement? Last(string name) => tablePropertyLayers.Select(layer => layer.Element(W + name)).LastOrDefault(element => element is not null);
+
+        bool isRightToLeft = Last("bidiVisual") is { } bidi && DocxStyleCascade.IsOn(bidi.Attribute(W + "val"));
         var tableCss = new StringBuilder();
-        if (DocxTableFormatting.WidthCss(tblPr?.Element(W + "tblW")) is { } width) tableCss.Append("width:").Append(width).Append(';');
-        if (DocxStyleCascade.TwipsAttribute(tblPr?.Element(W + "tblInd"), "w") is { } indent and not 0)
+        if (DocxTableFormatting.WidthCss(Last("tblW")) is { } width) tableCss.Append("width:").Append(width).Append(';');
+        if (DocxStyleCascade.TwipsAttribute(Last("tblInd"), "w") is { } indent and not 0)
             tableCss.Append("margin-inline-start:").Append(WordParagraphFormatting.TwipsToPt(indent)).Append("pt;");
-        DocxTableFormatting.Borders tableBorders = DocxTableFormatting.ReadBorders(tblPr?.Element(W + "tblBorders"));
-        string cellPadding = DocxTableFormatting.CellMarginCss(tblPr?.Element(W + "tblCellMar"));
+        if (DocxStyleCascade.TwipsAttribute(Last("tblCellSpacing"), "w") is { } spacing and > 0)
+            tableCss.Append("border-collapse:separate;border-spacing:").Append(WordParagraphFormatting.TwipsToPt(spacing * 2)).Append("pt;");
+        if ((string?)Last("tblLayout")?.Attribute(W + "type") == "fixed") tableCss.Append("table-layout:fixed;");
+        DocxTableFormatting.Borders tableBorders = DocxTableFormatting.ReadBorders(Last("tblBorders"));
+        string cellPadding = DocxTableFormatting.CellMarginCss(Last("tblCellMar"));
+        string? outerTableStyle = _tableStyleId;
+        _tableStyleId = tableStyleId;
 
         WordHtmlText.AppendOpenTag(html, "table", tableCss.ToString(), null, isRightToLeft);
         List<XElement> rows = table.Elements(W + "tr").ToList();
@@ -210,7 +267,9 @@ public sealed class DocxBlockHtmlRenderer
                 html.Append("<td");
                 if (span > 1) html.Append(" colspan=\"").Append(span).Append('"');
                 if (rowSpan > 1) html.Append(" rowspan=\"").Append(rowSpan).Append('"');
-                string cellCss = DocxTableFormatting.CellCss(tcPr, tableBorders) + cellPadding;
+                string cellCss = DocxTableFormatting.CellCss(tcPr, tableBorders)
+                               + (DocxTableFormatting.CellMarginCss(tcPr?.Element(W + "tcMar")) is { Length: > 0 } ownMargins ? ownMargins : cellPadding)
+                               + (tcPr?.Element(W + "noWrap") is { } noWrap && DocxStyleCascade.IsOn(noWrap.Attribute(W + "val")) ? "white-space:nowrap;" : "");
                 if (cellCss.Length > 0) html.Append(" style=\"").Append(cellCss).Append('"');
                 html.Append('>');
                 string? previous = _previousStyleKey;
@@ -223,6 +282,7 @@ public sealed class DocxBlockHtmlRenderer
             html.Append("</tr>");
         }
         html.Append("</table>");
+        _tableStyleId = outerTableStyle;
     }
 
     private static int CountVerticalMergeSpan(List<XElement> rows, int startRow, int targetColumn)

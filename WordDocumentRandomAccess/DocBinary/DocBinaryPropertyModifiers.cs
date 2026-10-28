@@ -53,6 +53,15 @@ public static class DocBinaryPropertyModifiers
                 case 0xC64D: formatting.ShadingHex = ShadingBackground(grpprl, operandAt + 4, operandLength); break;      // SHDOperand: cvFore then cvBack
                 case 0x442D: formatting.ShadingHex = Shading80Background(BitConverter.ToUInt16(grpprl, operandAt)); break;
                 case 0xC60D: case 0xC615: formatting.FirstTabStopTwips = FirstAddedTabStop(grpprl, operandAt, operandLength, formatting.LeftIndentTwips) ?? formatting.FirstTabStopTwips; break;
+                // paragraph borders: Brc80 (Word 97, 4 bytes) and Brc (Word 2000+, 8 bytes); top, left (= start), bottom, right (= end)
+                case 0x6424: formatting.BorderTopCss = Brc80Css(grpprl, operandAt); break;
+                case 0x6425: formatting.BorderStartCss = Brc80Css(grpprl, operandAt); break;
+                case 0x6426: formatting.BorderBottomCss = Brc80Css(grpprl, operandAt); break;
+                case 0x6427: formatting.BorderEndCss = Brc80Css(grpprl, operandAt); break;
+                case 0xC64E: formatting.BorderTopCss = BrcCss(grpprl, operandAt, operandLength); break;
+                case 0xC64F: formatting.BorderStartCss = BrcCss(grpprl, operandAt, operandLength); break;
+                case 0xC650: formatting.BorderBottomCss = BrcCss(grpprl, operandAt, operandLength); break;
+                case 0xC651: formatting.BorderEndCss = BrcCss(grpprl, operandAt, operandLength); break;
             }
         }
     }
@@ -88,6 +97,15 @@ public static class DocBinaryPropertyModifiers
                 case 0x083A: formatting.IsSmallCaps = Toggle(grpprl[operandAt], formatting.IsSmallCaps, styleBaseline?.IsSmallCaps); break;
                 case 0x083B: formatting.IsAllCaps = Toggle(grpprl[operandAt], formatting.IsAllCaps, styleBaseline?.IsAllCaps); break;
                 case 0x8840: formatting.CharacterSpacingTwips = BitConverter.ToInt16(grpprl, operandAt); break;
+                case 0x4840: formatting.PositionHalfPoints = BitConverter.ToInt16(grpprl, operandAt); break;                            // sprmCHpsPos
+                case 0x0868: formatting.IsHidden = Toggle(grpprl[operandAt], formatting.IsHidden, styleBaseline?.IsHidden); break;     // sprmCFWebHidden
+                case 0x2A53: formatting.IsStrikethrough = Toggle(grpprl[operandAt], formatting.IsStrikethrough, styleBaseline?.IsStrikethrough); break;   // double strike
+                case 0x0838: formatting.IsOutline = Toggle(grpprl[operandAt], formatting.IsOutline, styleBaseline?.IsOutline); break;
+                case 0x0839: formatting.IsShadow = Toggle(grpprl[operandAt], formatting.IsShadow, styleBaseline?.IsShadow); break;
+                case 0x0858: formatting.IsEmboss = Toggle(grpprl[operandAt], formatting.IsEmboss, styleBaseline?.IsEmboss); break;
+                case 0x0854: formatting.IsImprint = Toggle(grpprl[operandAt], formatting.IsImprint, styleBaseline?.IsImprint); break;
+                case 0x6865: formatting.BorderCss = Brc80Css(grpprl, operandAt); break;                                                  // sprmCBrc80
+                case 0xCA72: formatting.BorderCss = BrcCss(grpprl, operandAt, operandLength); break;                                     // sprmCBrc
                 case 0x4A4F: formatting.FontName = fonts?.NameOf(BitConverter.ToUInt16(grpprl, operandAt)) ?? formatting.FontName; break;   // ASCII text
                 case 0x4A5E: formatting.ComplexScriptFontName = fonts?.NameOf(BitConverter.ToUInt16(grpprl, operandAt)) ?? formatting.ComplexScriptFontName; break;  // bidi text
             }
@@ -102,6 +120,33 @@ public static class DocBinaryPropertyModifiers
         if (operandLength < 10 || at + 4 > grpprl.Length || grpprl[at + 3] == 0xFF) return null;
         string hex = $"{grpprl[at]:X2}{grpprl[at + 1]:X2}{grpprl[at + 2]:X2}";
         return hex == "FFFFFF" ? null : hex;
+    }
+
+    /// <summary>Brc80 ([MS-DOC] §2.9.17): dptLineWidth (eighths of a point), brcType, ico, then spacing/flags.</summary>
+    private static string? Brc80Css(byte[] grpprl, int at)
+    {
+        if (at + 4 > grpprl.Length) return null;
+        byte width = grpprl[at], type = grpprl[at + 1], ico = grpprl[at + 2];
+        if (type is 0 or 0xFF) return "none";
+        string color = ico > 0 && ico < IcoPalette.Length ? "#" + IcoPalette[ico] : "#000";
+        return BorderCss(width, type, color);
+    }
+
+    /// <summary>Brc ([MS-DOC] §2.9.16): cv (COLORREF), dptLineWidth, brcType, then spacing/flags. Sprms() already consumed the operand's cb.</summary>
+    private static string? BrcCss(byte[] grpprl, int at, int operandLength)
+    {
+        if (operandLength < 8 || at + 8 > grpprl.Length) return null;
+        byte width = grpprl[at + 4], type = grpprl[at + 5];
+        if (type is 0 or 0xFF) return "none";
+        string color = grpprl[at + 3] == 0xFF ? "#000" : $"#{grpprl[at]:X2}{grpprl[at + 1]:X2}{grpprl[at + 2]:X2}";
+        return BorderCss(width, type, color);
+    }
+
+    private static string BorderCss(byte eighthsOfPoint, byte brcType, string color)
+    {
+        double width = Math.Max(0.25, eighthsOfPoint / 8.0);
+        string style = brcType switch { 3 => "double", 6 => "dotted", 7 or 8 or 9 or 22 => "dashed", _ => "solid" };
+        return $"{width.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}pt {style} {color}";
     }
 
     /// <summary>Shd80: icoFore (5 bits), icoBack (5 bits), ipat (6 bits) → the background ico as "RRGGBB".</summary>

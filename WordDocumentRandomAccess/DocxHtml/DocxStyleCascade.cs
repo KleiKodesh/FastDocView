@@ -59,10 +59,41 @@ public sealed class DocxStyleCascade
         return formatting;
     }
 
-    /// <summary>Full paragraph formatting: style chain + direct pPr (+ its paragraph-mark rPr as the base run).</summary>
-    public WordParagraphFormatting ResolveParagraph(string? styleId, XElement? directParagraphProperties)
+    /// <summary>
+    /// Inside a table, Word layers the table style's pPr/rPr between the document defaults and the
+    /// paragraph style ([MS-OI29500] / ECMA-376 §17.7.2). Cached per (table style, paragraph style).
+    /// </summary>
+    public WordParagraphFormatting ResolveParagraphStyleInTable(string? tableStyleId, string? styleId)
     {
-        WordParagraphFormatting formatting = ResolveParagraphStyle(styleId).Clone();
+        if (tableStyleId is null) return ResolveParagraphStyle(styleId);
+        string key = tableStyleId + "\u0001" + (styleId ?? _defaultParagraphStyleId ?? "");
+        if (_resolvedParagraphStyles.TryGetValue(key, out WordParagraphFormatting? cached)) return cached;
+        WordParagraphFormatting formatting = DocumentDefaults.Clone();
+        foreach (XElement style in StyleChain(tableStyleId))
+        {
+            ApplyParagraphProperties(formatting, style.Element(W + "pPr"));
+            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"));
+        }
+        foreach (XElement style in StyleChain(styleId ?? _defaultParagraphStyleId))
+        {
+            ApplyParagraphProperties(formatting, style.Element(W + "pPr"));
+            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"));
+        }
+        _resolvedParagraphStyles[key] = formatting;
+        return formatting;
+    }
+
+    /// <summary>A table style's own w:tblPr / w:tcPr children through its basedOn chain, most specific last (borders, cell margins, shading).</summary>
+    public IEnumerable<XElement> TableStyleProperties(string? tableStyleId, string elementName)
+    {
+        foreach (XElement style in StyleChain(tableStyleId))
+            if (style.Element(W + elementName) is { } properties) yield return properties;
+    }
+
+    /// <summary>Full paragraph formatting: style chain + direct pPr (+ its paragraph-mark rPr as the base run).</summary>
+    public WordParagraphFormatting ResolveParagraph(string? styleId, XElement? directParagraphProperties, string? tableStyleId = null)
+    {
+        WordParagraphFormatting formatting = ResolveParagraphStyleInTable(tableStyleId, styleId).Clone();
         ApplyParagraphProperties(formatting, directParagraphProperties);
         formatting.StyleKey = styleId ?? _defaultParagraphStyleId ?? "";
         return formatting;
@@ -146,6 +177,13 @@ public sealed class DocxStyleCascade
             }
         }
         if (TwipsAttribute(pPr.Element(W + "outlineLvl"), "val") is { } outline) formatting.OutlineLevel = outline;
+        if (pPr.Element(W + "pBdr") is { } borders)
+        {
+            formatting.BorderTopCss = DocxTableFormatting.BorderCss(borders.Element(W + "top")) ?? formatting.BorderTopCss;
+            formatting.BorderBottomCss = DocxTableFormatting.BorderCss(borders.Element(W + "bottom")) ?? formatting.BorderBottomCss;
+            formatting.BorderStartCss = DocxTableFormatting.BorderCss(borders.Element(W + "start") ?? borders.Element(W + "left")) ?? formatting.BorderStartCss;
+            formatting.BorderEndCss = DocxTableFormatting.BorderCss(borders.Element(W + "end") ?? borders.Element(W + "right")) ?? formatting.BorderEndCss;
+        }
         if (pPr.Element(W + "contextualSpacing") is { } contextual) formatting.IsContextualSpacing = IsOn(contextual.Attribute(W + "val"));
         if (pPr.Element(W + "shd") is { } shading) formatting.ShadingHex = FillHex(shading);
         if (pPr.Element(W + "tabs") is { } tabs)
@@ -178,6 +216,18 @@ public sealed class DocxStyleCascade
                 case "strike": case "dstrike": formatting.IsStrikethrough = IsOn(property.Attribute(W + "val")); break;
                 case "vanish": case "webHidden": formatting.IsHidden = IsOn(property.Attribute(W + "val")); break;
                 case "smallCaps": formatting.IsSmallCaps = IsOn(property.Attribute(W + "val")); break;
+                case "position": formatting.PositionHalfPoints = TwipsAttribute(property, "val") ?? formatting.PositionHalfPoints; break;
+                case "outline": formatting.IsOutline = IsOn(property.Attribute(W + "val")); break;
+                case "shadow": formatting.IsShadow = property.Name.Namespace == W ? IsOn(property.Attribute(W + "val")) : true; break;
+                case "emboss": formatting.IsEmboss = IsOn(property.Attribute(W + "val")); break;
+                case "imprint": formatting.IsImprint = IsOn(property.Attribute(W + "val")); break;
+                case "bdr": formatting.BorderCss = DocxTableFormatting.BorderCss(property); break;
+                case "textFill":
+                    // Word 2010 text fill (w14): a solid fill is just a color; gradients fall back to their first stop.
+                    string? fillColor = property.Descendants().FirstOrDefault(e => e.Name.LocalName == "srgbClr")?.Attributes()
+                        .FirstOrDefault(a => a.Name.LocalName == "val")?.Value;
+                    if (fillColor is { Length: 6 }) formatting.ColorHex = fillColor;
+                    break;
                 case "caps": formatting.IsAllCaps = IsOn(property.Attribute(W + "val")); break;
                 case "spacing": formatting.CharacterSpacingTwips = TwipsAttribute(property, "val") ?? formatting.CharacterSpacingTwips; break;
                 case "rtl": formatting.IsRightToLeft = IsOn(property.Attribute(W + "val")); break;

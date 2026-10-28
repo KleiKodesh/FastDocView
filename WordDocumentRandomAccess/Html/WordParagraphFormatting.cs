@@ -28,6 +28,10 @@ public sealed class WordParagraphFormatting
     public bool IsContextualSpacing;        // no space between paragraphs of the same style
     public int FirstTabStopTwips;           // 0 = default stops; drives CSS tab-size
     public string? StyleKey;                // what "same style" means for contextual spacing
+    public string? BorderTopCss;            // CSS border values ("1pt solid #000"), null = none
+    public string? BorderBottomCss;
+    public string? BorderStartCss;
+    public string? BorderEndCss;
     public WordRunFormatting RunFormatting = new();
 
     public WordParagraphFormatting Clone()
@@ -62,6 +66,15 @@ public sealed class WordParagraphFormatting
         if (SpaceAfterTwips != 0) css.Append("margin-bottom:").Append(TwipsToPt(SpaceAfterTwips)).Append("pt;");
         if (ShadingHex is not null) css.Append("background-color:#").Append(ShadingHex).Append(';');
         if (FirstTabStopTwips > 0) css.Append("tab-size:").Append(TwipsToPt(FirstTabStopTwips)).Append("pt;");
+        bool hasBorder = false;
+        foreach ((string property, string? value) in new[] { ("border-top", BorderTopCss), ("border-bottom", BorderBottomCss),
+                                                              ("border-inline-start", BorderStartCss), ("border-inline-end", BorderEndCss) })
+        {
+            if (value is null or "none") continue;
+            css.Append(property).Append(':').Append(value).Append(';');
+            hasBorder = true;
+        }
+        if (hasBorder) css.Append("padding:1pt 4pt;");
         if (LineSpacingTwipsOrAuto > 0)
         {
             if (IsLineSpacingAuto) css.Append("line-height:").Append((LineSpacingTwipsOrAuto / 240.0).ToString("0.##", CultureInfo.InvariantCulture)).Append(';');

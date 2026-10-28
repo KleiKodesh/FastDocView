@@ -122,3 +122,20 @@ Append-only. Date, what we learned, what it changed.
   small body with huge notes is opened "in memory" and inflates the notes whole.
 - One package stream is shared by the block and note readers; their views re-seat the file
   position on every read, but concurrent requests still need a lock around rendering.
+
+## 2026-10-28 — corpus audit over the whole laptop
+
+- **Coverage is measured over every Word file on the machine** (5,355: 1,850 .docx, 3,339 .doc),
+  listed from the KitveiHakodesh service's file index. First pass: 248 files with paragraph
+  borders, 50 with text boxes (their text was being dropped), ~400 .doc with border sprms; 3 crashes.
+  After the fixes: 0 unhandled in both formats (bar one revision construct, ignored on purpose), 0 crashes.
+- **Drawings nest.** A picture inside a text box inside a shape: the drawing stripper's "these
+  don't nest, first close tag wins" assumption broke the XML of such blocks. Matching is depth-aware
+  now, and text boxes inside drawings are kept (their text is document text).
+- **Table styles layer under paragraph styles** (defaults → table style → paragraph style →
+  direct); cell margins / borders come from the table style first, the table's own tblPr last.
+- **A .doc can have junk before its Pcdt, or no Clx at all** (non-complex file: text is one
+  contiguous run from fcMin). Scanning forward for a plausible Pcdt and the contiguous fallback,
+  as LibreOffice does, opened the last failing file.
+- 145 files could not even be read (OneDrive placeholders / locked files): an OS state, not a
+  parser bug — report it as "file not available", never as a format failure.
