@@ -16,6 +16,6 @@ internal interface IDocxBlockTable
     WordDocumentBlockKind BlockKindOf(int blockIndex);
     int BlockTextLengthOf(int blockIndex);
     string? StyleIdOf(int blockIndex);
-    string? ListLabelOf(int blockIndex);
+    DocxListLabel? ListLabelOf(int blockIndex);
     ReadOnlySpan<DocxNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex);
 }

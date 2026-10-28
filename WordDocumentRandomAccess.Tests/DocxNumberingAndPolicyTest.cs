@@ -12,11 +12,15 @@ public static class DocxNumberingAndPolicyTest
     public static void Run()
     {
         TestReport.Step("Number formats");
-        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(1) == "א׳", "hebrew1 1 → א׳");
-        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(15) == "ט״ו", "hebrew1 15 → ט״ו");
-        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(16) == "ט״ז", "hebrew1 16 → ט״ז");
-        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(27) == "כ״ז", "hebrew1 27 → כ״ז");
-        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(5784) == "ה׳תשפ״ד", "hebrew1 5784 → ה׳תשפ״ד");
+        // Word 16 ListFormat.ListString (2026-10-28): no geresh / gershayim; the sequence cycles after 392.
+        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(1) == "א", "hebrew1 1 as Word shows it");
+        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(11) == "יא", "hebrew1 11 as Word shows it");
+        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(15) == "טו", "hebrew1 15 as Word shows it");
+        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(16) == "טז", "hebrew1 16 as Word shows it");
+        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(115) == "קטו", "hebrew1 115 as Word shows it");
+        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(500) == "קח", "hebrew1 500 as Word shows it");
+        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(1000) == "רטז", "hebrew1 1000 as Word shows it");
+        TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(5784) == "רצו", "hebrew1 5784 as Word shows it");
         TestReport.Check(DocxNumberingDefinitions.HebrewLetters(23) == "אא", "hebrew2 23 → אא");
         TestReport.Check(DocxNumberingDefinitions.FormatNumber(4, "lowerRoman") == "iv", "lowerRoman 4 → iv");
         TestReport.Check(DocxNumberingDefinitions.FormatNumber(28, "upperLetter") == "BB", "upperLetter 28 → BB");
@@ -47,8 +51,8 @@ public static class DocxNumberingAndPolicyTest
             string block14 = document.RenderBlocks(14, 1)[0].Html;
             TestReport.Check(block14.Contains("<span class=\"list-marker\">2.a</span>"), "block 14 is sub-item 2.a");
             string block7 = document.RenderBlocks(7, 1)[0].Html, block97 = document.RenderBlocks(97, 1)[0].Html;
-            TestReport.Check(block7.Contains("<span class=\"list-marker\">א׳.</span>"), "block 7 is Hebrew item א׳.");
-            TestReport.Check(block97.Contains("<span class=\"list-marker\">י׳.</span>"), "block 97 is Hebrew item י׳.");
+            TestReport.Check(block7.Contains("<span class=\"list-marker\">א.</span>"), "block 7 is Hebrew item א.");
+            TestReport.Check(block97.Contains("<span class=\"list-marker\">י.</span>"), "block 97 is Hebrew item י.");
             TestReport.Check(!document.RenderBlocks(5, 1)[0].Html.Contains("list-marker"), "plain paragraph has no marker");
 
             // notes: paragraph 21 references footnote 2, paragraph 102 endnote ii (Word's endnote default is lowerRoman)

@@ -30,6 +30,12 @@ public static class RealDocumentSmokeTest
                 int middle = document.BlockCount / 2;
                 IReadOnlyList<WordDocumentBlockHtml> mid = TestReport.Timed($"render 30 blocks at {middle}", () => document.RenderBlocks(middle, 30));
                 IReadOnlyList<WordDocumentBlockHtml> last = TestReport.Timed("render last 30 blocks", () => document.RenderBlocks(Math.Max(0, document.BlockCount - 30), 30));
+                Console.WriteLine("   window kinds: " + string.Join(",", mid.GroupBy(b => b.Kind).Select(g => g.Key + "=" + g.Count())) + "; list markers: " + mid.Count(b => b.Html.Contains("list-marker")) + "; underline: " + mid.Count(b => b.Html.Contains("underline")));
+                foreach (int other in new[] { middle + 2000, middle + 9000, middle / 2 })
+                    if (other + 30 < document.BlockCount) TestReport.Timed($"render 30 blocks at {other} (first time)", () => document.RenderBlocks(other, 30));
+                // warm (JIT done, caches filled): the steady-state cost of a window, best of 5
+                double warm = Enumerable.Range(0, 5).Min(_ => { var watch = System.Diagnostics.Stopwatch.StartNew(); document.RenderBlocks(middle, 30); return watch.Elapsed.TotalMilliseconds; });
+                Console.WriteLine($"   render 30 blocks at {middle}, warm (best of 5): {warm:0.#} ms");
                 int nonEmpty = first.Concat(mid).Concat(last).Count(b => StripTags(b.Html).Trim().Length > 0);
                 TestReport.Check(nonEmpty > 0, $"{nonEmpty} of {first.Count + mid.Count + last.Count} sampled blocks have visible text");
                 IReadOnlyList<WordDocumentHeading> headings = TestReport.Timed("headings", () => document.Headings);

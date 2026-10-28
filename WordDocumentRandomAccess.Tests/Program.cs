@@ -23,7 +23,7 @@
 using WordDocumentRandomAccess.Tests;
 
 int blocks = 50_000, deflateMegabytes = 8, hugeBlocks = 0, notesStreamingBlocks = 0;
-bool skipSynthetic = false, incrementalOpen = false;
+bool skipSynthetic = false, incrementalOpen = false, fidelityOnly = false;
 int incrementalBlocks = 1_000_000;
 var realPaths = new List<string>();
 var auditPaths = new List<string>();
@@ -48,6 +48,7 @@ for (int i = 0; i < args.Length; i++)
         case "--notes-streaming": notesStreamingBlocks = int.Parse(args[++i]); break;  // e.g. 20000 → 1000 footnotes, ~113 MB footnotes.xml
         case "--deflate-mb": deflateMegabytes = int.Parse(args[++i]); break;
         case "--skip-synthetic": skipSynthetic = true; break;
+        case "--fidelity": fidelityOnly = true; break;                                  // only the small Word-fidelity checks (seconds)
         case "--incremental-open":                                                     // optional block count, default 1000000
             incrementalOpen = true;
             if (i + 1 < args.Length && int.TryParse(args[i + 1], out int parsed)) { incrementalBlocks = parsed; i++; }
@@ -90,10 +91,12 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
+if (fidelityOnly) { DocxFidelityTest.Run(); skipSynthetic = true; }
 if (!skipSynthetic)
 {
     DocxNumberingAndPolicyTest.Run();
     DocxThemeAndUnderlineTest.Run();
+    DocxFidelityTest.Run();
     MalformedXmlRecoveryTest.Run();
     DocxIndexAndRenderTest.Run(blocks);
 }

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Xml.Linq;
+using WordDocumentRandomAccess.Docx;
 using WordDocumentRandomAccess.Html;
 
 namespace WordDocumentRandomAccess.DocxHtml;
@@ -21,12 +22,16 @@ public sealed class DocxBlockHtmlRenderer
 
     private readonly DocxStyleCascade _styles;
     private readonly NoteLabelResolver? _noteLabels;
-    private string? _listLabel;           // the index-time label of the block being rendered (its first paragraph)
+    private DocxListLabel? _listLabel;    // the index-time label of the block being rendered (its first paragraph)
     private string? _previousStyleKey;    // the style of the paragraph rendered just before (contextual spacing)
     private string? _currentNoteLabel;    // inside a note body: the label its w:footnoteRef/w:endnoteRef shows
     private WordDocumentNoteKind _currentNoteKind;
     private string? _tableStyleId;        // inside a table: its style, layered under paragraph styles
-    private int _textBoxDepth;            // inside a text box paragraphs become block spans (a <p> may not hold a <p>)
+    private DocxTableConditions _tableConditions;   // inside a table cell: the table style's conditional parts that apply to it
+    private int _textBoxDepth;
+
+    /// <summary>settings.xml compatibility option w:ulTrailSpace: underline the spaces that end a paragraph too.</summary>
+    private bool UnderlinesTrailingSpaces => _styles.Compatibility.UnderlinesTrailingSpaces;            // inside a text box paragraphs become block spans (a <p> may not hold a <p>)
 
     public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null)
     {
@@ -36,13 +41,15 @@ public sealed class DocxBlockHtmlRenderer
 
     /// <param name="listLabel">The label counted at index time ("3.", "ב."), or null when the block is not a list item.</param>
     /// <param name="previousStyleKey">The paragraph style of the block before (for contextual spacing), from the index.</param>
-    public string Render(XElement block, string? listLabel = null, string? previousStyleKey = null)
+    public string Render(XElement block, DocxListLabel? listLabel = null, string? previousStyleKey = null)
     {
         var html = new StringBuilder(1024);
         _listLabel = listLabel;
         _previousStyleKey = previousStyleKey;
         Run(RenderBlock(block, html));
         _listLabel = null;
+        _paragraphEndOf = null;                                    // keep no element of the rendered block alive
+        _paragraphEndTexts.Clear();
         return html.ToString();
     }
 
@@ -111,23 +118,48 @@ public sealed class DocxBlockHtmlRenderer
     {
         XElement? pPr = paragraph.Element(W + "pPr");
         string? styleId = (string?)pPr?.Element(W + "pStyle")?.Attribute(W + "val");
-        WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId);
+        WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId, _tableConditions);
         int headingLevel = formatting.OutlineLevel is >= 0 and <= 8 ? formatting.OutlineLevel + 1 : _styles.HeadingLevelOf(styleId);
         string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
         string css = formatting.ToCss(_previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : "");
+        // The paragraph mark's own run properties (pPr/rPr) format the list label and give an empty paragraph its height.
+        // Resolved only when used: for a label, or when the paragraph is empty.
+        bool hasLabel = _listLabel is { Text.Length: > 0 };
+        bool isEmpty = pPr?.Element(W + "rPr") is not null && !HasVisibleContent(paragraph);
+        WordRunFormatting? mark = hasLabel || isEmpty ? _styles.ResolveRun(formatting.RunFormatting, pPr?.Element(W + "rPr")) : null;
+        int markSize = isEmpty ? mark!.EffectiveFontSizeHalfPoints : 0;
+        if (markSize > 0 && markSize != formatting.RunFormatting.EffectiveFontSizeHalfPoints)
+            css += "font-size:" + (markSize / 2.0).ToString("0.#", CultureInfo.InvariantCulture) + "pt;";
 
         WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
-        if (_listLabel is { Length: > 0 } label)
+        if (_listLabel is { Text.Length: > 0 } label)
         {
-            html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(label)).Append("</span> ");
-            _listLabel = null;                                      // only the block's first paragraph carries it
+            // Word draws the number with the mark's formatting plus the level's rPr (§17.9.6), then the level's suffix (§17.9.28).
+            string labelCss = mark!.ToCss(formatting.RunFormatting) + label.LevelCss;
+            html.Append("<span class=\"list-marker\"");
+            if (labelCss.Length > 0) html.Append(" style=\"").Append(labelCss).Append('"');
+            html.Append('>').Append(WordHtmlText.Encode(label.Text)).Append("</span>");
+            html.Append(label.Suffix switch { DocxListLabelSuffix.Tab => "\t", DocxListLabelSuffix.Space => " ", _ => "" });
         }
+        if (_listLabel is not null) _listLabel = null;              // only the block's first paragraph carries it
         yield return new(RenderInlineChildren(paragraph, html, formatting.RunFormatting));
         html.Append("</").Append(tag).Append('>');
         _previousStyleKey = formatting.StyleKey;
 
         // A w:sectPr inside pPr ends a section: in a flow view that is a rule, not a new page.
         if (pPr?.Element(W + "sectPr") is not null && _textBoxDepth == 0) html.Append("<hr class=\"section-break\">");
+    }
+
+    /// <summary>Whether a paragraph draws anything besides its mark (text, tabs, breaks, symbols, drawings, note references).</summary>
+    private static bool HasVisibleContent(XElement paragraph)
+    {
+        foreach (XElement element in paragraph.Descendants())
+        {
+            string name = element.Name.LocalName;
+            if (name is "t" or "tab" or "ptab" or "br" or "cr" or "sym" or "drawing" or "pict" or "object" or "footnoteReference" or "endnoteReference" or "noBreakHyphen")
+                return true;
+        }
+        return false;
     }
 
     private IEnumerable<RenderStep> RenderInlineChildren(XElement container, StringBuilder html, WordRunFormatting paragraphBase)
@@ -155,28 +187,134 @@ public sealed class DocxBlockHtmlRenderer
     {
         XElement? rPr = run.Element(W + "rPr");
         WordRunFormatting formatting = _styles.ResolveRun(paragraphBase, rPr);
-        string css = formatting.ToCss(paragraphBase);
+        // The underline is drawn on the text pieces inside the run (not under word-only spaces, not under the paragraph's
+        // trailing spaces); the strikethrough stays on the run's span, so the two never have to share one style.
+        string css = formatting.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly);
         bool hasSpan = css.Length > 0;
         if (hasSpan) html.Append("<span style=\"").Append(css).Append("\">");
-        yield return new(RenderRunChildren(run, html));
+        yield return new(RenderRunChildren(run, html, formatting));
         if (hasSpan) html.Append("</span>");
     }
 
-    private IEnumerable<RenderStep> RenderRunChildren(XElement run, StringBuilder html)
+    /// <summary>
+    /// Run text with the run's underline drawn the way Word draws it (Word 16 PDF export, 2026-10-28): under spaces
+    /// between words and under tabs, but not under the spaces that end the paragraph (unless the compatibility option
+    /// w:ulTrailSpace asks for them); with w:u words only under the non-space characters (ST_Underline "words": no line
+    /// under breaking or non-breaking spaces).
+    /// </summary>
+    private void AppendRunText(StringBuilder html, XElement textElement, WordRunFormatting formatting)
+    {
+        string text = textElement.Value;
+        if (!formatting.IsUnderlined) { AppendScriptText(html, text, formatting); return; }
+        int contentEnd = text.Length;
+        if (contentEnd > 0 && char.IsWhiteSpace(text[contentEnd - 1]) && !UnderlinesTrailingSpaces && IsInParagraphEnd(textElement))
+            while (contentEnd > 0 && char.IsWhiteSpace(text[contentEnd - 1])) contentEnd--;
+        string underline = formatting.UnderlineCss();
+        if (!formatting.IsUnderlineWordsOnly)
+        {
+            if (contentEnd > 0) AppendUnderlined(html, text.Substring(0, contentEnd), formatting, underline);
+        }
+        else
+        {
+            for (int start = 0; start < contentEnd;)
+            {
+                bool isSpace = char.IsWhiteSpace(text[start]);
+                int end = start + 1;
+                while (end < contentEnd && char.IsWhiteSpace(text[end]) == isSpace) end++;
+                if (isSpace) AppendScriptText(html, text.Substring(start, end - start), formatting);
+                else AppendUnderlined(html, text.Substring(start, end - start), formatting, underline);
+                start = end;
+            }
+        }
+        if (contentEnd < text.Length) AppendScriptText(html, text.Substring(contentEnd), formatting);
+    }
+
+    private static void AppendUnderlined(StringBuilder html, string text, WordRunFormatting formatting, string underlineCss)
+    {
+        html.Append("<span style=\"").Append(underlineCss).Append("\">");
+        AppendScriptText(html, text, formatting);
+        html.Append("</span>");
+    }
+
+    /// <summary>A non-text run child (tab, symbol, hyphen) under the run's underline; a word-only underline skips tabs.</summary>
+    private static void AppendUnderlinedMarkup(StringBuilder html, string markup, WordRunFormatting formatting, bool isSpace)
+    {
+        if (!formatting.IsUnderlined || (isSpace && formatting.IsUnderlineWordsOnly)) { html.Append(markup); return; }
+        html.Append("<span style=\"").Append(formatting.UnderlineCss()).Append("\">").Append(markup).Append("</span>");
+    }
+
+    private XElement? _paragraphEndOf;                              // the paragraph _paragraphEndTexts was computed for
+    private readonly HashSet<XElement> _paragraphEndTexts = new();   // its w:t elements that nothing visible follows
+
+    /// <summary>
+    /// Whether nothing visible follows <paramref name="textElement"/> in its paragraph (only spaces, properties, deletions).
+    /// One backward walk per paragraph, on first need: the w:t elements from the end back to the last visible content.
+    /// </summary>
+    private bool IsInParagraphEnd(XElement textElement)
+    {
+        XElement? paragraph = textElement.Parent;
+        while (paragraph is not null && paragraph.Name != W + "p") paragraph = paragraph.Parent;
+        if (paragraph is null) return false;
+        if (_paragraphEndOf != paragraph)
+        {
+            _paragraphEndOf = paragraph;
+            _paragraphEndTexts.Clear();
+            // Backward document order without materialising the paragraph: last child first, descending into the last child.
+            var pending = new Stack<XElement>();
+            for (XNode? node = paragraph.LastNode; node is not null; node = node.PreviousNode) if (node is XElement child) pending.Push(child);
+            var reversed = new Stack<XElement>(pending);           // reversed order: last child on top
+            pending.Clear();
+            while (reversed.Count > 0)
+            {
+                XElement element = reversed.Pop();
+                string name = element.Name.LocalName;
+                if (element.Name.Namespace == W && name is "del" or "moveFrom" or "rPr" or "pPr" or "instrText") continue;   // not shown: skip the subtree
+                if (name == "t")
+                {
+                    _paragraphEndTexts.Add(element);
+                    if (!string.IsNullOrWhiteSpace(element.Value)) break;
+                    continue;
+                }
+                if (name is "tab" or "ptab" or "br" or "cr" or "sym" or "drawing" or "pict" or "object" or "noBreakHyphen"
+                    or "footnoteReference" or "endnoteReference") break;
+                for (XNode? node = element.FirstNode; node is not null; node = node.NextNode) if (node is XElement child) reversed.Push(child);
+            }
+        }
+        return _paragraphEndTexts.Contains(textElement);
+    }
+
+    /// <summary>Text; CJK characters switch to the run's eastAsia face when it differs (see <see cref="WordRunFormatting.EastAsianFontSwitch"/>).</summary>
+    private static void AppendScriptText(StringBuilder html, string text, WordRunFormatting formatting)
+    {
+        string? eastAsianFont = formatting.EastAsianFontSwitch;
+        if (eastAsianFont is null) { html.Append(WordHtmlText.Encode(text)); return; }
+        for (int start = 0; start < text.Length;)
+        {
+            bool isEastAsian = WordRunFormatting.IsEastAsianCharacter(text[start]);
+            int end = start + 1;
+            while (end < text.Length && WordRunFormatting.IsEastAsianCharacter(text[end]) == isEastAsian) end++;
+            string piece = WordHtmlText.Encode(text.Substring(start, end - start));
+            if (isEastAsian) html.Append("<span style=\"font-family:'").Append(WordHtmlText.CssFontName(eastAsianFont)).Append("'\">").Append(piece).Append("</span>");
+            else html.Append(piece);
+            start = end;
+        }
+    }
+
+    private IEnumerable<RenderStep> RenderRunChildren(XElement run, StringBuilder html, WordRunFormatting formatting)
     {
         foreach (XElement child in run.Elements())
         {
             switch (child.Name.LocalName)
             {
-                case "t": case "delText": html.Append(WordHtmlText.Encode(child.Value)); break;
-                case "tab": case "ptab": html.Append('\t'); break;
+                case "t": case "delText": AppendRunText(html, child, formatting); break;
+                case "tab": case "ptab": AppendUnderlinedMarkup(html, "\t", formatting, isSpace: true); break;
                 case "br":
                     html.Append(((string?)child.Attribute(W + "type")) == "page" ? "<span class=\"page-break\"></span>" : "<br>");
                     break;
                 case "cr": html.Append("<br>"); break;
-                case "noBreakHyphen": html.Append('‑'); break;
+                case "noBreakHyphen": AppendUnderlinedMarkup(html, "‑", formatting, isSpace: false); break;
                 case "softHyphen": html.Append('­'); break;
-                case "sym": html.Append(RenderSymbol(child)); break;
+                case "sym": AppendUnderlinedMarkup(html, RenderSymbol(child), formatting, isSpace: false); break;
                 case "footnoteReference": AppendNoteReference(html, WordDocumentNoteKind.Footnote, child); break;
                 case "endnoteReference": AppendNoteReference(html, WordDocumentNoteKind.Endnote, child); break;
                 case "footnoteRef": case "endnoteRef":
@@ -190,7 +328,7 @@ public sealed class DocxBlockHtmlRenderer
                 case "AlternateContent":
                     // mc:AlternateContent: the first choice this renderer can show, else the fallback — never both.
                     // The chosen branch's children are run children: walked in place, not copied (a copy clones recursively).
-                    if (ChosenAlternative(child) is { } chosen) yield return new(RenderRunChildren(chosen, html));
+                    if (ChosenAlternative(child) is { } chosen) yield return new(RenderRunChildren(chosen, html, formatting));
                     break;
                 case "pgNum": case "commentReference": case "annotationRef": break;   // no pages; comments are not shown in a reading view
                 // separator lines of the notes part, field codes, layout hints: nothing to show
@@ -257,15 +395,24 @@ public sealed class DocxBlockHtmlRenderer
         html.Append("</sup>");
     }
 
+    /// <summary>
+    /// w:sym (§17.3.3.30): the character in its own font, as LibreOffice does (DomainMapper LN_EG_RunInnerContent_sym: the run
+    /// font becomes w:font with the symbol character set and the character is kept as written). Symbol fonts map their glyphs
+    /// at U+F020-F0FF, so a code written without the F0 high byte is moved there. Without w:font the private-use offset is
+    /// dropped (the plain character is the best guess).
+    /// </summary>
     private static string RenderSymbol(XElement symbol)
     {
         string? code = (string?)symbol.Attribute(W + "char");
-        if (code is { Length: 4 } && int.TryParse(code, NumberStyles.HexNumber, null, out int value))
+        if (code is not { Length: > 0 and <= 4 } || !int.TryParse(code, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int value) || value == 0) return "";
+        string? font = (string?)symbol.Attribute(W + "font");
+        if (string.IsNullOrEmpty(font))
         {
-            if (value >= 0xF000) value -= 0xF000;          // symbol fonts live in the private-use area
+            if (value >= 0xF000) value -= 0xF000;
             return WordHtmlText.Encode(((char)value).ToString());
         }
-        return "";
+        if (value < 0x100) value += 0xF000;
+        return "<span style=\"font-family:'" + WordHtmlText.CssFontName(font!) + "'\">" + WordHtmlText.Encode(((char)value).ToString()) + "</span>";
     }
 
     // ── tables ───────────────────────────────────────────────────────────────────────
@@ -290,7 +437,15 @@ public sealed class DocxBlockHtmlRenderer
         DocxTableFormatting.Borders tableBorders = DocxTableFormatting.ReadBorders(Last("tblBorders"), _styles.Theme);
         string cellPadding = DocxTableFormatting.CellMarginCss(Last("tblCellMar"));
         string? outerTableStyle = _tableStyleId;
+        DocxTableConditions outerConditions = _tableConditions;
         _tableStyleId = tableStyleId;
+        int look = DocxTableConditionOrder.LookBits(Last("tblLook"));
+        // LibreOffice (DomainMapperTableHandler): a look bit whose conditional part the style lacks is dropped (it changes band counting)
+        foreach ((int bit, DocxTableConditions condition) in new[] { (0x020, DocxTableConditions.FirstRow), (0x040, DocxTableConditions.LastRow),
+                                                                      (0x080, DocxTableConditions.FirstColumn), (0x100, DocxTableConditions.LastColumn) })
+            if ((look & bit) != 0 && !_styles.HasTableConditionalPart(tableStyleId, condition)) look &= ~bit;
+        int rowBandSize = Math.Max(1, DocxStyleCascade.TwipsAttribute(Last("tblStyleRowBandSize"), "val") ?? 1);
+        int columnBandSize = Math.Max(1, DocxStyleCascade.TwipsAttribute(Last("tblStyleColBandSize"), "val") ?? 1);
 
         WordHtmlText.AppendOpenTag(html, "table", tableCss.ToString(), null, isRightToLeft);
         List<XElement> rows = table.Elements(W + "tr").ToList();
@@ -306,18 +461,25 @@ public sealed class DocxBlockHtmlRenderer
             int gridBefore = GridSkip(trPr, "gridBefore");
             if (gridBefore > 0) AppendGridGap(html, gridBefore, trPr?.Element(W + "wBefore"));
             int column = gridBefore;
-            foreach (XElement cell in rows[rowIndex].Elements(W + "tc"))
+            DocxTableConditions rowConditions = RowConditions(rowIndex, rows.Count, trPr, look, rowBandSize);
+            List<XElement> cells = rows[rowIndex].Elements(W + "tc").ToList();
+            // LibreOffice counts cells, not grid columns, and the gridBefore / gridAfter gaps are cells of their own.
+            int cellCount = cells.Count + (gridBefore > 0 ? 1 : 0) + (GridSkip(trPr, "gridAfter") > 0 ? 1 : 0);
+            int cellIndex = gridBefore > 0 ? 1 : 0;
+            foreach (XElement cell in cells)
             {
                 XElement? tcPr = cell.Element(W + "tcPr");
                 int span = DocxStyleCascade.TwipsAttribute(tcPr?.Element(W + "gridSpan"), "val") ?? 1;
                 string? verticalMerge = tcPr?.Element(W + "vMerge") is { } merge ? ((string?)merge.Attribute(W + "val") ?? "continue") : null;
+                DocxTableConditions conditions = CellConditions(rowConditions, cellIndex++, cellCount, look, columnBandSize);
                 if (verticalMerge == "continue") { column += span; continue; }
+                _tableConditions = conditions;
 
                 int rowSpan = verticalMerge == "restart" ? CountVerticalMergeSpan(rows, rowIndex, column) : 1;
                 html.Append("<td");
                 if (span > 1) html.Append(" colspan=\"").Append(span).Append('"');
                 if (rowSpan > 1) html.Append(" rowspan=\"").Append(rowSpan).Append('"');
-                string cellCss = DocxTableFormatting.CellCss(tcPr, tableBorders, _styles.Theme)
+                string cellCss = DocxTableFormatting.CellCss(tcPr, tableBorders, _styles.Theme, _styles.TableStyleCellProperties(tableStyleId, conditions))
                                + (DocxTableFormatting.CellMarginCss(tcPr?.Element(W + "tcMar")) is { Length: > 0 } ownMargins ? ownMargins : cellPadding)
                                + (tcPr?.Element(W + "noWrap") is { } noWrap && DocxStyleCascade.IsOn(noWrap.Attribute(W + "val")) ? "white-space:nowrap;" : "");
                 if (cellCss.Length > 0) html.Append(" style=\"").Append(cellCss).Append('"');
@@ -340,6 +502,42 @@ public sealed class DocxBlockHtmlRenderer
         }
         html.Append("</table>");
         _tableStyleId = outerTableStyle;
+        _tableConditions = outerConditions;
+    }
+
+    /// <summary>
+    /// The row's conditional parts, as LibreOffice decides them (DomainMapperTableHandler::endTableGetCellProperties): a header
+    /// row (w:tblHeader) or the first row with the first-row look → firstRow; the last row with the last-row look → lastRow;
+    /// any other row is banded unless noHBand — odd bands are band1, counted after the first row when it is styled. The band
+    /// size w:tblStyleRowBandSize (§17.7.6.7) groups rows per band (LibreOffice ignores it; 1 by default).
+    /// </summary>
+    private static DocxTableConditions RowConditions(int rowIndex, int rowCount, XElement? trPr, int look, int bandSize)
+    {
+        if (trPr?.Element(W + "tblHeader") is { } header && DocxStyleCascade.IsOn(header.Attribute(W + "val"))) return DocxTableConditions.FirstRow;
+        if (rowIndex == 0 && (look & 0x020) != 0) return DocxTableConditions.FirstRow;
+        if (rowIndex == rowCount - 1 && rowIndex > 0 && (look & 0x040) != 0) return DocxTableConditions.LastRow;
+        if ((look & 0x200) != 0) return DocxTableConditions.None;
+        int band = (rowIndex - ((look & 0x020) != 0 ? 1 : 0)) / bandSize;
+        return band % 2 == 0 ? DocxTableConditions.Band1Horizontal : DocxTableConditions.Band2Horizontal;
+    }
+
+    /// <summary>The cell's column part (first / last column or a vertical band) added to its row's, plus the corner cell parts.</summary>
+    private static DocxTableConditions CellConditions(DocxTableConditions row, int cellIndex, int cellCount, int look, int bandSize)
+    {
+        DocxTableConditions column = DocxTableConditions.None;
+        if (cellIndex == 0 && (look & 0x080) != 0) column = DocxTableConditions.FirstColumn;
+        else if (cellIndex == cellCount - 1 && cellIndex > 0 && (look & 0x100) != 0) column = DocxTableConditions.LastColumn;
+        else if ((look & 0x400) == 0)
+        {
+            int band = (cellIndex - ((look & 0x080) != 0 ? 1 : 0)) / bandSize;
+            column = band % 2 == 0 ? DocxTableConditions.Band1Vertical : DocxTableConditions.Band2Vertical;
+        }
+        DocxTableConditions conditions = row | column;
+        if (conditions == (DocxTableConditions.FirstColumn | DocxTableConditions.FirstRow)) conditions |= DocxTableConditions.NorthWestCell;
+        else if (conditions == (DocxTableConditions.FirstColumn | DocxTableConditions.LastRow)) conditions |= DocxTableConditions.SouthWestCell;
+        else if (conditions == (DocxTableConditions.LastColumn | DocxTableConditions.FirstRow)) conditions |= DocxTableConditions.NorthEastCell;
+        else if (conditions == (DocxTableConditions.LastColumn | DocxTableConditions.LastRow)) conditions |= DocxTableConditions.SouthEastCell;
+        return conditions;
     }
 
     private static int GridSkip(XElement? trPr, string name) => Math.Max(0, DocxStyleCascade.TwipsAttribute(trPr?.Element(W + name), "val") ?? 0);

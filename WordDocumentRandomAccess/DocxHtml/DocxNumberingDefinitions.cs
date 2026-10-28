@@ -4,24 +4,36 @@ using System.Xml.Linq;
 namespace WordDocumentRandomAccess.DocxHtml;
 
 /// <summary>
-/// word/numbering.xml (ECMA-376 §17.9): numId → abstractNumId (+ level start overrides) → per-level
-/// number format, start value and label pattern ("%1.", "%1.%2"). Lists sharing an abstractNum
-/// continue one sequence unless the num carries a startOverride, which is what Word does.
-/// Labels are computed once at index time by <see cref="DocxListCounter"/>, because a windowed
-/// renderer never sees the earlier items.
+/// word/numbering.xml (ECMA-376 §17.9): numId → abstractNumId → per-level number format, start value, label pattern
+/// ("%1.", "%1.%2"), restart rule, legal numbering, suffix and label run properties. The level a paragraph uses is looked
+/// up the way Open-Xml-PowerTools' ListItemRetriever does it (num/lvlOverride/lvl first — "applied in place of" the
+/// abstract level, §17.9.9 — then the abstractNum's lvl); an abstractNum with w:numStyleLink takes its levels from the
+/// abstractNum of the num that the linked numbering style's numPr names (§17.9.21). Lists sharing an abstractNum continue
+/// one sequence unless a num carries a startOverride. Labels are computed once at index time by
+/// <see cref="DocxListCounter"/>, because a windowed renderer never sees the earlier items.
 /// </summary>
 public sealed class DocxNumberingDefinitions
 {
     private static readonly XNamespace W = DocxStyleCascade.W;
 
-    public readonly record struct LevelDefinition(string Format, string Text, int Start);
+    /// <param name="Restart">w:lvlRestart (§17.9.10): null = restart after any higher level; 0 = never; N = when a level 1..N (one-based) is used.</param>
+    /// <param name="IsLegal">w:isLgl (§17.9.4): every level shown in this level's text is decimal.</param>
+    /// <param name="Suffix">w:suff (§17.9.28): tab (the default), space or nothing after the label.</param>
+    /// <param name="RunProperties">The level's w:rPr: the label's own formatting.</param>
+    public sealed record LevelDefinition(string Format, string Text, int Start, int? Restart = null, bool IsLegal = false,
+                                         string Suffix = "tab", XElement? RunProperties = null);
 
     private readonly Dictionary<int, int> _abstractIdByNumId = new();
     private readonly Dictionary<int, Dictionary<int, int>> _startOverridesByNumId = new();
+    private readonly Dictionary<(int numId, int level), LevelDefinition> _overrideLevels = new();
     private readonly Dictionary<(int abstractId, int level), LevelDefinition> _levels = new();
+    private readonly Dictionary<int, string> _numStyleLinkByAbstractId = new();
+    private readonly Func<string, int>? _numIdOfStyle;
 
-    public DocxNumberingDefinitions(XDocument? numberingDocument)
+    /// <param name="numIdOfStyle">A numbering style's numId (its pPr/numPr), for w:numStyleLink; -1 when it has none.</param>
+    public DocxNumberingDefinitions(XDocument? numberingDocument, Func<string, int>? numIdOfStyle = null)
     {
+        _numIdOfStyle = numIdOfStyle;
         XElement? root = numberingDocument?.Root;
         if (root is null) return;
         foreach (XElement num in root.Elements(W + "num"))
@@ -38,37 +50,65 @@ public sealed class DocxNumberingDefinitions
                     if (!_startOverridesByNumId.TryGetValue(id, out var overrides)) _startOverridesByNumId[id] = overrides = new Dictionary<int, int>();
                     overrides[level] = start;
                 }
+                if (levelOverride.Element(W + "lvl") is { } lvl) _overrideLevels[(id, level)] = ReadLevel(lvl, level);
             }
         }
         foreach (XElement abstractNum in root.Elements(W + "abstractNum"))
         {
             int? abstractId = DocxStyleCascade.TwipsAttribute(abstractNum, "abstractNumId");
             if (abstractId is not { } id) continue;
+            if ((string?)abstractNum.Element(W + "numStyleLink")?.Attribute(W + "val") is { } link) _numStyleLinkByAbstractId[id] = link;
             foreach (XElement level in abstractNum.Elements(W + "lvl"))
             {
                 int levelIndex = DocxStyleCascade.TwipsAttribute(level, "ilvl") ?? 0;
-                string format = (string?)level.Element(W + "numFmt")?.Attribute(W + "val") ?? "decimal";
-                string text = (string?)level.Element(W + "lvlText")?.Attribute(W + "val") ?? "%" + (levelIndex + 1) + ".";
-                int start = DocxStyleCascade.TwipsAttribute(level.Element(W + "start"), "val") ?? 1;
-                _levels[(id, levelIndex)] = new LevelDefinition(format, text, start);
+                _levels[(id, levelIndex)] = ReadLevel(level, levelIndex);
             }
         }
     }
 
+    private static LevelDefinition ReadLevel(XElement level, int levelIndex)
+    {
+        // A custom number format is written as mc:AlternateContent (Choice: numFmt val="custom", Fallback: a plain numFmt);
+        // the fallback is what every reader without that extension uses.
+        XElement? numFmt = level.Element(W + "numFmt")
+            ?? level.Elements().Where(e => e.Name.LocalName == "AlternateContent").Elements().Where(e => e.Name.LocalName == "Fallback").Elements(W + "numFmt").FirstOrDefault();
+        string format = (string?)numFmt?.Attribute(W + "val") ?? "decimal";
+        string text = (string?)level.Element(W + "lvlText")?.Attribute(W + "val") ?? "%" + (levelIndex + 1) + ".";
+        int start = DocxStyleCascade.TwipsAttribute(level.Element(W + "start"), "val") ?? 1;
+        int? restart = DocxStyleCascade.TwipsAttribute(level.Element(W + "lvlRestart"), "val");
+        bool isLegal = level.Element(W + "isLgl") is { } legal && DocxStyleCascade.IsOn(legal.Attribute(W + "val"));
+        string suffix = (string?)level.Element(W + "suff")?.Attribute(W + "val") ?? "tab";
+        return new LevelDefinition(format, text, start, restart, isLegal, suffix, level.Element(W + "rPr"));
+    }
+
     public bool IsEmpty => _abstractIdByNumId.Count == 0;
 
-    public int? AbstractIdOf(int numId) => _abstractIdByNumId.TryGetValue(numId, out int abstractId) ? abstractId : null;
+    /// <summary>The abstractNum whose levels and counters a num uses — through w:numStyleLink when the abstractNum is only a link.</summary>
+    public int? AbstractIdOf(int numId)
+    {
+        if (!_abstractIdByNumId.TryGetValue(numId, out int abstractId)) return null;
+        var seen = new HashSet<int> { abstractId };
+        while (_numStyleLinkByAbstractId.TryGetValue(abstractId, out string? style))
+        {
+            int linkedNumId = _numIdOfStyle?.Invoke(style) ?? -1;
+            if (!_abstractIdByNumId.TryGetValue(linkedNumId, out int linkedAbstractId) || !seen.Add(linkedAbstractId)) break;
+            abstractId = linkedAbstractId;
+        }
+        return abstractId;
+    }
 
-    public LevelDefinition? LevelOf(int abstractId, int level)
-        => _levels.TryGetValue((abstractId, level), out LevelDefinition definition) ? definition : null;
+    /// <summary>The level definition a paragraph of <paramref name="numId"/> uses: the num's lvlOverride/lvl, else the abstract level.</summary>
+    public LevelDefinition? LevelOf(int numId, int abstractId, int level)
+        => _overrideLevels.TryGetValue((numId, level), out LevelDefinition? own) ? own
+         : _levels.TryGetValue((abstractId, level), out LevelDefinition? definition) ? definition : null;
 
     public int? StartOverrideOf(int numId, int level)
         => _startOverridesByNumId.TryGetValue(numId, out var overrides) && overrides.TryGetValue(level, out int start) ? start : null;
 
-    /// <summary>Fills the "%1.%2" pattern of a level with the current counters of all levels.</summary>
-    public string FormatLabel(int abstractId, int level, int[] counters)
+    /// <summary>Fills the "%1.%2" pattern of a level with the current counters of all levels; with isLgl every number is decimal.</summary>
+    public string FormatLabel(int numId, int abstractId, int level, int[] counters)
     {
-        if (LevelOf(abstractId, level) is not { } definition) return "•";
+        if (LevelOf(numId, abstractId, level) is not { } definition) return "•";
         if (definition.Format == "bullet") return BulletCharacter(definition.Text);
         if (definition.Format == "none") return "";
         var label = new StringBuilder(definition.Text.Length + 8);
@@ -78,7 +118,8 @@ public sealed class DocxNumberingDefinitions
             if (c == '%' && i + 1 < definition.Text.Length && definition.Text[i + 1] is >= '1' and <= '9')
             {
                 int placeholderLevel = definition.Text[i + 1] - '1';
-                string format = placeholderLevel == level ? definition.Format : LevelOf(abstractId, placeholderLevel)?.Format ?? "decimal";
+                string format = definition.IsLegal ? "decimal"
+                              : placeholderLevel == level ? definition.Format : LevelOf(numId, abstractId, placeholderLevel)?.Format ?? "decimal";
                 label.Append(FormatNumber(counters[placeholderLevel], format));
                 i++;
             }
@@ -123,22 +164,22 @@ public sealed class DocxNumberingDefinitions
     private static readonly string[] HebrewTens = ["", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ"];
     private static readonly string[] HebrewHundreds = ["", "ק", "ר", "ש", "ת", "תק", "תר", "תש", "תת", "תתק"];
 
-    /// <summary>Gematria numerals as Word's hebrew1: טו/טז for 15/16, gershayim before the last letter.</summary>
+    /// <summary>
+    /// Word's hebrew1: gematria letters (טו / טז for 15 / 16) with no geresh or gershayim, cycling after 392 — what
+    /// Word 16 shows (ListFormat.ListString of synthetic lists, 2026-10-28: 11 → יא, 15 → טו, 115 → קטו, 500 → קח,
+    /// 1000 → רטז, 5784 → רצו).
+    /// </summary>
     public static string HebrewNumeral(int value)
     {
-        if (value <= 0 || value >= 10000) return value.ToString();
+        if (value <= 0) return value.ToString();
+        value = (value - 1) % 392 + 1;
         var letters = new StringBuilder();
-        int thousands = value / 1000;
-        if (thousands > 0) letters.Append(HebrewOnes[thousands]).Append('׳');
-        int rest = value % 1000;
-        letters.Append(HebrewHundreds[rest / 100]);
-        int tensAndOnes = rest % 100;
+        letters.Append(HebrewHundreds[value / 100]);
+        int tensAndOnes = value % 100;
         if (tensAndOnes == 15) letters.Append("טו");
         else if (tensAndOnes == 16) letters.Append("טז");
         else letters.Append(HebrewTens[tensAndOnes / 10]).Append(HebrewOnes[tensAndOnes % 10]);
-        string text = letters.ToString();
-        if (text.Length == 1) return text + '׳';                                  // geresh after a single letter
-        return text.Substring(0, text.Length - 1) + '״' + text[text.Length - 1];  // gershayim before the last letter
+        return letters.ToString();
     }
 
     /// <summary>Word's hebrew2: the 22 letters cycling (א..ת, then אא..).</summary>

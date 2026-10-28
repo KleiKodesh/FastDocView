@@ -78,16 +78,28 @@ public static class DocxTableFormatting
         _ => null,                               // lrTb / tb / lrTbV / tbV: horizontal, the default
     };
 
-    public static string CellCss(XElement? tcPr, Borders tableBorders, DocxTheme? theme)
+    public static string CellCss(XElement? tcPr, Borders tableBorders, DocxTheme? theme) => CellCss(tcPr, tableBorders, theme, []);
+
+    /// <param name="styleCellProperties">The table style's tcPr layers for this cell (whole table, then conditional parts);
+    /// the cell's own tcPr wins over them per property, the last layer over the earlier ones.</param>
+    public static string CellCss(XElement? tcPr, Borders tableBorders, DocxTheme? theme, IReadOnlyList<XElement> styleCellProperties)
     {
         var css = new StringBuilder();
         if (WidthCss(tcPr?.Element(W + "tcW")) is { } width) css.Append("width:").Append(width).Append(';');
-        if (tcPr?.Element(W + "shd") is { } shading && DocxStyleCascade.FillHex(shading, theme) is { } fill) css.Append("background:#").Append(fill).Append(';');
+        XElement? shading = tcPr?.Element(W + "shd") ?? styleCellProperties.Select(layer => layer.Element(W + "shd")).LastOrDefault(element => element is not null);
+        if (shading is not null && DocxStyleCascade.FillHex(shading, theme) is { } fill) css.Append("background:#").Append(fill).Append(';');
         string? verticalAlign = (string?)tcPr?.Element(W + "vAlign")?.Attribute(W + "val");
         if (verticalAlign is "center" or "bottom") css.Append("vertical-align:").Append(verticalAlign == "center" ? "middle" : "bottom").Append(';');
         if (TextDirectionCss((string?)tcPr?.Element(W + "textDirection")?.Attribute(W + "val")) is { } direction) css.Append(direction);
 
         Borders cell = ReadBorders(tcPr?.Element(W + "tcBorders"), theme);
+        foreach (XElement layer in Enumerable.Reverse(styleCellProperties))       // the cell's own sides first, then the last style layer that has one
+        {
+            if (layer.Element(W + "tcBorders") is not { } styleBorders) continue;
+            Borders style = ReadBorders(styleBorders, theme);
+            cell = new Borders(cell.Top ?? style.Top, cell.Start ?? style.Start, cell.Bottom ?? style.Bottom, cell.End ?? style.End,
+                               cell.InsideHorizontal ?? style.InsideHorizontal, cell.InsideVertical ?? style.InsideVertical);
+        }
         // A cell takes its own border, else the table's inside border, else the table's outer one.
         AppendBorder(css, "border-top", cell.Top ?? tableBorders.InsideHorizontal ?? tableBorders.Top);
         AppendBorder(css, "border-bottom", cell.Bottom ?? tableBorders.InsideHorizontal ?? tableBorders.Bottom);

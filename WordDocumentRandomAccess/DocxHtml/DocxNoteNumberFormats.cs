@@ -15,11 +15,9 @@ public sealed class DocxNoteNumberFormats
     public string FootnoteNumberFormat { get; } = "decimal";
     public string EndnoteNumberFormat { get; } = "lowerRoman";
 
-    public DocxNoteNumberFormats(ZipArchive package, string? settingsPartName)
+    public DocxNoteNumberFormats(XDocument? settingsDocument)
     {
-        ZipArchiveEntry? entry = settingsPartName is null ? null : package.GetEntry(settingsPartName);
-        if (entry is null) return;
-        XElement? settings = WordDocumentXml.LoadPartKeepingContentBeforeFirstError(entry.Open)?.Root;
+        XElement? settings = settingsDocument?.Root;
         FootnoteNumberFormat = (string?)settings?.Element(W + "footnotePr")?.Element(W + "numFmt")?.Attribute(W + "val") ?? FootnoteNumberFormat;
         EndnoteNumberFormat = (string?)settings?.Element(W + "endnotePr")?.Element(W + "numFmt")?.Attribute(W + "val") ?? EndnoteNumberFormat;
     }

@@ -139,7 +139,7 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
         return tableIndex >= 0 ? _scanner.StyleIdTable[tableIndex] : null;
     }
 
-    public string? ListLabelOf(int blockIndex)
+    public DocxListLabel? ListLabelOf(int blockIndex)
     {
         int labelIndex = _scanner.BlockListLabelIds[blockIndex];
         return labelIndex >= 0 ? _scanner.ListLabels[labelIndex] : null;

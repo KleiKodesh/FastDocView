@@ -14,6 +14,8 @@ public sealed class DocxDocumentParts
 {
     public DocxStyleCascade Styles { get; }
     public DocxNoteNumberFormats NoteNumberFormats { get; }
+    /// <summary>settings.xml w:compat options the renderer follows.</summary>
+    public DocxCompatibilitySettings Compatibility { get; }
     /// <summary>theme1.xml fonts and colors with settings.xml's clrSchemeMapping / themeFontLang; always present (empty without a theme part).</summary>
     public DocxTheme Theme { get; }
     /// <summary>Where the main document, notes, styles… live — from the package relationships.</summary>
@@ -33,15 +35,17 @@ public sealed class DocxDocumentParts
         _package = package;
         PartNames = DocxPackagePartNames.Resolve(package);
         using var zip = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
-        Theme = new DocxTheme(LoadPart(zip, PartNames.Theme), LoadPart(zip, PartNames.Settings));
-        Styles = new DocxStyleCascade(LoadStyles(zip, PartNames.Styles), Theme);
-        NoteNumberFormats = new DocxNoteNumberFormats(zip, PartNames.Settings);
+        XDocument? settings = LoadPart(zip, PartNames.Settings);          // parsed once: theme mapping, note formats, compatibility
+        Theme = new DocxTheme(LoadPart(zip, PartNames.Theme), settings);
+        Compatibility = new DocxCompatibilitySettings(settings);
+        Styles = new DocxStyleCascade(LoadStyles(zip, PartNames.Styles), Theme) { Compatibility = Compatibility };
+        NoteNumberFormats = new DocxNoteNumberFormats(settings);
     }
 
     private DocxNumberingDefinitions LoadNumbering()
     {
         using var zip = new ZipArchive(_package, ZipArchiveMode.Read, leaveOpen: true);
-        return new DocxNumberingDefinitions(LoadPart(zip, PartNames.Numbering));
+        return new DocxNumberingDefinitions(LoadPart(zip, PartNames.Numbering), styleId => Styles.NumberingOf(styleId).numId);
     }
 
     /// <summary>The scanner's hook: paragraph style / direct numPr → the next label of that list.</summary>
@@ -49,11 +53,17 @@ public sealed class DocxDocumentParts
     {
         if (Numbering.IsEmpty) return (_, _, _) => null;
         var counter = new DocxListCounter(Numbering);
+        var levelCss = new Dictionary<DocxNumberingDefinitions.LevelDefinition, string>();
         return (styleId, numId, level) =>
         {
             if (numId < 0 && styleId is not null)
                 (numId, level) = Styles.NumberingOf(styleId);
-            return numId > 0 ? counter.Next(numId, level) : null;
+            if (numId <= 0 || counter.NextWithDefinition(numId, level) is not { } next) return null;
+            DocxNumberingDefinitions.LevelDefinition? definition = next.definition;
+            string css = "";
+            if (definition is not null && !levelCss.TryGetValue(definition, out css!))
+                levelCss[definition] = css = Styles.LevelRunCss(definition.RunProperties, isBulletMapped: definition.Format == "bullet" && next.label != definition.Text);
+            return new DocxListLabel(next.label, DocxListLabel.SuffixOf(definition?.Suffix), css);
         };
     }
 
