@@ -70,28 +70,77 @@ public sealed class DocxStyleCascade
     }
 
     /// <summary>
-    /// Inside a table, Word layers the table style's pPr/rPr between the document defaults and the
-    /// paragraph style ([MS-OI29500] / ECMA-376 §17.7.2). Cached per (table style, paragraph style).
+    /// Inside a table, Word layers the table style's pPr/rPr between the document defaults and the paragraph style
+    /// ([MS-OI29500] / ECMA-376 §17.7.2): the whole-table part first, then the conditional parts that apply to the cell
+    /// (<see cref="DocxTableConditionOrder.Layers"/>). Then LibreOffice's Word rule (DomainMapperTableHandler.cxx, "a very
+    /// strange compatibility rule"): unless settings.xml has overrideTableStyleFontSizeAndJustification, a paragraph in the
+    /// default paragraph style whose size is 11 or 12 pt takes the table style's size, and one whose alignment is left takes
+    /// the table style's. Cached per (table style, conditions, paragraph style).
     /// </summary>
-    public WordParagraphFormatting ResolveParagraphStyleInTable(string? tableStyleId, string? styleId)
+    public WordParagraphFormatting ResolveParagraphStyleInTable(string? tableStyleId, string? styleId, DocxTableConditions conditions = DocxTableConditions.None)
     {
         if (tableStyleId is null) return ResolveParagraphStyle(styleId);
-        string key = tableStyleId + "\u0001" + (styleId ?? _defaultParagraphStyleId ?? "");
+        string paragraphStyle = styleId ?? _defaultParagraphStyleId ?? "";
+        string key = tableStyleId + "\u0001" + ((int)conditions).ToString(CultureInfo.InvariantCulture) + "\u0001" + paragraphStyle;
         if (_resolvedParagraphStyles.TryGetValue(key, out WordParagraphFormatting? cached)) return cached;
         WordParagraphFormatting formatting = DocumentDefaults.Clone();
-        foreach (XElement style in StyleChain(tableStyleId))
+        foreach ((XElement? pPr, XElement? rPr) in TableStyleTextLayers(tableStyleId, conditions))
         {
-            ApplyParagraphProperties(formatting, style.Element(W + "pPr"), _theme);
-            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme, WordStyleLayer.TableStyle);
+            ApplyParagraphProperties(formatting, pPr, _theme);
+            ApplyRunProperties(formatting.RunFormatting, rPr, _theme, WordStyleLayer.TableStyle);
         }
+        WordParagraphFormatting tableOnly = formatting.Clone();
         foreach (XElement style in StyleChain(styleId ?? _defaultParagraphStyleId))
         {
             ApplyParagraphProperties(formatting, style.Element(W + "pPr"), _theme);
             ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme, WordStyleLayer.ParagraphStyle);
         }
+        if (!Compatibility.OverridesTableStyleFontSizeAndJustification && paragraphStyle == (_defaultParagraphStyleId ?? ""))
+        {
+            WordParagraphFormatting paragraphOnly = ResolveParagraphStyle(styleId);
+            if (paragraphOnly.RunFormatting.FontSizeHalfPoints is 22 or 24 && tableOnly.RunFormatting.FontSizeHalfPoints != DocumentDefaults.RunFormatting.FontSizeHalfPoints)
+                formatting.RunFormatting.FontSizeHalfPoints = tableOnly.RunFormatting.FontSizeHalfPoints;
+            if (paragraphOnly.Alignment is WordParagraphAlignment.Start && tableOnly.Alignment is { } tableAlignment)
+                formatting.Alignment = tableAlignment;
+        }
         ResolveToggles(formatting.RunFormatting);
         _resolvedParagraphStyles[key] = formatting;
         return formatting;
+    }
+
+    /// <summary>The table style's pPr / rPr pairs in layering order: each chain style's whole-table part, then the applying conditional parts.</summary>
+    private IEnumerable<(XElement? pPr, XElement? rPr)> TableStyleTextLayers(string tableStyleId, DocxTableConditions conditions)
+    {
+        List<XElement> chain = StyleChain(tableStyleId);
+        foreach (XElement style in chain) yield return (style.Element(W + "pPr"), style.Element(W + "rPr"));
+        foreach (XElement part in TableConditionalParts(chain, conditions)) yield return (part.Element(W + "pPr"), part.Element(W + "rPr"));
+    }
+
+    private static IEnumerable<XElement> TableConditionalParts(List<XElement> chain, DocxTableConditions conditions)
+    {
+        if (conditions == DocxTableConditions.None) yield break;
+        foreach ((DocxTableConditions condition, string type) in DocxTableConditionOrder.Layers)
+        {
+            if ((conditions & condition) == 0) continue;
+            foreach (XElement style in chain)
+                foreach (XElement part in style.Elements(W + "tblStylePr"))
+                    if ((string?)part.Attribute(W + "type") == type) yield return part;
+        }
+    }
+
+    /// <summary>Whether the table style (through its chain) has a conditional part of this type.</summary>
+    public bool HasTableConditionalPart(string? tableStyleId, DocxTableConditions condition)
+        => tableStyleId is not null && TableConditionalParts(StyleChain(tableStyleId), condition).Any();
+
+    /// <summary>The cell properties (w:tcPr) a table style gives a cell: whole-table first, then the applying conditional parts.</summary>
+    public List<XElement> TableStyleCellProperties(string? tableStyleId, DocxTableConditions conditions)
+    {
+        var layers = new List<XElement>();
+        if (tableStyleId is null) return layers;
+        List<XElement> chain = StyleChain(tableStyleId);
+        foreach (XElement style in chain) if (style.Element(W + "tcPr") is { } tcPr) layers.Add(tcPr);
+        foreach (XElement part in TableConditionalParts(chain, conditions)) if (part.Element(W + "tcPr") is { } tcPr) layers.Add(tcPr);
+        return layers;
     }
 
     /// <summary>A table style's own w:tblPr / w:tcPr children through its basedOn chain, most specific last (borders, cell margins, shading).</summary>
@@ -102,9 +151,10 @@ public sealed class DocxStyleCascade
     }
 
     /// <summary>Full paragraph formatting: style chain + direct pPr (+ its paragraph-mark rPr as the base run).</summary>
-    public WordParagraphFormatting ResolveParagraph(string? styleId, XElement? directParagraphProperties, string? tableStyleId = null)
+    public WordParagraphFormatting ResolveParagraph(string? styleId, XElement? directParagraphProperties, string? tableStyleId = null,
+                                                    DocxTableConditions tableConditions = DocxTableConditions.None)
     {
-        WordParagraphFormatting formatting = ResolveParagraphStyleInTable(tableStyleId, styleId).Clone();
+        WordParagraphFormatting formatting = ResolveParagraphStyleInTable(tableStyleId, styleId, tableConditions).Clone();
         ApplyParagraphProperties(formatting, directParagraphProperties, _theme);
         ResolveToggles(formatting.RunFormatting);
         formatting.StyleKey = styleId ?? _defaultParagraphStyleId ?? "";

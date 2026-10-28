@@ -27,6 +27,7 @@ public sealed class DocxBlockHtmlRenderer
     private string? _currentNoteLabel;    // inside a note body: the label its w:footnoteRef/w:endnoteRef shows
     private WordDocumentNoteKind _currentNoteKind;
     private string? _tableStyleId;        // inside a table: its style, layered under paragraph styles
+    private DocxTableConditions _tableConditions;   // inside a table cell: the table style's conditional parts that apply to it
     private int _textBoxDepth;
 
     /// <summary>settings.xml compatibility option w:ulTrailSpace: underline the spaces that end a paragraph too.</summary>
@@ -115,7 +116,7 @@ public sealed class DocxBlockHtmlRenderer
     {
         XElement? pPr = paragraph.Element(W + "pPr");
         string? styleId = (string?)pPr?.Element(W + "pStyle")?.Attribute(W + "val");
-        WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId);
+        WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId, _tableConditions);
         int headingLevel = formatting.OutlineLevel is >= 0 and <= 8 ? formatting.OutlineLevel + 1 : _styles.HeadingLevelOf(styleId);
         string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
         string css = formatting.ToCss(_previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : "");
@@ -407,7 +408,15 @@ public sealed class DocxBlockHtmlRenderer
         DocxTableFormatting.Borders tableBorders = DocxTableFormatting.ReadBorders(Last("tblBorders"), _styles.Theme);
         string cellPadding = DocxTableFormatting.CellMarginCss(Last("tblCellMar"));
         string? outerTableStyle = _tableStyleId;
+        DocxTableConditions outerConditions = _tableConditions;
         _tableStyleId = tableStyleId;
+        int look = DocxTableConditionOrder.LookBits(Last("tblLook"));
+        // LibreOffice (DomainMapperTableHandler): a look bit whose conditional part the style lacks is dropped (it changes band counting)
+        foreach ((int bit, DocxTableConditions condition) in new[] { (0x020, DocxTableConditions.FirstRow), (0x040, DocxTableConditions.LastRow),
+                                                                      (0x080, DocxTableConditions.FirstColumn), (0x100, DocxTableConditions.LastColumn) })
+            if ((look & bit) != 0 && !_styles.HasTableConditionalPart(tableStyleId, condition)) look &= ~bit;
+        int rowBandSize = Math.Max(1, DocxStyleCascade.TwipsAttribute(Last("tblStyleRowBandSize"), "val") ?? 1);
+        int columnBandSize = Math.Max(1, DocxStyleCascade.TwipsAttribute(Last("tblStyleColBandSize"), "val") ?? 1);
 
         WordHtmlText.AppendOpenTag(html, "table", tableCss.ToString(), null, isRightToLeft);
         List<XElement> rows = table.Elements(W + "tr").ToList();
@@ -423,18 +432,25 @@ public sealed class DocxBlockHtmlRenderer
             int gridBefore = GridSkip(trPr, "gridBefore");
             if (gridBefore > 0) AppendGridGap(html, gridBefore, trPr?.Element(W + "wBefore"));
             int column = gridBefore;
-            foreach (XElement cell in rows[rowIndex].Elements(W + "tc"))
+            DocxTableConditions rowConditions = RowConditions(rowIndex, rows.Count, trPr, look, rowBandSize);
+            List<XElement> cells = rows[rowIndex].Elements(W + "tc").ToList();
+            // LibreOffice counts cells, not grid columns, and the gridBefore / gridAfter gaps are cells of their own.
+            int cellCount = cells.Count + (gridBefore > 0 ? 1 : 0) + (GridSkip(trPr, "gridAfter") > 0 ? 1 : 0);
+            int cellIndex = gridBefore > 0 ? 1 : 0;
+            foreach (XElement cell in cells)
             {
                 XElement? tcPr = cell.Element(W + "tcPr");
                 int span = DocxStyleCascade.TwipsAttribute(tcPr?.Element(W + "gridSpan"), "val") ?? 1;
                 string? verticalMerge = tcPr?.Element(W + "vMerge") is { } merge ? ((string?)merge.Attribute(W + "val") ?? "continue") : null;
+                DocxTableConditions conditions = CellConditions(rowConditions, cellIndex++, cellCount, look, columnBandSize);
                 if (verticalMerge == "continue") { column += span; continue; }
+                _tableConditions = conditions;
 
                 int rowSpan = verticalMerge == "restart" ? CountVerticalMergeSpan(rows, rowIndex, column) : 1;
                 html.Append("<td");
                 if (span > 1) html.Append(" colspan=\"").Append(span).Append('"');
                 if (rowSpan > 1) html.Append(" rowspan=\"").Append(rowSpan).Append('"');
-                string cellCss = DocxTableFormatting.CellCss(tcPr, tableBorders, _styles.Theme)
+                string cellCss = DocxTableFormatting.CellCss(tcPr, tableBorders, _styles.Theme, _styles.TableStyleCellProperties(tableStyleId, conditions))
                                + (DocxTableFormatting.CellMarginCss(tcPr?.Element(W + "tcMar")) is { Length: > 0 } ownMargins ? ownMargins : cellPadding)
                                + (tcPr?.Element(W + "noWrap") is { } noWrap && DocxStyleCascade.IsOn(noWrap.Attribute(W + "val")) ? "white-space:nowrap;" : "");
                 if (cellCss.Length > 0) html.Append(" style=\"").Append(cellCss).Append('"');
@@ -457,6 +473,42 @@ public sealed class DocxBlockHtmlRenderer
         }
         html.Append("</table>");
         _tableStyleId = outerTableStyle;
+        _tableConditions = outerConditions;
+    }
+
+    /// <summary>
+    /// The row's conditional parts, as LibreOffice decides them (DomainMapperTableHandler::endTableGetCellProperties): a header
+    /// row (w:tblHeader) or the first row with the first-row look → firstRow; the last row with the last-row look → lastRow;
+    /// any other row is banded unless noHBand — odd bands are band1, counted after the first row when it is styled. The band
+    /// size w:tblStyleRowBandSize (§17.7.6.7) groups rows per band (LibreOffice ignores it; 1 by default).
+    /// </summary>
+    private static DocxTableConditions RowConditions(int rowIndex, int rowCount, XElement? trPr, int look, int bandSize)
+    {
+        if (trPr?.Element(W + "tblHeader") is { } header && DocxStyleCascade.IsOn(header.Attribute(W + "val"))) return DocxTableConditions.FirstRow;
+        if (rowIndex == 0 && (look & 0x020) != 0) return DocxTableConditions.FirstRow;
+        if (rowIndex == rowCount - 1 && rowIndex > 0 && (look & 0x040) != 0) return DocxTableConditions.LastRow;
+        if ((look & 0x200) != 0) return DocxTableConditions.None;
+        int band = (rowIndex - ((look & 0x020) != 0 ? 1 : 0)) / bandSize;
+        return band % 2 == 0 ? DocxTableConditions.Band1Horizontal : DocxTableConditions.Band2Horizontal;
+    }
+
+    /// <summary>The cell's column part (first / last column or a vertical band) added to its row's, plus the corner cell parts.</summary>
+    private static DocxTableConditions CellConditions(DocxTableConditions row, int cellIndex, int cellCount, int look, int bandSize)
+    {
+        DocxTableConditions column = DocxTableConditions.None;
+        if (cellIndex == 0 && (look & 0x080) != 0) column = DocxTableConditions.FirstColumn;
+        else if (cellIndex == cellCount - 1 && cellIndex > 0 && (look & 0x100) != 0) column = DocxTableConditions.LastColumn;
+        else if ((look & 0x400) == 0)
+        {
+            int band = (cellIndex - ((look & 0x080) != 0 ? 1 : 0)) / bandSize;
+            column = band % 2 == 0 ? DocxTableConditions.Band1Vertical : DocxTableConditions.Band2Vertical;
+        }
+        DocxTableConditions conditions = row | column;
+        if (conditions == (DocxTableConditions.FirstColumn | DocxTableConditions.FirstRow)) conditions |= DocxTableConditions.NorthWestCell;
+        else if (conditions == (DocxTableConditions.FirstColumn | DocxTableConditions.LastRow)) conditions |= DocxTableConditions.SouthWestCell;
+        else if (conditions == (DocxTableConditions.LastColumn | DocxTableConditions.FirstRow)) conditions |= DocxTableConditions.NorthEastCell;
+        else if (conditions == (DocxTableConditions.LastColumn | DocxTableConditions.LastRow)) conditions |= DocxTableConditions.SouthEastCell;
+        return conditions;
     }
 
     private static int GridSkip(XElement? trPr, string name) => Math.Max(0, DocxStyleCascade.TwipsAttribute(trPr?.Element(W + name), "val") ?? 0);

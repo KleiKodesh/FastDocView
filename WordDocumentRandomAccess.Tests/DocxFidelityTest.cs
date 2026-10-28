@@ -28,6 +28,7 @@ public static partial class DocxFidelityTest
         yield return ShadingPatterns;
         yield return Symbols;
         yield return CompatibilitySettings;
+        yield return TableConditionalFormatting;
     }
 
     /// <summary>Writes a minimal package and returns every block's HTML.</summary>
