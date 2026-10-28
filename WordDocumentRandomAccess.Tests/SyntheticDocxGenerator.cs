@@ -36,6 +36,29 @@ public static class SyntheticDocxGenerator
         </w:numbering>
         """;
 
+    /// <summary>An Office-like theme: minor latin Calibri, empty a:cs, Hebrew supplemental face Arial; accent1 4472C4 (Word's 2016 palette).</summary>
+    private const string ThemeXml = """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme"><a:themeElements>
+          <a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
+            <a:dk2><a:srgbClr val="44546A"/></a:dk2><a:lt2><a:srgbClr val="E7E6E6"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1><a:accent2><a:srgbClr val="ED7D31"/></a:accent2>
+            <a:accent3><a:srgbClr val="A5A5A5"/></a:accent3><a:accent4><a:srgbClr val="FFC000"/></a:accent4><a:accent5><a:srgbClr val="5B9BD5"/></a:accent5><a:accent6><a:srgbClr val="70AD47"/></a:accent6>
+            <a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme>
+          <a:fontScheme name="Office"><a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/><a:font script="Hebr" typeface="Times New Roman"/></a:majorFont>
+            <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/><a:font script="Hebr" typeface="Arial"/></a:minorFont></a:fontScheme>
+          <a:fmtScheme name="Office"><a:fillStyleLst/><a:lnStyleLst/><a:effectStyleLst/><a:bgFillStyleLst/></a:fmtScheme>
+        </a:themeElements></a:theme>
+        """;
+
+    /// <summary>settings.xml with the theme hooks: bidi font language Hebrew (picks the "Hebr" supplemental face) and accent2 remapped onto accent6.</summary>
+    private const string SettingsXml = """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:themeFontLang w:val="en-US" w:bidi="he-IL"/>
+          <w:clrSchemeMapping w:bg1="light1" w:t1="dark1" w:bg2="light2" w:t2="dark2" w:accent1="accent1" w:accent2="accent6" w:accent3="accent3" w:accent4="accent4" w:accent5="accent5" w:accent6="accent6" w:hyperlink="hyperlink" w:followedHyperlink="followedHyperlink"/>
+        </w:settings>
+        """;
+
     private const string ContentTypesXml = """
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -44,6 +67,8 @@ public static class SyntheticDocxGenerator
           <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
           <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
           <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
+          <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
+          <Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
           <Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>
           <Override PartName="/word/endnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/>
         </Types>
@@ -63,13 +88,16 @@ public static class SyntheticDocxGenerator
           <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
           <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>
           <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/>
+          <Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
+          <Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
         </Relationships>
         """;
 
     public static int ExpectedBlockCount(int blockCount) => blockCount + 1;   // + the trailing w:sectPr
 
     /// <param name="noteFillerCharacters">Extra text per note — makes the notes parts as large as a test needs (streamed, never built in memory).</param>
-    public static void Write(string path, int blockCount, int noteFillerCharacters = 0)
+    /// <param name="withThemeSamples">Also writes theme1.xml + settings.xml and turns paragraphs 45-49 into the theme / underline / emphasis samples (see <see cref="ThemeSampleParagraph"/>).</param>
+    public static void Write(string path, int blockCount, int noteFillerCharacters = 0, bool withThemeSamples = false)
     {
         using var file = File.Create(path);
         using var zip = new ZipArchive(file, ZipArchiveMode.Create);
@@ -78,6 +106,7 @@ public static class SyntheticDocxGenerator
         AddText(zip, "word/_rels/document.xml.rels", DocumentRelsXml);
         AddText(zip, "word/styles.xml", StylesXml);
         AddText(zip, "word/numbering.xml", NumberingXml);
+        if (withThemeSamples) { AddText(zip, "word/settings.xml", SettingsXml); AddText(zip, "word/theme/theme1.xml", ThemeXml); }
         WriteNotes(zip, "word/footnotes.xml", "footnotes", "footnote", blockCount, FootnoteEvery, "הערה", noteFillerCharacters);
         WriteNotes(zip, "word/endnotes.xml", "endnotes", "endnote", blockCount, EndnoteEvery, "הערת סיום", noteFillerCharacters);
 
@@ -90,6 +119,7 @@ public static class SyntheticDocxGenerator
         {
             if (i % 200 == 199) { WriteTable(writer, i); continue; }
             if (i % 50 == 0) writer.Write($"<w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>כותרת {i / 50 + 1} — פסקה {i}</w:t></w:r></w:p>");
+            else if (withThemeSamples && ThemeSampleParagraph(i) is { } sample) writer.Write(sample);
             else if (i % 10 == 3) writer.Write($"<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr><w:r><w:t>פסקה {i} פריט רשימה</w:t></w:r></w:p>");
             else if (i % 10 == 4) writer.Write($"<w:p><w:pPr><w:numPr><w:ilvl w:val=\"1\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr><w:r><w:t>פסקה {i} תת-פריט</w:t></w:r></w:p>");
             else if (i % 10 == 7) writer.Write($"<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"2\"/></w:numPr></w:pPr><w:r><w:t>פסקה {i} סעיף עברי</w:t></w:r></w:p>");
@@ -147,6 +177,23 @@ public static class SyntheticDocxGenerator
         writer.Write(index);
         writer.Write("</w:t></w:r></w:p>");
     }
+
+    public const int ThemeFontParagraph = 45, ThemeColorParagraph = 46, UnderlineParagraph = 47, EmphasisParagraph = 48, MappedColorParagraph = 49, UnderlinedParagraphMarkParagraph = 55;
+
+    /// <summary>
+    /// The formatting samples DocxThemeAndUnderlineTest checks: a theme complex-script font over an explicit one,
+    /// a theme color with a tint over a wrong explicit val, a colored double underline, an emphasis mark, a remapped accent.
+    /// </summary>
+    private static string? ThemeSampleParagraph(int index) => index switch
+    {
+        ThemeFontParagraph => $"<w:p><w:r><w:rPr><w:rFonts w:cs=\"David\" w:cstheme=\"minorBidi\"/><w:rtl/></w:rPr><w:t>פסקה {index} גופן ערכת נושא</w:t></w:r></w:p>",
+        ThemeColorParagraph => $"<w:p><w:r><w:rPr><w:color w:val=\"FF0000\" w:themeColor=\"accent1\" w:themeTint=\"99\"/><w:shd w:val=\"clear\" w:fill=\"FF0000\" w:themeFill=\"accent6\" w:themeFillShade=\"80\"/></w:rPr><w:t>פסקה {index} צבע ערכת נושא</w:t></w:r></w:p>",
+        UnderlineParagraph => $"<w:p><w:r><w:rPr><w:u w:val=\"double\" w:color=\"00B050\"/></w:rPr><w:t>פסקה {index} קו תחתון כפול</w:t></w:r><w:r><w:rPr><w:u w:val=\"none\"/></w:rPr><w:t> ללא קו</w:t></w:r><w:r><w:rPr><w:u w:val=\"wavyHeavy\" w:themeColor=\"text2\"/></w:rPr><w:t> גלי</w:t></w:r></w:p>",
+        EmphasisParagraph => $"<w:p><w:r><w:rPr><w:em w:val=\"underDot\"/></w:rPr><w:t>פסקה {index} סימן הדגשה</w:t></w:r><w:r><w:rPr><w:em w:val=\"comma\"/></w:rPr><w:t> מעל</w:t></w:r></w:p>",
+        UnderlinedParagraphMarkParagraph => $"<w:p><w:pPr><w:rPr><w:u w:val=\"single\"/></w:rPr></w:pPr><w:r><w:rPr><w:u w:val=\"dotted\"/></w:rPr><w:t>פסקה {index} מנוקד בתוך פסקה מקווקוות</w:t></w:r></w:p>",
+        MappedColorParagraph => $"<w:p><w:pPr><w:pBdr><w:bottom w:val=\"single\" w:sz=\"8\" w:color=\"FF0000\" w:themeColor=\"accent2\"/></w:pBdr></w:pPr><w:r><w:rPr><w:color w:val=\"FF0000\" w:themeColor=\"background1\" w:themeShade=\"80\"/></w:rPr><w:t>פסקה {index} מיפוי צבעים</w:t></w:r></w:p>",
+        _ => null,
+    };
 
     private static void WriteTable(TextWriter writer, int index)
     {

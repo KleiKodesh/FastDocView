@@ -33,20 +33,25 @@ public static class DocxTableFormatting
         };
     }
 
-    public static Borders ReadBorders(XElement? borders)
+    public static Borders ReadBorders(XElement? borders) => ReadBorders(borders, null);
+
+    public static Borders ReadBorders(XElement? borders, DocxTheme? theme)
     {
         if (borders is null) return Borders.None;
         return new Borders(
-            BorderCss(borders.Element(W + "top")),
-            BorderCss(borders.Element(W + "start") ?? borders.Element(W + "left")),
-            BorderCss(borders.Element(W + "bottom")),
-            BorderCss(borders.Element(W + "end") ?? borders.Element(W + "right")),
-            BorderCss(borders.Element(W + "insideH")),
-            BorderCss(borders.Element(W + "insideV")));
+            BorderCss(borders.Element(W + "top"), theme),
+            BorderCss(borders.Element(W + "start") ?? borders.Element(W + "left"), theme),
+            BorderCss(borders.Element(W + "bottom"), theme),
+            BorderCss(borders.Element(W + "end") ?? borders.Element(W + "right"), theme),
+            BorderCss(borders.Element(W + "insideH"), theme),
+            BorderCss(borders.Element(W + "insideV"), theme));
     }
 
     /// <summary>One border element → CSS, or null when absent.</summary>
-    public static string? BorderCss(XElement? border)
+    public static string? BorderCss(XElement? border) => BorderCss(border, null);
+
+    /// <summary>One border element → CSS; the color goes through the theme (themeColor + tint / shade supersede @color, §17.3.2.3).</summary>
+    public static string? BorderCss(XElement? border, DocxTheme? theme)
     {
         if (border is null) return null;
         string style = (string?)border.Attribute(W + "val") ?? "single";
@@ -54,20 +59,22 @@ public static class DocxTableFormatting
         int eighths = DocxStyleCascade.TwipsAttribute(border, "sz") ?? 4;
         string width = Math.Max(0.25, eighths / 8.0).ToString("0.##", CultureInfo.InvariantCulture) + "pt";
         string cssStyle = style switch { "double" => "double", "dotted" => "dotted", "dashed" or "dashSmallGap" => "dashed", _ => "solid" };
-        string? color = (string?)border.Attribute(W + "color");
-        string cssColor = color is { Length: 6 } && !color.Equals("auto", StringComparison.OrdinalIgnoreCase) ? "#" + color : "#000";
+        string? color = DocxTheme.ResolveColorHex(border, "color", theme);
+        string cssColor = color is not null ? "#" + color : "#000";
         return $"{width} {cssStyle} {cssColor}";
     }
 
-    public static string CellCss(XElement? tcPr, Borders tableBorders)
+    public static string CellCss(XElement? tcPr, Borders tableBorders) => CellCss(tcPr, tableBorders, null);
+
+    public static string CellCss(XElement? tcPr, Borders tableBorders, DocxTheme? theme)
     {
         var css = new StringBuilder();
         if (WidthCss(tcPr?.Element(W + "tcW")) is { } width) css.Append("width:").Append(width).Append(';');
-        if (tcPr?.Element(W + "shd") is { } shading && DocxStyleCascade.FillHex(shading) is { } fill) css.Append("background:#").Append(fill).Append(';');
+        if (tcPr?.Element(W + "shd") is { } shading && DocxStyleCascade.FillHex(shading, theme) is { } fill) css.Append("background:#").Append(fill).Append(';');
         string? verticalAlign = (string?)tcPr?.Element(W + "vAlign")?.Attribute(W + "val");
         if (verticalAlign is "center" or "bottom") css.Append("vertical-align:").Append(verticalAlign == "center" ? "middle" : "bottom").Append(';');
 
-        Borders cell = ReadBorders(tcPr?.Element(W + "tcBorders"));
+        Borders cell = ReadBorders(tcPr?.Element(W + "tcBorders"), theme);
         // A cell takes its own border, else the table's inside border, else the table's outer one.
         AppendBorder(css, "border-top", cell.Top ?? tableBorders.InsideHorizontal ?? tableBorders.Top);
         AppendBorder(css, "border-bottom", cell.Bottom ?? tableBorders.InsideHorizontal ?? tableBorders.Bottom);

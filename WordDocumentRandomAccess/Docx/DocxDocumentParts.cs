@@ -5,7 +5,7 @@ using WordDocumentRandomAccess.DocxHtml;
 namespace WordDocumentRandomAccess.Docx;
 
 /// <summary>
-/// The small parts of a .docx that are loaded whole (styles, numbering) — a few hundred KB at
+/// The small parts of a .docx that are loaded whole (styles, theme, settings, numbering) — a few hundred KB at
 /// most, unlike the body. Read through ZipArchive over any seekable stream, so it works the same
 /// on a file-system host and in the browser.
 /// </summary>
@@ -13,6 +13,8 @@ public sealed class DocxDocumentParts
 {
     public DocxStyleCascade Styles { get; }
     public DocxNoteNumberFormats NoteNumberFormats { get; }
+    /// <summary>theme1.xml fonts and colors with settings.xml's clrSchemeMapping / themeFontLang; always present (empty without a theme part).</summary>
+    public DocxTheme Theme { get; }
 
     /// <summary>
     /// numbering.xml is only needed by the index pass (list labels are stored in the index), so it
@@ -27,7 +29,8 @@ public sealed class DocxDocumentParts
     {
         _package = package;
         using var zip = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
-        Styles = new DocxStyleCascade(LoadPart(zip, "word/styles.xml"));
+        Theme = new DocxTheme(LoadPart(zip, ThemePartName(zip)), LoadPart(zip, "word/settings.xml"));
+        Styles = new DocxStyleCascade(LoadPart(zip, "word/styles.xml"), Theme);
         NoteNumberFormats = new DocxNoteNumberFormats(zip);
     }
 
@@ -48,6 +51,16 @@ public sealed class DocxDocumentParts
                 (numId, level) = Styles.NumberingOf(styleId);
             return numId > 0 ? counter.Next(numId, level) : null;
         };
+    }
+
+    /// <summary>Word writes word/theme/theme1.xml; any other single theme part under word/theme/ is accepted too.</summary>
+    private static string ThemePartName(ZipArchive zip)
+    {
+        if (zip.GetEntry("word/theme/theme1.xml") is not null) return "word/theme/theme1.xml";
+        foreach (ZipArchiveEntry entry in zip.Entries)
+            if (entry.FullName.StartsWith("word/theme/", StringComparison.OrdinalIgnoreCase) && entry.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                return entry.FullName;
+        return "word/theme/theme1.xml";
     }
 
     private static XDocument? LoadPart(ZipArchive zip, string name)

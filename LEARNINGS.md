@@ -139,3 +139,19 @@ Append-only. Date, what we learned, what it changed.
   as LibreOffice does, opened the last failing file.
 - 145 files could not even be read (OneDrive placeholders / locked files): an OS state, not a
   parser bug — report it as "file not available", never as a format failure.
+
+## 2026-10-28 — theme fonts and colors
+
+- **Word's Office theme has an empty `a:cs` face.** `cstheme="minorBidi"` only yields a Hebrew font
+  through the supplemental `a:font script="Hebr"` entry, picked by `settings.xml`
+  `w:themeFontLang/@bidi` (he-IL). Resolving `minorBidi` to `a:cs` alone — the obvious reading of
+  the spec — gives "" and Hebrew falls back to Calibri. LibreOffice does the supplemental lookup
+  first (ThemeHandler.cxx); so do we.
+- **The spec's tint/shade formula is an image.** Every HTML rendering of ECMA-376 §17.3.2.6 loses
+  it; the worked examples (C0504D tint 99 → D99694) pin it down as a per-component linear blend
+  toward white / black. Verify formulas against the examples, not the prose.
+- **Theme vs explicit value is spelled out per attribute** — theme wins for fonts and colors alike
+  ("shall be ignored" / "is ignored"). LibreOffice still uses the explicit `val` for the character
+  color (and keeps the theme reference beside it), because Word writes the precomputed value; we
+  follow the spec when a theme part exists and fall back to `val` when it does not.
+

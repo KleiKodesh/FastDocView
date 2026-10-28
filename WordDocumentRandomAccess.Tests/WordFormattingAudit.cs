@@ -31,10 +31,10 @@ public static class WordFormattingAudit
          // revision marks on the paragraph mark itself; move ranges (the moved text itself is rendered)
          "ins", "del", "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
          // no pages, no comments in a reading view
-         "pgNum", "commentReference", "annotationRef", "underlineColor", "fitText", "moveFrom", "moveTo"];
+         "pgNum", "commentReference", "annotationRef", "fitText", "moveFrom", "moveTo"];
     private static readonly HashSet<string> HandledRunProperties =
         ["rStyle", "b", "bCs", "i", "iCs", "u", "strike", "dstrike", "vanish", "webHidden", "rtl", "vertAlign", "sz", "szCs", "color",
-         "highlight", "shd", "rFonts", "smallCaps", "caps", "spacing", "cs", "position", "outline", "shadow", "emboss", "imprint", "bdr", "textFill"];
+         "highlight", "shd", "rFonts", "smallCaps", "caps", "spacing", "cs", "position", "outline", "shadow", "emboss", "imprint", "bdr", "textFill", "em"];
     private static readonly HashSet<string> HandledParagraphProperties =
         ["pStyle", "bidi", "jc", "ind", "spacing", "outlineLvl", "numPr", "rPr", "ilvl", "numId", "contextualSpacing", "shd", "tabs", "sectPr", "pBdr"];
     private static readonly HashSet<string> HandledRunChildren =
