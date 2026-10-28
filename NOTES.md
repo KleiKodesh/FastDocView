@@ -110,6 +110,24 @@ Deliberately not done yet:
   reassembled into `<table>` because a row spans several blocks.
 - **Word 6/95, encrypted, RTF-as-.doc, MHTML-as-.doc** — rejected with a clear message.
 
+## Coverage plan — "full flow-preview coverage" (estimate 2–3 weeks, not months)
+
+Parsing is the cheap part; each item below is mostly the semantics → CSS table plus a test file.
+Ordered by value for text-heavy Hebrew documents:
+
+1. Footnotes/endnotes (deferred by user) — bodies from footnotes.xml, shown like commentary.
+2. Themes — `theme1.xml` fonts (`asciiTheme`/`csTheme` → minor/major, by script) and colors (`themeColor`).
+3. Tables, properly — `tblGrid`/`tcW` widths, borders (`tblBorders`/`tcBorders`), row heights, `tblInd`, nested tables, `.doc` rows reassembled from cell marks into `<table>`.
+4. Images — `drawing`/`pict` → rels → blob endpoint (inline only; floating as inline).
+5. Text boxes / shapes — `mc:AlternateContent` → `w:txbxContent` rendered inline after the paragraph.
+6. Paragraph borders/shading, tab stops (`w:tabs` positions), character spacing/scale, caps/small caps, underline styles, `w:lvlRestart`, legal numbering.
+7. Fields — `fldSimple`/`fldChar` result text (done) + `HYPERLINK`, `REF`, `PAGEREF` targets as anchors; `TOC` left as text.
+8. Tracked changes toggle (show/hide `w:ins`/`w:del`), comments ignored.
+9. Math (`m:oMath`) → MathML (ECMA-376 §22.1 maps almost 1:1).
+10. `.doc`: fonts (Sttbfffn), lists (PlcfLst/LFO → the same label counter), footnotes (PlcffndRef/Txt), tables, the remaining common sprms.
+
+Out of scope on purpose: page layout, headers/footers, columns, exact Word metrics.
+
 ## Binary .doc (DocBinary/)
 
 The old format already has random access: the **piece table** (Clx → PlcPcd) maps character

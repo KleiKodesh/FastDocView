@@ -54,3 +54,22 @@ Append-only. Date, what we learned, what it changed.
 - **WASM readiness is mostly about entry points.** Once the documents take a `Stream` and the
   index serialises to a `Stream`, nothing else in the core cares about files; the workload
   install is the remaining blocker.
+
+## 2026-10-28 — real big files (found through the KitveiHakodesh service's local-file index)
+
+- **The service index has paths, not sizes.** Listing the largest Word files = read the Lucene
+  index read-only (`DirectoryReader` over `%LOCALAPPDATA%\KleiKodesh\KitveiHakodeshService\filesystemindex`,
+  stored field `path`) and `FileInfo` each hit. 5,667 Word files on this laptop; a full-drive
+  `Get-ChildItem -Recurse` never finished.
+- Measured on real files: 40 MB `.doc` (107k paragraphs) cold 445 ms / reopen 175 ms / windows
+  3–100 ms; 12 MB `.docx` with an **87 MB body** (123k blocks) index 5 s once, reopen 420 ms,
+  windows 7–60 ms. Heap stays flat.
+- **Block size, not body size, drives render cost.** A 15 MB docx with only 64 blocks (7 MB of
+  drawing XML) takes 165–260 ms per window because each block's XML is parsed whole. Policy by
+  body size alone misjudges such files; a per-block byte size is already in the index
+  (start offsets) — a "largest block" signal should feed the decision and the renderer should
+  skip `w:drawing` subtrees before parsing.
+- `.doc` paragraphs: ~40 % of sampled blocks had no visible text (empty paragraphs / cell marks).
+  Expected for table-heavy halachic compilations; reassembling `.doc` tables would fold those.
+- OneDrive placeholder files throw "cloud file provider is not running" — surface as a clear
+  "file is not downloaded" message rather than a failure.
