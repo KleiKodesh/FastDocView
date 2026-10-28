@@ -50,4 +50,5 @@ not the product; the product is the app's book-view.
 - Formatting coverage follows `--audit` on real files: keep both audits at 0 unhandled; anything
   ignored on purpose goes in the audit's ignored-by-design set with a reason.
 - Notes follow Word's draft view: references inline, bodies delivered with their block.
-- Don't build or verify unless asked; when asked, run the harness and the viewer screenshot.
+- Don't build or verify unless asked; when asked, run the harness and the Playwright checks in
+  `vue-demo/playwright` (liveCheck, notesCheck) — never screenshots.
