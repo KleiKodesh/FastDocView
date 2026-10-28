@@ -195,3 +195,16 @@ Append-only. Date, what we learned, what it changed.
   0x0868 is CFUsePgsuSettings (we hid the text — 7,399 runs in 34 corpus files), web-hidden is 0x0811;
   0x245B is PFDyaBeforeAuto, contextual spacing is 0x246D. The other 68 matched.
 - Lesson kept in CLAUDE.md: an opcode table is looked up, never recalled.
+
+## 2026-10-28 — "why not zlib?" answered with measurements
+
+- .NET's DeflateStream (zlib-ng since .NET 9) cannot checkpoint or resume: no inflatePrime /
+  inflateSetDictionary / Z_BLOCK in the public API, and no proposal to add them was found.
+- ZLibDotNet 0.1.1 (managed zlib 1.3.1 port, zlib license, dormant since 2024-03) has all three
+  APIs and resumes correctly — but **fails with "invalid bit length repeat" on our real
+  document.xml** and on zlib levels 1/6/9 output (only .NET "Fastest" output decodes), and is at best
+  1–1.5× our inflater, slower on random reads. Rejected. Evaluation code kept on branch
+  work/zlib-evaluation (b70a54e), not merged.
+- Measured on the 91.6 MB XML: ours ~225–305 MB/s, .NET zlib ~830 MB/s, random 64 KB read ~2.2 ms.
+  The path forward is our own inflater rebuilt on zlib's inflate_fast ideas (combined
+  length/distance table entries, fewer bounds checks), one managed code path for every target.

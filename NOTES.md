@@ -36,6 +36,10 @@ Prior art looked at: `GzipSeekable` (NuGet 0.1.0, managed, gzip-only wrapper), `
 (Python), `jzran` (Java), `zindex`. None handles a raw-deflate zip entry directly, and the glue
 (zip offsets + paragraph map) is the real work, so the inflater was written here.
 
+**Not zlib:** .NET's zlib (DeflateStream) has no checkpoint/resume API, and the one managed
+zlib port that has it (ZLibDotNet 0.1.1) mis-decodes our real files and is not faster — see
+LEARNINGS 2026-10-28. The inflater stays ours; its speed work follows zlib's inflate_fast design.
+
 ## The .docx index (Docx/)
 
 `DocxRandomAccessIndexBuilder` does the one pass. While inflating it feeds every chunk to
