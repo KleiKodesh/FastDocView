@@ -17,6 +17,9 @@ public sealed class WordRunFormatting
     public bool IsSuperscript;
     public bool IsSubscript;
     public bool IsHidden;
+    public bool IsSmallCaps;
+    public bool IsAllCaps;
+    public int CharacterSpacingTwips;
     public bool IsRightToLeft;
     public int FontSizeHalfPoints;          // 0 = inherited/default
     public int ComplexScriptFontSizeHalfPoints;
@@ -50,6 +53,10 @@ public sealed class WordRunFormatting
         else if (IsSubscript && (baseline is null || !baseline.IsSubscript)) css.Append("vertical-align:sub;font-size:smaller;");
         else if (baseline is not null && (baseline.IsSuperscript || baseline.IsSubscript) && !IsSuperscript && !IsSubscript) css.Append("vertical-align:baseline;");
         if (IsHidden) css.Append("display:none;");
+        if (IsSmallCaps && (baseline is null || !baseline.IsSmallCaps)) css.Append("font-variant:small-caps;");
+        if (IsAllCaps && (baseline is null || !baseline.IsAllCaps)) css.Append("text-transform:uppercase;");
+        if (CharacterSpacingTwips != 0 && (baseline is null || CharacterSpacingTwips != baseline.CharacterSpacingTwips))
+            css.Append("letter-spacing:").Append((CharacterSpacingTwips / 20.0).ToString("0.##", CultureInfo.InvariantCulture)).Append("pt;");
 
         int size = EffectiveFontSizeHalfPoints;
         if (size > 0 && (baseline is null || size != baseline.EffectiveFontSizeHalfPoints) && !IsSuperscript && !IsSubscript)

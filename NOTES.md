@@ -100,14 +100,8 @@ roman, hebrew1 (gematria with geresh/gershayim), hebrew2, bullets, `%1.%2` patte
 
 Deliberately not done yet:
 
-- **Footnotes / endnotes** — only a `[*]` marker with `data-note-id`. **Deferred by the user
-  (2026-10-28), to be reminded.** The old `DocConvertLib/OoxmlHtmlConverter.cs` already extracts
-  note bodies and is the model.
 - **Images** — `[image]` placeholder. Needs the rels part + a blob endpoint.
 - **Fields** — `w:fldSimple`/`instrText` show their result text only.
-- **Fonts in .doc** — ftc → `Sttbfffn` not resolved (default font used).
-- **.doc tables** — cell paragraphs render as paragraphs (class `table-cell-end`); rows are not
-  reassembled into `<table>` because a row spans several blocks.
 - **Word 6/95, encrypted, RTF-as-.doc, MHTML-as-.doc** — rejected with a clear message.
 
 ## Coverage plan — "full flow-preview coverage" (estimate 2–3 weeks, not months)
@@ -127,6 +121,38 @@ Ordered by value for text-heavy Hebrew documents:
 10. `.doc`: fonts (Sttbfffn), lists (PlcfLst/LFO → the same label counter), footnotes (PlcffndRef/Txt), tables, the remaining common sprms.
 
 Out of scope on purpose: page layout, headers/footers, columns, exact Word metrics.
+
+## Footnotes and endnotes (Word draft-view model)
+
+Word's continuous/draft view keeps notes out of the text and shows them in a notes pane. Same
+here: a reference renders as `<sup class="note-reference" data-note-kind data-note-number>`, and
+every block is delivered with the bodies of the notes it references (`WordDocumentBlockHtml.Notes`),
+so the host lists the notes of the visible blocks without a second round trip.
+
+- **Numbering is counted at index time** (same reason as list numbers): .docx — the scanner counts
+  `w:footnoteReference` / `w:endnoteReference` per kind in body order (`customMarkFollows` → no
+  number, the following run is the mark), formats from settings.xml `footnotePr`/`endnotePr`
+  (defaults decimal / lowerRoman). .doc — PlcffndRef/PlcfendRef order, FRD.nAuto ≠ 0 → numbered.
+- **Bodies**: .docx footnotes.xml / endnotes.xml loaded whole (small; separators skipped), rendered
+  by the same block renderer with `w:footnoteRef` showing the label. .doc: the CP ranges from
+  PlcffndTxt / PlcfendTxt in the footnote / endnote stories (story starts from ccpText, ccpFtn,
+  ccpHdd, ccpAtn), rendered paragraph by paragraph; the leading 0x02 shows the label.
+- `NoteReferences` (kind, number, block) for "next footnote" navigation; `NoteCounts`.
+- Demo: notes pane under the text (All footnotes / All endnotes), click highlights, hover tooltip.
+  Verified live: 239 / 234 footnotes in the samples; synthetic file checks endnotes (i, ii, iii).
+
+## Formatting coverage — audited, not guessed
+
+`WordDocumentRandomAccess.Tests -- --audit <files>` streams every text-bearing part (.docx) or
+every PAPX/CHPX/style UPX (.doc) and lists constructs the renderers don't handle. On the
+דור המלקטים samples both read **0 unhandled**. Deliberately ignored (listed in the audit as such):
+pagination (widow/keep/page-break-before), proofing and language ids, revision ids (rsid), kerning,
+script hints, east-asian fonts, frame/table positioning. Added for it: tab stops (`tab-size`),
+contextual spacing, paragraph/character shading, small caps / caps / character spacing,
+`webHidden`, section breaks, table widths / borders / cell margins / vertical alignment,
+.doc fonts (SttbfFfn), .doc table rows as real rows (widths, RTL, cell shading, borders),
+huge PAPX in the Data stream, `sprmCSymbol`. Found and fixed: `sprmTDefTable`'s cb counts the
+operand plus one — reading it as the length desynced every later sprm of table rows.
 
 ## Binary .doc (DocBinary/)
 

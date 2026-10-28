@@ -78,9 +78,10 @@ public sealed class DocxBlockXmlReader : IDisposable
 
     private XElement ParseWrapped(byte[] bytes, int start, int length)
     {
-        using var wrapped = new MemoryStream(_rootOpenTagBytes.Length + length + RootCloseTagBytes.Length);
+        ArraySegment<byte> block = DocxDrawingStripper.Strip(bytes, start, length);
+        using var wrapped = new MemoryStream(_rootOpenTagBytes.Length + block.Count + RootCloseTagBytes.Length);
         wrapped.Write(_rootOpenTagBytes, 0, _rootOpenTagBytes.Length);
-        wrapped.Write(bytes, start, length);
+        wrapped.Write(block.Array!, block.Offset, block.Count);
         wrapped.Write(RootCloseTagBytes, 0, RootCloseTagBytes.Length);
         wrapped.Position = 0;
         XElement root = XElement.Load(wrapped);

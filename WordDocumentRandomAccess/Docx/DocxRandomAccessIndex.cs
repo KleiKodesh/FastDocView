@@ -14,7 +14,7 @@ namespace WordDocumentRandomAccess.Docx;
 public sealed class DocxRandomAccessIndex
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 2;
+    private const int FormatVersion = 3;
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -29,13 +29,16 @@ public sealed class DocxRandomAccessIndex
     public string[] StyleIdTable { get; }
     public int[] BlockListLabelIds { get; }
     public string[] ListLabels { get; }
+    public WordDocumentHeading[] Headings { get; }
+    public DocxNoteReference[] NoteReferences { get; }      // in body order
 
     public int BlockCount => BlockStartOffsets.Length;
 
     public DocxRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, ZipEntryLocation documentEntry,
                                  string rootOpenTag, long bodyEndOffset, IReadOnlyList<DeflateCheckpoint> checkpoints,
                                  long[] blockStartOffsets, WordDocumentBlockKind[] blockKinds, int[] blockTextLengths,
-                                 short[] blockStyleIds, string[] styleIdTable, int[] blockListLabelIds, string[] listLabels)
+                                 short[] blockStyleIds, string[] styleIdTable, int[] blockListLabelIds, string[] listLabels,
+                                 WordDocumentHeading[] headings, DocxNoteReference[] noteReferences)
     {
         SourceFileLength = sourceFileLength;
         SourceLastWriteTicksUtc = sourceLastWriteTicksUtc;
@@ -50,6 +53,26 @@ public sealed class DocxRandomAccessIndex
         StyleIdTable = styleIdTable;
         BlockListLabelIds = blockListLabelIds;
         ListLabels = listLabels;
+        Headings = headings;
+        NoteReferences = noteReferences;
+    }
+
+    /// <summary>The note references inside blocks [first, last] — a slice of the body-ordered array.</summary>
+    public ReadOnlySpan<DocxNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex)
+    {
+        int start = LowerBound(firstBlockIndex), end = LowerBound(lastBlockIndex + 1);
+        return NoteReferences.AsSpan(start, end - start);
+    }
+
+    private int LowerBound(int blockIndex)
+    {
+        int low = 0, high = NoteReferences.Length;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (NoteReferences[middle].BlockIndex < blockIndex) low = middle + 1; else high = middle;
+        }
+        return low;
     }
 
     public long BlockEndOffset(int blockIndex)
@@ -116,6 +139,14 @@ public sealed class DocxRandomAccessIndex
         foreach (int length in BlockTextLengths) writer.Write(length);
         foreach (short styleId in BlockStyleIds) writer.Write(styleId);
         foreach (int labelId in BlockListLabelIds) writer.Write(labelId);
+
+        writer.Write(Headings.Length);
+        foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
+        writer.Write(NoteReferences.Length);
+        foreach (DocxNoteReference reference in NoteReferences)
+        {
+            writer.Write(reference.BlockIndex); writer.Write((byte)reference.Kind); writer.Write(reference.NoteId); writer.Write(reference.Number);
+        }
         writer.Flush();
     }
 
@@ -160,8 +191,14 @@ public sealed class DocxRandomAccessIndex
         for (int i = 0; i < blockCount; i++) styleIds[i] = reader.ReadInt16();
         for (int i = 0; i < blockCount; i++) labelIds[i] = reader.ReadInt32();
 
+        var headings = new WordDocumentHeading[reader.ReadInt32()];
+        for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
+        var noteReferences = new DocxNoteReference[reader.ReadInt32()];
+        for (int i = 0; i < noteReferences.Length; i++)
+            noteReferences[i] = new DocxNoteReference(reader.ReadInt32(), (WordDocumentNoteKind)reader.ReadByte(), reader.ReadInt32(), reader.ReadInt32());
+
         return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints,
-                                         starts, kinds, textLengths, styleIds, styleIdTable, labelIds, listLabels);
+                                         starts, kinds, textLengths, styleIds, styleIdTable, labelIds, listLabels, headings, noteReferences);
     }
 
     // ── sidecar file helpers (file-system hosts) ───────────────────────────────────────

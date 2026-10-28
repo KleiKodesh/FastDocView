@@ -91,3 +91,23 @@ Append-only. Date, what we learned, what it changed.
 - Playwright in a side project must pin the app's version (1.59.1) — its browsers are already in
   `%LOCALAPPDATA%\ms-playwright`; a newer package wants a download. Vite binds `localhost`, not
   `127.0.0.1`, and its ready line carries ANSI codes — don't grep for `Local:`.
+
+## 2026-10-28 — notes, formatting audit, text-first open
+
+- **Audit before implementing.** Streaming every part / every FKP run and counting unhandled
+  constructs turned "full coverage" from guesswork into a 42-item (.docx) / ~80-item (.doc) list;
+  most of it was pagination/proofing to ignore on purpose. Both now read 0 on the samples.
+- **A desynced grpprl shows up as garbage opcodes** (0x0000, 0xFFFF, 0xD9D9…). The cause was
+  `sprmTDefTable`'s 2-byte cb, which counts the operand PLUS ONE. Every sprm after it in a table
+  row's PAPX was being misread — widths, borders, shading, all of it.
+- **FIB arrays are longer than 0x200 bytes.** fcPlcfendRef/Txt are FibRgFcLcb97 entries 46/47
+  (offset 0x212+); always bound by the file's own cbRgFcLcb.
+- **.doc table rows must be one block.** Cell-mark paragraphs as rows produced runs of empty,
+  zero-height rows the windowed scroller could not land on (jumps 9 rows early). Rows are now
+  detected at index time (PAPX sprmPFInTable / sprmPFTtp) and rendered as one `<tr>`.
+- **Notes ride with their block.** Delivering each block's note bodies in the same response keeps
+  the notes pane exact for the visible text with no extra requests; numbering is index-time.
+- **Text first.** Mounting the scroller before headings/weights and sending weights as raw Int32
+  (not JSON) took reopen-to-text to 74 ms (.doc) / 147 ms (.docx 87 MB body) in the browser.
+- **Drawing XML is skipped before parsing** (byte-level strip of w:drawing / w:pict / w:object):
+  a drawing-heavy block no longer costs its DrawingML in XElement parsing.

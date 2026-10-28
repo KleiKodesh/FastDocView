@@ -12,7 +12,7 @@ public static class DocxIndexAndRenderTest
     public static void Run(int blockCount)
     {
         // the generator's structure is part of the checks — bump the suffix when it changes so a stale file is never reused
-        string path = Path.Combine(TestReport.OutputDirectory, $"synthetic-{blockCount}-v2.docx");
+        string path = Path.Combine(TestReport.OutputDirectory, $"synthetic-{blockCount}-v3.docx");
         string cacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache");
         TestReport.Step($"Synthetic docx with {blockCount:N0} blocks");
         if (!File.Exists(path)) TestReport.Timed("generate", () => SyntheticDocxGenerator.Write(path, blockCount));

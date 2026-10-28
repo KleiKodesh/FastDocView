@@ -5,7 +5,9 @@ namespace WordDocumentRandomAccess.DocBinary;
 /// <summary>
 /// Applies a grpprl (a run of Sprm property modifiers, [MS-DOC] §2.6) to the format-neutral
 /// paragraph/run formatting. Only the sprms that matter for HTML flow rendering are interpreted;
-/// everything else is skipped by operand size. Fonts (ftc → Sttbfffn) are not resolved yet.
+/// everything else is skipped by operand size (the audit lists which ones are ignored on purpose:
+/// revision ids, language ids, proofing, pagination and frame hints). Fonts resolve through the
+/// document's SttbfFfn (<see cref="DocBinaryFontTable"/>).
 /// </summary>
 public static class DocBinaryPropertyModifiers
 {
@@ -47,11 +49,16 @@ public static class DocBinaryPropertyModifiers
                 case 0x260A: formatting.NumberingLevel = grpprl[operandAt]; break;
                 case 0x460B: formatting.NumberingId = BitConverter.ToUInt16(grpprl, operandAt); break;
                 case 0x2640: formatting.OutlineLevel = grpprl[operandAt] is var level && level <= 8 ? level : -1; break;
+                case 0x245B: formatting.IsContextualSpacing = grpprl[operandAt] != 0; break;
+                case 0xC64D: formatting.ShadingHex = ShadingBackground(grpprl, operandAt + 4, operandLength); break;      // SHDOperand: cvFore then cvBack
+                case 0x442D: formatting.ShadingHex = Shading80Background(BitConverter.ToUInt16(grpprl, operandAt)); break;
+                case 0xC60D: case 0xC615: formatting.FirstTabStopTwips = FirstAddedTabStop(grpprl, operandAt, operandLength, formatting.LeftIndentTwips) ?? formatting.FirstTabStopTwips; break;
             }
         }
     }
 
-    public static void ApplyCharacterSprms(WordRunFormatting formatting, byte[] grpprl, int start, int length, WordRunFormatting? styleBaseline = null)
+    public static void ApplyCharacterSprms(WordRunFormatting formatting, byte[] grpprl, int start, int length, WordRunFormatting? styleBaseline = null,
+                                           DocBinaryFontTable? fonts = null)
     {
         foreach ((ushort opcode, int operandAt, int operandLength) in Sprms(grpprl, start, length))
         {
@@ -76,8 +83,46 @@ public static class DocBinaryPropertyModifiers
                     byte ico = grpprl[operandAt];
                     formatting.HighlightCssColor = ico != 0 && ico < IcoPalette.Length ? "#" + IcoPalette[ico] : null;
                     break;
+                case 0xCA71: formatting.HighlightCssColor = ShadingBackground(grpprl, operandAt + 4, operandLength) is { } back ? "#" + back : formatting.HighlightCssColor; break;
+                case 0x4866: formatting.HighlightCssColor = Shading80Background(BitConverter.ToUInt16(grpprl, operandAt)) is { } back80 ? "#" + back80 : formatting.HighlightCssColor; break;
+                case 0x083A: formatting.IsSmallCaps = Toggle(grpprl[operandAt], formatting.IsSmallCaps, styleBaseline?.IsSmallCaps); break;
+                case 0x083B: formatting.IsAllCaps = Toggle(grpprl[operandAt], formatting.IsAllCaps, styleBaseline?.IsAllCaps); break;
+                case 0x8840: formatting.CharacterSpacingTwips = BitConverter.ToInt16(grpprl, operandAt); break;
+                case 0x4A4F: formatting.FontName = fonts?.NameOf(BitConverter.ToUInt16(grpprl, operandAt)) ?? formatting.FontName; break;   // ASCII text
+                case 0x4A5E: formatting.ComplexScriptFontName = fonts?.NameOf(BitConverter.ToUInt16(grpprl, operandAt)) ?? formatting.ComplexScriptFontName; break;  // bidi text
             }
         }
+    }
+
+    /// <summary>SHDOperand's Shd.cvBack (a COLORREF r,g,b,flag; flag 0xFF = auto) → "RRGGBB", null for auto/white.</summary>
+    private static string? ShadingBackground(byte[] grpprl, int colorAt, int operandLength)
+    {
+        // Sprms() already consumed the operand's cb byte, so the operand IS the Shd and cvBack is at +4.
+        int at = colorAt;
+        if (operandLength < 10 || at + 4 > grpprl.Length || grpprl[at + 3] == 0xFF) return null;
+        string hex = $"{grpprl[at]:X2}{grpprl[at + 1]:X2}{grpprl[at + 2]:X2}";
+        return hex == "FFFFFF" ? null : hex;
+    }
+
+    /// <summary>Shd80: icoFore (5 bits), icoBack (5 bits), ipat (6 bits) → the background ico as "RRGGBB".</summary>
+    private static string? Shading80Background(ushort shd80)
+    {
+        int icoBack = (shd80 >> 5) & 0x1F;
+        return icoBack > 0 && icoBack < IcoPalette.Length && IcoPalette[icoBack] != "FFFFFF" ? IcoPalette[icoBack] : null;
+    }
+
+    /// <summary>sprmPChgTabsPapx/sprmPChgTabs: cb, cTabsDel + positions, cTabsAdd + positions → the first added stop, relative to the indent.</summary>
+    private static int? FirstAddedTabStop(byte[] grpprl, int operandAt, int operandLength, int leftIndentTwips)
+    {
+        int position = operandAt;
+        if (position >= grpprl.Length) return null;
+        int deleted = grpprl[position++];
+        position += deleted * 2;
+        if (position >= grpprl.Length) return null;
+        int added = grpprl[position++];
+        int first = int.MaxValue;
+        for (int i = 0; i < added && position + 2 <= grpprl.Length; i++, position += 2) first = Math.Min(first, BitConverter.ToInt16(grpprl, position));
+        return first == int.MaxValue || first <= 0 ? null : Math.Max(120, first - leftIndentTwips);
     }
 
     /// <summary>sprmPIstd / sprmCIstd inside a grpprl, when present.</summary>
@@ -85,6 +130,19 @@ public static class DocBinaryPropertyModifiers
     {
         foreach ((ushort opcode, int operandAt, _) in Sprms(grpprl, start, length))
             if (opcode is 0x4600 or 0x4A30) return BitConverter.ToUInt16(grpprl, operandAt);
+        return null;
+    }
+
+    /// <summary>sprmCSymbol: ftc (2 bytes) then the character (2 bytes); symbol fonts use the private-use area.</summary>
+    public static char? SymbolCharacterIn(byte[] grpprl, int start, int length)
+    {
+        foreach ((ushort opcode, int operandAt, int operandLength) in Sprms(grpprl, start, length))
+        {
+            if (opcode != 0x6A09 || operandLength < 4) continue;
+            int character = BitConverter.ToUInt16(grpprl, operandAt + 2);
+            if (character >= 0xF000) character -= 0xF000;
+            return (char)character;
+        }
         return null;
     }
 
@@ -124,7 +182,9 @@ public static class DocBinaryPropertyModifiers
             if (operandLength < 0)
             {
                 if (position >= end) yield break;
-                if (opcode == 0xD608) { operandLength = BitConverter.ToUInt16(grpprl, position); position += 2; }   // sprmTDefTable
+                // sprmTDefTable: a 2-byte cb that counts the operand PLUS ONE ([MS-DOC] §2.6.3 TDefTableOperand).
+                // Reading it as the plain length shifted every later sprm of the paragraph by a byte.
+                if (opcode == 0xD608) { operandLength = Math.Max(0, BitConverter.ToUInt16(grpprl, position) - 1); position += 2; }
                 else { operandLength = grpprl[position]; position += 1; }
             }
             if (position + operandLength > end) yield break;

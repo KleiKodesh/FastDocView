@@ -24,6 +24,10 @@ public sealed class WordParagraphFormatting
     public int NumberingId = -1;
     public int NumberingLevel;
     public bool IsInTable;
+    public string? ShadingHex;              // paragraph background "RRGGBB"
+    public bool IsContextualSpacing;        // no space between paragraphs of the same style
+    public int FirstTabStopTwips;           // 0 = default stops; drives CSS tab-size
+    public string? StyleKey;                // what "same style" means for contextual spacing
     public WordRunFormatting RunFormatting = new();
 
     public WordParagraphFormatting Clone()
@@ -33,9 +37,12 @@ public sealed class WordParagraphFormatting
         return clone;
     }
 
-    public string ToCss()
+    /// <param name="previousStyleKey">The style of the paragraph before; with contextual spacing on
+    /// and the same style, the space between the two collapses as Word does.</param>
+    public string ToCss(string? previousStyleKey = null)
     {
         var css = new StringBuilder();
+        bool isSpacingSuppressed = IsContextualSpacing && StyleKey is not null && StyleKey == previousStyleKey;
         if (Alignment is { } alignment)
             css.Append("text-align:").Append(alignment switch
             {
@@ -48,8 +55,13 @@ public sealed class WordParagraphFormatting
         if (LeftIndentTwips != 0) css.Append("margin-inline-start:").Append(TwipsToPt(LeftIndentTwips)).Append("pt;");
         if (RightIndentTwips != 0) css.Append("margin-inline-end:").Append(TwipsToPt(RightIndentTwips)).Append("pt;");
         if (FirstLineIndentTwips != 0) css.Append("text-indent:").Append(TwipsToPt(FirstLineIndentTwips)).Append("pt;");
-        if (SpaceBeforeTwips != 0) css.Append("margin-top:").Append(TwipsToPt(SpaceBeforeTwips)).Append("pt;");
+        // Contextual spacing: the previous same-style paragraph's space-after is cancelled by an
+        // equal negative top margin (sums to zero whether or not the margins collapse).
+        if (isSpacingSuppressed) { if (SpaceAfterTwips != 0) css.Append("margin-top:-").Append(TwipsToPt(SpaceAfterTwips)).Append("pt;"); }
+        else if (SpaceBeforeTwips != 0) css.Append("margin-top:").Append(TwipsToPt(SpaceBeforeTwips)).Append("pt;");
         if (SpaceAfterTwips != 0) css.Append("margin-bottom:").Append(TwipsToPt(SpaceAfterTwips)).Append("pt;");
+        if (ShadingHex is not null) css.Append("background-color:#").Append(ShadingHex).Append(';');
+        if (FirstTabStopTwips > 0) css.Append("tab-size:").Append(TwipsToPt(FirstTabStopTwips)).Append("pt;");
         if (LineSpacingTwipsOrAuto > 0)
         {
             if (IsLineSpacingAuto) css.Append("line-height:").Append((LineSpacingTwipsOrAuto / 240.0).ToString("0.##", CultureInfo.InvariantCulture)).Append(';');

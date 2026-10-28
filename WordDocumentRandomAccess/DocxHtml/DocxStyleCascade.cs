@@ -64,6 +64,7 @@ public sealed class DocxStyleCascade
     {
         WordParagraphFormatting formatting = ResolveParagraphStyle(styleId).Clone();
         ApplyParagraphProperties(formatting, directParagraphProperties);
+        formatting.StyleKey = styleId ?? _defaultParagraphStyleId ?? "";
         return formatting;
     }
 
@@ -145,6 +146,16 @@ public sealed class DocxStyleCascade
             }
         }
         if (TwipsAttribute(pPr.Element(W + "outlineLvl"), "val") is { } outline) formatting.OutlineLevel = outline;
+        if (pPr.Element(W + "contextualSpacing") is { } contextual) formatting.IsContextualSpacing = IsOn(contextual.Attribute(W + "val"));
+        if (pPr.Element(W + "shd") is { } shading) formatting.ShadingHex = FillHex(shading);
+        if (pPr.Element(W + "tabs") is { } tabs)
+        {
+            // Flow view has no ruler; the first explicit stop (relative to the indent) becomes tab-size.
+            int? firstStop = tabs.Elements(W + "tab")
+                .Where(tab => (string?)tab.Attribute(W + "val") is not ("clear" or "bar"))
+                .Select(tab => TwipsAttribute(tab, "pos")).Where(position => position > 0).Min();
+            if (firstStop is { } stop) formatting.FirstTabStopTwips = Math.Max(120, stop - formatting.LeftIndentTwips);
+        }
         if (pPr.Element(W + "numPr") is { } numPr)
         {
             formatting.NumberingId = TwipsAttribute(numPr.Element(W + "numId"), "val") ?? -1;
@@ -165,7 +176,10 @@ public sealed class DocxStyleCascade
                 case "i": case "iCs": formatting.IsItalic = IsOn(property.Attribute(W + "val")); break;
                 case "u": formatting.IsUnderlined = ((string?)property.Attribute(W + "val") ?? "single") != "none"; break;
                 case "strike": case "dstrike": formatting.IsStrikethrough = IsOn(property.Attribute(W + "val")); break;
-                case "vanish": formatting.IsHidden = IsOn(property.Attribute(W + "val")); break;
+                case "vanish": case "webHidden": formatting.IsHidden = IsOn(property.Attribute(W + "val")); break;
+                case "smallCaps": formatting.IsSmallCaps = IsOn(property.Attribute(W + "val")); break;
+                case "caps": formatting.IsAllCaps = IsOn(property.Attribute(W + "val")); break;
+                case "spacing": formatting.CharacterSpacingTwips = TwipsAttribute(property, "val") ?? formatting.CharacterSpacingTwips; break;
                 case "rtl": formatting.IsRightToLeft = IsOn(property.Attribute(W + "val")); break;
                 case "vertAlign":
                     string? vertical = (string?)property.Attribute(W + "val");
@@ -189,6 +203,13 @@ public sealed class DocxStyleCascade
                     break;
             }
         }
+    }
+
+    /// <summary>A w:shd's fill as "RRGGBB", or null for auto / clear.</summary>
+    public static string? FillHex(XElement shading)
+    {
+        string? fill = (string?)shading.Attribute(W + "fill");
+        return fill is { Length: 6 } && !fill.Equals("auto", StringComparison.OrdinalIgnoreCase) && !fill.Equals("FFFFFF", StringComparison.OrdinalIgnoreCase) ? fill : null;
     }
 
     public static bool IsOn(XAttribute? value)

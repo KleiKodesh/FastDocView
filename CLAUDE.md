@@ -47,5 +47,7 @@ not the product; the product is the app's book-view.
   windowed data).
 - Long runs report progress per step (`IProgress<WordDocumentIndexProgress>`).
 - Default sidecar threshold is 8 MB of body (`WordIndexPolicy`); change it with a measurement, not a guess.
-- Footnotes are deferred on purpose — remind the user before starting unrelated rendering work.
+- Formatting coverage follows `--audit` on real files: keep both audits at 0 unhandled; anything
+  ignored on purpose goes in the audit's ignored-by-design set with a reason.
+- Notes follow Word's draft view: references inline, bodies delivered with their block.
 - Don't build or verify unless asked; when asked, run the harness and the viewer screenshot.

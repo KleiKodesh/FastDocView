@@ -24,6 +24,9 @@ public sealed class DocBinaryStyleSheet
     private readonly StyleDefinition?[] _styles;
     private readonly Dictionary<int, WordParagraphFormatting> _resolved = new();
 
+    /// <summary>Set once after construction; character sprms in style UPXs name fonts by index.</summary>
+    public DocBinaryFontTable Fonts { get; set; } = DocBinaryFontTable.Empty;
+
     public WordParagraphFormatting DocumentDefaults { get; } = new()
     {
         RunFormatting = new WordRunFormatting { FontSizeHalfPoints = 20, FontName = "Times New Roman" },
@@ -102,8 +105,9 @@ public sealed class DocBinaryStyleSheet
         foreach (StyleDefinition style in chain)
         {
             if (style.ParagraphGrpprl.Length > 2) DocBinaryPropertyModifiers.ApplyParagraphSprms(formatting, style.ParagraphGrpprl, 2, style.ParagraphGrpprl.Length - 2);
-            DocBinaryPropertyModifiers.ApplyCharacterSprms(formatting.RunFormatting, style.CharacterGrpprl, 0, style.CharacterGrpprl.Length);
+            DocBinaryPropertyModifiers.ApplyCharacterSprms(formatting.RunFormatting, style.CharacterGrpprl, 0, style.CharacterGrpprl.Length, fonts: Fonts);
         }
+        formatting.StyleKey = styleIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
         _resolved[styleIndex] = formatting;
         return formatting;
     }

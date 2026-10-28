@@ -13,12 +13,14 @@ public sealed class DocxDocumentParts
 {
     public DocxStyleCascade Styles { get; }
     public DocxNumberingDefinitions Numbering { get; }
+    public DocxNoteBodies Notes { get; }
 
     public DocxDocumentParts(Stream package)
     {
         using var zip = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
         Styles = new DocxStyleCascade(LoadPart(zip, "word/styles.xml"));
         Numbering = new DocxNumberingDefinitions(LoadPart(zip, "word/numbering.xml"));
+        Notes = new DocxNoteBodies(zip);
     }
 
     /// <summary>The scanner's hook: paragraph style / direct numPr → the next label of that list.</summary>

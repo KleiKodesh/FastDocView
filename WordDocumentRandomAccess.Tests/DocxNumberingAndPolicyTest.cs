@@ -49,7 +49,18 @@ public static class DocxNumberingAndPolicyTest
             string block7 = document.RenderBlocks(7, 1)[0].Html, block97 = document.RenderBlocks(97, 1)[0].Html;
             TestReport.Check(block7.Contains("<span class=\"list-marker\">א׳.</span>"), "block 7 is Hebrew item א׳.");
             TestReport.Check(block97.Contains("<span class=\"list-marker\">י׳.</span>"), "block 97 is Hebrew item י׳.");
-            TestReport.Check(!document.RenderBlocks(1, 1)[0].Html.Contains("list-marker"), "plain paragraph has no marker");
+            TestReport.Check(!document.RenderBlocks(5, 1)[0].Html.Contains("list-marker"), "plain paragraph has no marker");
+
+            // notes: paragraph 21 references footnote 2, paragraph 102 endnote ii (Word's endnote default is lowerRoman)
+            TestReport.Check(document.NoteCounts == (15, 3), $"note counts {document.NoteCounts} == (15, 3)");
+            WordDocumentBlockHtml withFootnote = document.RenderBlocks(21, 1)[0];
+            TestReport.Check(withFootnote.Html.Contains("data-note-kind=\"footnote\" data-note-number=\"2\""), "block 21 references footnote 2");
+            TestReport.Check(withFootnote.Notes.Count == 1 && withFootnote.Notes[0].Label == "2" && withFootnote.Notes[0].Html.Contains("של פסקה 21")
+                             && withFootnote.Notes[0].Html.Contains("note-mark\">2<"), "footnote 2 body comes with block 21, numbered 2");
+            WordDocumentBlockHtml withEndnote = document.RenderBlocks(102, 1)[0];
+            TestReport.Check(withEndnote.Notes.Count == 1 && withEndnote.Notes[0].Kind == WordDocumentNoteKind.Endnote && withEndnote.Notes[0].Label == "ii"
+                             && withEndnote.Notes[0].Html.Contains("של פסקה 102"), "endnote ii body comes with block 102");
+            TestReport.Check(document.RenderBlocks(0, 300).Sum(b => b.Notes.Count) == 18, "every reference in the document delivers its note");
         }
 
         var forced = new WordIndexPolicy { CacheDirectory = cacheDirectory, ForcedMode = WordIndexMode.Sidecar };

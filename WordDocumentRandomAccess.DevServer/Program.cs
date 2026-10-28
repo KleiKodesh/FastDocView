@@ -1,8 +1,9 @@
 // Localhost JSON host for the Vite demo. Endpoints (all JSON, CORS open — dev only):
 //   GET  /api/folder?path=…                  policy decision for every Word file under a folder
 //   POST /api/documents  { path, forceSidecar? }   opens (indexing if needed) → document summary
-//   GET  /api/documents/{id}/weights          estimated text length per block (scrollbar weights)
-//   GET  /api/documents/{id}/blocks?first&count    rendered blocks [{ index, kind, html }]
+//   GET  /api/documents/{id}/weights          estimated text length per block, raw little-endian Int32 (scrollbar weights)
+//   GET  /api/documents/{id}/headings         [{ blockIndex, level, text }] — from the index, no block reads
+//   GET  /api/documents/{id}/blocks?first&count    rendered blocks [{ index, kind, html, notes: [{ kind, number, label, html }] }]
 //   DELETE /api/documents/{id}                closes
 //   GET  /api/progress                        the last index progress (polled while opening)
 //   GET  /api/memory                          managed heap / working set of this process
@@ -68,19 +69,31 @@ app.MapPost("/api/documents", (OpenRequest request) =>
         DocBinaryWindowedDocument doc => doc.Decision,
         _ => new WordIndexDecision(request.Path, WordIndexMode.InMemory, false, 0, 0, ""),
     };
-    var headingsWatch = Stopwatch.StartNew();
-    List<HeadingBody> headings = document.Headings.Take(5000).Select(h => new HeadingBody(h.BlockIndex, h.Level, h.Text)).ToList();
+    (int footnotes, int endnotes) = document.NoteCounts;
     return Results.Ok(new DocumentSummary(id, Path.GetFileName(request.Path), request.Path, document.BlockCount, document.IsRightToLeft, document.Stylesheet,
-                                          headings, openMilliseconds, headingsWatch.Elapsed.TotalMilliseconds, decision.Mode.ToString(), decision.HasCachedIndex, decision.Reason,
-                                          document.GetType().Name));
+                                          openMilliseconds, decision.Mode.ToString(), decision.HasCachedIndex, decision.Reason,
+                                          document.GetType().Name, document.Headings.Count, footnotes, endnotes));
+});
+
+app.MapGet("/api/documents/{id:int}/headings", (int id) =>
+{
+    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
+    return Results.Ok(document.Headings.Select(h => new HeadingBody(h.BlockIndex, h.Level, h.Text)).ToList());
+});
+
+app.MapGet("/api/documents/{id:int}/note-references", (int id) =>
+{
+    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
+    return Results.Ok(document.NoteReferences.Select(r => new NoteReferenceBody(r.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", r.Number, r.BlockIndex)).ToList());
 });
 
 app.MapGet("/api/documents/{id:int}/weights", (int id) =>
 {
     if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
-    var weights = new int[document.BlockCount];
-    for (int i = 0; i < weights.Length; i++) weights[i] = document.EstimatedTextLength(i);
-    return Results.Ok(weights);
+    // Raw Int32 little-endian: 123k blocks are 0.5 MB and parse in microseconds (JSON took ~200 ms).
+    var bytes = new byte[document.BlockCount * 4];
+    for (int i = 0; i < document.BlockCount; i++) BitConverter.TryWriteBytes(bytes.AsSpan(i * 4), document.EstimatedTextLength(i));
+    return Results.Bytes(bytes, "application/octet-stream");
 });
 
 app.MapGet("/api/documents/{id:int}/blocks", (int id, int first, int count, HttpResponse response) =>
@@ -89,7 +102,8 @@ app.MapGet("/api/documents/{id:int}/blocks", (int id, int first, int count, Http
     var watch = Stopwatch.StartNew();
     IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(first, Math.Min(count, 500));
     response.Headers["X-Render-Milliseconds"] = watch.Elapsed.TotalMilliseconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
-    return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, b.Html)).ToList());
+    return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, b.Html,
+        b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())).ToList());
 });
 
 app.MapDelete("/api/documents/{id:int}", (int id) =>
@@ -122,9 +136,12 @@ record OpenRequest(string Path, bool? ForceSidecar, bool? RebuildIndex);
 record ErrorBody(string Error);
 record FolderEntry(string Path, string FileName, long FileBytes, string Mode, bool HasCachedIndex, long BodyBytes, long EstimatedIndexBytes, string Reason);
 record HeadingBody(int BlockIndex, int Level, string Text);
-record DocumentSummary(int Id, string FileName, string Path, int BlockCount, bool IsRightToLeft, string Stylesheet, List<HeadingBody> Headings,
-                       double OpenMilliseconds, double HeadingsMilliseconds, string Mode, bool HasCachedIndex, string Reason, string ReaderType);
-record BlockBody(int Index, int Kind, string Html);
+record DocumentSummary(int Id, string FileName, string Path, int BlockCount, bool IsRightToLeft, string Stylesheet,
+                       double OpenMilliseconds, string Mode, bool HasCachedIndex, string Reason, string ReaderType,
+                       int HeadingCount, int FootnoteCount, int EndnoteCount);
+record NoteBody(string Kind, int Number, string Label, string Html);
+record NoteReferenceBody(string Kind, int Number, int BlockIndex);
+record BlockBody(int Index, int Kind, string Html, List<NoteBody> Notes);
 record ProgressBody(long BytesDone, long BytesTotal, int BlocksFound);
 record MemoryBody(long ManagedHeapMegabytes, long WorkingSetMegabytes, int OpenDocuments);
 
@@ -133,7 +150,8 @@ record MemoryBody(long ManagedHeapMegabytes, long WorkingSetMegabytes, int OpenD
 [JsonSerializable(typeof(ErrorBody))]
 [JsonSerializable(typeof(List<FolderEntry>))]
 [JsonSerializable(typeof(DocumentSummary))]
-[JsonSerializable(typeof(int[]))]
+[JsonSerializable(typeof(List<HeadingBody>))]
+[JsonSerializable(typeof(List<NoteReferenceBody>))]
 [JsonSerializable(typeof(List<BlockBody>))]
 [JsonSerializable(typeof(ProgressBody))]
 [JsonSerializable(typeof(MemoryBody))]

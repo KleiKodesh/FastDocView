@@ -20,9 +20,13 @@ public sealed class DocBinaryFormattedDiskPages
     private readonly uint[] _characterBinPages;
     private readonly Dictionary<uint, byte[]> _pageCache = new();
 
-    public DocBinaryFormattedDiskPages(Stream wordDocument, Stream tableStream, DocBinaryFileInformationBlock fib)
+    private readonly Stream? _dataStream;
+
+    /// <param name="dataStream">The compound file's "Data" stream, where oversized PAPXs live (sprmPHugePapx); null when absent.</param>
+    public DocBinaryFormattedDiskPages(Stream wordDocument, Stream tableStream, DocBinaryFileInformationBlock fib, Stream? dataStream = null)
     {
         _wordDocument = wordDocument;
+        _dataStream = dataStream;
         (_paragraphBinFcs, _paragraphBinPages) = ReadBinTable(tableStream, fib.ParagraphBinTable);
         (_characterBinFcs, _characterBinPages) = ReadBinTable(tableStream, fib.CharacterBinTable);
     }
@@ -57,6 +61,50 @@ public sealed class DocBinaryFormattedDiskPages
         if (offset == 0) return new PropertyRun(fcStart, fcEnd, page, 0, 0);
         int length = page[offset];
         return new PropertyRun(fcStart, fcEnd, page, offset + 1, Math.Min(length, PageSize - offset - 1));
+    }
+
+    /// <summary>
+    /// A PAPX grpprl with sprmPHugePapx (0x6646) resolved: that sprm's operand is an offset into
+    /// the Data stream holding cb (2 bytes) + the real grpprl ([MS-DOC] §2.6.2). Returns the input
+    /// span when there is none — the common case, no allocation.
+    /// </summary>
+    public (byte[] grpprl, int start, int length) ExpandHugePapx(byte[] grpprl, int start, int length)
+    {
+        if (_dataStream is null) return (grpprl, start, length);
+        foreach ((ushort opcode, int operandAt, _) in DocBinaryPropertyModifiers.Sprms(grpprl, start, length))
+        {
+            if (opcode != 0x6646) continue;
+            uint offset = BitConverter.ToUInt32(grpprl, operandAt);
+            if (offset + 2 > _dataStream.Length) break;
+            var header = new byte[2];
+            _dataStream.Position = offset;
+            if (_dataStream.Read(header, 0, 2) < 2) break;
+            int size = BitConverter.ToUInt16(header, 0);
+            var expanded = new byte[size];
+            int read = 0;
+            while (read < size) { int n = _dataStream.Read(expanded, read, size - read); if (n <= 0) break; read += n; }
+            return (expanded, 0, read);
+        }
+        return (grpprl, start, length);
+    }
+
+    /// <summary>Every PAPX (isParagraph) or CHPX run in the document, page by page — for audits, not for rendering.</summary>
+    public IEnumerable<PropertyRun> AllRuns(bool isParagraph)
+    {
+        uint[] binFcs = isParagraph ? _paragraphBinFcs : _characterBinFcs;
+        uint[] binPages = isParagraph ? _paragraphBinPages : _characterBinPages;
+        for (int bin = 0; bin < binPages.Length; bin++)
+        {
+            byte[]? page = PageFor(binFcs, binPages, binFcs[bin]);
+            if (page is null) continue;
+            int runCount = page[PageSize - 1];
+            for (int run = 0; run < runCount; run++)
+            {
+                uint fc = BitConverter.ToUInt32(page, run * 4);
+                PropertyRun? found = isParagraph ? ParagraphRunAt(fc) : CharacterRunAt(fc);
+                if (found is { } propertyRun) yield return propertyRun;
+            }
+        }
     }
 
     private static int RunIndex(byte[] page, int runCount, uint fc)

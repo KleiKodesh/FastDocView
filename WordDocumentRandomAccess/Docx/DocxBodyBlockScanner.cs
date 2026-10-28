@@ -15,8 +15,17 @@ internal sealed class DocxBodyBlockScanner
     private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData }
 
     private const int MaxRootTagBytes = 1 << 16;
+    private const int MaxHeadingTextBytes = 600;
 
     private readonly DocxListLabelResolver? _listLabelResolver;
+    private readonly Func<string, int>? _headingLevelOfStyle;
+
+    // heading text of the current body-level paragraph, when its style is a heading
+    private int _currentHeadingLevel;
+    private readonly MemoryStream _headingText = new();
+
+    // note references: running auto-number per kind (footnote, endnote)
+    private readonly int[] _noteAutoNumbers = new int[2];
 
     private State _state = State.Text;
     private long _offset;                       // uncompressed offset of the next byte to be fed
@@ -48,15 +57,21 @@ internal sealed class DocxBodyBlockScanner
     public List<string> StyleIdTable { get; } = new();
     public List<int> BlockListLabelIds { get; } = new();         // index into ListLabels, -1 = not a list item
     public List<string> ListLabels { get; } = new();
+    public List<WordDocumentHeading> Headings { get; } = new();
+    public List<DocxNoteReference> NoteReferences { get; } = new();
     public long BodyEndOffset { get; private set; } = -1;
     public string RootOpenTag => Encoding.UTF8.GetString(_rootOpenTag.ToArray());
 
     private readonly Dictionary<string, short> _styleIdLookup = new(StringComparer.Ordinal);
 
-    public DocxBodyBlockScanner(DocxListLabelResolver? listLabelResolver = null)
+    public DocxBodyBlockScanner(DocxListLabelResolver? listLabelResolver = null, Func<string, int>? headingLevelOfStyle = null)
     {
         _listLabelResolver = listLabelResolver;
+        _headingLevelOfStyle = headingLevelOfStyle;
     }
+
+    /// <summary>Call once after the last chunk: closes the last block's heading.</summary>
+    public void Finish() => CloseHeading();
 
     public void Feed(byte[] chunk, int count)
     {
@@ -76,7 +91,11 @@ internal sealed class DocxBodyBlockScanner
                         _tagStartOffset = _offset;
                         if (!_isRootTagDone && _depth == 0) { _rootOpenTag.SetLength(0); _rootOpenTag.WriteByte(b); }
                     }
-                    else if (_isInsideTextRun && BlockTextLengths.Count > 0) BlockTextLengths[BlockTextLengths.Count - 1]++;
+                    else if (_isInsideTextRun && BlockTextLengths.Count > 0)
+                    {
+                        BlockTextLengths[BlockTextLengths.Count - 1]++;
+                        if (_currentHeadingLevel > 0 && _headingText.Length < MaxHeadingTextBytes) _headingText.WriteByte(b);
+                    }
                     break;
 
                 case State.TagOpen:
@@ -145,10 +164,11 @@ internal sealed class DocxBodyBlockScanner
         _isTagNameComplete = true;
         if (_isClosingTag || _bodyDepth < 0) return;
         string name = _tagName.ToString();
-        // Only a body-level paragraph's pPr children are interesting: <w:pStyle> (depth body+2) and
-        // <w:numPr>'s <w:numId>/<w:ilvl> (depth body+3).
+        // A body-level paragraph's pPr children: <w:pStyle> (depth body+2) and <w:numPr>'s
+        // <w:numId>/<w:ilvl> (depth body+3); and note references anywhere inside the body.
         if (_depth == _bodyDepth + 2 && name == "w:pStyle") _capturedAttributeTag = name;
         else if (_depth == _bodyDepth + 3 && name is "w:numId" or "w:ilvl") _capturedAttributeTag = name;
+        else if (_depth > _bodyDepth && name is "w:footnoteReference" or "w:endnoteReference") _capturedAttributeTag = name;
     }
 
     private void OnTagEnd()
@@ -160,7 +180,7 @@ internal sealed class DocxBodyBlockScanner
         {
             if (name == "w:t") _isInsideTextRun = false;
             _depth--;
-            if (name == "w:body" && _bodyDepth >= 0) { BodyEndOffset = _tagStartOffset; _bodyDepth = -1; }
+            if (name == "w:body" && _bodyDepth >= 0) { CloseHeading(); BodyEndOffset = _tagStartOffset; _bodyDepth = -1; }
             else if (name == "w:pPr" && _bodyDepth >= 0 && _depth == _bodyDepth + 1) OnParagraphPropertiesClosed();
             return;
         }
@@ -178,6 +198,7 @@ internal sealed class DocxBodyBlockScanner
 
     private void OnBodyChildStarted(string name)
     {
+        CloseHeading();
         BlockStartOffsets.Add(_tagStartOffset);
         BlockKinds.Add(name switch
         {
@@ -189,6 +210,7 @@ internal sealed class DocxBodyBlockScanner
         BlockTextLengths.Add(0);
         BlockStyleIds.Add(-1);
         BlockListLabelIds.Add(-1);
+        _currentHeadingLevel = 0;
         _currentStyleId = null;
         _currentNumId = -1;
         _currentLevel = 0;
@@ -196,12 +218,19 @@ internal sealed class DocxBodyBlockScanner
 
     private void OnCapturedAttribute(string tag, string attributes)
     {
+        if (BlockStyleIds.Count == 0) return;
+        if (tag is "w:footnoteReference" or "w:endnoteReference")
+        {
+            OnNoteReference(tag == "w:footnoteReference" ? WordDocumentNoteKind.Footnote : WordDocumentNoteKind.Endnote, attributes);
+            return;
+        }
         string? value = AttributeValue(attributes, "w:val=");
-        if (value is null || BlockStyleIds.Count == 0) return;
+        if (value is null) return;
         switch (tag)
         {
             case "w:pStyle":
                 _currentStyleId = value;
+                _currentHeadingLevel = _headingLevelOfStyle?.Invoke(value) ?? 0;
                 if (!_styleIdLookup.TryGetValue(value, out short tableIndex))
                 {
                     tableIndex = (short)StyleIdTable.Count;
@@ -213,6 +242,30 @@ internal sealed class DocxBodyBlockScanner
             case "w:numId": if (int.TryParse(value, out int numId)) _currentNumId = numId; break;
             case "w:ilvl": if (int.TryParse(value, out int level)) _currentLevel = level; break;
         }
+    }
+
+    /// <summary>
+    /// Word numbers notes in reference order, separately per kind; a reference with
+    /// w:customMarkFollows shows the run text after it instead of a number (Number 0).
+    /// </summary>
+    private void OnNoteReference(WordDocumentNoteKind kind, string attributes)
+    {
+        if (!int.TryParse(AttributeValue(attributes, "w:id="), out int id)) return;
+        string? customMark = AttributeValue(attributes, "w:customMarkFollows=");
+        bool isCustomMark = customMark is "1" or "true" or "on";
+        int number = isCustomMark ? 0 : ++_noteAutoNumbers[(int)kind];
+        NoteReferences.Add(new DocxNoteReference(BlockStartOffsets.Count - 1, kind, id, number));
+    }
+
+    private void CloseHeading()
+    {
+        if (_currentHeadingLevel > 0 && BlockStartOffsets.Count > 0)
+        {
+            string text = System.Net.WebUtility.HtmlDecode(Encoding.UTF8.GetString(_headingText.ToArray())).Trim();
+            if (text.Length > 0) Headings.Add(new WordDocumentHeading(BlockStartOffsets.Count - 1, _currentHeadingLevel, text));
+        }
+        _currentHeadingLevel = 0;
+        _headingText.SetLength(0);
     }
 
     private void OnParagraphPropertiesClosed()

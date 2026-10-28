@@ -4,34 +4,37 @@ namespace WordDocumentRandomAccess.DocBinary;
 
 /// <summary>
 /// A binary .doc opened for windowed rendering. The piece table already gives random access to the
-/// text; the only pass is the paragraph-boundary scan, kept in memory for small files and saved as
-/// a sidecar for big ones (policy). Everything else — PAPX, CHPX, styles — is looked up on demand
-/// through the bin tables. <see cref="OpenFromStream"/> is the host-agnostic (WASM) entry.
+/// text; the only pass is the block scan (paragraphs and table rows, headings), kept in memory for
+/// small files and saved as a sidecar for big ones (policy). Everything else — PAPX, CHPX, styles,
+/// fonts, note bodies — is looked up on demand. <see cref="OpenFromStream"/> is the host-agnostic (WASM) entry.
 /// </summary>
 public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
 {
     private readonly CompoundFileReader _compoundFile;
     private readonly Stream _wordDocument;
     private readonly Stream _tableStream;
-    private readonly DocBinaryParagraphIndex _index;
+    private readonly Stream? _dataStream;
+    private readonly DocBinaryBlockIndex _index;
     private readonly DocBinaryParagraphHtmlRenderer _renderer;
     private readonly DocBinaryStyleSheet _styles;
-    private IReadOnlyList<WordDocumentHeading>? _headings;
+    private readonly DocBinaryNoteReferences _notes;
 
     public string FilePath { get; }
-    public int BlockCount => _index.ParagraphCount;
+    public int BlockCount => _index.BlockCount;
     public bool IsRightToLeft { get; }
     public string Stylesheet { get; }
     public WordIndexDecision Decision { get; }
     public DocBinaryFileInformationBlock FileInformationBlock { get; }
     public DocBinaryPieceTable PieceTable { get; }
+    public DocBinaryFormattedDiskPages FormattedDiskPages { get; }
+    public DocBinaryStyleSheet StyleSheet => _styles;
 
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
     {
         using var compoundFile = new CompoundFileReader(filePath);
         using Stream wordDocument = compoundFile.OpenRootStream("WordDocument") ?? throw new InvalidDataException("No WordDocument stream.");
         var fib = new DocBinaryFileInformationBlock(wordDocument);
-        bool hasCachedIndex = DocBinaryParagraphIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
+        bool hasCachedIndex = DocBinaryBlockIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
         return policy.Decide(filePath, (long)fib.MainTextCharacterCount * 2, hasCachedIndex);
     }
 
@@ -42,7 +45,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         policy ??= WordIndexPolicy.Default;
         var info = new FileInfo(filePath);
         string indexPath = policy.IndexPathFor(filePath);
-        DocBinaryParagraphIndex? cached = DocBinaryParagraphIndex.TryLoad(indexPath, filePath);
+        DocBinaryBlockIndex? cached = DocBinaryBlockIndex.TryLoad(indexPath, filePath);
         var file = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
         try
         {
@@ -59,12 +62,12 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
 
     /// <summary>Host-agnostic entry: the stream stays open for the document's lifetime and is disposed with it.</summary>
     public static DocBinaryWindowedDocument OpenFromStream(Stream file, string displayPath, WordIndexPolicy policy,
-                                                           DocBinaryParagraphIndex? cachedIndex, long sourceLength, long sourceLastWriteTicksUtc,
+                                                           DocBinaryBlockIndex? cachedIndex, long sourceLength, long sourceLastWriteTicksUtc,
                                                            IProgress<WordDocumentIndexProgress>? progress = null,
                                                            CancellationToken cancellation = default)
         => new(file, displayPath, policy, cachedIndex, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
 
-    private DocBinaryWindowedDocument(Stream file, string displayPath, WordIndexPolicy policy, DocBinaryParagraphIndex? cachedIndex,
+    private DocBinaryWindowedDocument(Stream file, string displayPath, WordIndexPolicy policy, DocBinaryBlockIndex? cachedIndex,
                                       long sourceLength, long sourceLastWriteTicksUtc,
                                       IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
     {
@@ -75,14 +78,20 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         _tableStream = _compoundFile.OpenRootStream(FileInformationBlock.TableStreamName)
                        ?? throw new InvalidDataException($"Table stream {FileInformationBlock.TableStreamName} is missing.");
         PieceTable = new DocBinaryPieceTable(_wordDocument, _tableStream, FileInformationBlock.PieceTable);
-        _styles = new DocBinaryStyleSheet(_tableStream, FileInformationBlock.StyleSheet);
-        var pages = new DocBinaryFormattedDiskPages(_wordDocument, _tableStream, FileInformationBlock);
-        _renderer = new DocBinaryParagraphHtmlRenderer(PieceTable, pages, _styles);
+        _styles = new DocBinaryStyleSheet(_tableStream, FileInformationBlock.StyleSheet)
+        {
+            Fonts = DocBinaryFontTable.Read(_tableStream, FileInformationBlock.FontTable),
+        };
+        _dataStream = _compoundFile.OpenRootStream("Data");
+        FormattedDiskPages = new DocBinaryFormattedDiskPages(_wordDocument, _tableStream, FileInformationBlock, _dataStream);
+        _notes = new DocBinaryNoteReferences(_tableStream, FileInformationBlock);
+        _renderer = new DocBinaryParagraphHtmlRenderer(PieceTable, FormattedDiskPages, _styles, _notes);
 
         bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc);
         Decision = policy.Decide(displayPath, (long)FileInformationBlock.MainTextCharacterCount * 2, isCacheValid);
         _index = isCacheValid ? cachedIndex!
-               : DocBinaryParagraphIndex.Build(PieceTable, FileInformationBlock.MainTextCharacterCount, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
+               : DocBinaryBlockIndex.Build(PieceTable, _renderer, _styles, FileInformationBlock.MainTextCharacterCount,
+                                           sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
 
         IsRightToLeft = DetectRightToLeft();
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(0).RunFormatting, IsRightToLeft);
@@ -103,38 +112,57 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         return letters > 0 && rightToLeft * 5 > letters;
     }
 
-    public int EstimatedTextLength(int blockIndex) => _index.ParagraphTextLengths[blockIndex];
+    public int EstimatedTextLength(int blockIndex) => _index.BlockTextLengths[blockIndex];
 
     public IReadOnlyList<WordDocumentBlockHtml> RenderBlocks(int firstBlockIndex, int count)
     {
         var result = new List<WordDocumentBlockHtml>(count);
         int last = Math.Min(BlockCount, firstBlockIndex + count);
         for (int blockIndex = Math.Max(0, firstBlockIndex); blockIndex < last; blockIndex++)
-            result.Add(new WordDocumentBlockHtml(blockIndex, WordDocumentBlockKind.Paragraph,
-                                                 _renderer.Render(_index.ParagraphStartCps[blockIndex], _index.ParagraphEndCp(blockIndex))));
+        {
+            int start = _index.BlockStartCps[blockIndex], end = _index.BlockEndCp(blockIndex);
+            WordDocumentBlockKind kind = _index.BlockKinds[blockIndex];
+            string html = kind == WordDocumentBlockKind.TableRow
+                ? _renderer.RenderRow(start, end)
+                : _renderer.Render(start, end, PreviousStyleKey(blockIndex));
+            result.Add(new WordDocumentBlockHtml(blockIndex, kind, html, RenderNotesIn(start, end)));
+        }
         return result;
     }
 
-    public IReadOnlyList<WordDocumentHeading> Headings => _headings ??= CollectHeadings();
-
-    private List<WordDocumentHeading> CollectHeadings()
+    /// <summary>The style of the paragraph before a block, for contextual spacing (one cached PAPX lookup).</summary>
+    private string? PreviousStyleKey(int blockIndex)
     {
-        // One PAPX page lookup per paragraph, cached per 512-byte page, so a full pass stays cheap.
-        var headings = new List<WordDocumentHeading>();
-        for (int blockIndex = 0; blockIndex < BlockCount; blockIndex++)
-        {
-            int cpStart = _index.ParagraphStartCps[blockIndex], cpEnd = _index.ParagraphEndCp(blockIndex);
-            (_, int styleIndex) = _renderer.ResolveParagraph(cpStart, cpEnd);
-            int level = _styles.HeadingLevelOf(styleIndex);
-            if (level == 0) continue;
-            string text = _renderer.PlainText(cpStart, cpEnd);
-            if (text.Length > 0) headings.Add(new WordDocumentHeading(blockIndex, level, text));
-        }
-        return headings;
+        if (blockIndex == 0 || _index.BlockKinds[blockIndex - 1] != WordDocumentBlockKind.Paragraph) return null;
+        return _renderer.ResolveParagraph(_index.BlockStartCps[blockIndex - 1], _index.BlockEndCp(blockIndex - 1)).formatting.StyleKey;
     }
+
+    private IReadOnlyList<WordDocumentNoteHtml> RenderNotesIn(int cpStart, int cpEnd)
+    {
+        ReadOnlySpan<DocBinaryNoteReferences.NoteReference> references = _notes.InRange(cpStart, cpEnd);
+        if (references.IsEmpty) return [];
+        var notes = new List<WordDocumentNoteHtml>(references.Length);
+        foreach (DocBinaryNoteReferences.NoteReference reference in references)
+        {
+            string label = DocBinaryParagraphHtmlRenderer.NoteLabel(reference);
+            notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label,
+                                               _renderer.RenderNote(reference.TextStartCp, reference.TextEndCp, label)));
+        }
+        return notes;
+    }
+
+    /// <summary>From the index — captured during the block scan, so a reopen reads no text for the TOC.</summary>
+    public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
+
+    public (int footnotes, int endnotes) NoteCounts => (_notes.FootnoteCount, _notes.EndnoteCount);
+
+    public IReadOnlyList<WordDocumentNoteReference> NoteReferences
+        => _noteReferences ??= _notes.References.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, _index.BlockAt(r.ReferenceCp))).ToArray();
+    private WordDocumentNoteReference[]? _noteReferences;
 
     public void Dispose()
     {
+        _dataStream?.Dispose();
         _tableStream.Dispose();
         _wordDocument.Dispose();
         _compoundFile.Dispose();

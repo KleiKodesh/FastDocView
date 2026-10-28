@@ -20,17 +20,26 @@ export interface WordDocumentSummary {
   blockCount: number
   isRightToLeft: boolean
   stylesheet: string
-  headings: WordHeading[]
   openMilliseconds: number
-  headingsMilliseconds: number
   mode: string
   hasCachedIndex: boolean
   reason: string
   readerType: string
+  headingCount: number
+  footnoteCount: number
+  endnoteCount: number
 }
 
-/** The block shape the app's lines view consumes: index + html. */
-export interface WordBlock { index: number; kind: number; html: string }
+export type WordNoteKind = 'footnote' | 'endnote'
+
+/** A footnote/endnote body, delivered with the block that references it. */
+export interface WordNote { kind: WordNoteKind; number: number; label: string; html: string }
+
+/** A note as the notes pane lists it: which block referenced it and a key unique within the document. */
+export interface WordVisibleNote extends WordNote { key: string; blockIndex: number }
+
+/** The block shape the app's lines view consumes: index + html (+ the notes it references). */
+export interface WordBlock { index: number; kind: number; html: string; notes: WordNote[] }
 
 export interface WordServerMemory { managedHeapMegabytes: number; workingSetMegabytes: number; openDocuments: number }
 
@@ -59,8 +68,15 @@ export function closeDocument(id: number): Promise<Response> {
   return fetch(`/api/documents/${id}`, { method: 'DELETE' })
 }
 
-export function fetchWeights(id: number): Promise<number[]> {
-  return fetch(`/api/documents/${id}/weights`).then(readJson<number[]>)
+/** Raw little-endian Int32 per block — no JSON for 100k+ numbers. */
+export async function fetchWeights(id: number): Promise<Int32Array> {
+  const response = await fetch(`/api/documents/${id}/weights`)
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+  return new Int32Array(await response.arrayBuffer())
+}
+
+export function fetchHeadings(id: number): Promise<WordHeading[]> {
+  return fetch(`/api/documents/${id}/headings`).then(readJson<WordHeading[]>)
 }
 
 export async function fetchBlocks(id: number, first: number, count: number): Promise<{ blocks: WordBlock[]; renderMilliseconds: number; roundTripMilliseconds: number }> {
@@ -72,10 +88,6 @@ export async function fetchBlocks(id: number, first: number, count: number): Pro
     renderMilliseconds: Number(response.headers.get('X-Render-Milliseconds') ?? 0),
     roundTripMilliseconds: performance.now() - started,
   }
-}
-
-export function fetchProgress(): Promise<{ bytesDone: number; bytesTotal: number; blocksFound: number }> {
-  return fetch('/api/progress').then(readJson<{ bytesDone: number; bytesTotal: number; blocksFound: number }>)
 }
 
 export function fetchServerMemory(collect = false): Promise<WordServerMemory> {

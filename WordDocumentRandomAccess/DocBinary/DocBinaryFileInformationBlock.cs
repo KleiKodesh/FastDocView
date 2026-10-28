@@ -18,16 +18,26 @@ public sealed class DocBinaryFileInformationBlock
     public string TableStreamName { get; }
     public int MainTextCharacterCount { get; }      // ccpText
     public int FootnoteCharacterCount { get; }      // ccpFtn
+    public int HeaderCharacterCount { get; }        // ccpHdd
+    public int CommentCharacterCount { get; }       // ccpAtn
+    public int EndnoteCharacterCount { get; }       // ccpEdn
     public (uint offset, uint length) StyleSheet { get; }          // Stshf
     public (uint offset, uint length) PieceTable { get; }          // Clx
     public (uint offset, uint length) CharacterBinTable { get; }   // PlcfBteChpx
     public (uint offset, uint length) ParagraphBinTable { get; }   // PlcfBtePapx
     public (uint offset, uint length) FootnoteReferences { get; }  // PlcffndRef
     public (uint offset, uint length) FootnoteTexts { get; }       // PlcffndTxt
+    public (uint offset, uint length) EndnoteReferences { get; }   // PlcfendRef
+    public (uint offset, uint length) EndnoteTexts { get; }        // PlcfendTxt
+    public (uint offset, uint length) FontTable { get; }           // SttbfFfn
+
+    /// <summary>Where each story starts in the CP space: main text, footnotes, headers, comments, endnotes ([MS-DOC] §2.3).</summary>
+    public int FootnoteStoryStart => MainTextCharacterCount;
+    public int EndnoteStoryStart => MainTextCharacterCount + FootnoteCharacterCount + HeaderCharacterCount + CommentCharacterCount;
 
     public DocBinaryFileInformationBlock(Stream wordDocumentStream)
     {
-        var fib = new byte[0x200];
+        var fib = new byte[0x600];                     // FibRgFcLcb2007 at most ends near 0x5B6
         wordDocumentStream.Position = 0;
         int read = 0;
         while (read < fib.Length) { int n = wordDocumentStream.Read(fib, read, fib.Length - read); if (n <= 0) break; read += n; }
@@ -43,18 +53,29 @@ public sealed class DocBinaryFileInformationBlock
 
         MainTextCharacterCount = BitConverter.ToInt32(fib, 0x4C);
         FootnoteCharacterCount = BitConverter.ToInt32(fib, 0x50);
+        HeaderCharacterCount = BitConverter.ToInt32(fib, 0x54);
+        CommentCharacterCount = BitConverter.ToInt32(fib, 0x5C);
+        EndnoteCharacterCount = BitConverter.ToInt32(fib, 0x60);
 
+        _fcLcbCount = BitConverter.ToUInt16(fib, 0x98);
         StyleSheet = FcLcb(fib, 1);
         FootnoteReferences = FcLcb(fib, 2);
         FootnoteTexts = FcLcb(fib, 3);
         CharacterBinTable = FcLcb(fib, 12);
         ParagraphBinTable = FcLcb(fib, 13);
         PieceTable = FcLcb(fib, 33);
+        FontTable = FcLcb(fib, 15);
+        EndnoteReferences = FcLcb(fib, 46);
+        EndnoteTexts = FcLcb(fib, 47);
     }
 
-    private static (uint, uint) FcLcb(byte[] fib, int index)
+    private readonly int _fcLcbCount;
+
+    /// <summary>An (offset, length) pair of FibRgFcLcb; (0, 0) when this file's FIB is too short to have it.</summary>
+    private (uint, uint) FcLcb(byte[] fib, int index)
     {
         int at = FibRgFcLcbStart + index * 8;
+        if (index >= _fcLcbCount || at + 8 > fib.Length) return (0, 0);
         return (BitConverter.ToUInt32(fib, at), BitConverter.ToUInt32(fib, at + 4));
     }
 }

@@ -17,7 +17,10 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private readonly DocxBlockXmlReader _blockReader;
     private readonly DocxStyleCascade _styles;
     private readonly DocxBlockHtmlRenderer _renderer;
-    private IReadOnlyList<WordDocumentHeading>? _headings;
+    private readonly DocxNoteBodies _notes;
+    private readonly Dictionary<(WordDocumentNoteKind kind, int id), int> _noteNumbers = new();
+    private readonly int _footnoteCount;
+    private readonly int _endnoteCount;
 
     public string FilePath { get; }
     public int BlockCount => _index.BlockCount;
@@ -89,7 +92,13 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _index = index;
         _blockReader = blockReader;
         _styles = parts.Styles;
-        _renderer = new DocxBlockHtmlRenderer(_styles);
+        _notes = parts.Notes;
+        foreach (DocxNoteReference reference in index.NoteReferences)
+        {
+            _noteNumbers[(reference.Kind, reference.NoteId)] = reference.Number;
+            if (reference.Kind == WordDocumentNoteKind.Footnote) _footnoteCount++; else _endnoteCount++;
+        }
+        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel);
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
@@ -101,30 +110,41 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     {
         var result = new List<WordDocumentBlockHtml>(count);
         foreach ((int blockIndex, XElement element) in _blockReader.ReadBlocks(firstBlockIndex, count))
-            result.Add(new WordDocumentBlockHtml(blockIndex, _index.BlockKinds[blockIndex], _renderer.Render(element, _index.ListLabelOf(blockIndex))));
+        {
+            string? previousStyleKey = blockIndex > 0 ? _index.StyleIdOf(blockIndex - 1) ?? "" : null;
+            string html = _renderer.Render(element, _index.ListLabelOf(blockIndex), previousStyleKey);
+            result.Add(new WordDocumentBlockHtml(blockIndex, _index.BlockKinds[blockIndex], html, RenderNotesOf(blockIndex)));
+        }
         return result;
     }
 
-    public IReadOnlyList<WordDocumentHeading> Headings => _headings ??= CollectHeadings();
-
-    private List<WordDocumentHeading> CollectHeadings()
+    /// <summary>The notes a block references, rendered — what a Word-style notes pane shows for the visible text.</summary>
+    private IReadOnlyList<WordDocumentNoteHtml> RenderNotesOf(int blockIndex)
     {
-        var headings = new List<WordDocumentHeading>();
-        var levelByStyleId = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (string styleId in _index.StyleIdTable) levelByStyleId[styleId] = _styles.HeadingLevelOf(styleId);
-
-        for (int blockIndex = 0; blockIndex < _index.BlockCount; blockIndex++)
+        ReadOnlySpan<DocxNoteReference> references = _index.NoteReferencesInBlocks(blockIndex, blockIndex);
+        if (references.IsEmpty) return [];
+        var notes = new List<WordDocumentNoteHtml>(references.Length);
+        foreach (DocxNoteReference reference in references)
         {
-            string? styleId = _index.StyleIdOf(blockIndex);
-            if (styleId is null || levelByStyleId[styleId] == 0) continue;
-            foreach ((_, XElement element) in _blockReader.ReadBlocks(blockIndex, 1))
-            {
-                string text = DocxBlockHtmlRenderer.PlainText(element);
-                if (text.Length > 0) headings.Add(new WordDocumentHeading(blockIndex, levelByStyleId[styleId], text));
-            }
+            string label = reference.Number > 0 ? _notes.FormatNumber(reference.Kind, reference.Number) : "*";
+            XElement? body = _notes.Find(reference.Kind, reference.NoteId);
+            string html = body is null ? "" : _renderer.RenderNote(body, reference.Kind, label);
+            notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, html));
         }
-        return headings;
+        return notes;
     }
+
+    private (int number, string label)? ResolveNoteLabel(WordDocumentNoteKind kind, int noteId)
+        => _noteNumbers.TryGetValue((kind, noteId), out int number) ? (number, number > 0 ? _notes.FormatNumber(kind, number) : "*") : null;
+
+    /// <summary>From the index — captured during the scan, so a reopen reads no blocks for the TOC.</summary>
+    public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
+
+    public (int footnotes, int endnotes) NoteCounts => (_footnoteCount, _endnoteCount);
+
+    public IReadOnlyList<WordDocumentNoteReference> NoteReferences
+        => _noteReferences ??= _index.NoteReferences.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, r.BlockIndex)).ToArray();
+    private WordDocumentNoteReference[]? _noteReferences;
 
     private static FileStream OpenRead(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
 

@@ -10,6 +10,7 @@ using WordDocumentRandomAccess.Tests;
 int blocks = 50_000, deflateMegabytes = 8, hugeBlocks = 0;
 bool skipSynthetic = false;
 var realPaths = new List<string>();
+var auditPaths = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -19,6 +20,7 @@ for (int i = 0; i < args.Length; i++)
         case "--deflate-mb": deflateMegabytes = int.Parse(args[++i]); break;
         case "--skip-synthetic": skipSynthetic = true; break;
         case "--real": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) realPaths.Add(args[++i]); break;
+        case "--audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) auditPaths.Add(args[++i]); break;
     }
 }
 
@@ -30,6 +32,7 @@ if (!skipSynthetic)
 }
 if (hugeBlocks > 0) HugeDocumentMemoryTest.Run(hugeBlocks);
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));
+if (auditPaths.Count > 0) WordFormattingAudit.Run(auditPaths.Where(File.Exists));
 
 Console.WriteLine();
 Console.WriteLine(TestReport.FailureCount == 0 ? "ALL PASSED" : $"{TestReport.FailureCount} FAILURE(S)");

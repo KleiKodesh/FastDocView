@@ -34,6 +34,12 @@ public static class RealDocumentSmokeTest
                 TestReport.Check(nonEmpty > 0, $"{nonEmpty} of {first.Count + mid.Count + last.Count} sampled blocks have visible text");
                 IReadOnlyList<WordDocumentHeading> headings = TestReport.Timed("headings", () => document.Headings);
                 Console.WriteLine($"   {headings.Count} headings" + (headings.Count > 0 ? $", first: {Truncate(headings[0].Text)}" : ""));
+                (int footnotes, int endnotes) = document.NoteCounts;
+                int notesInSample = first.Concat(mid).Concat(last).Sum(b => b.Notes.Count);
+                int referencesInSample = first.Concat(mid).Concat(last).Sum(b => CountOccurrences(b.Html, "class=\"note-reference\""));
+                Console.WriteLine($"   notes: {footnotes} footnotes, {endnotes} endnotes; sampled blocks carry {referencesInSample} references and {notesInSample} note bodies");
+                TestReport.Check(referencesInSample == notesInSample, "every sampled note reference comes with its note body");
+                TestReport.Check(first.Concat(mid).Concat(last).SelectMany(b => b.Notes).All(n => n.Html.Length > 0), "no empty note bodies");
                 Console.WriteLine($"   first text: {Truncate(StripTags(string.Concat(first.Select(b => b.Html))))}");
 
                 var html = new StringBuilder();
@@ -49,6 +55,13 @@ public static class RealDocumentSmokeTest
                 TestReport.Check(false, $"opened without exception — {exception.GetType().Name}: {exception.Message}");
             }
         }
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        int count = 0;
+        for (int at = text.IndexOf(value, StringComparison.Ordinal); at >= 0; at = text.IndexOf(value, at + value.Length, StringComparison.Ordinal)) count++;
+        return count;
     }
 
     private static string StripTags(string html) => System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", "");

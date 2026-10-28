@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Xml.Linq;
 using WordDocumentRandomAccess.Html;
@@ -5,33 +6,57 @@ using WordDocumentRandomAccess.Html;
 namespace WordDocumentRandomAccess.DocxHtml;
 
 /// <summary>
-/// Renders one body-level block element (w:p, w:tbl, w:sdt, …) to HTML with resolved formatting.
-/// No page layout: paragraphs flow, page breaks become a thin rule. Images are placeholders and
-/// footnote references are a marker only (footnote bodies are deferred — see NOTES.md).
+/// Renders one body-level block element (w:p, w:tbl, w:sdt, …) or a footnote/endnote body to HTML
+/// with resolved formatting. No page layout: paragraphs flow, page and section breaks become thin
+/// rules, tabs are real tab characters sized by the paragraph's first tab stop. Note references
+/// show the number counted at index time and carry data-note-kind / data-note-number so the host
+/// can pair them with the notes delivered alongside the block. Images are placeholders.
 /// </summary>
 public sealed class DocxBlockHtmlRenderer
 {
     private static readonly XNamespace W = DocxStyleCascade.W;
 
-    private readonly DocxStyleCascade _styles;
-    private string? _listLabel;     // the index-time label of the block being rendered (its first paragraph)
+    /// <summary>(kind, note id in footnotes.xml/endnotes.xml) → its number and label, or null when unknown.</summary>
+    public delegate (int number, string label)? NoteLabelResolver(WordDocumentNoteKind kind, int noteId);
 
-    public DocxBlockHtmlRenderer(DocxStyleCascade styles)
+    private readonly DocxStyleCascade _styles;
+    private readonly NoteLabelResolver? _noteLabels;
+    private string? _listLabel;           // the index-time label of the block being rendered (its first paragraph)
+    private string? _previousStyleKey;    // the style of the paragraph rendered just before (contextual spacing)
+    private string? _currentNoteLabel;    // inside a note body: the label its w:footnoteRef/w:endnoteRef shows
+    private WordDocumentNoteKind _currentNoteKind;
+
+    public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null)
     {
         _styles = styles;
+        _noteLabels = noteLabels;
     }
 
     /// <param name="listLabel">The label counted at index time ("3.", "ב."), or null when the block is not a list item.</param>
-    public string Render(XElement block, string? listLabel = null)
+    /// <param name="previousStyleKey">The paragraph style of the block before (for contextual spacing), from the index.</param>
+    public string Render(XElement block, string? listLabel = null, string? previousStyleKey = null)
     {
         var html = new StringBuilder(1024);
         _listLabel = listLabel;
+        _previousStyleKey = previousStyleKey;
         RenderBlock(block, html);
         _listLabel = null;
         return html.ToString();
     }
 
-    /// <summary>Plain text of a block — for headings in the table of contents.</summary>
+    /// <summary>A footnote/endnote body (the w:footnote / w:endnote element); its w:footnoteRef shows <paramref name="label"/>.</summary>
+    public string RenderNote(XElement note, WordDocumentNoteKind kind, string label)
+    {
+        var html = new StringBuilder(512);
+        _currentNoteLabel = label;
+        _currentNoteKind = kind;
+        _previousStyleKey = null;
+        foreach (XElement child in note.Elements()) RenderBlock(child, html);
+        _currentNoteLabel = null;
+        return html.ToString();
+    }
+
+    /// <summary>Plain text of a block.</summary>
     public static string PlainText(XElement block)
     {
         var text = new StringBuilder();
@@ -63,7 +88,7 @@ public sealed class DocxBlockHtmlRenderer
         int headingLevel = formatting.OutlineLevel is >= 0 and <= 8 ? formatting.OutlineLevel + 1 : _styles.HeadingLevelOf(styleId);
         string tag = headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
 
-        WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(), null, formatting.IsRightToLeft);
+        WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(_previousStyleKey), null, formatting.IsRightToLeft);
         if (_listLabel is { Length: > 0 } label)
         {
             html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(label)).Append("</span> ");
@@ -71,6 +96,10 @@ public sealed class DocxBlockHtmlRenderer
         }
         RenderInlineChildren(paragraph, html, formatting.RunFormatting);
         html.Append("</").Append(tag).Append('>');
+        _previousStyleKey = formatting.StyleKey;
+
+        // A w:sectPr inside pPr ends a section: in a flow view that is a rule, not a new page.
+        if (pPr?.Element(W + "sectPr") is not null) html.Append("<hr class=\"section-break\">");
     }
 
     private void RenderInlineChildren(XElement container, StringBuilder html, WordRunFormatting paragraphBase)
@@ -103,31 +132,47 @@ public sealed class DocxBlockHtmlRenderer
             switch (child.Name.LocalName)
             {
                 case "t": case "delText": html.Append(WordHtmlText.Encode(child.Value)); break;
-                case "tab": html.Append("<span class=\"tab\"></span>"); break;
+                case "tab": case "ptab": html.Append('\t'); break;
                 case "br":
-                    html.Append(((string?)child.Attribute(W + "type")) == "page" ? "<div class=\"page-break\"></div>" : "<br>");
+                    html.Append(((string?)child.Attribute(W + "type")) == "page" ? "<span class=\"page-break\"></span>" : "<br>");
                     break;
                 case "cr": html.Append("<br>"); break;
                 case "noBreakHyphen": html.Append('‑'); break;
                 case "softHyphen": html.Append('­'); break;
                 case "sym": html.Append(RenderSymbol(child)); break;
-                case "footnoteReference": case "endnoteReference":
-                    html.Append("<sup class=\"footnote-reference\" data-note-id=\"").Append(WordHtmlText.Encode((string?)child.Attribute(W + "id") ?? ""))
-                        .Append("\">[").Append(child.Name.LocalName == "footnoteReference" ? "*" : "†").Append("]</sup>");
+                case "footnoteReference": AppendNoteReference(html, WordDocumentNoteKind.Footnote, child); break;
+                case "endnoteReference": AppendNoteReference(html, WordDocumentNoteKind.Endnote, child); break;
+                case "footnoteRef": case "endnoteRef":
+                    // the number at the start of a note body
+                    if (_currentNoteLabel is not null)
+                        html.Append("<span class=\"note-mark\">").Append(WordHtmlText.Encode(_currentNoteLabel)).Append("</span>");
                     break;
                 case "drawing": case "pict": case "object":
                     html.Append("<span class=\"unsupported\">[image]</span>");
                     break;
-                case "fldChar": case "instrText": case "rPr": case "lastRenderedPageBreak": break;
+                // separator lines of the notes part, field codes, layout hints: nothing to show
+                case "separator": case "continuationSeparator": case "fldChar": case "instrText": case "rPr": case "lastRenderedPageBreak": break;
             }
         }
         if (hasSpan) html.Append("</span>");
     }
 
+    private void AppendNoteReference(StringBuilder html, WordDocumentNoteKind kind, XElement reference)
+    {
+        int.TryParse((string?)reference.Attribute(W + "id"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int noteId);
+        (int number, string label)? resolved = _noteLabels?.Invoke(kind, noteId);
+        string kindName = kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote";
+        bool isCustomMark = reference.Attribute(W + "customMarkFollows") is { } custom && DocxStyleCascade.IsOn(custom);
+        html.Append("<sup class=\"note-reference\" data-note-kind=\"").Append(kindName)
+            .Append("\" data-note-number=\"").Append(resolved?.number ?? 0).Append("\" data-note-id=\"").Append(noteId).Append("\">");
+        if (!isCustomMark) html.Append(WordHtmlText.Encode(resolved?.label ?? "*"));     // a custom mark is the run text that follows
+        html.Append("</sup>");
+    }
+
     private static string RenderSymbol(XElement symbol)
     {
         string? code = (string?)symbol.Attribute(W + "char");
-        if (code is { Length: 4 } && int.TryParse(code, System.Globalization.NumberStyles.HexNumber, null, out int value))
+        if (code is { Length: 4 } && int.TryParse(code, NumberStyles.HexNumber, null, out int value))
         {
             if (value >= 0xF000) value -= 0xF000;          // symbol fonts live in the private-use area
             return WordHtmlText.Encode(((char)value).ToString());
@@ -139,8 +184,16 @@ public sealed class DocxBlockHtmlRenderer
 
     private void RenderTable(XElement table, StringBuilder html)
     {
-        bool isRightToLeft = table.Element(W + "tblPr")?.Element(W + "bidiVisual") is { } bidi && DocxStyleCascade.IsOn(bidi.Attribute(W + "val"));
-        WordHtmlText.AppendOpenTag(html, "table", null, null, isRightToLeft);
+        XElement? tblPr = table.Element(W + "tblPr");
+        bool isRightToLeft = tblPr?.Element(W + "bidiVisual") is { } bidi && DocxStyleCascade.IsOn(bidi.Attribute(W + "val"));
+        var tableCss = new StringBuilder();
+        if (DocxTableFormatting.WidthCss(tblPr?.Element(W + "tblW")) is { } width) tableCss.Append("width:").Append(width).Append(';');
+        if (DocxStyleCascade.TwipsAttribute(tblPr?.Element(W + "tblInd"), "w") is { } indent and not 0)
+            tableCss.Append("margin-inline-start:").Append(WordParagraphFormatting.TwipsToPt(indent)).Append("pt;");
+        DocxTableFormatting.Borders tableBorders = DocxTableFormatting.ReadBorders(tblPr?.Element(W + "tblBorders"));
+        string cellPadding = DocxTableFormatting.CellMarginCss(tblPr?.Element(W + "tblCellMar"));
+
+        WordHtmlText.AppendOpenTag(html, "table", tableCss.ToString(), null, isRightToLeft);
         List<XElement> rows = table.Elements(W + "tr").ToList();
         for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
         {
@@ -157,10 +210,13 @@ public sealed class DocxBlockHtmlRenderer
                 html.Append("<td");
                 if (span > 1) html.Append(" colspan=\"").Append(span).Append('"');
                 if (rowSpan > 1) html.Append(" rowspan=\"").Append(rowSpan).Append('"');
-                string? fill = (string?)tcPr?.Element(W + "shd")?.Attribute(W + "fill");
-                if (fill is { Length: 6 } && !fill.Equals("auto", StringComparison.OrdinalIgnoreCase)) html.Append(" style=\"background:#").Append(fill).Append('"');
+                string cellCss = DocxTableFormatting.CellCss(tcPr, tableBorders) + cellPadding;
+                if (cellCss.Length > 0) html.Append(" style=\"").Append(cellCss).Append('"');
                 html.Append('>');
+                string? previous = _previousStyleKey;
+                _previousStyleKey = null;
                 foreach (XElement child in cell.Elements()) RenderBlock(child, html);
+                _previousStyleKey = previous;
                 html.Append("</td>");
                 column += span;
             }

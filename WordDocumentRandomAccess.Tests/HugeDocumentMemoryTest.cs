@@ -13,7 +13,7 @@ public static class HugeDocumentMemoryTest
     public static void Run(int blockCount)
     {
         TestReport.Step($"Huge synthetic docx ({blockCount:N0} blocks): instant reload + flat memory");
-        string path = Path.Combine(TestReport.OutputDirectory, $"synthetic-{blockCount}-v2.docx");
+        string path = Path.Combine(TestReport.OutputDirectory, $"synthetic-{blockCount}-v3.docx");
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
         if (!File.Exists(path)) TestReport.Timed("generate", () => SyntheticDocxGenerator.Write(path, blockCount));
         Console.WriteLine($"   file {new FileInfo(path).Length >> 20} MB on disk");

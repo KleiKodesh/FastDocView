@@ -48,7 +48,7 @@ public static class DocxRandomAccessIndexBuilder
                                               MemoryStream? bodyCopy, CancellationToken cancellation)
     {
         ZipEntryLocation entry = LocateDocumentEntry(package);
-        var scanner = new DocxBodyBlockScanner(parts.CreateListLabelResolver());
+        var scanner = new DocxBodyBlockScanner(parts.CreateListLabelResolver(), parts.Styles.HeadingLevelOf);
         var checkpoints = new List<DeflateCheckpoint>();
         var chunk = new byte[ChunkSize];
         long totalOut = 0;
@@ -92,12 +92,14 @@ public static class DocxRandomAccessIndexBuilder
             }
         }
 
+        scanner.Finish();
         if (scanner.BodyEndOffset < 0) throw new InvalidDataException("word/document.xml has no closing <w:body>.");
 
         return new DocxRandomAccessIndex(
             sourceLength, sourceLastWriteTicksUtc, entry, scanner.RootOpenTag, scanner.BodyEndOffset, checkpoints,
             scanner.BlockStartOffsets.ToArray(), scanner.BlockKinds.ToArray(), scanner.BlockTextLengths.ToArray(),
             scanner.BlockStyleIds.ToArray(), scanner.StyleIdTable.ToArray(),
-            scanner.BlockListLabelIds.ToArray(), scanner.ListLabels.ToArray());
+            scanner.BlockListLabelIds.ToArray(), scanner.ListLabels.ToArray(),
+            scanner.Headings.ToArray(), scanner.NoteReferences.ToArray());
     }
 }
