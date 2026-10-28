@@ -41,7 +41,7 @@ public sealed class DocxDocumentParts
     private DocxNumberingDefinitions LoadNumbering()
     {
         using var zip = new ZipArchive(_package, ZipArchiveMode.Read, leaveOpen: true);
-        return new DocxNumberingDefinitions(LoadPart(zip, PartNames.Numbering));
+        return new DocxNumberingDefinitions(LoadPart(zip, PartNames.Numbering), styleId => Styles.NumberingOf(styleId).numId);
     }
 
     /// <summary>The scanner's hook: paragraph style / direct numPr → the next label of that list.</summary>
