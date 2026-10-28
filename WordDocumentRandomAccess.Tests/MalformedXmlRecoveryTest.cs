@@ -50,6 +50,23 @@ public static class MalformedXmlRecoveryTest
         byte[] bytes = Encoding.ASCII.GetBytes(doctype);
         for (int i = 0; i < bytes.Length; i++) if (skipper.Feed(bytes[i])) { endAt = i; break; }
         TestReport.Check(endAt == bytes.Length - 1, $"<!DOCTYPE …> internal subset skipped to its own '>' (ended at {endAt} of {bytes.Length - 1})");
+
+        // the body scanner: a DOCTYPE before the root, and a comment holding "D", "'" and "[" between blocks
+        const string body = "<?xml version=\"1.0\"?><!DOCTYPE d [<!ENTITY e SYSTEM \"http://x/\">]>"
+                          + "<w:document xmlns:w=\"urn:w\"><w:body><w:p/><!-- Don't [x] Draft --><w:p/><w:p/></w:body></w:document>";
+        foreach (int chunkSize in new[] { 1, 7, 4096 })
+        {
+            var scanner = new DocxBodyBlockScanner();
+            byte[] all = Encoding.UTF8.GetBytes(body);
+            for (int i = 0; i < all.Length; i += chunkSize)
+            {
+                int count = Math.Min(chunkSize, all.Length - i);
+                scanner.Feed(all.AsSpan(i, count).ToArray(), count);
+            }
+            scanner.Finish();
+            TestReport.Check(scanner.BlockStartOffsets.Count == 3 && scanner.BodyEndOffset > 0,
+                             $"body scanner, chunks of {chunkSize}: DOCTYPE and a comment with D/'/[ skipped — {scanner.BlockStartOffsets.Count} blocks");
+        }
     }
 
     private static XElement? Load(string xml)

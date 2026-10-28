@@ -70,6 +70,7 @@ public sealed class DocxDocumentParts
             // malformed: what precedes the first error, the same elements the streaming path keeps
             XDocument? whole = WordDocumentXml.LoadPartKeepingContentBeforeFirstError(() => zip.GetEntry(name!)!.Open());
             if (whole?.Root is not { } root || root.Name != DocxStyleCascade.W + "styles") return null;
+            root.DescendantNodes().OfType<XComment>().Remove();   // the streaming path ignores comments
             return new XDocument(new XElement(root.Name, root.Elements().Where(element => element.Name == DocxStyleCascade.W + "docDefaults" || element.Name == DocxStyleCascade.W + "style")));
         }
     }
