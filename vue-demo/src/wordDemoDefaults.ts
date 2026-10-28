@@ -9,5 +9,5 @@ export const SAMPLE_FILES: WordDemoSample[] = [
   { label: '.docx — 87 MB body, 123k blocks', path: `${DEFAULT_FOLDER_PATH}\\0כללי\\דור המלקטים\\שבת.docx` },
 ]
 
-export const DEFAULT_FILE_PATH = SAMPLE_FILES[0].path
+export const DEFAULT_FILE_PATH = SAMPLE_FILES[0]!.path
 export const LAST_FILE_STORAGE_KEY = 'word-demo.file'
