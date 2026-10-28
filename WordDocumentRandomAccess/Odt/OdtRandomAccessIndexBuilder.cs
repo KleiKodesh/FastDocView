@@ -52,7 +52,7 @@ public static class OdtRandomAccessIndexBuilder
         return Finish(scanner, styles, sourceLength, sourceLastWriteTicksUtc, isFlat: true, null, []);
     }
 
-    private static OdtRandomAccessIndex Finish(OdtBodyBlockScanner scanner, OdtStyleCascade styles, long sourceLength, long sourceLastWriteTicksUtc, bool isFlat,
+    internal static OdtRandomAccessIndex Finish(OdtBodyBlockScanner scanner, OdtStyleCascade styles, long sourceLength, long sourceLastWriteTicksUtc, bool isFlat,
                                                ZipEntryLocation? content, List<DeflateCheckpoint> checkpoints)
     {
         if (!scanner.IsBodyComplete && !scanner.KeepCompleteBlocks())

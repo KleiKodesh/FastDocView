@@ -4,7 +4,7 @@
 //   GET  /api/documents/{id}/weights          estimated text length per block, raw little-endian Int32 (scrollbar weights)
 //   GET  /api/documents/{id}/headings         [{ blockIndex, level, text }] — from the index, no block reads
 //   GET  /api/documents/{id}/blocks?first&count    rendered blocks [{ index, kind, html, notes: [{ kind, number, label, html }] }];
-//        headers X-Known-Block-Count / X-Estimated-Block-Count / X-Index-Complete: a .docx first open builds its index
+//        headers X-Known-Block-Count / X-Index-Complete: a .docx first open builds its index
 //        on demand (each request scans as far as it needs), so the reader corrects its count from every response.
 //        Headings / weights / note-references return what is known so far.
 //   DELETE /api/documents/{id}                closes
@@ -21,7 +21,7 @@ const string Url = "http://127.0.0.1:5188";
 
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.WebHost.UseUrls(Url);
-builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("X-Render-Milliseconds", "X-Known-Block-Count", "X-Estimated-Block-Count", "X-Index-Complete")));
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("X-Render-Milliseconds", "X-Known-Block-Count", "X-Index-Complete")));
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Insert(0, DevServerJsonContext.Default));
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
 
@@ -111,10 +111,18 @@ app.MapGet("/api/documents/{id:int}/blocks", (int id, int first, int count, Http
     catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }   // the demo reopens
     response.Headers["X-Render-Milliseconds"] = watch.Elapsed.TotalMilliseconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Known-Block-Count"] = document.KnownBlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
-    response.Headers["X-Estimated-Block-Count"] = document.BlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Index-Complete"] = document.IsIndexComplete ? "true" : "false";
     return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, b.Html,
         b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())).ToList());
+});
+
+// A first open keeps building its index: the demo calls this until it is complete (each call indexes `blocks` more blocks; renders and sends nothing).
+app.MapPost("/api/documents/{id:int}/scan", (int id, int blocks) =>
+{
+    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
+    try { document.ScanAhead(Math.Clamp(blocks, 1, 100_000)); }
+    catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }
+    return Results.Ok(new ScanBody(document.KnownBlockCount, document.IsIndexComplete));
 });
 
 app.MapDelete("/api/documents/{id:int}", (int id) =>
@@ -152,6 +160,7 @@ record DocumentSummary(int Id, string FileName, string Path, int BlockCount, boo
                        int HeadingCount, int FootnoteCount, int EndnoteCount, int KnownBlockCount, bool IsIndexComplete);
 record NoteBody(string Kind, int Number, string Label, string Html);
 record NoteReferenceBody(string Kind, int Number, int BlockIndex);
+record ScanBody(int KnownBlockCount, bool IsIndexComplete);
 record BlockBody(int Index, int Kind, string Html, List<NoteBody> Notes);
 record ProgressBody(long BytesDone, long BytesTotal, int BlocksFound);
 record MemoryBody(long ManagedHeapMegabytes, long WorkingSetMegabytes, int OpenDocuments);

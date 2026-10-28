@@ -24,6 +24,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     public int BlockCount => _index.BlockCount;
     public bool IsIndexComplete => true;
     public int KnownBlockCount => _index.BlockCount;
+    public int ScanAhead(int blocks) => BlockCount;          // always complete
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
     public bool IsRightToLeft => _index.IsRightToLeft;
     public string Stylesheet { get; }
