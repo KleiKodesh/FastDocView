@@ -18,9 +18,14 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     private readonly OdtBlockHtmlRenderer _renderer;
     private readonly object _readLock = new();
     private readonly int _footnoteCount, _endnoteCount;
+    private WordDocumentFileStream? _releasableFile;   // set by Open(path): released after every window
+    private bool _isReadingFromFile;                    // false when content.xml was inflated in memory (small package)
 
     public string FilePath { get; }
     public int BlockCount => _index.BlockCount;
+    public bool IsIndexComplete => true;
+    public int KnownBlockCount => _index.BlockCount;
+    public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
     public bool IsRightToLeft { get; }
     public string Stylesheet { get; }
     public WordIndexDecision Decision { get; }
@@ -43,7 +48,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         var info = new FileInfo(filePath);
         string indexPath = policy.IndexPathFor(filePath);
         OdtRandomAccessIndex? cached = OdtRandomAccessIndex.TryLoad(indexPath, filePath);
-        FileStream file = OpenRead(filePath);
+        var file = new WordDocumentFileStream(filePath);
         try
         {
             WordIndexDecision decision = policy.Decide(filePath, TextBytes(file, isFlat), cached is not null);
@@ -53,6 +58,10 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                 try { document._index.Save(indexPath); }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }   // the sidecar is a cache; the open document stands
             }
+            document._releasableFile = file;
+            document._isReadingFromFile = isFlat || decision.Mode == WordIndexMode.Sidecar
+                                          || (cached is not null && cached.MatchesSource(info.Length, info.LastWriteTimeUtc.Ticks));
+            file.Release();                                   // no handle on the file between windows (Word / LibreOffice must be able to save it)
             return document;
         }
         catch
@@ -126,6 +135,15 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     {
         lock (_readLock)
         {
+            if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
+                throw new WordDocumentSourceChangedException(FilePath);
+            try { return RenderBlocksLocked(firstBlockIndex, count); }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
+    private List<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count)
+    {
             var result = new List<WordDocumentBlockHtml>(Math.Max(0, count));
             foreach ((int blockIndex, XElement element) in _reader.ReadBlocks(firstBlockIndex, count))
             {
@@ -134,7 +152,6 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                 result.Add(new WordDocumentBlockHtml(blockIndex, _index.BlockKinds[blockIndex], html, notes));
             }
             return result;
-        }
     }
 
     public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
@@ -145,7 +162,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         => _noteReferences ??= _index.NoteReferences.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, r.BlockIndex)).ToArray();
     private WordDocumentNoteReference[]? _noteReferences;
 
-    private static FileStream OpenRead(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+    private static FileStream OpenRead(string path) => WordDocumentFileStream.OpenShared(path);     // Word / LibreOffice may hold the file open
 
     public void Dispose() => _reader.Dispose();
 }

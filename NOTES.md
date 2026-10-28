@@ -360,3 +360,39 @@ overloads. Every rule below was read from the source named, not from memory:
   table cells and notes get a plain bullet, not their counted label; heading outline numbering
   (`text:outline-style`) is not shown except where the producer wrote `text:number`; tab stops,
   images (placeholder), list-level indents (a fixed 18 pt per level) are approximations.
+## On-demand index for the first open (.docx, 2026-10-28)
+
+The first open of a big .docx no longer waits for the whole index pass. With
+`WordIndexPolicy.IndexesOnDemand` (the dev server sets it; the library default stays off so
+`BuildSidecarIndexes`, the corpus pass and older hosts keep the one-go build) a sidecar open with no
+cached index scans only until the first 100 blocks are known and returns.
+
+- `DocxIncrementalIndexBuilder` owns the body's inflater (`DocxEntryInflationCursor`, the pull form of
+  `DocxEntryInflation.Run`: same 256 KB chunks, same checkpoint rule) and the `DocxBodyBlockScanner`.
+  It is advanced **synchronously in the caller's thread** ("until block N is known" / to the end) - no
+  background thread. A block is known once the next one has started (or `</w:body>` was seen).
+- `IDocxBlockTable` is what the block reader and renderer read per block; the finished
+  `DocxRandomAccessIndex` and the builder (over its known blocks) both serve it. The block reader's
+  `DeflateRandomAccessStream` is opened over the builder's live checkpoint list, so it already seeks
+  anywhere in the part scanned so far.
+- `DocxWindowedDocument`: `BlockCount` = `EstimatedBlockCount` while incomplete (known + unscanned
+  body bytes / average block bytes so far), `KnownBlockCount`, `IsIndexComplete`, `CompleteIndex()`.
+  `RenderBlocks(first, count)` first advances the scan to `first + count`; a jump to the end pays the
+  rest of the pass once. `EstimatedTextLength` past the known blocks returns the known average;
+  headings / note references are those of the known blocks.
+- **Notes**: `DocxIncrementalNotesPart` pulls footnotes.xml / endnotes.xml forward only until a
+  referenced note's range is found (Word writes notes in reference order, so early blocks find theirs
+  near the start; every part is still inflated once in total). Chosen over "scan the notes first"
+  because a notes part can be bigger than the body (`--notes-streaming`).
+- On completion the finished index replaces the builder (scanner lists freed, note reader re-opened
+  over the index) and `Open(path)` saves the sidecar. The index is **byte-identical** to
+  `DocxRandomAccessIndexBuilder.Build` (shared `CreateIndex` / `CreateNotesPartIndex`).
+- Dev server: blocks responses carry `X-Known-Block-Count`, `X-Estimated-Block-Count`,
+  `X-Index-Complete`; the summary has `knownBlockCount` / `isIndexComplete`. The demo uses the
+  estimate as the scroller count, corrects it from every blocks response (no polling) and refetches
+  headings + weights when the index completes. Weights are applied only while their length matches
+  the count. `playwright/incrementalCheck.mjs` checks it live.
+- Measured (`--incremental-open`, JIT warm): 1M-block synthetic (350 MB body) open + first 40
+  blocks ~25 ms (was ~10 s for the full pass), window at 10 % ~1 s, at 50 % ~1 s more, completion
+  from 50 % ~1.6 s; the 87 MB-body sample first window ~80 ms, 10 % ~170 ms, 50 % ~0.8 s, end ~0.4 s.
+  Heap at 50 %: 27 MB (synthetic) / 13 MB (sample).

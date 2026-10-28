@@ -222,3 +222,40 @@ Append-only. Date, what we learned, what it changed.
   note shows offset+1 was not verified — the citation text the producer wrote is shown instead.
 - Converting the 12 MB sample with headless LibreOffice took ~7 minutes; the converted file is
   cached in TestOutput (gitignored) and reused while newer than its source.
+## 2026-10-28 — coexisting with Word
+
+- `File.OpenRead` / `FileShare.Read` deny other writers: with a document open in the reader, Word
+  would open the file read-only or fail to save. Word saves by writing a temp file and replacing
+  the original, so delete/rename must be shared too: every open is now `FileShare.ReadWrite |
+  FileShare.Delete`, through one helper.
+- Index-mode documents used to keep the file open for their whole life. Now the handle exists only
+  while a window is read (released after every render) — measured cost: none visible.
+- After Word saves, the old index's offsets point into a different file: rendering on would show
+  wrong text silently. Renders now check size + write time first (microseconds) and throw
+  `WordDocumentSourceChangedException`; the dev server answers 409 and the demo reopens in place.
+  An in-memory .docx keeps showing the version it read; it still reports the change.
+- A build in progress keeps its handle (shared) — if Word saves mid-build, the handle keeps reading
+  the old file object, and the saved index fails its size/time check on the next open (re-index).
+## 2026-10-28 - on-demand index for the first open
+
+- **The scan is resumable for free.** The scanner was already chunk-fed and the inflater already
+  pauses between symbols, so "index on demand" is a pull loop in the reader's thread, not a
+  background pass. Checkpoints depend only on deflate block boundaries and output offsets, never on
+  read sizes, so the pulled index is byte-identical to the one-go build.
+- **A process-cold first render costs ~300-400 ms of JIT** (zip, XmlReader, the renderer) on top of
+  the scan. Timings in the harness are taken after a small warm-up file; a real host is long-lived.
+- **Heap "bounded" means "no more than a sidecar reopen".** A 1M-block index itself is ~45 MB of
+  managed arrays/strings; comparing against 1/8 of the body was the wrong yardstick.
+- Worktrees need `..\SeekableDeflate` next to them since the split: a junction
+  `WordDocumentRandomAccess-work\SeekableDeflate -> ..\SeekableDeflate` makes them build.
+
+## 2026-10-28 — on-demand index, live-checked
+
+- A cold first open of the 87 MB-body sample shows text after ~0.26 s in the browser (server
+  ~0.07 s) with ~440 of 123,007 blocks known; a jump to the middle pulls the scan there (~1.8 s);
+  reaching the end completes and saves the index (identical to a full build).
+- The live check caught what the harness could not: a jump to the *estimated* last row completed
+  the index, the real count shrank (154,146 → 123,007), and the scroller mounted an empty window
+  past the new end — a blank screen. Cause in the scroller's landing: its window was computed from
+  the count before the rows were fetched. `landAt` now re-checks after the fetch and re-lands on the
+  new last row. The app's own WindowedScroller has the same latent race when a count shrinks mid-landing.

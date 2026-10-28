@@ -20,7 +20,7 @@ public static class WordWindowedDocumentOpener
     public static WordFileFormat DetectFormat(string filePath)
     {
         var header = new byte[4];
-        using var file = File.OpenRead(filePath);
+        using FileStream file = WordDocumentFileStream.OpenShared(filePath);
         _ = file.Read(header, 0, 4);
         if (header[0] == (byte)'P' && header[1] == (byte)'K')
             return OdtPackage.IsOpenDocumentTextPackage(file) ? WordFileFormat.OpenDocument : WordFileFormat.Docx;

@@ -21,6 +21,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
 
     public string FilePath { get; }
     public int BlockCount => _index.BlockCount;
+    public bool IsIndexComplete => true;
+    public int KnownBlockCount => _index.BlockCount;
     public bool IsRightToLeft { get; }
     public string Stylesheet { get; }
     public WordIndexDecision Decision { get; }
@@ -48,11 +50,14 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         var info = new FileInfo(filePath);
         string indexPath = policy.IndexPathFor(filePath);
         DocBinaryBlockIndex? cached = DocBinaryBlockIndex.TryLoad(indexPath, filePath);
-        var file = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+        var file = new WordDocumentFileStream(filePath);
         try
         {
             var document = new DocBinaryWindowedDocument(file, filePath, policy, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
             if (document.Decision.Mode == WordIndexMode.Sidecar && cached is null) document._index.Save(indexPath);
+            document._releasableFile = file;
+            document._isReadingFromFile = true;                // .doc text is always read through the piece table
+            file.Release();                                   // no handle on the file between windows (Word must be able to save it)
             return document;
         }
         catch
@@ -117,7 +122,25 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
 
     public int EstimatedTextLength(int blockIndex) => _index.BlockTextLengths[blockIndex];
 
+    private WordDocumentFileStream? _releasableFile;   // set by Open(path): released after every window
+    private bool _isReadingFromFile;                    // false when the whole text was inflated in memory (small .docx)
+    private readonly object _readLock = new();
+
+    public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
+
     public IReadOnlyList<WordDocumentBlockHtml> RenderBlocks(int firstBlockIndex, int count)
+    {
+        lock (_readLock)
+        {
+            // Only documents that still read the file (index mode) are at risk; a stale in-memory body is still consistent.
+            if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
+                throw new WordDocumentSourceChangedException(FilePath);
+            try { return RenderBlocksLocked(firstBlockIndex, count); }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
+    private IReadOnlyList<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count)
     {
         var result = new List<WordDocumentBlockHtml>(count);
         int last = Math.Min(BlockCount, firstBlockIndex + count);

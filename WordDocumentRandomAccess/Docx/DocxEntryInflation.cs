@@ -6,47 +6,25 @@ namespace WordDocumentRandomAccess.Docx;
 /// One sequential pass over a zip entry's uncompressed bytes, chunk by chunk, capturing a deflate
 /// checkpoint roughly every <c>checkpointSpanBytes</c> of output (pass <see cref="long.MaxValue"/>
 /// for none). Shared by the body and the notes parts so all three get the same random access.
+/// The pass can run in one go (<see cref="Run"/>) or be pulled one chunk at a time
+/// (<see cref="DocxEntryInflationCursor"/>) — both produce the same chunks and checkpoints.
 /// </summary>
 internal static class DocxEntryInflation
 {
-    private const int ChunkSize = 1 << 18;
+    public const int ChunkSize = 1 << 18;
 
     public static List<DeflateCheckpoint> Run(Stream package, ZipEntryLocation entry, Action<byte[], int> onChunk,
                                               long checkpointSpanBytes, CancellationToken cancellation)
     {
-        var checkpoints = new List<DeflateCheckpoint>();
-        var chunk = new byte[ChunkSize];
-        if (entry.IsDeflate)
+        var cursor = new DocxEntryInflationCursor(package, entry, checkpointSpanBytes);
+        while (true)
         {
-            var inflater = new DeflateCheckpointInflater(package, entry.DataOffset, entry.CompressedSize);
-            long nextCheckpointAt = 0;
-            if (checkpointSpanBytes != long.MaxValue)
-                inflater.BlockBoundaryReached += source =>
-                {
-                    if (source.TotalOut < nextCheckpointAt) return;
-                    checkpoints.Add(source.CaptureCheckpoint());
-                    nextCheckpointAt = source.TotalOut + checkpointSpanBytes;
-                };
-            while (true)
-            {
-                cancellation.ThrowIfCancellationRequested();
-                int read = inflater.Read(chunk, 0, chunk.Length);
-                if (read == 0) break;
-                onChunk(chunk, read);
-            }
+            cancellation.ThrowIfCancellationRequested();
+            int read = cursor.ReadNextChunk();
+            if (read == 0) break;
+            onChunk(cursor.Chunk, read);
         }
-        else
-        {
-            using var stored = new ZipStoredEntryStream(package, entry.DataOffset, entry.CompressedSize);
-            while (true)
-            {
-                cancellation.ThrowIfCancellationRequested();
-                int read = stored.Read(chunk, 0, chunk.Length);
-                if (read == 0) break;
-                onChunk(chunk, read);
-            }
-        }
-        return checkpoints;
+        return cursor.Checkpoints;
     }
 
     /// <summary>A seekable view of the entry's uncompressed bytes over the package (which the view does not own).</summary>

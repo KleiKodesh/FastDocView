@@ -11,7 +11,7 @@ namespace WordDocumentRandomAccess.Docx;
 /// or whatever store a WASM host provides); about 3 % of the uncompressed XML at the default 1 MB
 /// checkpoint spacing.
 /// </summary>
-public sealed class DocxRandomAccessIndex
+public sealed class DocxRandomAccessIndex : IDocxBlockTable
 {
     private const string Magic = "KHWORDIDX";
     private const int FormatVersion = 5;
@@ -35,6 +35,10 @@ public sealed class DocxRandomAccessIndex
     public DocxNotesPartIndex? EndnotesPart { get; }
 
     public int BlockCount => BlockStartOffsets.Length;
+
+    long IDocxBlockTable.BlockStartOffset(int blockIndex) => BlockStartOffsets[blockIndex];
+    WordDocumentBlockKind IDocxBlockTable.BlockKindOf(int blockIndex) => BlockKinds[blockIndex];
+    int IDocxBlockTable.BlockTextLengthOf(int blockIndex) => BlockTextLengths[blockIndex];
 
     public DocxRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, ZipEntryLocation documentEntry,
                                  string rootOpenTag, long bodyEndOffset, IReadOnlyList<DeflateCheckpoint> checkpoints,

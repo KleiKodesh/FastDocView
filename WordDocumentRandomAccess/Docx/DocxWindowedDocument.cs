@@ -10,33 +10,63 @@ namespace WordDocumentRandomAccess.Docx;
 ///     is cached next to the other indexes;
 ///   • <see cref="OpenFromStream"/> — any host (WASM): the caller supplies the package stream and
 ///     an optional previously saved index; nothing touches a file system.
+/// A sidecar first open with <see cref="WordIndexPolicy.IndexesOnDemand"/> returns after the first
+/// blocks are scanned: <see cref="RenderBlocks"/> extends the index as far as it is asked
+/// (<see cref="DocxIncrementalIndexBuilder"/>), and when the scan reaches the end the finished index
+/// replaces the builder (and is saved as the sidecar by <see cref="Open"/>).
 /// </summary>
 public sealed class DocxWindowedDocument : IWordWindowedDocument
 {
-    private readonly DocxRandomAccessIndex _index;
+    /// <summary>Blocks scanned before an on-demand open returns — more than a first screen.</summary>
+    public const int OnDemandFirstBlockCount = 100;
+
+    private DocxRandomAccessIndex? _index;                  // null while the on-demand scan is running
+    private DocxIncrementalIndexBuilder? _builder;          // null once the index is complete
+    private IDocxBlockTable _blocks;
+    private readonly string? _sidecarPathToSave;
     private readonly DocxBlockXmlReader _blockReader;
     private readonly DocxStyleCascade _styles;
     private readonly DocxBlockHtmlRenderer _renderer;
-    private readonly DocxNoteXmlReader _noteReader;
+    private DocxNoteXmlReader _noteReader;
     private readonly DocxNoteNumberFormats _noteFormats;
-    private readonly object _readLock = new();          // one package stream is shared by the block and note readers
+    private WordDocumentFileStream? _releasableFile;   // set by Open(path): released after every window
+    private bool _isReadingFromFile;                    // false when the whole text was inflated in memory (small .docx)
+    private readonly object _readLock = new();          // one package stream is shared by the block and note readers (and the on-demand scan)
     private readonly Dictionary<(WordDocumentNoteKind kind, int id), string> _noteHtmlCache = new();
     private long _noteHtmlCacheCharacters;
     private const long NoteHtmlCacheCharacterLimit = 2_000_000;   // bounded: a few MB of rendered notes, never the part
     private readonly Dictionary<(WordDocumentNoteKind kind, int id), int> _noteNumbers = new();
-    private readonly int _footnoteCount;
-    private readonly int _endnoteCount;
+    private int _noteReferencesRecorded;                // references already counted into _noteNumbers / the counts
+    private int _footnoteCount;
+    private int _endnoteCount;
 
     public string FilePath { get; }
-    public int BlockCount => _index.BlockCount;
     public bool IsRightToLeft { get; }
     public string Stylesheet { get; }
     public WordIndexDecision Decision { get; }
-    public DocxRandomAccessIndex Index => _index;
+
+    /// <summary>The finished index. Throws while an on-demand open is still scanning (see <see cref="CompleteIndex"/>).</summary>
+    public DocxRandomAccessIndex Index => _index ?? throw new InvalidOperationException("The index is still being built on demand; call CompleteIndex() first.");
+
+    public bool IsIndexComplete => _index is not null;
+
+    /// <summary>Blocks whose position is final.</summary>
+    public int KnownBlockCount
+    {
+        get { lock (_readLock) return _builder?.KnownBlockCount ?? _index!.BlockCount; }
+    }
+
+    /// <summary>The block count the reader should lay out: exact when complete, the builder's estimate before.</summary>
+    public int EstimatedBlockCount
+    {
+        get { lock (_readLock) return _builder?.EstimatedBlockCount ?? _index!.BlockCount; }
+    }
+
+    public int BlockCount => EstimatedBlockCount;
 
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
     {
-        using FileStream file = OpenRead(filePath);
+        using FileStream file = WordDocumentFileStream.OpenShared(filePath);
         long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(file);       // body + footnotes + endnotes
         bool hasCachedIndex = DocxRandomAccessIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
         return policy.Decide(filePath, textBytes, hasCachedIndex);
@@ -50,13 +80,22 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         var info = new FileInfo(filePath);
         string indexPath = policy.IndexPathFor(filePath);
         DocxRandomAccessIndex? cached = DocxRandomAccessIndex.TryLoad(indexPath, filePath);
-        FileStream package = OpenRead(filePath);
+        var package = new WordDocumentFileStream(filePath);
         try
         {
             long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(package);
             WordIndexDecision decision = policy.Decide(filePath, textBytes, cached is not null);
-            DocxWindowedDocument document = OpenFromStream(package, filePath, decision, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
-            if (decision.Mode == WordIndexMode.Sidecar && cached is null) document._index.Save(indexPath);
+            DocxWindowedDocument document;
+            if (decision.Mode == WordIndexMode.Sidecar && cached is null && policy.IndexesOnDemand)
+                document = OpenOnDemand(package, filePath, decision, info.Length, info.LastWriteTimeUtc.Ticks, progress, indexPath);
+            else
+            {
+                document = OpenFromStream(package, filePath, decision, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
+                if (decision.Mode == WordIndexMode.Sidecar && cached is null) document.Index.Save(indexPath);
+            }
+            document._releasableFile = package;
+            document._isReadingFromFile = decision.Mode == WordIndexMode.Sidecar || cached is not null;
+            package.Release();                                // no handle on the file between windows (Word must be able to save it)
             return document;
         }
         catch
@@ -70,24 +109,29 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     /// Host-agnostic entry. <paramref name="package"/> must be seekable and stays open for the
     /// document's lifetime in sidecar mode (it is disposed with the document); in in-memory mode
     /// it is only read during this call. <paramref name="cachedIndex"/> is used when it matches.
+    /// <paramref name="indexOnDemand"/>: sidecar mode without a matching cached index returns after
+    /// the first blocks and extends the index as blocks are asked for; the host saves
+    /// <see cref="Index"/> once <see cref="IsIndexComplete"/>.
     /// </summary>
     public static DocxWindowedDocument OpenFromStream(Stream package, string displayPath, WordIndexDecision decision,
                                                       DocxRandomAccessIndex? cachedIndex, long sourceLength, long sourceLastWriteTicksUtc,
                                                       IProgress<WordDocumentIndexProgress>? progress = null,
-                                                      CancellationToken cancellation = default)
+                                                      CancellationToken cancellation = default, bool indexOnDemand = false)
     {
-        var parts = new DocxDocumentParts(package);
         if (cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc))
-            return OverPackage(displayPath, package, cachedIndex, parts, decision);
+            return OverPackage(displayPath, package, cachedIndex, new DocxDocumentParts(package), decision);
+        if (decision.Mode == WordIndexMode.Sidecar && indexOnDemand)
+            return OpenOnDemand(package, displayPath, decision, sourceLength, sourceLastWriteTicksUtc, progress, sidecarPathToSave: null);
 
+        var parts = new DocxDocumentParts(package);
         if (decision.Mode == WordIndexMode.InMemory)
         {
             (DocxRandomAccessIndex index, DocxRandomAccessIndexBuilder.InMemoryParts inflated) =
                 DocxRandomAccessIndexBuilder.BuildInMemory(package, parts, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
             package.Dispose();
-            return new DocxWindowedDocument(displayPath, index, DocxBlockXmlReader.OverBody(inflated.Body, index),
+            return new DocxWindowedDocument(displayPath, index, null, DocxBlockXmlReader.OverBody(inflated.Body, index),
                                             DocxNoteXmlReader.OverBytes(inflated.Footnotes, index.FootnotesPart, inflated.Endnotes, index.EndnotesPart),
-                                            parts, decision);
+                                            parts, decision, sidecarPathToSave: null);
         }
 
         DocxRandomAccessIndex built = DocxRandomAccessIndexBuilder.Build(package, parts, sourceLength, sourceLastWriteTicksUtc, progress, cancellation: cancellation);
@@ -95,34 +139,117 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     }
 
     private static DocxWindowedDocument OverPackage(string displayPath, Stream package, DocxRandomAccessIndex index, DocxDocumentParts parts, WordIndexDecision decision)
-        => new(displayPath, index, DocxBlockXmlReader.OverPackage(package, index),
-               DocxNoteXmlReader.OverPackage(package, index.FootnotesPart, index.EndnotesPart), parts, decision);
+        => new(displayPath, index, null, DocxBlockXmlReader.OverPackage(package, index),
+               DocxNoteXmlReader.OverPackage(package, index.FootnotesPart, index.EndnotesPart), parts, decision, sidecarPathToSave: null);
 
-    private DocxWindowedDocument(string filePath, DocxRandomAccessIndex index, DocxBlockXmlReader blockReader, DocxNoteXmlReader noteReader,
-                                 DocxDocumentParts parts, WordIndexDecision decision)
+    private static DocxWindowedDocument OpenOnDemand(Stream package, string displayPath, WordIndexDecision decision, long sourceLength,
+                                                     long sourceLastWriteTicksUtc, IProgress<WordDocumentIndexProgress>? progress, string? sidecarPathToSave)
+    {
+        var parts = new DocxDocumentParts(package);
+        var builder = new DocxIncrementalIndexBuilder(package, parts, sourceLength, sourceLastWriteTicksUtc, progress);
+        builder.AdvanceUntilKnown(OnDemandFirstBlockCount);
+        var document = new DocxWindowedDocument(displayPath, null, builder, DocxBlockXmlReader.OverIncrementalBuild(package, builder),
+                                                DocxNoteXmlReader.OverIncrementalParts(package, builder.Footnotes, builder.Endnotes),
+                                                parts, decision, sidecarPathToSave);
+        if (builder.IsBodyScanned) document.CompleteIndexLocked();      // a short body: done already
+        return document;
+    }
+
+    private DocxWindowedDocument(string filePath, DocxRandomAccessIndex? index, DocxIncrementalIndexBuilder? builder,
+                                 DocxBlockXmlReader blockReader, DocxNoteXmlReader noteReader,
+                                 DocxDocumentParts parts, WordIndexDecision decision, string? sidecarPathToSave)
     {
         FilePath = filePath;
         _index = index;
+        _builder = builder;
+        _blocks = (IDocxBlockTable?)index ?? builder!;
+        _sidecarPathToSave = sidecarPathToSave;
         _blockReader = blockReader;
         _noteReader = noteReader;
         _styles = parts.Styles;
         _noteFormats = parts.NoteNumberFormats;
-        foreach (DocxNoteReference reference in index.NoteReferences)
-        {
-            _noteNumbers[(reference.Kind, reference.NoteId)] = reference.Number;
-            if (reference.Kind == WordDocumentNoteKind.Footnote) _footnoteCount++; else _endnoteCount++;
-        }
+        RecordNewNoteReferences();
         _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel);
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
     }
 
-    public int EstimatedTextLength(int blockIndex) => _index.BlockTextLengths[blockIndex];
+    /// <summary>Counts the note references found since the last call into the number lookup and the per-kind counts.</summary>
+    private void RecordNewNoteReferences()
+    {
+        IReadOnlyList<DocxNoteReference> references = (IReadOnlyList<DocxNoteReference>?)_index?.NoteReferences ?? _builder!.KnownNoteReferences;
+        for (; _noteReferencesRecorded < references.Count; _noteReferencesRecorded++)
+        {
+            DocxNoteReference reference = references[_noteReferencesRecorded];
+            _noteNumbers[(reference.Kind, reference.NoteId)] = reference.Number;
+            if (reference.Kind == WordDocumentNoteKind.Footnote) _footnoteCount++; else _endnoteCount++;
+        }
+    }
+
+    /// <summary>
+    /// Finishes an on-demand index now (scans the rest of the body and the notes parts) and saves
+    /// the sidecar when the document was opened from a path. No-op when already complete.
+    /// </summary>
+    public DocxRandomAccessIndex CompleteIndex()
+    {
+        lock (_readLock) return CompleteIndexLocked();
+    }
+
+    private DocxRandomAccessIndex CompleteIndexLocked()
+    {
+        if (_index is not null) return _index;
+        DocxIncrementalIndexBuilder builder = _builder!;
+        DocxRandomAccessIndex index = builder.Complete();
+        // Swap the scan's live tables for the finished index (same offsets), and free the scanner.
+        _index = index;
+        _blocks = index;
+        _blockReader.Table = index;
+        Stream package = _blockReader.Package!;
+        _noteReader.Dispose();
+        _noteReader = DocxNoteXmlReader.OverPackage(package, index.FootnotesPart, index.EndnotesPart);
+        RecordNewNoteReferences();
+        _builder = null;
+        _headingsSnapshot = null;
+        _noteReferences = null;
+        if (_sidecarPathToSave is not null)
+        {
+            try { index.Save(_sidecarPathToSave); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { /* reading goes on; the next open rebuilds */ }
+        }
+        return index;
+    }
+
+    /// <summary>Past the end (a count read before the index completed) it answers 0 instead of throwing.</summary>
+    public int EstimatedTextLength(int blockIndex)
+    {
+        if (_index is { } index) return blockIndex < index.BlockCount ? index.BlockTextLengths[blockIndex] : 0;
+        lock (_readLock)
+        {
+            if (_builder is not { } builder) return blockIndex < _index!.BlockCount ? _index.BlockTextLengths[blockIndex] : 0;
+            return blockIndex < builder.KnownBlockCount ? builder.BlockTextLengthOf(blockIndex) : builder.AverageTextLength;
+        }
+    }
 
     public IReadOnlyList<WordDocumentBlockHtml> RenderBlocks(int firstBlockIndex, int count)
     {
-        lock (_readLock) return RenderBlocksLocked(firstBlockIndex, count);
+        lock (_readLock)
+        {
+            // Only documents that still read the file (index mode) are at risk; a stale in-memory body is still consistent.
+            if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
+                throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                if (_builder is { } builder)
+                {
+                    builder.AdvanceUntilKnown(firstBlockIndex + count);     // the on-demand scan reopens the released file like any read
+                    if (builder.IsBodyScanned) CompleteIndexLocked();
+                    else RecordNewNoteReferences();
+                }
+                return RenderBlocksLocked(firstBlockIndex, count);
+            }
+            finally { _releasableFile?.Release(); }
+        }
     }
 
     private List<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count)
@@ -130,9 +257,9 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         var result = new List<WordDocumentBlockHtml>(count);
         foreach ((int blockIndex, XElement element) in _blockReader.ReadBlocks(firstBlockIndex, count))
         {
-            string? previousStyleKey = blockIndex > 0 ? _index.StyleIdOf(blockIndex - 1) ?? "" : null;
-            string html = _renderer.Render(element, _index.ListLabelOf(blockIndex), previousStyleKey);
-            result.Add(new WordDocumentBlockHtml(blockIndex, _index.BlockKinds[blockIndex], html, RenderNotesOf(blockIndex)));
+            string? previousStyleKey = blockIndex > 0 ? _blocks.StyleIdOf(blockIndex - 1) ?? "" : null;
+            string html = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), previousStyleKey);
+            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, RenderNotesOf(blockIndex)));
         }
         return result;
     }
@@ -140,7 +267,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     /// <summary>The notes a block references, rendered — what a Word-style notes pane shows for the visible text.</summary>
     private IReadOnlyList<WordDocumentNoteHtml> RenderNotesOf(int blockIndex)
     {
-        ReadOnlySpan<DocxNoteReference> references = _index.NoteReferencesInBlocks(blockIndex, blockIndex);
+        ReadOnlySpan<DocxNoteReference> references = _blocks.NoteReferencesInBlocks(blockIndex, blockIndex);
         if (references.IsEmpty) return [];
         var notes = new List<WordDocumentNoteHtml>(references.Length);
         foreach (DocxNoteReference reference in references)
@@ -166,20 +293,55 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private (int number, string label)? ResolveNoteLabel(WordDocumentNoteKind kind, int noteId)
         => _noteNumbers.TryGetValue((kind, noteId), out int number) ? (number, number > 0 ? _noteFormats.Format(kind, number) : "*") : null;
 
-    /// <summary>From the index — captured during the scan, so a reopen reads no blocks for the TOC.</summary>
-    public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
+    /// <summary>
+    /// From the index — captured during the scan, so a reopen reads no blocks for the TOC. While an
+    /// on-demand open is scanning: the headings of the blocks known so far.
+    /// </summary>
+    public IReadOnlyList<WordDocumentHeading> Headings
+    {
+        get
+        {
+            if (_index is { } index) return index.Headings;
+            lock (_readLock)
+            {
+                if (_builder is not { } builder) return _index!.Headings;
+                IReadOnlyList<WordDocumentHeading> known = builder.KnownHeadings;
+                if (_headingsSnapshot is null || _headingsSnapshot.Length != known.Count) _headingsSnapshot = known.ToArray();
+                return _headingsSnapshot;
+            }
+        }
+    }
+    private WordDocumentHeading[]? _headingsSnapshot;
 
-    public (int footnotes, int endnotes) NoteCounts => (_footnoteCount, _endnoteCount);
+    public (int footnotes, int endnotes) NoteCounts
+    {
+        get { lock (_readLock) return (_footnoteCount, _endnoteCount); }
+    }
 
+    /// <summary>Every note reference in body order — while an on-demand open is scanning, those of the blocks known so far.</summary>
     public IReadOnlyList<WordDocumentNoteReference> NoteReferences
-        => _noteReferences ??= _index.NoteReferences.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, r.BlockIndex)).ToArray();
+    {
+        get
+        {
+            lock (_readLock)
+            {
+                IReadOnlyList<DocxNoteReference> references = (IReadOnlyList<DocxNoteReference>?)_index?.NoteReferences ?? _builder!.KnownNoteReferences;
+                if (_noteReferences is null || _noteReferences.Length != references.Count)
+                    _noteReferences = references.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, r.BlockIndex)).ToArray();
+                return _noteReferences;
+            }
+        }
+    }
     private WordDocumentNoteReference[]? _noteReferences;
 
-    private static FileStream OpenRead(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+    public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
 
     public void Dispose()
     {
-        _noteReader.Dispose();
-        _blockReader.Dispose();
+        lock (_readLock)
+        {
+            _noteReader.Dispose();
+            _blockReader.Dispose();
+        }
     }
 }

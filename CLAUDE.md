@@ -8,7 +8,9 @@ milliseconds, for files of any size, inside the app's book-view (lines pane + wi
 TOC from headings + notes). **Speed is the goal** (user, 2026-10-28): instant loading beats
 formatting coverage when the two compete.
 
-Read first: [NOTES.md](NOTES.md) (design, measurements, limitations, specs) and
+Read first: [REFERENCES.md](REFERENCES.md) (the authoritative sources, in order — Word's source is
+not available; Microsoft's Open Specifications are the closest), [NOTES.md](NOTES.md) (design,
+measurements, limitations) and
 [LEARNINGS.md](LEARNINGS.md) (what we found out the hard way — append, never rewrite history).
 Naming and style follow `KitveiHakodesh/.kiro/steering/` (full words, siblings share a prefix,
 one concept one name, no `utils`, a name must match its contents).
@@ -59,7 +61,7 @@ view over SQLite.
 | `samples/` | the two real test files (דור המלקטים .doc 40 MB, .docx 87 MB body) — the demo's default |
 | `WordDocumentRandomAccess.Tests` | console harness; must print ALL PASSED. `--real`, `--audit`, `--odt [N]`, `--corpus <list>`, `--huge N`, `--notes-streaming N` |
 | `WordDocumentRandomAccess.DevServer` | C# localhost JSON host on 5188 (dev only; the real host will be the KitveiHakodesh service) |
-| `vue-demo` | **the live rig** — Vite on 5189 + the app's `WindowedScroller` (copied from `KitveiHakodesh/vue-frontend/src/components`, keep in sync); `window.__wordDemo` hooks; `playwright/` checks |
+| `vue-demo` | **the live rig** — Vite on 5189 + the app's `WindowedScroller` (copied from `KitveiHakodesh/vue-frontend/src/components`, keep in sync — the copy carries one fix to port back: `landAt` re-lands on the new last row when fetching rows shrinks the count); `window.__wordDemo` hooks; `playwright/` checks |
 | `WordDocumentRandomAccess.Viewer` | old WinForms viewer — superseded, do not extend |
 
 ## Verifying
@@ -77,9 +79,17 @@ view over SQLite.
 
 ## Rules
 
+- **Never get in Word's way** (user, 2026-10-28). Every file open goes through
+  `WordDocumentFileStream` (`OpenShared` = read access, sharing read + write + delete) — never
+  `File.OpenRead` / `FileShare.Read`, which block Word from saving. A document holds no handle
+  between windows (`Release()` after each render), notices a save (`HasSourceChanged`) and refuses
+  to render the new file with the old index (`WordDocumentSourceChangedException`) — the host
+  reopens. `WordCoexistenceTest` (exclusive open + save-by-replace while we read) must pass.
+
 - **Always double-check against the source; never rely on memory alone** (user, 2026-10-28).
   Format facts (sprm opcodes, element semantics, FIB offsets, LibreOffice behaviour) must be
-  verified in the spec or the real upstream code before they are implemented — a remembered
+  verified in a source from REFERENCES.md before they are implemented — for Word-specific .docx
+  behaviour check [MS-OI29500] first; when sources disagree or are silent, test in Word itself — a remembered
   opcode already cost us silently dropped raised/lowered text (0x4840 vs 0x4845). Research
   reports must say which facts were read from source and which came from memory; the
   from-memory ones are checked before use.

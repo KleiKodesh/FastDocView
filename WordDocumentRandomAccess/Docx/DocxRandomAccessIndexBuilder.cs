@@ -47,7 +47,7 @@ public static class DocxRandomAccessIndexBuilder
          + (LocateTextEntry(package, FootnotesEntryName)?.UncompressedSize ?? 0)
          + (LocateTextEntry(package, EndnotesEntryName)?.UncompressedSize ?? 0);
 
-    private static ZipEntryLocation? LocateTextEntry(Stream package, string name)
+    internal static ZipEntryLocation? LocateTextEntry(Stream package, string name)
     {
         ZipEntryLocation? entry = ZipEntryLocator.Locate(package, name);
         if (entry is not null && !entry.IsDeflate && !entry.IsStored)
@@ -90,13 +90,25 @@ public static class DocxRandomAccessIndexBuilder
                 done += read;
                 progress?.Report(new WordDocumentIndexProgress(done, totalBytes, scanner.BlockStartOffsets.Count));
             }, checkpointSpanBytes, cancellation);
-            return new DocxNotesPartIndex(entry, notesScanner.RootOpenTag, checkpoints,
-                                          notesScanner.NoteIds.ToArray(), notesScanner.NoteStarts.ToArray(), notesScanner.NoteEnds.ToArray());
+            return CreateNotesPartIndex(entry, notesScanner, checkpoints);
         }
 
         DocxNotesPartIndex? footnotesPart = ScanNotes(footnotes, 1);
         DocxNotesPartIndex? endnotesPart = ScanNotes(endnotes, 2);
 
+        return CreateIndex(sourceLength, sourceLastWriteTicksUtc, body, scanner, bodyCheckpoints, footnotesPart, endnotesPart);
+    }
+
+    /// <summary>The finished notes-part index from its scanner — shared with <see cref="DocxIncrementalIndexBuilder"/> so both passes save the same sidecar.</summary>
+    internal static DocxNotesPartIndex CreateNotesPartIndex(ZipEntryLocation entry, DocxNotesPartScanner notesScanner, List<DeflateCheckpoint> checkpoints)
+        => new(entry, notesScanner.RootOpenTag, checkpoints,
+               notesScanner.NoteIds.ToArray(), notesScanner.NoteStarts.ToArray(), notesScanner.NoteEnds.ToArray());
+
+    /// <summary>The finished index from a body scanner that has seen the whole part — shared with <see cref="DocxIncrementalIndexBuilder"/>.</summary>
+    internal static DocxRandomAccessIndex CreateIndex(long sourceLength, long sourceLastWriteTicksUtc, ZipEntryLocation body,
+                                                      DocxBodyBlockScanner scanner, List<DeflateCheckpoint> bodyCheckpoints,
+                                                      DocxNotesPartIndex? footnotesPart, DocxNotesPartIndex? endnotesPart)
+    {
         return new DocxRandomAccessIndex(
             sourceLength, sourceLastWriteTicksUtc, body, scanner.RootOpenTag, scanner.BodyEndOffset, bodyCheckpoints,
             scanner.BlockStartOffsets.ToArray(), scanner.BlockKinds.ToArray(), scanner.BlockTextLengths.ToArray(),
