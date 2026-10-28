@@ -8,7 +8,9 @@ milliseconds, for files of any size, inside the app's book-view (lines pane + wi
 TOC from headings + notes). **Speed is the goal** (user, 2026-10-28): instant loading beats
 formatting coverage when the two compete.
 
-Read first: [NOTES.md](NOTES.md) (design, measurements, limitations, specs) and
+Read first: [REFERENCES.md](REFERENCES.md) (the authoritative sources, in order — Word's source is
+not available; Microsoft's Open Specifications are the closest), [NOTES.md](NOTES.md) (design,
+measurements, limitations) and
 [LEARNINGS.md](LEARNINGS.md) (what we found out the hard way — append, never rewrite history).
 Naming and style follow `KitveiHakodesh/.kiro/steering/` (full words, siblings share a prefix,
 one concept one name, no `utils`, a name must match its contents).
@@ -85,7 +87,8 @@ view over SQLite.
 
 - **Always double-check against the source; never rely on memory alone** (user, 2026-10-28).
   Format facts (sprm opcodes, element semantics, FIB offsets, LibreOffice behaviour) must be
-  verified in the spec or the real upstream code before they are implemented — a remembered
+  verified in a source from REFERENCES.md before they are implemented — for Word-specific .docx
+  behaviour check [MS-OI29500] first; when sources disagree or are silent, test in Word itself — a remembered
   opcode already cost us silently dropped raised/lowered text (0x4840 vs 0x4845). Research
   reports must say which facts were read from source and which came from memory; the
   from-memory ones are checked before use.
