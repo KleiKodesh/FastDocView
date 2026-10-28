@@ -515,5 +515,14 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
 
 - Not supported, precise NotSupportedException: Word 6.0/95 (.doc wIdent 0xA5DC / 0xA697-0xA699),
   Word for Windows 1.x/2.0, Word 2003 XML, HTML saved as .doc, encrypted .doc/.docx/.odt.
+- **GAP — older Word formats (open, to do):** Word 6.0/95, Word for Windows 1.x/2.0 and Word 2003
+  XML (.doc that is XML) are rejected, not read. test-data holds 37 Word 6/95 files (nFib 101 / 104,
+  wIdent 0xA5DC; 0xA697–0xA699), 10 Word 1/2 files and 1 Word 2003 XML. None of the user's 3,470 real
+  .doc files failed this way (corpus pass 2026-10-28), so it is low priority, but it is a real gap.
+  Word 6/95 is the feasible one: same piece-table/FKP idea as Word 97, but a different FIB layout,
+  1-byte sprm opcodes and a different style sheet. Sources: LibreOffice ww8 "Ver67" paths
+  (ww8par*.cxx, ww8scan.cxx), Apache POI HWPF old-format support (HWPFOldDocument / OldFIB). There is
+  no Microsoft spec for it — treat facts as unverified until checked in both. Word 2003 XML would be a
+  small streaming reader of its own (WordprocessingML 2003 schema).
 - Malformed XML in any part → InvalidDataException naming the part (LibreOffice opens some of these,
   e.g. math-malformed_xml.docx, with a recovering parser — not done here).
