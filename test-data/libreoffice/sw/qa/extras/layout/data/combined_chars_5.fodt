@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+                 xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+                 xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+                 xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+                 office:mimetype="application/vnd.oasis.opendocument.text">
+  <office:automatic-styles>
+    <style:style style:name="MyCombinedText" style:family="text">
+      <!-- This forces the engine to squash the letters together! -->
+      <style:text-properties style:text-combine="letters"/>
+    </style:style>
+  </office:automatic-styles>
+  <office:body>
+    <office:text>
+      <!-- We provide exactly 5 characters to trigger the > 4 math loop -->
+      <text:p><text:span text:style-name="MyCombinedText">12345</text:span></text:p>
+    </office:text>
+  </office:body>
+</office:document>
