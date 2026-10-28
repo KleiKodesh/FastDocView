@@ -35,7 +35,7 @@ export interface WordDocumentSummary {
 }
 
 /** Index state carried by every blocks response (headers): the on-demand scan moves with each request. */
-export interface WordIndexState { knownBlockCount: number; estimatedBlockCount: number; isIndexComplete: boolean }
+export interface WordIndexState { knownBlockCount: number; isIndexComplete: boolean }
 
 export type WordNoteKind = 'footnote' | 'endnote'
 
@@ -94,17 +94,23 @@ export async function fetchBlocks(id: number, first: number, count: number): Pro
   const response = await fetch(`/api/documents/${id}/blocks?first=${first}&count=${count}`)
   if (response.status === 409) throw new WordSourceChangedError('The document changed on disk')
   const blocks = await readJson<WordBlock[]>(response)
-  const estimated = response.headers.get('X-Estimated-Block-Count')
+  const known = response.headers.get('X-Known-Block-Count')
   return {
     blocks,
-    indexState: estimated === null ? null : {
-      knownBlockCount: Number(response.headers.get('X-Known-Block-Count') ?? 0),
-      estimatedBlockCount: Number(estimated),
+    indexState: known === null ? null : {
+      knownBlockCount: Number(known),
       isIndexComplete: response.headers.get('X-Index-Complete') === 'true',
     },
     renderMilliseconds: Number(response.headers.get('X-Render-Milliseconds') ?? 0),
     roundTripMilliseconds: performance.now() - started,
   }
+}
+
+/** Builds `blocks` more blocks of a first open's index on the server (renders and sends nothing) and reports the new state. */
+export async function scanAhead(id: number, blocks: number): Promise<WordIndexState> {
+  const response = await fetch(`/api/documents/${id}/scan?blocks=${blocks}`, { method: 'POST' })
+  if (response.status === 409) throw new WordSourceChangedError('The document changed on disk')
+  return readJson<WordIndexState>(response)
 }
 
 export function fetchServerMemory(collect = false): Promise<WordServerMemory> {

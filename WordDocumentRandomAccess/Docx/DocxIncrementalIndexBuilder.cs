@@ -61,23 +61,6 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
     /// <summary>Blocks whose range and metadata are final: all but the one still being scanned.</summary>
     public int KnownBlockCount => _scanner.BodyEndOffset >= 0 ? _scanner.BlockStartOffsets.Count : Math.Max(0, _scanner.BlockStartOffsets.Count - 1);
 
-    /// <summary>
-    /// The total block count: exact once the body is scanned, otherwise the known count plus the
-    /// unscanned body bytes divided by the average block size so far (always more than known).
-    /// </summary>
-    public int EstimatedBlockCount
-    {
-        get
-        {
-            int known = KnownBlockCount;
-            if (_isBodyScanned || _scanner.BodyEndOffset >= 0) return known;
-            int started = _scanner.BlockStartOffsets.Count;
-            if (started == 0) return known + 1;
-            double bytesPerBlock = Math.Max(1.0, (double)_bodyCursor.BytesInflated / started);
-            long remaining = Math.Max(0, BodyEntry.UncompressedSize - _bodyCursor.BytesInflated);
-            return (int)Math.Min(int.MaxValue - 1, Math.Max(known + 1, started + (long)(remaining / bytesPerBlock)));
-        }
-    }
 
     /// <summary>Average text length of the blocks known so far — the stand-in for blocks not reached yet.</summary>
     public int AverageTextLength

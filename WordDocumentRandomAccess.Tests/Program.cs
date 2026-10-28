@@ -9,6 +9,7 @@
 //   dotnet run -c Release -- --incremental-open [N]  first open with the index built on demand (synthetic N blocks, default 1M, + --real .docx files)
 //   dotnet run -c Release -- --notes-streaming 20000   notes read on demand from a 100 MB+ footnotes part
 //   dotnet run -c Release -- --audit <path>...     formatting constructs the renderers do not handle
+//   dotnet run -c Release -- --odt-incremental [N] first open of a synthetic .odt and .fodt with the index built on demand (N blocks, default 200000)
 //   dotnet run -c Release -- --odt [N]             synthetic .odt/.fodt (N repeating blocks, default 20000); with LibreOffice installed,
 //                                                  every --real .docx is also converted to .odt (TestOutput) and smoke-tested + audited
 //   dotnet run -c Release -- --text [N] / --mhtml [N]   synthetic .txt (every encoding / line ending) and MHTML (qp + base64), N filler blocks
@@ -32,6 +33,7 @@ string? corpusList = null;
 string? listLabelsFallback = null;
 int corpusMax = int.MaxValue;
 int corpusSample = 0;
+int odtIncrementalBlocks = 0;
 int odtBlocks = 0, rtfBlocks = 0, textBlocks = 0, mhtmlBlocks = 0, textLargest = 200, textRandom = 300;
 string? textCorpus = null, mimeScan = null;
 var markupProfilePaths = new List<string>();
@@ -55,6 +57,10 @@ for (int i = 0; i < args.Length; i++)
         case "--profile-open": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) profilePaths.Add(args[++i]); break;
         case "--profile-index": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) indexProfilePaths.Add(args[++i]); break;
         case "--corpus": corpusList = args[++i]; break;            // a text file with one Word file path per line
+        case "--odt-incremental":                                                      // optional block count, default 200000
+            odtIncrementalBlocks = 200_000;
+            if (i + 1 < args.Length && int.TryParse(args[i + 1], out int odtIncrementalCount)) { odtIncrementalBlocks = odtIncrementalCount; i++; }
+            break;
         case "--odt":
             odtBlocks = 20_000;
             if (i + 1 < args.Length && int.TryParse(args[i + 1], out int odtCount)) { odtBlocks = odtCount; i++; }
@@ -94,6 +100,7 @@ if (!skipSynthetic)
 if (hugeBlocks > 0) HugeDocumentMemoryTest.Run(hugeBlocks);
 if (incrementalOpen)
     DocxIncrementalOpenTest.Run(incrementalBlocks, realPaths.Where(path => File.Exists(path) && path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)));
+if (odtIncrementalBlocks > 0) OdtIncrementalOpenTest.Run(odtIncrementalBlocks);
 if (notesStreamingBlocks > 0) DocxNotesStreamingTest.Run(notesStreamingBlocks, noteFillerCharacters: 60_000);
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Count > 0) WordCoexistenceTest.Run(realPaths.Where(File.Exists));

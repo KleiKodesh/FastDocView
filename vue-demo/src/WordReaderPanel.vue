@@ -5,7 +5,7 @@ import WindowedScroller from '@/components/WindowedScroller.vue'
 import type { WindowedScrollerApi } from '@/components/windowedScrollerTypes'
 import WordNotesPane from './WordNotesPane.vue'
 import {
-  closeDocument, fetchBlocks, fetchHeadings, fetchServerMemory, fetchWeights, openDocument, WordSourceChangedError,
+  closeDocument, fetchBlocks, fetchHeadings, fetchServerMemory, fetchWeights, openDocument, scanAhead, WordSourceChangedError,
   type WordDocumentSummary, type WordHeading, type WordIndexState, type WordNote, type WordServerMemory, type WordVisibleNote,
 } from './wordDemoApi'
 
@@ -15,6 +15,7 @@ import {
 // open; headings and scrollbar weights arrive in parallel and are applied when they land.
 
 const BLOCK_CACHE_RADIUS = 1500
+const INDEX_BLOCKS_PER_CALL = 5000                 // index-building step on a first open (~ tens of ms per call)
 
 // A .docx first open builds its index on demand: the server scans only as far as the blocks asked
 // for, so the block count starts as an estimate and every blocks response carries the corrected
@@ -80,6 +81,7 @@ async function open(path: string, options: { forceSidecar?: boolean; rebuildInde
     knownBlockCount.value = opened.knownBlockCount
     isIndexComplete.value = opened.isIndexComplete
     summary.value = opened                       // text mounts now; weights + headings follow
+    if (!opened.isIndexComplete) void buildIndexInBackground(opened)
     const textShownAt = performance.now()
     const [fetchedWeights, fetchedHeadings] = await Promise.all([fetchWeights(opened.id), fetchHeadings(opened.id)])
     if (generation !== requestGeneration) return
@@ -138,8 +140,8 @@ function applyIndexState(document: WordDocumentSummary, state: WordIndexState) {
   // the scan only moves forward: a response older than one already applied (or any after completion) is stale
   if (isIndexComplete.value || state.knownBlockCount < knownBlockCount.value) return
   knownBlockCount.value = state.knownBlockCount
-  // A shrinking estimate under an in-flight jump is handled by the scroller's landing (it re-lands on the new last row).
-  if (blockCount.value !== state.estimatedBlockCount) blockCount.value = state.estimatedBlockCount
+  // The count is the blocks known so far: it only grows while the first open streams in.
+  if (blockCount.value !== state.knownBlockCount) blockCount.value = state.knownBlockCount
   if (!state.isIndexComplete) return
   isIndexComplete.value = true
   void Promise.all([fetchWeights(document.id), fetchHeadings(document.id)]).then(([fetchedWeights, fetchedHeadings]) => {
@@ -149,7 +151,22 @@ function applyIndexState(document: WordDocumentSummary, state: WordIndexState) {
   })
 }
 
-/** Weights only while they describe the current count (an estimate moves; the complete set is fetched on completion). */
+/**
+ * A first open keeps building its index: each call has the server index the next stretch of blocks
+ * (it renders and sends nothing but the new count) while the reader reads windows from the partial
+ * index; the count grows until the index is complete and saved. One request at a time, pulled from
+ * here (no timers). The document itself is never sent — only the windows on screen.
+ */
+async function buildIndexInBackground(document: WordDocumentSummary) {
+  while (summary.value === document && !isIndexComplete.value) {
+    let state: WordIndexState
+    try { state = await scanAhead(document.id, INDEX_BLOCKS_PER_CALL) } catch { return }   // a changed file reopens through the next blocks fetch
+    if (summary.value !== document) return
+    applyIndexState(document, state)
+  }
+}
+
+/** Weights only while they describe the current count (the count grows while the index builds; the complete set is fetched on completion). */
 const rowWeights = computed(() => (weights.value && weights.value.length === blockCount.value ? weights.value : undefined))
 
 function trimCache(around: number) {

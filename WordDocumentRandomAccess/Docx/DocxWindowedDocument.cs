@@ -57,12 +57,25 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     }
 
     /// <summary>The block count the reader should lay out: exact when complete, the builder's estimate before.</summary>
-    public int EstimatedBlockCount
+    public int ScanAhead(int blocks)
     {
-        get { lock (_readLock) return _builder?.EstimatedBlockCount ?? _index!.BlockCount; }
+        lock (_readLock)
+        {
+            if (_builder is not { } builder) return _index!.BlockCount;
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                builder.AdvanceUntilKnown((int)Math.Min(int.MaxValue, (long)builder.KnownBlockCount + Math.Max(1, blocks)));
+                if (builder.IsBodyScanned) CompleteIndexLocked();
+                else RecordNewNoteReferences();
+                return _builder?.KnownBlockCount ?? _index!.BlockCount;
+            }
+            finally { _releasableFile?.Release(); }
+        }
     }
 
-    public int BlockCount => EstimatedBlockCount;
+    /// <summary>The blocks known so far while an on-demand index is scanning (only grows), exact once complete.</summary>
+    public int BlockCount => KnownBlockCount;
 
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
     {

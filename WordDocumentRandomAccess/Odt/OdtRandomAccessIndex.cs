@@ -11,7 +11,7 @@ namespace WordDocumentRandomAccess.Odt;
 /// block its byte range, kind, list depth + label and text length, plus headings and note
 /// references with their bodies' byte ranges. Serialised to/from a <see cref="Stream"/>.
 /// </summary>
-public sealed class OdtRandomAccessIndex
+public sealed class OdtRandomAccessIndex : IOdtBlockTable
 {
     private const string Magic = "KHODTIDX";
     private const int FormatVersion = 1;
@@ -58,6 +58,11 @@ public sealed class OdtRandomAccessIndex
         Headings = headings;
         NoteReferences = noteReferences;
     }
+
+    long IOdtBlockTable.BlockStartOffset(int blockIndex) => BlockStartOffsets[blockIndex];
+    long IOdtBlockTable.BlockEndOffset(int blockIndex) => BlockEndOffsets[blockIndex];
+    WordDocumentBlockKind IOdtBlockTable.BlockKindOf(int blockIndex) => BlockKinds[blockIndex];
+    int IOdtBlockTable.BlockTextLengthOf(int blockIndex) => BlockTextLengths[blockIndex];
 
     public string? ListLabelOf(int blockIndex)
     {
