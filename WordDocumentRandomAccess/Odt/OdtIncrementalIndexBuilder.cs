@@ -18,7 +18,7 @@ namespace WordDocumentRandomAccess.Odt;
 /// </summary>
 internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
 {
-    private const int FlatChunkSize = 1 << 18;               // OdtRandomAccessIndexBuilder.BuildFromFlat's chunk
+    private const int FlatChunkSize = OdtRandomAccessIndexBuilder.ChunkSize;   // the one-go flat pass's chunk: same chunks, same index
 
     private readonly OdtStyleCascade _styles;
     private readonly OdtBodyBlockScanner _scanner;

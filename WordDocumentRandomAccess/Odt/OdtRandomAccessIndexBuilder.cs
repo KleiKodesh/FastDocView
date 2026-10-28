@@ -14,7 +14,7 @@ namespace WordDocumentRandomAccess.Odt;
 public static class OdtRandomAccessIndexBuilder
 {
     public const long DefaultCheckpointSpanBytes = 1 << 20;
-    private const int ChunkSize = 1 << 18;
+    internal const int ChunkSize = 1 << 18;
 
     public static OdtRandomAccessIndex BuildFromPackage(Stream package, OdtStyleCascade styles, long sourceLength, long sourceLastWriteTicksUtc,
                                                         IProgress<WordDocumentIndexProgress>? progress, long checkpointSpanBytes,
