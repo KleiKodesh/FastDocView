@@ -11,6 +11,8 @@
 //   dotnet run -c Release -- --audit <path>...     formatting constructs the renderers do not handle
 //   dotnet run -c Release -- --odt [N]             synthetic .odt/.fodt (N repeating blocks, default 20000); with LibreOffice installed,
 //                                                  every --real .docx is also converted to .odt (TestOutput) and smoke-tested + audited
+//   dotnet run -c Release -- --rtf [N]             synthetic .rtf (N repeating blocks, default 20000); with --corpus, the RTF files of the list
+//                                                  are audited (unhandled control words) and opened + rendered; --rtf-audit <path>... audits files
 //   dotnet run -c Release -- --skip-synthetic --corpus <list.txt>   the same over a whole file list, aggregated + open/render crash check
 using WordDocumentRandomAccess.Tests;
 
@@ -24,7 +26,8 @@ var indexProfilePaths = new List<string>();
 string? corpusList = null;
 string? listLabelsFallback = null;
 int corpusMax = int.MaxValue;
-int odtBlocks = 0;
+int odtBlocks = 0, rtfBlocks = 0;
+var rtfAuditPaths = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -47,6 +50,11 @@ for (int i = 0; i < args.Length; i++)
             odtBlocks = 20_000;
             if (i + 1 < args.Length && int.TryParse(args[i + 1], out int odtCount)) { odtBlocks = odtCount; i++; }
             break;
+        case "--rtf":
+            rtfBlocks = 20_000;
+            if (i + 1 < args.Length && int.TryParse(args[i + 1], out int rtfCount)) { rtfBlocks = rtfCount; i++; }
+            break;
+        case "--rtf-audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfAuditPaths.Add(args[++i]); break;
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
         case "--list-labels-fallback": listLabelsFallback = args[++i]; break;   // a path list to scan for a .doc with lists when the --real ones have none
     }
@@ -69,7 +77,10 @@ if (realPaths.Any(path => path.EndsWith(".doc", StringComparison.OrdinalIgnoreCa
 if (auditPaths.Count > 0) WordFormattingAudit.Run(auditPaths.Where(File.Exists));
 if (profilePaths.Count > 0) OpenTimingProfile.Run(profilePaths.Where(File.Exists));
 if (indexProfilePaths.Count > 0) IndexPassProfile.Run(indexProfilePaths.Where(File.Exists));
-if (corpusList is not null) WordFormattingAudit.RunCorpus(corpusList, corpusMax);
+if (corpusList is not null && rtfBlocks == 0) WordFormattingAudit.RunCorpus(corpusList, corpusMax);
+if (rtfBlocks > 0) RtfIndexAndRenderTest.Run(rtfBlocks);
+if (rtfAuditPaths.Count > 0) RtfFormattingAudit.Run(rtfAuditPaths.Where(File.Exists));
+if (rtfBlocks > 0 && corpusList is not null) RtfFormattingAudit.RunCorpus(corpusList, corpusMax);
 if (odtBlocks > 0)
 {
     OdtIndexAndRenderTest.Run(odtBlocks);
