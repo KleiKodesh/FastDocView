@@ -1,0 +1,115 @@
+# WordDocumentRandomAccess — design notes
+
+Goal: open huge Word files (.docx and old binary .doc) and render any window of paragraphs to
+HTML in milliseconds, without ever holding a decompressed copy of the document, so the app's
+windowed (virtual-scroll) view can show them instantly. No page layout: paragraphs flow, page
+breaks are a thin rule.
+
+## Why random access is hard for .docx
+
+`word/document.xml` is one deflate-compressed zip entry. Deflate has no seek: every byte may
+back-reference the previous 32 KB of *output*, so reaching paragraph 50 000 normally means
+inflating everything before it. Word itself keeps no layout cache in the file
+(`w:lastRenderedPageBreak` is write-only metadata; see conversation 2026-10-28).
+
+## The zran technique (Deflate/)
+
+Mark Adler's `zlib/examples/zran.c` (v1.7, 2025 — supports raw deflate):
+
+1. One sequential pass inflates the stream. At deflate **block boundaries** (the only clean
+   resume points) roughly every 1 MB of output we save a **checkpoint**: compressed byte
+   position + leftover bits of the previous byte (blocks are not byte aligned), uncompressed
+   offset, and the last 32 KB of output (the window later back-references copy from).
+2. To read at uncompressed offset X: take the last checkpoint ≤ X, seed the inflater with its
+   window, re-seat the bit reader, inflate forward ≤ 1 MB, return the bytes.
+
+Cost: ~32 KB per checkpoint → ~3 % of the uncompressed XML. A 1 GB document.xml → ~32 MB index.
+Seeks are a few ms (the inflater runs ~40–60 MB/s managed).
+
+`DeflateCheckpointInflater` is a from-scratch managed RFC 1951 inflater (no zlib, no
+SharpZipLib) because .NET's `DeflateStream` cannot be primed with a window or started at a bit
+offset. It pauses between symbols, so a read can stop at any output byte, and it fires
+`BlockBoundaryReached` where a checkpoint is valid. `DeflateHuffmanDecoder` uses a 10-bit fast
+table plus puff.c's canonical walk for longer codes.
+
+Prior art looked at: `GzipSeekable` (NuGet 0.1.0, managed, gzip-only wrapper), `indexed_gzip`
+(Python), `jzran` (Java), `zindex`. None handles a raw-deflate zip entry directly, and the glue
+(zip offsets + paragraph map) is the real work, so the inflater was written here.
+
+## The .docx index (Docx/)
+
+`DocxRandomAccessIndexBuilder` does the one pass. While inflating it feeds every chunk to
+`DocxBodyBlockScanner`, a byte-level XML state machine (no DOM) that records, for every child of
+`<w:body>` (**block** = paragraph / table / content control / other):
+
+- uncompressed start offset (end = next block's start; last = `</w:body>` offset)
+- kind, `w:pStyle` id (for headings without reading the block), text length in bytes
+  (for the viewer's scroll-height estimate)
+
+plus the root element's opening tag, whose namespace declarations wrap each block so it can be
+parsed in isolation (`DocxBlockXmlReader`).
+
+The index is saved to `%LOCALAPPDATA%\KitveiHakodesh\WordDocumentRandomAccess\<name>.<hash>.wordindex`
+keyed by path, validated by file length + last write time. Re-opening a 50 000-block file from
+the cached index: ~50 ms. Cold build runs at about 40 MB/s of XML with a few MB of RAM.
+
+Measured (synthetic, 50 000 blocks, 22 MB XML): build 0.5 s, index 1.2 MB, random window of 40
+blocks worst 30 ms, consecutive windows ~2 ms each.
+
+## Rendering (Html/, DocxHtml/)
+
+`DocxStyleCascade` loads `styles.xml` whole (it is small) and resolves docDefaults → basedOn
+chain → direct pPr/rPr into the format-neutral `WordParagraphFormatting` / `WordRunFormatting`.
+Runs emit only the CSS that differs from the paragraph's base run, so most runs have no inline
+style. Headings become `<h1>`–`<h6>` from `w:outlineLvl` or built-in "heading N" names.
+
+Deliberately not done yet:
+
+- **Footnotes / endnotes** — only a `[*]` marker with `data-note-id`. **Deferred by the user
+  (2026-10-28), to be reminded.** The old `DocConvertLib/OoxmlHtmlConverter.cs` already extracts
+  note bodies and is the model.
+- **Numbering** — windowed rendering cannot count list items that were never rendered, so
+  numbered levels show a neutral "–" marker and bullets a "•". Correct numbers need an
+  index-time counter per (numId, level) — easy to add to the scanner later.
+- **Images** — `[image]` placeholder. Needs the rels part + a blob endpoint.
+- **Fields** — `w:fldSimple`/`instrText` show their result text only.
+- **Fonts in .doc** — ftc → `Sttbfffn` not resolved (default font used).
+- **.doc tables** — cell paragraphs render as paragraphs (class `table-cell-end`); rows are not
+  reassembled into `<table>` because a row spans several blocks.
+- **Word 6/95, encrypted, RTF-as-.doc, MHTML-as-.doc** — rejected with a clear message.
+
+## Binary .doc (DocBinary/)
+
+The old format already has random access: the **piece table** (Clx → PlcPcd) maps character
+positions (CP) to file offsets, each piece either 8-bit cp1252 or UTF-16. So:
+
+- `CompoundFileReader` — [MS-CFB] header, FAT via DIFAT, directory, mini FAT; streams are
+  exposed as `Stream`s mapped over their sector chains (nothing copied).
+- `DocBinaryFileInformationBlock` — FIB offsets (Word 97+ layout: fcClx at 0x1A2, etc.).
+- `DocBinaryParagraphIndex` — one streamed scan for paragraph marks (0x0D / 0x07 / 0x0C) →
+  `int[]` of paragraph start CPs; cached as a sidecar like the docx index.
+- `DocBinaryFormattedDiskPages` — PAPX/CHPX by file offset through PlcfBtePapx / PlcfBteChpx
+  and the 512-byte FKPs (cached per page).
+- `DocBinaryStyleSheet` — STSH: names, base chain, sti (1–9 = Heading 1–9), UPX grpprls.
+- `DocBinaryPropertyModifiers` — the sprm subset that matters for HTML (jc, bidi, indents,
+  spacing, bold/italic/underline/strike, size, color, highlight, super/sub, hidden, fSpec).
+
+## Integration plan (the app)
+
+The block API is shaped like `seforimApi.getLinesPaged` (`index` + `html`) on purpose: a
+Word-document adapter can slot into the lines view's windowed scroller, with headings feeding
+the TOC. The WinForms/WebView2 viewer here is only a stand-in; its `viewer.js` shows the
+protocol (`requestBlocks` → `blocks`) and a minimal estimate-then-measure windowing.
+
+Open questions carried over from `docx-as-lines` (2026-08-27): synthetic book ids vs per-doc
+SQLite; footnotes as commentary links.
+
+## Specifications used
+
+- ECMA-376 Part 1 (5th ed., 2016), WordprocessingML §17 — https://ecma-international.org/publications-and-standards/standards/ecma-376/
+- [MS-DOCX] Word extensions to .docx — https://learn.microsoft.com/openspecs/office_standards/ms-docx/
+- [MS-OE376] how Office implements ECMA-376 — https://learn.microsoft.com/openspecs/office_standards/ms-oe376/
+- [MS-DOC] Word binary format (rev. 12.5, 2026) — https://learn.microsoft.com/openspecs/office_file_formats/ms-doc/
+- [MS-CFB] compound file — https://learn.microsoft.com/openspecs/windows_protocols/ms-cfb/
+- RFC 1951 deflate; zlib `examples/zran.c` — https://github.com/madler/zlib/blob/develop/examples/zran.c
+- PKWARE APPNOTE (zip, Zip64) — https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT

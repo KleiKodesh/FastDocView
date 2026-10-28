@@ -1,0 +1,16 @@
+html, body { margin: 0; height: 100%; font-family: Segoe UI, sans-serif; background: #f3f3f3; }
+body { display: flex; }
+#headings-panel { width: 240px; flex: none; overflow: auto; border-inline-end: 1px solid #ccc; background: #fafafa; font-size: 13px; }
+#headings-panel .panel-title { padding: 8px 10px; font-weight: 600; color: #444; border-bottom: 1px solid #ddd; }
+#headings-list { list-style: none; margin: 0; padding: 4px 0; }
+#headings-list li { padding: 3px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: start; }
+#headings-list li:hover { background: #e8eefc; }
+#headings-list li[data-level="2"] { padding-inline-start: 22px; }
+#headings-list li[data-level="3"] { padding-inline-start: 34px; }
+#scroller { flex: 1; overflow: auto; position: relative; }
+#toolbar { position: sticky; top: 0; z-index: 1; display: flex; gap: 16px; align-items: center; padding: 6px 12px; background: #fff; border-bottom: 1px solid #ddd; font-size: 13px; }
+#toolbar input { width: 90px; }
+#position { color: #666; margin-inline-start: auto; }
+#window { background: #fff; max-width: 800px; margin: 0 auto; padding: 24px 48px; box-shadow: 0 0 6px rgba(0,0,0,.08); }
+#window > [data-block] { position: relative; }
+#window > [data-block]:hover::before { content: attr(data-block); position: absolute; inset-inline-end: 100%; margin-inline-end: 10px; font: 10px Segoe UI, sans-serif; color: #aaa; direction: ltr; }

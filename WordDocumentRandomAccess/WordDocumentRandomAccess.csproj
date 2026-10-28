@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Random access into Word files without keeping a decompressed copy, for windowed
+       (virtual-scroll) HTML rendering of huge documents.
+
+         • Deflate/    — a managed inflater that can be checkpointed at block boundaries and
+                         resumed from a checkpoint (the zlib "zran" technique).
+         • Zip/        — finds word/document.xml inside the .docx zip (data offset, method, sizes).
+         • Docx/       — one indexing pass records checkpoints + every body-level block
+                         (paragraph / table / ...) offset; afterwards any block is read in ms.
+         • DocxHtml/   — styles.xml cascade + block → HTML (no page layout, no footnote bodies yet).
+         • DocBinary/  — old .doc: compound file, FIB, piece table, paragraph boundaries, styles.
+
+       Same multi-target pattern as DocConvertLib: net10.0 leg for the AOT service,
+       net48 leg for the hosted VSTO world. Zero package dependencies. -->
+  <PropertyGroup>
+    <TargetFrameworks>net48;net10.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsAotCompatible Condition="'$(TargetFramework)'=='net10.0'">true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)'=='net48'">
+    <Reference Include="System.IO.Compression" />
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+  </ItemGroup>
+
+</Project>

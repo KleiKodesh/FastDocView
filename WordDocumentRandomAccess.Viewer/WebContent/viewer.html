@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="he">
+<head>
+<meta charset="utf-8">
+<title>Word random-access viewer</title>
+<link rel="stylesheet" href="viewer.css">
+<style id="document-stylesheet"></style>
+</head>
+<body>
+<aside id="headings-panel">
+  <div class="panel-title">Headings</div>
+  <ul id="headings-list"></ul>
+</aside>
+<main id="scroller">
+  <div id="toolbar">
+    <span id="file-name">No document</span>
+    <label>Go to block <input id="goto-block" type="number" min="0" value="0"></label>
+    <span id="position"></span>
+  </div>
+  <div id="top-spacer"></div>
+  <div id="window" class="word-document"></div>
+  <div id="bottom-spacer"></div>
+</main>
+<script src="viewer.js"></script>
+</body>
+</html>

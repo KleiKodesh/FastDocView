@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Lightweight WinForms + WebView2 test viewer: opens a .docx/.doc through the library and
+       renders it in a windowed (virtual-scroll) page — only the blocks near the viewport are
+       asked for and rendered. A stand-in for the app's Vue windowed scroller, which is the
+       intended final host (same block API shape: index + html).
+         dotnet run -c Release [file] [screenshot out.png]  (see Program.cs for the switches)  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+    <ProjectReference Include="..\WordDocumentRandomAccess\WordDocumentRandomAccess.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="WebContent\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
