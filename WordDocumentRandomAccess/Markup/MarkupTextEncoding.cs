@@ -5,10 +5,11 @@ namespace WordDocumentRandomAccess.Markup;
 
 /// <summary>
 /// The character encodings the markup readers (.txt, MHTML) work with, by Windows code page, and the
-/// .txt encoding detection. Detection is the TextEncodingDetection library (sibling repo), which
-/// reproduces Notepad++ (the user's reference for .txt) exactly: BOM, then the uchardet copy
-/// Notepad++ bundles (ported), then UTF-16 LE without BOM (IsTextUnicode statistics), UTF-8
-/// structure and the ANSI code page — windows-1255 for this Hebrew collection. See its README.
+/// .txt encoding detection. Detection is the TextEncodingDetection library (sibling repo) in its
+/// default Improved mode: Notepad++'s decision (the user's reference for .txt) wherever Notepad++
+/// is right, plus what it misses (UTF-32 BOMs, BOM-less UTF-16 BE/LE, every uchardet charset, ICU's
+/// detector as a second opinion for non-Hebrew 8-bit text); windows-1255 stays the ANSI fallback for
+/// this Hebrew collection. See its README.
 /// </summary>
 public static class MarkupTextEncoding
 {
@@ -55,9 +56,21 @@ public static class MarkupTextEncoding
     public static (int codePage, int bomLength, string reason) DetectPlainText(ReadOnlySpan<byte> sample, long fileLength)
     {
         DetectionResult r = TextEncodingDetector.Detect(sample, fileLength, HebrewWindows);
+        // The block scanner reads 1-byte, double-byte (lead/trail) and UTF-16 code units. For what it
+        // cannot split safely (UTF-32, GB18030 four-byte, EUC-JP three-byte, stateful ISO-2022 / HZ)
+        // the Notepad++ decision stands, as before Improved mode.
+        if (!IsScannable(r.CodePage))
+            r = TextEncodingDetector.Detect(sample, fileLength, HebrewWindows, DetectionMode.NotepadPlusPlus);
         string reason = r.Reason == DetectionReason.Uchardet ? $"uchardet {r.UchardetCharset} ({r.Confidence:0.00})" : r.Reason.ToString();
         return (r.CodePage, r.BomLength, reason);
     }
+
+    /// <summary>Code pages <see cref="MarkupBlockScanner"/> handles: UTF-8, UTF-16 LE/BE, the
+    /// double-byte ones it knows the lead bytes of, and every single-byte code page.</summary>
+    public static bool IsScannable(int codePage) =>
+        codePage is Utf8 or Utf16LittleEndian or Utf16BigEndian or 932 or 936 or 949 or 950 or 51949
+        || (codePage is not (12000 or 12001 or 54936 or 51932 or 50220 or 50221 or 50222 or 50225 or 50227 or 52936)
+            && FromCodePage(codePage).IsSingleByte);
 
     public static bool ContainsHebrew(string text)
     {
