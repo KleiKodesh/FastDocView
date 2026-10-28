@@ -26,7 +26,10 @@ public sealed class DocxBlockHtmlRenderer
     private string? _currentNoteLabel;    // inside a note body: the label its w:footnoteRef/w:endnoteRef shows
     private WordDocumentNoteKind _currentNoteKind;
     private string? _tableStyleId;        // inside a table: its style, layered under paragraph styles
-    private int _textBoxDepth;            // inside a text box paragraphs become block spans (a <p> may not hold a <p>)
+    private int _textBoxDepth;
+
+    /// <summary>settings.xml compatibility option w:ulTrailSpace: underline the spaces that end a paragraph too.</summary>
+    public bool UnderlinesTrailingSpaces { get; set; }            // inside a text box paragraphs become block spans (a <p> may not hold a <p>)
 
     public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null)
     {
@@ -155,15 +158,80 @@ public sealed class DocxBlockHtmlRenderer
     {
         XElement? rPr = run.Element(W + "rPr");
         WordRunFormatting formatting = _styles.ResolveRun(paragraphBase, rPr);
-        string css = formatting.ToCss(paragraphBase);
+        // The underline is drawn on the text pieces inside the run (not under word-only spaces, not under the paragraph's
+        // trailing spaces); the strikethrough stays on the run's span, so the two never have to share one style.
+        string css = formatting.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly);
         bool hasSpan = css.Length > 0;
         if (hasSpan) html.Append("<span style=\"").Append(css).Append("\">");
         yield return new(RenderRunChildren(run, html, formatting));
         if (hasSpan) html.Append("</span>");
     }
 
-    /// <summary>Run text; CJK characters switch to the run's eastAsia face when it differs (see <see cref="WordRunFormatting.EastAsianFontSwitch"/>).</summary>
-    private static void AppendRunText(StringBuilder html, string text, WordRunFormatting formatting)
+    /// <summary>
+    /// Run text with the run's underline drawn the way Word draws it (Word 16 PDF export, 2026-10-28): under spaces
+    /// between words and under tabs, but not under the spaces that end the paragraph (unless the compatibility option
+    /// w:ulTrailSpace asks for them); with w:u words only under the non-space characters (ST_Underline "words": no line
+    /// under breaking or non-breaking spaces).
+    /// </summary>
+    private void AppendRunText(StringBuilder html, XElement textElement, WordRunFormatting formatting)
+    {
+        string text = textElement.Value;
+        if (!formatting.IsUnderlined) { AppendScriptText(html, text, formatting); return; }
+        int contentEnd = text.Length;
+        if (contentEnd > 0 && char.IsWhiteSpace(text[contentEnd - 1]) && !UnderlinesTrailingSpaces && IsLastContentOfParagraph(textElement))
+            while (contentEnd > 0 && char.IsWhiteSpace(text[contentEnd - 1])) contentEnd--;
+        string underline = formatting.UnderlineCss();
+        if (!formatting.IsUnderlineWordsOnly)
+        {
+            if (contentEnd > 0) AppendUnderlined(html, text.Substring(0, contentEnd), formatting, underline);
+        }
+        else
+        {
+            for (int start = 0; start < contentEnd;)
+            {
+                bool isSpace = char.IsWhiteSpace(text[start]);
+                int end = start + 1;
+                while (end < contentEnd && char.IsWhiteSpace(text[end]) == isSpace) end++;
+                if (isSpace) AppendScriptText(html, text.Substring(start, end - start), formatting);
+                else AppendUnderlined(html, text.Substring(start, end - start), formatting, underline);
+                start = end;
+            }
+        }
+        if (contentEnd < text.Length) AppendScriptText(html, text.Substring(contentEnd), formatting);
+    }
+
+    private static void AppendUnderlined(StringBuilder html, string text, WordRunFormatting formatting, string underlineCss)
+    {
+        html.Append("<span style=\"").Append(underlineCss).Append("\">");
+        AppendScriptText(html, text, formatting);
+        html.Append("</span>");
+    }
+
+    /// <summary>A non-text run child (tab, symbol, hyphen) under the run's underline; a word-only underline skips tabs.</summary>
+    private static void AppendUnderlinedMarkup(StringBuilder html, string markup, WordRunFormatting formatting, bool isSpace)
+    {
+        if (!formatting.IsUnderlined || (isSpace && formatting.IsUnderlineWordsOnly)) { html.Append(markup); return; }
+        html.Append("<span style=\"").Append(formatting.UnderlineCss()).Append("\">").Append(markup).Append("</span>");
+    }
+
+    /// <summary>Whether nothing visible follows <paramref name="textElement"/> in its paragraph (only spaces, properties, deletions).</summary>
+    private static bool IsLastContentOfParagraph(XElement textElement)
+    {
+        for (XElement node = textElement; node.Name != W + "p" && node.Parent is { } parent; node = parent)
+            foreach (XElement sibling in node.ElementsAfterSelf())
+                foreach (XElement element in sibling.DescendantsAndSelf())
+                {
+                    string name = element.Name.LocalName;
+                    if (element.Ancestors().Any(a => a.Name == W + "del" || a.Name == W + "moveFrom")) continue;
+                    if (name == "t") { if (element.Value.Any(c => !char.IsWhiteSpace(c))) return false; }
+                    else if (name is "tab" or "ptab" or "br" or "cr" or "sym" or "drawing" or "pict" or "object" or "noBreakHyphen"
+                             or "footnoteReference" or "endnoteReference") return false;
+                }
+        return true;
+    }
+
+    /// <summary>Text; CJK characters switch to the run's eastAsia face when it differs (see <see cref="WordRunFormatting.EastAsianFontSwitch"/>).</summary>
+    private static void AppendScriptText(StringBuilder html, string text, WordRunFormatting formatting)
     {
         string? eastAsianFont = formatting.EastAsianFontSwitch;
         if (eastAsianFont is null) { html.Append(WordHtmlText.Encode(text)); return; }
@@ -185,15 +253,15 @@ public sealed class DocxBlockHtmlRenderer
         {
             switch (child.Name.LocalName)
             {
-                case "t": case "delText": AppendRunText(html, child.Value, formatting); break;
-                case "tab": case "ptab": html.Append('\t'); break;
+                case "t": case "delText": AppendRunText(html, child, formatting); break;
+                case "tab": case "ptab": AppendUnderlinedMarkup(html, "\t", formatting, isSpace: true); break;
                 case "br":
                     html.Append(((string?)child.Attribute(W + "type")) == "page" ? "<span class=\"page-break\"></span>" : "<br>");
                     break;
                 case "cr": html.Append("<br>"); break;
-                case "noBreakHyphen": html.Append('‑'); break;
+                case "noBreakHyphen": AppendUnderlinedMarkup(html, "‑", formatting, isSpace: false); break;
                 case "softHyphen": html.Append('­'); break;
-                case "sym": html.Append(RenderSymbol(child)); break;
+                case "sym": AppendUnderlinedMarkup(html, RenderSymbol(child), formatting, isSpace: false); break;
                 case "footnoteReference": AppendNoteReference(html, WordDocumentNoteKind.Footnote, child); break;
                 case "endnoteReference": AppendNoteReference(html, WordDocumentNoteKind.Endnote, child); break;
                 case "footnoteRef": case "endnoteRef":

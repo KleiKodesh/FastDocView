@@ -13,6 +13,7 @@ public sealed class WordRunFormatting
     public bool IsBold;
     public bool IsItalic;
     public bool IsUnderlined;
+    public bool IsUnderlineWordsOnly;       // w:u words: no line under spaces (ST_Underline)
     public string? UnderlineStyleCss;       // CSS text-decoration-style for the underline (double, dotted, dashed, wavy); null = solid
     public bool IsUnderlineThick;           // thick / *Heavy underline patterns
     public string? UnderlineColorHex;       // "RRGGBB" from w:u/@color (+ theme); null = the text color
@@ -55,22 +56,34 @@ public sealed class WordRunFormatting
          : "";
 
     /// <summary>
-    /// Underline pattern and color as CSS text-decoration-style / -thickness / -color; emitted only
-    /// while underlined and only when they differ from the baseline (a style/color is meaningless without a line).
+    /// The underline as one CSS declaration set: line, pattern (text-decoration-style), thick / *Heavy (thickness) and
+    /// color; empty when not underlined. Always absolute, never relative to a parent: CSS cannot take a parent's
+    /// decoration away from a child, so lines are only ever drawn on the run itself (see <see cref="WordDecorationOutput"/>).
     /// </summary>
-    private bool AppendUnderlineDetails(StringBuilder css, WordRunFormatting? baseline)
+    public string UnderlineCss()
     {
-        if (!IsUnderlined) return false;
-        int before = css.Length;
-        bool baselineUnderlined = baseline?.IsUnderlined == true;
-        string style = UnderlineStyleCss ?? "solid";
-        if (style != "solid" && (!baselineUnderlined || style != (baseline!.UnderlineStyleCss ?? "solid"))) css.Append("text-decoration-style:").Append(style).Append(';');
-        else if (style == "solid" && baselineUnderlined && (baseline!.UnderlineStyleCss ?? "solid") != "solid") css.Append("text-decoration-style:solid;");
-        if (IsUnderlineThick && (!baselineUnderlined || !baseline!.IsUnderlineThick)) css.Append("text-decoration-thickness:0.15em;");
-        else if (!IsUnderlineThick && baselineUnderlined && baseline!.IsUnderlineThick) css.Append("text-decoration-thickness:auto;");
-        if (UnderlineColorHex is not null && (!baselineUnderlined || UnderlineColorHex != baseline!.UnderlineColorHex)) css.Append("text-decoration-color:#").Append(UnderlineColorHex).Append(';');
-        else if (UnderlineColorHex is null && baselineUnderlined && baseline!.UnderlineColorHex is not null) css.Append("text-decoration-color:currentColor;");
-        return css.Length > before;
+        if (!IsUnderlined) return "";
+        var css = new StringBuilder("text-decoration:underline;");
+        if (UnderlineStyleCss is { } style) css.Append("text-decoration-style:").Append(style).Append(';');
+        if (IsUnderlineThick) css.Append("text-decoration-thickness:0.15em;");
+        if (UnderlineColorHex is not null) css.Append("text-decoration-color:#").Append(UnderlineColorHex).Append(';');
+        return css.ToString();
+    }
+
+    /// <summary>Single or double strikethrough (w:strike / w:dstrike) as CSS; empty when none.</summary>
+    public string StrikeCss()
+        => IsDoubleStrikethrough ? "text-decoration:line-through;text-decoration-style:double;"
+         : IsStrikethrough ? "text-decoration:line-through;" : "";
+
+    private void AppendDecorations(StringBuilder css, WordDecorationOutput output)
+    {
+        if (output == WordDecorationOutput.None) return;
+        string strike = StrikeCss();
+        if (output == WordDecorationOutput.StrikeOnly || !IsUnderlined) { css.Append(strike); return; }
+        if (strike.Length == 0) { css.Append(UnderlineCss()); return; }
+        // Both lines on one element share one style / thickness / color: the underline's (a renderer that can nest
+        // elements asks for StrikeOnly and draws the underline on an inner element instead).
+        css.Append(UnderlineCss().Replace("text-decoration:underline;", "text-decoration:underline line-through;"));
     }
 
     /// <summary>w:em as CSS text-emphasis (+ position for marks drawn below the glyphs); empty when none.</summary>
@@ -106,20 +119,14 @@ public sealed class WordRunFormatting
     /// <summary>CSS for the whole formatting (used for the block's base font).</summary>
     public string ToCss() => ToCss(null);
 
-    /// <summary>CSS for what differs from <paramref name="baseline"/>; empty when nothing differs.</summary>
-    public string ToCss(WordRunFormatting? baseline)
+    /// <summary>CSS for what differs from <paramref name="baseline"/>; empty when nothing differs. Text decorations are not
+    /// diffed: they are written whenever the run has them (<paramref name="decorations"/> says which).</summary>
+    public string ToCss(WordRunFormatting? baseline, WordDecorationOutput decorations = WordDecorationOutput.Combined)
     {
         var css = new StringBuilder();
         if (baseline is null || IsBold != baseline.IsBold) css.Append(IsBold ? "font-weight:bold;" : baseline is null ? "" : "font-weight:normal;");
         if (baseline is null || IsItalic != baseline.IsItalic) css.Append(IsItalic ? "font-style:italic;" : baseline is null ? "" : "font-style:normal;");
-        string decoration = (IsUnderlined ? "underline " : "") + (IsStrikethrough || IsDoubleStrikethrough ? "line-through" : "");
-        string baselineDecoration = baseline is null ? "" : (baseline.IsUnderlined ? "underline " : "") + (baseline.IsStrikethrough || baseline.IsDoubleStrikethrough ? "line-through" : "");
-        // text-decoration-style / -thickness / -color only apply to a line declared on the same element, so a run whose
-        // underline differs from the paragraph's re-declares the line even when the set of lines is unchanged.
-        int decorationAt = css.Length;
-        if (decoration != baselineDecoration) css.Append("text-decoration:").Append(decoration.Length == 0 ? "none" : decoration.Trim()).Append(';');
-        bool hasDetails = AppendUnderlineDetails(css, baseline);
-        if (hasDetails && decoration == baselineDecoration) css.Insert(decorationAt, "text-decoration:" + decoration.Trim() + ";");
+        AppendDecorations(css, decorations);
         string emphasis = EmphasisCss();
         if (emphasis.Length > 0 && (baseline is null || emphasis != baseline.EmphasisCss())) css.Append(emphasis);
         else if (emphasis.Length == 0 && baseline is not null && baseline.EmphasisCss().Length > 0) css.Append("text-emphasis:none;");
@@ -150,4 +157,15 @@ public sealed class WordRunFormatting
         if (font is not null && (baseline is null || font != baseline.EffectiveFontName)) css.Append("font-family:'").Append(WordHtmlText.CssFontName(font)).Append("';");
         return css.ToString();
     }
+}
+
+/// <summary>Which text decorations <see cref="WordRunFormatting.ToCss(WordRunFormatting?, WordDecorationOutput)"/> writes.</summary>
+public enum WordDecorationOutput
+{
+    /// <summary>Underline and strikethrough on the same element (when both are on they share the underline's style).</summary>
+    Combined,
+    /// <summary>Strikethrough only: the renderer draws the underline on inner elements (word-only underline, untouched trailing spaces).</summary>
+    StrikeOnly,
+    /// <summary>None: a paragraph element, whose lines its runs could never switch off.</summary>
+    None,
 }

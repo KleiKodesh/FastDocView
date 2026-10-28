@@ -22,6 +22,7 @@ public static partial class DocxFidelityTest
     {
         yield return ToggleProperties;
         yield return ScriptProperties;
+        yield return UnderlineAndStrike;
     }
 
     /// <summary>Writes a minimal package and returns every block's HTML.</summary>
@@ -126,5 +127,35 @@ public static partial class DocxFidelityTest
         TestReport.Check(html[2].Contains("font-family:'Times New Roman'") && html[2].Contains("font-size:10pt"), "w:cs: cs font and szCs");
         TestReport.Check(html[3].Contains("font-family:'Courier New'") && html[3].Contains("font-size:20pt") && IsBold(html[3]), "w:bidi paragraph alone does not switch runs to the cs set");
         TestReport.Check(html[4].Contains("<span style=\"font-family:'MS Mincho'\">漢字</span>"), "CJK characters switch to the eastAsia face");
+    }
+
+    /// <summary>
+    /// Underline / strike as Word 16 draws them (PDF export of a synthetic document, 2026-10-28): spaces between words and
+    /// tabs underlined, the spaces ending the paragraph not; "words" skips spaces; a bare &lt;w:u/&gt; draws nothing; a style's
+    /// underline switched off by the run (w:u none) really disappears; dstrike + a patterned underline keep both patterns.
+    /// </summary>
+    private static void UnderlineAndStrike()
+    {
+        const string styles = """<w:style w:type="paragraph" w:styleId="U"><w:name w:val="U"/><w:rPr><w:u w:val="single"/><w:strike/></w:rPr></w:style>""";
+        static string Run(string properties, string text) => $"<w:r><w:rPr>{properties}</w:rPr><w:t xml:space=\"preserve\">{text}</w:t></w:r>";
+        List<string> html = RenderAll("underline", 
+            "<w:p>" + Run("<w:u w:val=\"single\"/>", "abc   ") + "</w:p>"                                        // 0 trailing spaces at paragraph end: not underlined
+          + "<w:p>" + Run("<w:u w:val=\"single\"/>", "abc   ") + Run("", "def") + "</w:p>"                     // 1 spaces before more text: underlined
+          + "<w:p>" + Run("<w:u w:val=\"words\"/>", "ab cd ef") + "</w:p>"                                // 2 words
+          + "<w:p>" + Run("<w:u w:val=\"single\"/>", "abc") + "<w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:tab/></w:r>" + Run("", "x") + "</w:p>"   // 3 tab underlined
+          + "<w:p>" + Run("<w:u/>", "bare") + "</w:p>"                                                       // 4 bare w:u: nothing
+          + "<w:p><w:pPr><w:pStyle w:val=\"U\"/></w:pPr>" + Run("<w:u w:val=\"none\"/><w:strike w:val=\"0\"/>", "off") + Run("", "on") + "</w:p>"   // 5
+          + "<w:p>" + Run("<w:u w:val=\"dotted\"/><w:dstrike/>", "both") + "</w:p>", styles);                 // 6
+        const string line = "<span style=\"text-decoration:underline;\">";
+        TestReport.Check(html[0].Contains(line + "abc</span>   "), "underline stops before the spaces that end the paragraph");
+        TestReport.Check(html[1].Contains(line + "abc   </span>"), "spaces followed by more text are underlined");
+        TestReport.Check(html[2].Contains(line + "ab</span> " + line + "cd</span>&#160;" + line + "ef</span>") || html[2].Contains(line + "ab</span> " + line + "cd</span> " + line + "ef</span>"),
+                         "w:u words: no line under spaces (breaking or non-breaking)");
+        TestReport.Check(html[3].Contains(line + "\t</span>"), "an underlined tab is underlined");
+        TestReport.Check(!html[4].Contains("underline"), "a bare <w:u/> (no w:val) draws no underline");
+        TestReport.Check(!html[5].Contains("<p style=\"text-decoration") && !html[5].Contains("text-decoration:underline;\">off") && html[5].Contains(line + "on</span>")
+                         && html[5].Contains("line-through;\">") , "a style's underline / strike switched off by a run disappears; other runs keep them on the run");
+        TestReport.Check(html[6].Contains("text-decoration:line-through;text-decoration-style:double;") && html[6].Contains("text-decoration:underline;text-decoration-style:dotted;"),
+                         "dstrike and a dotted underline keep their own patterns (separate elements)");
     }
 }

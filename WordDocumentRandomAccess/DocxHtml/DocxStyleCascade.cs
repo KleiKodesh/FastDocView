@@ -310,24 +310,33 @@ public sealed class DocxStyleCascade
     }
 
     /// <summary>
-    /// w:u (§17.3.2.40): the pattern → CSS text-decoration-style, thick / *Heavy → a thicker line; color (+ theme) →
-    /// text-decoration-color. "none" switches the underline off; the pattern list is ST_Underline (§17.18.99).
+    /// w:u (§17.3.2.40). The pattern (ST_Underline §17.18.99) → CSS: double; dotted / dottedHeavy → dotted; the dash
+    /// family (dash, dashLong, dotDash, dotDotDash and their Heavy forms) → dashed (CSS has one dash pattern; LibreOffice
+    /// keeps DASH / LONGDASH / DASHDOT / DASHDOTDOT apart — DomainMapper::handleUnderlineType); wave / wavyHeavy /
+    /// wavyDouble → wavy (CSS has no double wave); thick and every *Heavy → a thicker line; words → single, but not
+    /// under spaces ("no underline beneath any space character (breaking or non-breaking)"); none → off.
+    /// A w:u without w:val leaves the pattern as inherited — LibreOffice only sets the underline from the val attribute,
+    /// and Word 16 draws no line for a bare &lt;w:u/&gt; (PDF export check, 2026-10-28). color / themeColor (+ tint / shade)
+    /// → text-decoration-color; themeColor supersedes color; "auto" = the text color.
     /// </summary>
     private static void ApplyUnderline(WordRunFormatting formatting, XElement underline, DocxTheme? theme)
     {
-        string pattern = (string?)underline.Attribute(W + "val") ?? "single";
-        formatting.IsUnderlined = pattern != "none";
-        if (!formatting.IsUnderlined) { formatting.UnderlineStyleCss = null; formatting.IsUnderlineThick = false; formatting.UnderlineColorHex = null; return; }
-        formatting.UnderlineStyleCss = pattern switch
+        if ((string?)underline.Attribute(W + "val") is { } pattern)
         {
-            "double" => "double",
-            "dotted" or "dottedHeavy" => "dotted",
-            "dash" or "dashedHeavy" or "dashLong" or "dashLongHeavy" or "dotDash" or "dashDotHeavy" or "dotDotDash" or "dashDotDotHeavy" => "dashed",
-            "wave" or "wavyHeavy" or "wavyDouble" => "wavy",
-            _ => null,                                        // single, words, thick
-        };
-        formatting.IsUnderlineThick = pattern is "thick" or "dottedHeavy" or "dashedHeavy" or "dashLongHeavy" or "dashDotHeavy" or "dashDotDotHeavy" or "wavyHeavy";
-        formatting.UnderlineColorHex = DocxTheme.ResolveColorHex(underline, "color", theme);
+            formatting.IsUnderlined = pattern != "none";
+            formatting.IsUnderlineWordsOnly = pattern == "words";
+            formatting.UnderlineStyleCss = pattern switch
+            {
+                "double" => "double",
+                "dotted" or "dottedHeavy" => "dotted",
+                "dash" or "dashedHeavy" or "dashLong" or "dashLongHeavy" or "dotDash" or "dashDotHeavy" or "dotDotDash" or "dashDotDotHeavy" => "dashed",
+                "wave" or "wavyHeavy" or "wavyDouble" => "wavy",
+                _ => null,                                        // single, words, thick
+            };
+            formatting.IsUnderlineThick = pattern is "thick" or "dottedHeavy" or "dashedHeavy" or "dashLongHeavy" or "dashDotHeavy" or "dashDotDotHeavy" or "wavyHeavy";
+        }
+        if (underline.Attribute(W + "color") is not null || underline.Attribute(W + "themeColor") is not null)
+            formatting.UnderlineColorHex = DocxTheme.ResolveColorHex(underline, "color", theme);
     }
 
     /// <summary>A w:shd's fill as "RRGGBB" (themeFill + tint / shade first, then fill), or null for auto / clear / white.</summary>

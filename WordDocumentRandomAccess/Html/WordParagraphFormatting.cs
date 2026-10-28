@@ -80,7 +80,7 @@ public sealed class WordParagraphFormatting
             if (IsLineSpacingAuto) css.Append("line-height:").Append((LineSpacingTwipsOrAuto / 240.0).ToString("0.##", CultureInfo.InvariantCulture)).Append(';');
             else css.Append("line-height:").Append(TwipsToPt(LineSpacingTwipsOrAuto)).Append("pt;");
         }
-        css.Append(RunFormatting.ToCss());
+        css.Append(RunFormatting.ToCss(null, WordDecorationOutput.None));   // lines go on the runs: a child cannot remove a parent's line
         return css.ToString();
     }
 
