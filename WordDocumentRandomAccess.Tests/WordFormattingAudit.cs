@@ -113,7 +113,13 @@ public static class WordFormattingAudit
     public static void RunCorpus(string listPath, int maxFiles)
     {
         try { System.Diagnostics.Process.GetCurrentProcess().PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal; } catch { }
-        string[] paths = File.ReadAllLines(listPath).Where(line => line.Length > 0).Take(maxFiles).ToArray();
+        // A list file (one path per line), or a folder such as test-data/ whose supported documents are all taken.
+        IEnumerable<string> candidates = Directory.Exists(listPath)
+            ? Directory.EnumerateFiles(listPath, "*", SearchOption.AllDirectories)
+                .Where(path => WordWindowedDocumentOpener.SupportedExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
+                .OrderBy(path => path, StringComparer.Ordinal)
+            : File.ReadAllLines(listPath).Where(line => line.Length > 0);
+        string[] paths = candidates.Take(maxFiles).ToArray();
         TestReport.Step($"Corpus audit: {paths.Length:N0} files from {listPath}");
         var docxTally = new AuditTally();
         var docTally = new AuditTally();

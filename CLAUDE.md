@@ -71,6 +71,9 @@ view over SQLite.
   Playwright against `localhost:5189` — `liveCheck.mjs` (jumps, bounded window, reload keeps the
   same block at the same pixel), `notesCheck.mjs` (numbering, notes pane, click, hover). Read DOM,
   console and `__wordDemo.state()`.
+- **Third-party stress documents** live in `test-data/` (LibreOffice + Apache POI, licenses inside):
+  `--corpus ../test-data` runs all 1,817 — part of QA for any reader/renderer change. 0 crashes;
+  broken/encrypted files must fail with a clear error.
 - **Coverage follows real files**: `--audit` on the samples and `--corpus <list>` over every Word
   file on the machine (list exported from the KitveiHakodesh service's file index — a full-drive
   search is too slow). Keep unhandled at 0; anything ignored on purpose goes in the audit's
