@@ -7,15 +7,28 @@ namespace WordDocumentRandomAccess.Docx;
 /// and records the uncompressed byte offset where each child of &lt;w:body&gt; starts, the body's
 /// end, the root element's opening tag (its namespace declarations are needed to parse a block in
 /// isolation), each paragraph's style id (for headings), its list label (counted here, because a
-/// windowed renderer never sees the earlier items) and a rough text length (for scroll-height
-/// estimates). Fed in arbitrary chunks; state carries across chunk boundaries.
+/// windowed renderer never sees the earlier items), heading text, note references and a rough
+/// text length (for scroll-height estimates). Fed in arbitrary chunks; state carries across chunk
+/// boundaries. Text and tag bodies are skipped with vectorised span searches, and tag names are
+/// compared as bytes against the dozen names that matter — no string per tag.
 /// </summary>
 internal sealed class DocxBodyBlockScanner
 {
     private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData }
 
+    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference }
+
     private const int MaxRootTagBytes = 1 << 16;
     private const int MaxHeadingTextBytes = 600;
+    private const int MaxTagNameBytes = 64;
+
+    private static readonly (byte[] name, KnownTag tag)[] KnownTags =
+    [
+        ("w:p"u8.ToArray(), KnownTag.Paragraph), ("w:t"u8.ToArray(), KnownTag.Text), ("w:pPr"u8.ToArray(), KnownTag.ParagraphProperties),
+        ("w:tbl"u8.ToArray(), KnownTag.Table), ("w:sdt"u8.ToArray(), KnownTag.ContentControl), ("w:body"u8.ToArray(), KnownTag.Body),
+        ("w:pStyle"u8.ToArray(), KnownTag.ParagraphStyle), ("w:numId"u8.ToArray(), KnownTag.NumberingId), ("w:ilvl"u8.ToArray(), KnownTag.NumberingLevel),
+        ("w:footnoteReference"u8.ToArray(), KnownTag.FootnoteReference), ("w:endnoteReference"u8.ToArray(), KnownTag.EndnoteReference),
+    ];
 
     private readonly DocxListLabelResolver? _listLabelResolver;
     private readonly Func<string, int>? _headingLevelOfStyle;
@@ -37,10 +50,12 @@ internal sealed class DocxBodyBlockScanner
     private byte _quoteChar;
     private int _markerMatched;                 // progress through "-->" / "?>" / "]]>"
 
-    private readonly StringBuilder _tagName = new(32);
+    private readonly byte[] _tagName = new byte[MaxTagNameBytes];
+    private int _tagNameLength;
+    private KnownTag _tag;
     private bool _isTagNameComplete;
-    private readonly StringBuilder _tagAttributes = new();
-    private string? _capturedAttributeTag;      // which tag's attributes are being captured (w:pStyle / w:numId / w:ilvl)
+    private readonly MemoryStream _tagAttributes = new();
+    private bool _isCapturingAttributes;        // only for pStyle / numId / ilvl / note references
     private readonly MemoryStream _rootOpenTag = new();
     private bool _isRootTagDone;
     private bool _isInsideTextRun;              // inside <w:t>…</w:t>
@@ -75,136 +90,266 @@ internal sealed class DocxBodyBlockScanner
 
     public void Feed(byte[] chunk, int count)
     {
-        for (int i = 0; i < count; i++)
+        var span = new ReadOnlySpan<byte>(chunk, 0, count);
+        int position = 0;
+        while (position < count)
         {
-            byte b = chunk[i];
-            if (!_isRootTagDone && _rootOpenTag.Length < MaxRootTagBytes && _state != State.Text && _depth == 0
-                && _state != State.ProcessingInstruction && _state != State.Comment)
-                _rootOpenTag.WriteByte(b);
-
             switch (_state)
             {
                 case State.Text:
-                    if (b == (byte)'<')
-                    {
-                        _state = State.TagOpen;
-                        _tagStartOffset = _offset;
-                        if (!_isRootTagDone && _depth == 0) { _rootOpenTag.SetLength(0); _rootOpenTag.WriteByte(b); }
-                    }
-                    else if (_isInsideTextRun && BlockTextLengths.Count > 0)
-                    {
-                        BlockTextLengths[BlockTextLengths.Count - 1]++;
-                        if (_currentHeadingLevel > 0 && _headingText.Length < MaxHeadingTextBytes) _headingText.WriteByte(b);
-                    }
+                {
+                    int next = span.Slice(position).IndexOf((byte)'<');
+                    int textLength = next < 0 ? count - position : next;
+                    if (textLength > 0) OnText(span.Slice(position, textLength));
+                    position += textLength;
+                    if (next < 0) break;
+                    _tagStartOffset = _offset + position;
+                    int consumed = TryProcessWholeTag(span.Slice(position + 1), chunk, position + 1);
+                    if (consumed > 0) { position += 1 + consumed; break; }
+                    _state = State.TagOpen;
+                    if (!_isRootTagDone && _depth == 0) { _rootOpenTag.SetLength(0); _rootOpenTag.WriteByte((byte)'<'); }
+                    position++;
                     break;
+                }
 
                 case State.TagOpen:
-                    _tagName.Clear();
+                {
+                    byte b = span[position++];
+                    CaptureRootTagByte(b);
+                    _tagNameLength = 0;
                     _isTagNameComplete = false;
                     _isClosingTag = false;
                     _previousWasSlash = false;
-                    _capturedAttributeTag = null;
-                    _tagAttributes.Clear();
+                    _isCapturingAttributes = false;
+                    _tagAttributes.SetLength(0);
                     if (b == (byte)'!') { _state = State.Comment; _markerMatched = 0; }        // <!-- or <![CDATA[ (decided below)
                     else if (b == (byte)'?') { _state = State.ProcessingInstruction; _markerMatched = 0; }
                     else if (b == (byte)'/') { _isClosingTag = true; _state = State.TagName; }
-                    else { _state = State.TagName; _tagName.Append((char)b); }
+                    else { _state = State.TagName; _tagName[_tagNameLength++] = b; }
                     break;
+                }
 
                 case State.TagName:
-                    if (b == (byte)'>' || b == (byte)'/' || b <= (byte)' ')
-                    {
-                        OnTagNameComplete();
-                        _state = State.TagBody;
-                        goto case State.TagBody;
-                    }
-                    if (_tagName.Length < 64) _tagName.Append((char)b);
+                {
+                    ReadOnlySpan<byte> rest = span.Slice(position);
+                    int end = IndexOfNameEnd(rest);
+                    int take = end < 0 ? rest.Length : end;
+                    int room = Math.Min(take, MaxTagNameBytes - _tagNameLength);
+                    rest.Slice(0, room).CopyTo(_tagName.AsSpan(_tagNameLength));
+                    _tagNameLength += room;
+                    if (!_isRootTagDone && _depth == 0) _rootOpenTag.Write(chunk, position, take);
+                    position += take;
+                    if (end < 0) break;
+                    OnTagNameComplete();
+                    _state = State.TagBody;
                     break;
+                }
 
                 case State.TagBody:
-                    if (b == (byte)'"' || b == (byte)'\'') { _quoteChar = b; _state = State.TagQuote; }
-                    else if (b == (byte)'>') { OnTagEnd(); _state = State.Text; }
-                    if (_capturedAttributeTag is not null && b != (byte)'>') _tagAttributes.Append((char)b);
-                    _previousWasSlash = b == (byte)'/';
+                {
+                    ReadOnlySpan<byte> rest = span.Slice(position);
+                    int stop = rest.IndexOfAny((byte)'>', (byte)'"', (byte)'\'');
+                    int take = stop < 0 ? rest.Length : stop;
+                    if (take > 0)
+                    {
+                        if (_isCapturingAttributes) _tagAttributes.Write(chunk, position, take);
+                        if (!_isRootTagDone && _depth == 0) _rootOpenTag.Write(chunk, position, take);
+                        _previousWasSlash = rest[take - 1] == (byte)'/';
+                        position += take;
+                    }
+                    if (stop < 0) break;
+                    byte b = span[position++];
+                    if (b == (byte)'>')
+                    {
+                        CaptureRootTagByte(b);
+                        OnTagEnd();
+                        _state = State.Text;
+                    }
+                    else
+                    {
+                        if (_isCapturingAttributes) _tagAttributes.WriteByte(b);
+                        CaptureRootTagByte(b);
+                        _quoteChar = b;
+                        _previousWasSlash = false;
+                        _state = State.TagQuote;
+                    }
                     break;
+                }
 
                 case State.TagQuote:
-                    if (_capturedAttributeTag is not null) _tagAttributes.Append((char)b);
-                    if (b == _quoteChar) _state = State.TagBody;
+                {
+                    ReadOnlySpan<byte> rest = span.Slice(position);
+                    int close = rest.IndexOf(_quoteChar);
+                    int take = close < 0 ? rest.Length : close + 1;
+                    if (_isCapturingAttributes) _tagAttributes.Write(chunk, position, take);
+                    if (!_isRootTagDone && _depth == 0) _rootOpenTag.Write(chunk, position, take);
+                    position += take;
+                    if (close >= 0) _state = State.TagBody;
                     break;
+                }
 
                 case State.Comment:
+                {
                     // Entered on "<!": "<![CDATA[" ends with "]]>", "<!--" ends with "-->"; both end on '>'
                     // after their marker. The byte after '!' tells CDATA ("[") from a comment ("-").
+                    byte b = span[position++];
                     if (_markerMatched == 0 && b == (byte)'[') { _state = State.CData; _markerMatched = 0; break; }
                     if (b == (byte)'-') _markerMatched = Math.Min(2, _markerMatched + 1);
                     else if (b == (byte)'>' && _markerMatched == 2) _state = State.Text;
                     else _markerMatched = 0;
                     break;
+                }
 
                 case State.CData:
+                {
+                    byte b = span[position++];
                     if (b == (byte)']') _markerMatched = Math.Min(2, _markerMatched + 1);
                     else if (b == (byte)'>' && _markerMatched == 2) _state = State.Text;
                     else _markerMatched = 0;
                     break;
+                }
 
                 case State.ProcessingInstruction:
+                {
+                    byte b = span[position++];
                     if (b == (byte)'?') _markerMatched = 1;
                     else if (b == (byte)'>' && _markerMatched == 1) _state = State.Text;
                     else _markerMatched = 0;
                     break;
+                }
             }
-            _offset++;
         }
+        _offset += count;
+    }
+
+    /// <summary>
+    /// The fast path: an element tag that lies whole in this chunk is handled with one search for
+    /// '>' instead of a state-machine step per byte. Returns the bytes consumed after '<', or 0 to
+    /// fall back to the state machine (tag crosses the chunk edge, is a comment / PI / CDATA, or has
+    /// unbalanced quotes — a '>' inside an attribute value would otherwise be taken for the end).
+    /// </summary>
+    private int TryProcessWholeTag(ReadOnlySpan<byte> afterOpen, byte[] chunk, int chunkPosition)
+    {
+        int end = afterOpen.IndexOf((byte)'>');
+        if (end <= 0) return 0;
+        ReadOnlySpan<byte> tag = afterOpen.Slice(0, end);
+        byte first = tag[0];
+        if (first is (byte)'!' or (byte)'?') return 0;
+        if (tag.IndexOfAny((byte)'"', (byte)0x27) >= 0)
+        {
+            int doubleQuotes = 0, singleQuotes = 0;
+            foreach (byte b in tag) { if (b == (byte)'"') doubleQuotes++; else if (b == (byte)0x27) singleQuotes++; }
+            if ((doubleQuotes & 1) != 0 || (singleQuotes & 1) != 0) return 0;
+        }
+
+        _isClosingTag = first == (byte)'/';
+        int nameStart = _isClosingTag ? 1 : 0;
+        int nameEndRelative = IndexOfNameEnd(tag.Slice(nameStart));
+        int nameEnd = nameEndRelative < 0 ? tag.Length : nameStart + nameEndRelative;
+        ReadOnlySpan<byte> name = tag.Slice(nameStart, nameEnd - nameStart);
+        _tagNameLength = Math.Min(name.Length, MaxTagNameBytes);
+        name.Slice(0, _tagNameLength).CopyTo(_tagName);
+        _previousWasSlash = tag[tag.Length - 1] == (byte)'/';
+        _isTagNameComplete = false;
+        _isCapturingAttributes = false;
+        OnTagNameComplete();
+
+        if (!_isRootTagDone && _depth == 0)
+        {
+            _rootOpenTag.SetLength(0);
+            _rootOpenTag.WriteByte((byte)'<');
+            _rootOpenTag.Write(chunk, chunkPosition, Math.Min(end + 1, MaxRootTagBytes));
+        }
+        if (_isCapturingAttributes)
+        {
+            _tagAttributes.SetLength(0);
+            _tagAttributes.Write(chunk, chunkPosition + nameEnd, tag.Length - nameEnd);
+        }
+        OnTagEnd();
+        return end + 1;
+    }
+
+    private static int IndexOfNameEnd(ReadOnlySpan<byte> rest)
+    {
+        for (int i = 0; i < rest.Length; i++)
+        {
+            byte b = rest[i];
+            if (b == (byte)'>' || b == (byte)'/' || b <= (byte)' ') return i;
+        }
+        return -1;
+    }
+
+    private void CaptureRootTagByte(byte b)
+    {
+        if (!_isRootTagDone && _depth == 0 && _rootOpenTag.Length < MaxRootTagBytes) _rootOpenTag.WriteByte(b);
+    }
+
+    private void OnText(ReadOnlySpan<byte> text)
+    {
+        if (!_isInsideTextRun || BlockTextLengths.Count == 0) return;
+        BlockTextLengths[BlockTextLengths.Count - 1] += text.Length;
+        if (_currentHeadingLevel > 0 && _headingText.Length < MaxHeadingTextBytes)
+            _headingText.Write(text.Slice(0, (int)Math.Min(text.Length, MaxHeadingTextBytes - _headingText.Length)));
     }
 
     private void OnTagNameComplete()
     {
         if (_isTagNameComplete) return;
         _isTagNameComplete = true;
+        _tag = Classify(_tagName.AsSpan(0, _tagNameLength));
         if (_isClosingTag || _bodyDepth < 0) return;
-        string name = _tagName.ToString();
         // A body-level paragraph's pPr children: <w:pStyle> (depth body+2) and <w:numPr>'s
         // <w:numId>/<w:ilvl> (depth body+3); and note references anywhere inside the body.
-        if (_depth == _bodyDepth + 2 && name == "w:pStyle") _capturedAttributeTag = name;
-        else if (_depth == _bodyDepth + 3 && name is "w:numId" or "w:ilvl") _capturedAttributeTag = name;
-        else if (_depth > _bodyDepth && name is "w:footnoteReference" or "w:endnoteReference") _capturedAttributeTag = name;
+        _isCapturingAttributes = _tag switch
+        {
+            KnownTag.ParagraphStyle => _depth == _bodyDepth + 2,
+            KnownTag.NumberingId or KnownTag.NumberingLevel => _depth == _bodyDepth + 3,
+            KnownTag.FootnoteReference or KnownTag.EndnoteReference => _depth > _bodyDepth,
+            _ => false,
+        };
+    }
+
+    private static KnownTag Classify(ReadOnlySpan<byte> name)
+    {
+        if (name.Length < 3 || name[0] != (byte)'w' || name[1] != (byte)':') return KnownTag.Other;
+        foreach ((byte[] known, KnownTag tag) in KnownTags)
+            if (name.SequenceEqual(known)) return tag;
+        return KnownTag.Other;
     }
 
     private void OnTagEnd()
     {
-        string name = _tagName.ToString();
         bool isSelfClosing = _previousWasSlash;
 
         if (_isClosingTag)
         {
-            if (name == "w:t") _isInsideTextRun = false;
+            if (_tag == KnownTag.Text) _isInsideTextRun = false;
             _depth--;
-            if (name == "w:body" && _bodyDepth >= 0) { CloseHeading(); BodyEndOffset = _tagStartOffset; _bodyDepth = -1; }
-            else if (name == "w:pPr" && _bodyDepth >= 0 && _depth == _bodyDepth + 1) OnParagraphPropertiesClosed();
+            if (_tag == KnownTag.Body && _bodyDepth >= 0) { CloseHeading(); BodyEndOffset = _tagStartOffset; _bodyDepth = -1; }
+            else if (_tag == KnownTag.ParagraphProperties && _bodyDepth >= 0 && _depth == _bodyDepth + 1) OnParagraphPropertiesClosed();
             return;
         }
 
         if (_depth == 0) _isRootTagDone = true;
 
-        if (_bodyDepth >= 0 && _depth == _bodyDepth) OnBodyChildStarted(name);
-        else if (_capturedAttributeTag is not null) OnCapturedAttribute(_capturedAttributeTag, _tagAttributes.ToString());
+        if (_bodyDepth >= 0 && _depth == _bodyDepth) OnBodyChildStarted();
+        else if (_isCapturingAttributes) OnCapturedAttribute(Encoding.ASCII.GetString(_tagAttributes.GetBuffer(), 0, (int)_tagAttributes.Length));
 
-        if (name == "w:body" && _bodyDepth < 0) _bodyDepth = _depth + 1;
-        if (name == "w:t" && !isSelfClosing) _isInsideTextRun = true;
+        if (_tag == KnownTag.Body && _bodyDepth < 0) _bodyDepth = _depth + 1;
+        if (_tag == KnownTag.Text && !isSelfClosing) _isInsideTextRun = true;
         if (!isSelfClosing) _depth++;
-        _capturedAttributeTag = null;
+        _isCapturingAttributes = false;
     }
 
-    private void OnBodyChildStarted(string name)
+    private void OnBodyChildStarted()
     {
         CloseHeading();
         BlockStartOffsets.Add(_tagStartOffset);
-        BlockKinds.Add(name switch
+        BlockKinds.Add(_tag switch
         {
-            "w:p" => WordDocumentBlockKind.Paragraph,
-            "w:tbl" => WordDocumentBlockKind.Table,
-            "w:sdt" => WordDocumentBlockKind.ContentControl,
+            KnownTag.Paragraph => WordDocumentBlockKind.Paragraph,
+            KnownTag.Table => WordDocumentBlockKind.Table,
+            KnownTag.ContentControl => WordDocumentBlockKind.ContentControl,
             _ => WordDocumentBlockKind.Other,
         });
         BlockTextLengths.Add(0);
@@ -216,19 +361,19 @@ internal sealed class DocxBodyBlockScanner
         _currentLevel = 0;
     }
 
-    private void OnCapturedAttribute(string tag, string attributes)
+    private void OnCapturedAttribute(string attributes)
     {
         if (BlockStyleIds.Count == 0) return;
-        if (tag is "w:footnoteReference" or "w:endnoteReference")
+        if (_tag is KnownTag.FootnoteReference or KnownTag.EndnoteReference)
         {
-            OnNoteReference(tag == "w:footnoteReference" ? WordDocumentNoteKind.Footnote : WordDocumentNoteKind.Endnote, attributes);
+            OnNoteReference(_tag == KnownTag.FootnoteReference ? WordDocumentNoteKind.Footnote : WordDocumentNoteKind.Endnote, attributes);
             return;
         }
         string? value = AttributeValue(attributes, "w:val=");
         if (value is null) return;
-        switch (tag)
+        switch (_tag)
         {
-            case "w:pStyle":
+            case KnownTag.ParagraphStyle:
                 _currentStyleId = value;
                 _currentHeadingLevel = _headingLevelOfStyle?.Invoke(value) ?? 0;
                 if (!_styleIdLookup.TryGetValue(value, out short tableIndex))
@@ -239,8 +384,8 @@ internal sealed class DocxBodyBlockScanner
                 }
                 BlockStyleIds[BlockStyleIds.Count - 1] = tableIndex;
                 break;
-            case "w:numId": if (int.TryParse(value, out int numId)) _currentNumId = numId; break;
-            case "w:ilvl": if (int.TryParse(value, out int level)) _currentLevel = level; break;
+            case KnownTag.NumberingId: if (int.TryParse(value, out int numId)) _currentNumId = numId; break;
+            case KnownTag.NumberingLevel: if (int.TryParse(value, out int level)) _currentLevel = level; break;
         }
     }
 
@@ -261,7 +406,7 @@ internal sealed class DocxBodyBlockScanner
     {
         if (_currentHeadingLevel > 0 && BlockStartOffsets.Count > 0)
         {
-            string text = System.Net.WebUtility.HtmlDecode(Encoding.UTF8.GetString(_headingText.ToArray())).Trim();
+            string text = System.Net.WebUtility.HtmlDecode(Encoding.UTF8.GetString(_headingText.GetBuffer(), 0, (int)_headingText.Length)).Trim();
             if (text.Length > 0) Headings.Add(new WordDocumentHeading(BlockStartOffsets.Count - 1, _currentHeadingLevel, text));
         }
         _currentHeadingLevel = 0;

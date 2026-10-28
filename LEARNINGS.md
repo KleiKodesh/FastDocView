@@ -139,3 +139,16 @@ Append-only. Date, what we learned, what it changed.
   as LibreOffice does, opened the last failing file.
 - 145 files could not even be read (OneDrive placeholders / locked files): an OS state, not a
   parser bug — report it as "file not available", never as a format failure.
+
+## 2026-10-28 — first-open profile: the scanner, not the inflater
+
+- `--profile-index` on the 87 MB body (machine shared with two agent builds, so ±30 %): our
+  inflater alone 0.5–0.9 s (100–170 MB/s), .NET's zlib 0.12–0.2 s (500–700 MB/s), the
+  byte-level body scanner alone 1.8–2.5 s. **The scanner was the bottleneck**, at ~300 ns per
+  tag: 4–6 state-machine iterations and a string allocation per tag.
+- Fixes: text skipped with a vectorised `IndexOf('<')`, tag names compared as bytes against the
+  dozen that matter, and a whole-tag fast path (one `IndexOf('>')` per tag, quote-parity check,
+  fallback to the state machine for comments / CDATA / chunk-edge tags). Scanner now ~0.9–1.1 s.
+- Inflater: 7-byte refills, mask instead of modulo, bulk + chunk-doubling match copies took it
+  from ~35 to ~100+ MB/s. zlib is still 4–5× faster; a progressive first open (text before the
+  index finishes) matters more than closing that gap, since reopen already reads no body.

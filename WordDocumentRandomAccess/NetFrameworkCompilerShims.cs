@@ -5,3 +5,7 @@ namespace System.Runtime.CompilerServices
     internal static class IsExternalInit { }
 }
 #endif
+
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("WordDocumentRandomAccess.Tests")]
