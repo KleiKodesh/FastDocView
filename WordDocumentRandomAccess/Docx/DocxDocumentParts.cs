@@ -49,11 +49,17 @@ public sealed class DocxDocumentParts
     {
         if (Numbering.IsEmpty) return (_, _, _) => null;
         var counter = new DocxListCounter(Numbering);
+        var levelCss = new Dictionary<DocxNumberingDefinitions.LevelDefinition, string>();
         return (styleId, numId, level) =>
         {
             if (numId < 0 && styleId is not null)
                 (numId, level) = Styles.NumberingOf(styleId);
-            return numId > 0 ? counter.Next(numId, level) : null;
+            if (numId <= 0 || counter.NextWithDefinition(numId, level) is not { } next) return null;
+            DocxNumberingDefinitions.LevelDefinition? definition = next.definition;
+            string css = "";
+            if (definition is not null && !levelCss.TryGetValue(definition, out css!))
+                levelCss[definition] = css = Styles.LevelRunCss(definition.RunProperties, isBulletMapped: definition.Format == "bullet" && next.label != definition.Text);
+            return new DocxListLabel(next.label, DocxListLabel.SuffixOf(definition?.Suffix), css);
         };
     }
 

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Xml.Linq;
+using WordDocumentRandomAccess.Docx;
 using WordDocumentRandomAccess.Html;
 
 namespace WordDocumentRandomAccess.DocxHtml;
@@ -21,7 +22,7 @@ public sealed class DocxBlockHtmlRenderer
 
     private readonly DocxStyleCascade _styles;
     private readonly NoteLabelResolver? _noteLabels;
-    private string? _listLabel;           // the index-time label of the block being rendered (its first paragraph)
+    private DocxListLabel? _listLabel;    // the index-time label of the block being rendered (its first paragraph)
     private string? _previousStyleKey;    // the style of the paragraph rendered just before (contextual spacing)
     private string? _currentNoteLabel;    // inside a note body: the label its w:footnoteRef/w:endnoteRef shows
     private WordDocumentNoteKind _currentNoteKind;
@@ -39,7 +40,7 @@ public sealed class DocxBlockHtmlRenderer
 
     /// <param name="listLabel">The label counted at index time ("3.", "ב."), or null when the block is not a list item.</param>
     /// <param name="previousStyleKey">The paragraph style of the block before (for contextual spacing), from the index.</param>
-    public string Render(XElement block, string? listLabel = null, string? previousStyleKey = null)
+    public string Render(XElement block, DocxListLabel? listLabel = null, string? previousStyleKey = null)
     {
         var html = new StringBuilder(1024);
         _listLabel = listLabel;
@@ -118,19 +119,41 @@ public sealed class DocxBlockHtmlRenderer
         int headingLevel = formatting.OutlineLevel is >= 0 and <= 8 ? formatting.OutlineLevel + 1 : _styles.HeadingLevelOf(styleId);
         string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
         string css = formatting.ToCss(_previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : "");
+        // The paragraph mark's own run properties (pPr/rPr) format the list label and give an empty paragraph its height.
+        WordRunFormatting mark = _styles.ResolveRun(formatting.RunFormatting, pPr?.Element(W + "rPr"));
+        int markSize = mark.EffectiveFontSizeHalfPoints;
+        if (markSize > 0 && markSize != formatting.RunFormatting.EffectiveFontSizeHalfPoints && !HasVisibleContent(paragraph))
+            css += "font-size:" + (markSize / 2.0).ToString("0.#", CultureInfo.InvariantCulture) + "pt;";
 
         WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
-        if (_listLabel is { Length: > 0 } label)
+        if (_listLabel is { Text.Length: > 0 } label)
         {
-            html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(label)).Append("</span> ");
-            _listLabel = null;                                      // only the block's first paragraph carries it
+            // Word draws the number with the mark's formatting plus the level's rPr (§17.9.6), then the level's suffix (§17.9.28).
+            string labelCss = mark.ToCss(formatting.RunFormatting) + label.LevelCss;
+            html.Append("<span class=\"list-marker\"");
+            if (labelCss.Length > 0) html.Append(" style=\"").Append(labelCss).Append('"');
+            html.Append('>').Append(WordHtmlText.Encode(label.Text)).Append("</span>");
+            html.Append(label.Suffix switch { DocxListLabelSuffix.Tab => "\t", DocxListLabelSuffix.Space => " ", _ => "" });
         }
+        if (_listLabel is not null) _listLabel = null;              // only the block's first paragraph carries it
         yield return new(RenderInlineChildren(paragraph, html, formatting.RunFormatting));
         html.Append("</").Append(tag).Append('>');
         _previousStyleKey = formatting.StyleKey;
 
         // A w:sectPr inside pPr ends a section: in a flow view that is a rule, not a new page.
         if (pPr?.Element(W + "sectPr") is not null && _textBoxDepth == 0) html.Append("<hr class=\"section-break\">");
+    }
+
+    /// <summary>Whether a paragraph draws anything besides its mark (text, tabs, breaks, symbols, drawings, note references).</summary>
+    private static bool HasVisibleContent(XElement paragraph)
+    {
+        foreach (XElement element in paragraph.Descendants())
+        {
+            string name = element.Name.LocalName;
+            if (name is "t" or "tab" or "ptab" or "br" or "cr" or "sym" or "drawing" or "pict" or "object" or "footnoteReference" or "endnoteReference" or "noBreakHyphen")
+                return true;
+        }
+        return false;
     }
 
     private IEnumerable<RenderStep> RenderInlineChildren(XElement container, StringBuilder html, WordRunFormatting paragraphBase)

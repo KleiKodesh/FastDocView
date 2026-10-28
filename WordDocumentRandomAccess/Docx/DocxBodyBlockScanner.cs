@@ -73,7 +73,7 @@ internal sealed class DocxBodyBlockScanner
     public List<short> BlockStyleIds { get; } = new();           // index into StyleIdTable, -1 = none
     public List<string> StyleIdTable { get; } = new();
     public List<int> BlockListLabelIds { get; } = new();         // index into ListLabels, -1 = not a list item
-    public List<string> ListLabels { get; } = new();
+    public List<DocxListLabel> ListLabels { get; } = new();
     public List<WordDocumentHeading> Headings { get; } = new();
     public List<DocxNoteReference> NoteReferences { get; } = new();
     public long BodyEndOffset { get; private set; } = -1;
@@ -432,7 +432,7 @@ internal sealed class DocxBodyBlockScanner
     private void OnParagraphPropertiesClosed()
     {
         if (_listLabelResolver is null || BlockListLabelIds.Count == 0) return;
-        string? label = _listLabelResolver(_currentStyleId, _currentNumId, _currentLevel);
+        DocxListLabel? label = _listLabelResolver(_currentStyleId, _currentNumId, _currentLevel);
         if (label is null) return;
         BlockListLabelIds[BlockListLabelIds.Count - 1] = ListLabels.Count;
         ListLabels.Add(label);

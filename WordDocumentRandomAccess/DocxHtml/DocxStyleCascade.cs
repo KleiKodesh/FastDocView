@@ -142,6 +142,21 @@ public sealed class DocxStyleCascade
         formatting.IsHidden = toggles.IsOn(WordToggleProperty.Vanish) || formatting.IsWebHidden;
     }
 
+    /// <summary>
+    /// A numbering level's w:rPr as CSS for its label (only what the level sets). A bullet whose symbol-font character was
+    /// mapped to a Unicode bullet drops the symbol font, which would draw another glyph for it.
+    /// </summary>
+    public string LevelRunCss(XElement? levelRunProperties, bool isBulletMapped)
+    {
+        if (levelRunProperties is null) return "";
+        var empty = new WordRunFormatting();
+        WordRunFormatting formatting = empty.Clone();
+        ApplyRunProperties(formatting, levelRunProperties, _theme, WordStyleLayer.Direct);
+        ResolveToggles(formatting);
+        if (isBulletMapped) { formatting.FontName = null; formatting.ComplexScriptFontName = null; formatting.EastAsianFontName = null; }
+        return formatting.ToCss(empty);
+    }
+
     /// <summary>Heading level 1-9 for a style id, or 0 when the style is not a heading.</summary>
     public int HeadingLevelOf(string? styleId)
     {
@@ -236,7 +251,8 @@ public sealed class DocxStyleCascade
             formatting.NumberingId = TwipsAttribute(numPr.Element(W + "numId"), "val") ?? -1;
             formatting.NumberingLevel = TwipsAttribute(numPr.Element(W + "ilvl"), "val") ?? 0;
         }
-        ApplyRunProperties(formatting.RunFormatting, pPr.Element(W + "rPr"), theme, WordStyleLayer.Direct);
+        // pPr/rPr formats the paragraph mark only (§17.3.1.29), not the paragraph's runs: the renderer uses it for the list
+        // label and the height of an empty paragraph (DocxBlockHtmlRenderer.RenderParagraph).
     }
 
     /// <param name="layer">Where <paramref name="rPr"/> sits in the style hierarchy: toggle properties combine per layer (<see cref="WordToggleLayers"/>);
