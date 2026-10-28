@@ -17,6 +17,7 @@
 //   dotnet run -c Release -- --profile-markup <path>...  cold / reopen / window ms of .txt / .mht files
 //   dotnet run -c Release -- --rtf [N]             synthetic .rtf (N repeating blocks, default 20000); with --corpus, the RTF files of the list
 //                                                  are audited (unhandled control words) and opened + rendered; --rtf-audit <path>... audits files
+//   dotnet run -c Release -- --skip-synthetic --corpus ../test-data --corpus-sample 300   quick pass: fixed-seed sample + the fixed-case regressions
 //   dotnet run -c Release -- --skip-synthetic --corpus <list.txt>   the same over a whole file list, aggregated + open/render crash check
 using WordDocumentRandomAccess.Tests;
 
@@ -30,6 +31,7 @@ var indexProfilePaths = new List<string>();
 string? corpusList = null;
 string? listLabelsFallback = null;
 int corpusMax = int.MaxValue;
+int corpusSample = 0;
 int odtBlocks = 0, rtfBlocks = 0, textBlocks = 0, mhtmlBlocks = 0, textLargest = 200, textRandom = 300;
 string? textCorpus = null, mimeScan = null;
 var markupProfilePaths = new List<string>();
@@ -77,6 +79,7 @@ for (int i = 0; i < args.Length; i++)
         case "--rtf-profile": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfProfilePaths.Add(args[++i]); break;
         case "--rtf-audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfAuditPaths.Add(args[++i]); break;
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
+        case "--corpus-sample": corpusSample = int.Parse(args[++i]); break;   // a fixed-seed random sample of N corpus files (quick regression pass)
         case "--list-labels-fallback": listLabelsFallback = args[++i]; break;   // a path list to scan for a .doc with lists when the --real ones have none
     }
 }
@@ -98,7 +101,8 @@ if (realPaths.Any(path => path.EndsWith(".doc", StringComparison.OrdinalIgnoreCa
 if (auditPaths.Count > 0) WordFormattingAudit.Run(auditPaths.Where(File.Exists));
 if (profilePaths.Count > 0) OpenTimingProfile.Run(profilePaths.Where(File.Exists));
 if (indexProfilePaths.Count > 0) IndexPassProfile.Run(indexProfilePaths.Where(File.Exists));
-if (corpusList is not null && rtfBlocks == 0) WordFormattingAudit.RunCorpus(corpusList, corpusMax);
+if (corpusList is not null && rtfBlocks == 0) WordFormattingAudit.RunCorpus(corpusList, corpusMax, corpusSample);
+if (corpusList is not null && Directory.Exists(corpusList) && File.Exists(Path.Combine(corpusList, "apache-poi", "MultipleBodyBug.docx"))) CorpusRegressionTest.Run(corpusList);
 if (rtfBlocks > 0) RtfIndexAndRenderTest.Run(rtfBlocks);
 foreach (string path in rtfProfilePaths.Where(File.Exists)) RtfIndexAndRenderTest.Profile(path);
 if (rtfAuditPaths.Count > 0) RtfFormattingAudit.Run(rtfAuditPaths.Where(File.Exists));

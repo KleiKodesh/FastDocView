@@ -338,7 +338,10 @@ internal sealed class DocxBodyBlockScanner
         if (_bodyDepth >= 0 && _depth == _bodyDepth) OnBodyChildStarted();
         else if (_isCapturingAttributes) OnCapturedAttribute(Encoding.ASCII.GetString(_tagAttributes.GetBuffer(), 0, (int)_tagAttributes.Length));
 
-        if (_tag == KnownTag.Body && _bodyDepth < 0) _bodyDepth = _depth + 1;
+        // A document with several w:body elements (Apache POI's MultipleBodyBug.docx; POI's
+        // TestXWPFWordExtractor.testMultipleBodyBug reads all of them): every body's children are
+        // blocks, and the body ends at the last </w:body>.
+        if (_tag == KnownTag.Body && _bodyDepth < 0) { _bodyDepth = _depth + 1; BodyEndOffset = -1; }
         if (_tag == KnownTag.Text && !isSelfClosing) _isInsideTextRun = true;
         if (!isSelfClosing) _depth++;
         _isCapturingAttributes = false;

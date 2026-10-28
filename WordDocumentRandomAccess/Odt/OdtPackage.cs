@@ -7,9 +7,8 @@ namespace WordDocumentRandomAccess.Odt;
 
 /// <summary>
 /// What kind of OpenDocument text file a stream holds and where its parts are.
-///   • .odt / .ott — a zip package; the stored `mimetype` entry says
-///     application/vnd.oasis.opendocument.text (or -template) (ODF 1.3 part 2 §3.3: the first
-///     file of the zip, stored). content.xml holds the body, styles.xml the named styles.
+///   • .odt / .ott — a zip package whose `mimetype` entry (or, without one, the manifest's root
+///     entry) says application/vnd.oasis.opendocument.text (or -template). content.xml holds the body, styles.xml the named styles.
 ///   • .fodt — one plain XML file whose root is office:document; body offsets are file offsets.
 /// A package whose manifest lists encryption-data for content.xml is password-protected and refused.
 /// </summary>
@@ -21,7 +20,9 @@ public static class OdtPackage
     public const string TextMimeType = "application/vnd.oasis.opendocument.text";
     public const string TextTemplateMimeType = "application/vnd.oasis.opendocument.text-template";
     private const int MaxManifestBytes = 4 << 20;
-    private const int FlatSniffBytes = 8192;
+    private const string OfficeNamespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
+    private const int MimeTypeReadBytes = 1024;
+    private const string ManifestNamespace = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0";
 
     /// <summary>True when the zip carries an OpenDocument text (or text template) mimetype entry.</summary>
     public static bool IsOpenDocumentTextPackage(Stream zip)
@@ -30,36 +31,74 @@ public static class OdtPackage
         return mimeType is TextMimeType or TextTemplateMimeType;
     }
 
-    /// <summary>The `mimetype` entry's content, or null (not an ODF package, or not stored as the spec requires).</summary>
+    /// <summary>
+    /// The package's media type, or null when the zip is not an ODF package. Read the way
+    /// LibreOffice's ZipPackage::parseManifest does (package/source/zippackage/ZipPackage.cxx): the
+    /// `mimetype` entry is looked up by name — no check of its position or compression (ODF 1.3
+    /// part 2 §3.3 asks writers to store it first and uncompressed, but real files deflate it or put
+    /// it later) — and its first 1024 bytes are the type (LibreOffice's readBytes( aData, 1024 ));
+    /// without a `mimetype` entry the manifest's root file-entry (manifest:full-path="/",
+    /// ODF 1.3 part 2, manifest) names it.
+    /// </summary>
     public static string? ReadMimeType(Stream zip)
     {
         ZipEntryLocation? entry;
         try { entry = ZipEntryLocator.Locate(zip, "mimetype"); }
         catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException) { return null; }
-        if (entry is null || !entry.IsStored || entry.CompressedSize > 256) return null;
-        var bytes = new byte[entry.CompressedSize];
-        zip.Position = entry.DataOffset;
-        int filled = 0;
-        while (filled < bytes.Length)
+        if (entry is null) return ReadManifestRootMediaType(zip);
+        if (!entry.IsStored && !entry.IsDeflate) return null;
+        try
         {
-            int read = zip.Read(bytes, filled, bytes.Length - filled);
-            if (read <= 0) return null;
-            filled += read;
+            using Stream view = OpenEntry(zip, entry);
+            var bytes = new byte[MimeTypeReadBytes];
+            int filled = 0;
+            while (filled < bytes.Length)
+            {
+                int read = view.Read(bytes, filled, bytes.Length - filled);
+                if (read <= 0) break;
+                filled += read;
+            }
+            string mimeType = Encoding.ASCII.GetString(bytes, 0, filled).Trim();
+            return mimeType.Length > 0 ? mimeType : ReadManifestRootMediaType(zip);   // an empty mimetype says nothing (LibreOffice: the manifest's type wins anyway)
         }
-        return Encoding.ASCII.GetString(bytes).Trim();
+        catch (Exception exception) when (exception is InvalidDataException or IOException) { return null; }
     }
 
-    /// <summary>True when the file is a flat OpenDocument text: XML whose root is office:document with a text mimetype.</summary>
+    /// <summary>manifest:media-type of the manifest's root file-entry (full-path "/"), or null.</summary>
+    private static string? ReadManifestRootMediaType(Stream zip)
+    {
+        try
+        {
+            ZipEntryLocation? manifest = ZipEntryLocator.Locate(zip, ManifestEntryName);
+            if (manifest is null || (!manifest.IsStored && !manifest.IsDeflate)) return null;
+            using Stream view = OpenEntry(zip, manifest);
+            using XmlReader reader = WordDocumentXml.CreateReader(view, tolerateUndeclaredPrefixes: true);
+            while (reader.Read())
+            {
+                if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "file-entry") continue;
+                if (reader.GetAttribute("full-path", ManifestNamespace) == "/") return reader.GetAttribute("media-type", ManifestNamespace)?.Trim();
+            }
+            return null;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or XmlException) { return null; }
+    }
+
+    /// <summary>
+    /// True when the file is a flat OpenDocument text: XML whose root element is office:document
+    /// (in the office namespace, whatever its prefix, and however its attributes are laid out over
+    /// lines) with an office:mimetype naming a text or text template. Only the root start tag is read.
+    /// </summary>
     public static bool IsFlatOpenDocumentText(Stream file)
     {
-        var head = new byte[FlatSniffBytes];
         file.Position = 0;
-        int count = file.Read(head, 0, head.Length);
-        string text = Encoding.UTF8.GetString(head, 0, count);
-        int root = text.IndexOf("<office:document ", StringComparison.Ordinal);
-        if (root < 0) root = text.IndexOf("<office:document>", StringComparison.Ordinal);
-        return root >= 0 && (text.IndexOf(TextMimeType + "\"", root, StringComparison.Ordinal) >= 0
-                          || text.IndexOf(TextTemplateMimeType + "\"", root, StringComparison.Ordinal) >= 0);
+        try
+        {
+            using XmlReader reader = WordDocumentXml.CreateReader(file, tolerateUndeclaredPrefixes: true);
+            if (reader.MoveToContent() != XmlNodeType.Element || reader.LocalName != "document" || reader.NamespaceURI != OfficeNamespace) return false;
+            string? mimeType = reader.GetAttribute("mimetype", OfficeNamespace)?.Trim();
+            return mimeType is TextMimeType or TextTemplateMimeType;
+        }
+        catch (XmlException) { return false; }           // not XML (or broken before its root tag): not a flat OpenDocument
     }
 
     /// <summary>content.xml of a package; throws when the package is password-protected or has no content.xml.</summary>
@@ -81,15 +120,19 @@ public static class OdtPackage
         ZipEntryLocation? manifest = ZipEntryLocator.Locate(zip, ManifestEntryName);
         if (manifest is null || manifest.UncompressedSize > MaxManifestBytes) return;
         using Stream view = OpenEntry(zip, manifest);
-        using var reader = XmlReader.Create(view, new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore, CloseInput = false });
+        using XmlReader reader = WordDocumentXml.CreateReader(view, tolerateUndeclaredPrefixes: true);
         string? currentPath = null;
-        while (reader.Read())
+        try
         {
-            if (reader.NodeType != XmlNodeType.Element) continue;
-            if (reader.LocalName == "file-entry") currentPath = reader.GetAttribute("full-path", "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0");
-            else if (reader.LocalName == "encryption-data" && currentPath == ContentEntryName)
-                throw new NotSupportedException("password-protected OpenDocument is not supported");
+            while (reader.Read())
+            {
+                if (reader.NodeType != XmlNodeType.Element) continue;
+                if (reader.LocalName == "file-entry") currentPath = reader.GetAttribute("full-path", ManifestNamespace);
+                else if (reader.LocalName == "encryption-data" && currentPath == ContentEntryName)
+                    throw new NotSupportedException("password-protected OpenDocument is not supported");
+            }
         }
+        catch (XmlException exception) { throw WordDocumentXml.Malformed(ManifestEntryName, exception); }
     }
 
     /// <summary>A forward-only view of a whole entry (small parts only: manifest, styles.xml) — .NET's inflater, no checkpoints needed.</summary>
@@ -109,19 +152,23 @@ public static class OdtPackage
         ZipEntryLocation? entry = ZipEntryLocator.Locate(zip, StylesEntryName);
         if (entry is null) return sections;
         using Stream view = OpenEntry(zip, entry);
-        using var reader = XmlReader.Create(view, new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore, CloseInput = false });
-        reader.MoveToContent();
-        if (!reader.Read()) return sections;
-        while (!reader.EOF)
+        using XmlReader reader = WordDocumentXml.CreateReader(view, tolerateUndeclaredPrefixes: true);
+        try
         {
-            if (reader.NodeType == XmlNodeType.Element && reader.Depth == 1)
+            reader.MoveToContent();
+            if (!reader.Read()) return sections;
+            while (!reader.EOF)
             {
-                if (reader.LocalName is "font-face-decls" or "styles") { sections.Add((XElement)XNode.ReadFrom(reader)); continue; }
-                reader.Skip();
-                continue;
+                if (reader.NodeType == XmlNodeType.Element && reader.Depth == 1)
+                {
+                    if (reader.LocalName is "font-face-decls" or "styles") { sections.Add((XElement)XNode.ReadFrom(reader)); continue; }
+                    reader.Skip();
+                    continue;
+                }
+                reader.Read();
             }
-            reader.Read();
         }
+        catch (XmlException exception) { throw WordDocumentXml.Malformed(StylesEntryName, exception); }
         return sections;
     }
 }

@@ -22,6 +22,7 @@ public sealed class DocBinaryStyleSheet
     }
 
     private readonly StyleDefinition?[] _styles;
+    private const int MinimumStdfBaseLength = 6;     // the three words ParseStyle reads: sti, stk + istdBase, cupx
     private readonly Dictionary<int, WordParagraphFormatting> _resolved = new();
 
     /// <summary>Set once after construction; character sprms in style UPXs name fonts by index.</summary>
@@ -34,11 +35,8 @@ public sealed class DocBinaryStyleSheet
 
     public DocBinaryStyleSheet(Stream tableStream, (uint offset, uint length) location)
     {
-        if (location.length < 4) { _styles = []; return; }
-        var bytes = new byte[location.length];
-        tableStream.Position = location.offset;
-        int read = 0;
-        while (read < bytes.Length) { int n = tableStream.Read(bytes, read, bytes.Length - read); if (n <= 0) break; read += n; }
+        byte[]? bytes = location.length < 6 ? null : DocBinaryStructureReader.TryRead(tableStream, location);
+        if (bytes is null) { _styles = []; return; }       // no style sheet, or one outside the table stream: document defaults only
 
         int stshiLength = BitConverter.ToUInt16(bytes, 0);
         int styleCount = BitConverter.ToUInt16(bytes, 2);
@@ -51,7 +49,9 @@ public sealed class DocBinaryStyleSheet
             int stdLength = BitConverter.ToUInt16(bytes, position);
             position += 2;
             if (stdLength == 0) continue;
-            _styles[index] = ParseStyle(bytes, position, stdLength, stdBaseLength, index);
+            // An STD that runs past the style sheet is cut at its end; one too short for its fixed part (StdfBase) is no style.
+            int available = Math.Min(stdLength, bytes.Length - position);
+            if (available >= MinimumStdfBaseLength) _styles[index] = ParseStyle(bytes, position, available, stdBaseLength, index);
             position += stdLength;
         }
     }
@@ -70,6 +70,7 @@ public sealed class DocBinaryStyleSheet
         int upxCount = word2 & 0x000F;
 
         int position = start + stdBaseLength;
+        if (position + 2 > start + length) return style;       // no room for the name (xstzName) or UPXs
         int nameLength = BitConverter.ToUInt16(bytes, position);
         position += 2;
         if (position + nameLength * 2 <= start + length) style.Name = Encoding.Unicode.GetString(bytes, position, nameLength * 2);

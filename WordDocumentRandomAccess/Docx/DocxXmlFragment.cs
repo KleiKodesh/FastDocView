@@ -10,7 +10,7 @@ namespace WordDocumentRandomAccess.Docx;
 /// </summary>
 internal static class DocxXmlFragment
 {
-    public static XElement Parse(byte[] rootOpenTagBytes, string rootElementName, byte[] bytes, int start, int length)
+    public static XElement Parse(byte[] rootOpenTagBytes, string rootElementName, byte[] bytes, int start, int length, string partName)
     {
         ArraySegment<byte> element = DocxDrawingStripper.Strip(bytes, start, length);
         byte[] closeTag = Encoding.UTF8.GetBytes("</" + rootElementName + ">");
@@ -19,8 +19,7 @@ internal static class DocxXmlFragment
         wrapped.Write(element.Array!, element.Offset, element.Count);
         wrapped.Write(closeTag, 0, closeTag.Length);
         wrapped.Position = 0;
-        XElement root = XElement.Load(wrapped);
-        return root.Elements().FirstOrDefault() ?? new XElement("empty");
+        return WordDocumentXml.ReadFirstChildElement(wrapped, LoadOptions.None, tolerateUndeclaredPrefixes: false, partName);
     }
 
     /// <summary>"w:document" from "&lt;w:document xmlns:w=…&gt;".</summary>

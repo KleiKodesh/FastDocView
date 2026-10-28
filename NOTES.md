@@ -510,3 +510,10 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
   and table borders, text boxes / shape text (`\shp` skipped whole), hyperlink targets, style
   formatting not repeated in the paragraph (Word always repeats it), `\pn` (Word 6) numbering without
   `\pntext`, Shift-JIS lead bytes that are `\`/`{`/`}`, the Chicago note format (from memory).
+
+## Format support limits (corpus pass 2026-10-28)
+
+- Not supported, precise NotSupportedException: Word 6.0/95 (.doc wIdent 0xA5DC / 0xA697-0xA699),
+  Word for Windows 1.x/2.0, Word 2003 XML, HTML saved as .doc, encrypted .doc/.docx/.odt.
+- Malformed XML in any part → InvalidDataException naming the part (LibreOffice opens some of these,
+  e.g. math-malformed_xml.docx, with a recovering parser — not done here).

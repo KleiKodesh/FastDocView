@@ -301,3 +301,15 @@ Append-only. Date, what we learned, what it changed.
 - IsTextUnicode with only IS_TEXT_UNICODE_STATISTICS is undocumented arithmetic; ReactOS's
   RtlIsTextUnicode (3 x high-byte variation < low-byte variation, first 256 units) matched Win32 on
   22,628 inputs.
+
+## 2026-10-28 — third-party corpus (LibreOffice / POI / Tika, 4,971 files)
+
+- **ODF mimetype is looked up by name**: 15 real .odt/.ott deflate it or store it late; LibreOffice
+  (ZipPackage::parseManifest) does no position/compression check and falls back to the manifest root.
+- **.docx part names come from relationships** (_rels/.rels → main part → its rels), not word/... names.
+- **Every FIB (fc, lcb) is untrusted**: range-check against the stream, truncate PLCs at the first
+  unsorted CP, clamp FKP crun to what fits the page (all as LibreOffice ww8scan.cxx does). Raw
+  Overflow/IndexOutOfRange exceptions were all unchecked FIB values.
+- **LibreOffice's CVE-*/EDB-* test files are RC4-encrypted (key "CVE")** by its filters-test harness —
+  not documents as stored; they show up as Unknown.
+- The corpus pass now fails on any raw exception type; `--corpus-sample 300` is the quick run.
