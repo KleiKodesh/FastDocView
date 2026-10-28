@@ -313,3 +313,14 @@ Append-only. Date, what we learned, what it changed.
 - **LibreOffice's CVE-*/EDB-* test files are RC4-encrypted (key "CVE")** by its filters-test harness —
   not documents as stored; they show up as Unknown.
 - The corpus pass now fails on any raw exception type; `--corpus-sample 300` is the quick run.
+
+## 2026-10-28 — malformed XML
+
+- **LibreOffice does not recover malformed XML.** fastparser runs libxml2 without
+  XML_PARSE_RECOVER; the first fatal error stops all events. A broken .docx opens only after the
+  user approves the repair prompt, and then holds what preceded the error; a broken ODF
+  content/styles part never opens. LibreOffice's own tests assert both (testMathMalformedXml,
+  testForcepoint108). "Open it like LibreOffice" = keep the content before the first error.
+- **`<!DOCTYPE … [ … ]>` in a .docx part** (apache-poi ExternalEntityInText.docx) broke the byte
+  scanner: "<!" was taken for a comment waiting for "-->". Its internal subset can hold '>' and ']'
+  inside literals and comments.
