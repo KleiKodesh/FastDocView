@@ -48,6 +48,8 @@ public sealed class DocxBlockHtmlRenderer
         _previousStyleKey = previousStyleKey;
         Run(RenderBlock(block, html));
         _listLabel = null;
+        _paragraphEndOf = null;                                    // keep no element of the rendered block alive
+        _paragraphEndTexts.Clear();
         return html.ToString();
     }
 
@@ -121,16 +123,19 @@ public sealed class DocxBlockHtmlRenderer
         string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
         string css = formatting.ToCss(_previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : "");
         // The paragraph mark's own run properties (pPr/rPr) format the list label and give an empty paragraph its height.
-        WordRunFormatting mark = _styles.ResolveRun(formatting.RunFormatting, pPr?.Element(W + "rPr"));
-        int markSize = mark.EffectiveFontSizeHalfPoints;
-        if (markSize > 0 && markSize != formatting.RunFormatting.EffectiveFontSizeHalfPoints && !HasVisibleContent(paragraph))
+        // Resolved only when used: for a label, or when the paragraph is empty.
+        bool hasLabel = _listLabel is { Text.Length: > 0 };
+        bool isEmpty = pPr?.Element(W + "rPr") is not null && !HasVisibleContent(paragraph);
+        WordRunFormatting? mark = hasLabel || isEmpty ? _styles.ResolveRun(formatting.RunFormatting, pPr?.Element(W + "rPr")) : null;
+        int markSize = isEmpty ? mark!.EffectiveFontSizeHalfPoints : 0;
+        if (markSize > 0 && markSize != formatting.RunFormatting.EffectiveFontSizeHalfPoints)
             css += "font-size:" + (markSize / 2.0).ToString("0.#", CultureInfo.InvariantCulture) + "pt;";
 
         WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
         if (_listLabel is { Text.Length: > 0 } label)
         {
             // Word draws the number with the mark's formatting plus the level's rPr (§17.9.6), then the level's suffix (§17.9.28).
-            string labelCss = mark.ToCss(formatting.RunFormatting) + label.LevelCss;
+            string labelCss = mark!.ToCss(formatting.RunFormatting) + label.LevelCss;
             html.Append("<span class=\"list-marker\"");
             if (labelCss.Length > 0) html.Append(" style=\"").Append(labelCss).Append('"');
             html.Append('>').Append(WordHtmlText.Encode(label.Text)).Append("</span>");
@@ -202,7 +207,7 @@ public sealed class DocxBlockHtmlRenderer
         string text = textElement.Value;
         if (!formatting.IsUnderlined) { AppendScriptText(html, text, formatting); return; }
         int contentEnd = text.Length;
-        if (contentEnd > 0 && char.IsWhiteSpace(text[contentEnd - 1]) && !UnderlinesTrailingSpaces && IsLastContentOfParagraph(textElement))
+        if (contentEnd > 0 && char.IsWhiteSpace(text[contentEnd - 1]) && !UnderlinesTrailingSpaces && IsInParagraphEnd(textElement))
             while (contentEnd > 0 && char.IsWhiteSpace(text[contentEnd - 1])) contentEnd--;
         string underline = formatting.UnderlineCss();
         if (!formatting.IsUnderlineWordsOnly)
@@ -238,20 +243,44 @@ public sealed class DocxBlockHtmlRenderer
         html.Append("<span style=\"").Append(formatting.UnderlineCss()).Append("\">").Append(markup).Append("</span>");
     }
 
-    /// <summary>Whether nothing visible follows <paramref name="textElement"/> in its paragraph (only spaces, properties, deletions).</summary>
-    private static bool IsLastContentOfParagraph(XElement textElement)
+    private XElement? _paragraphEndOf;                              // the paragraph _paragraphEndTexts was computed for
+    private readonly HashSet<XElement> _paragraphEndTexts = new();   // its w:t elements that nothing visible follows
+
+    /// <summary>
+    /// Whether nothing visible follows <paramref name="textElement"/> in its paragraph (only spaces, properties, deletions).
+    /// One backward walk per paragraph, on first need: the w:t elements from the end back to the last visible content.
+    /// </summary>
+    private bool IsInParagraphEnd(XElement textElement)
     {
-        for (XElement node = textElement; node.Name != W + "p" && node.Parent is { } parent; node = parent)
-            foreach (XElement sibling in node.ElementsAfterSelf())
-                foreach (XElement element in sibling.DescendantsAndSelf())
+        XElement? paragraph = textElement.Parent;
+        while (paragraph is not null && paragraph.Name != W + "p") paragraph = paragraph.Parent;
+        if (paragraph is null) return false;
+        if (_paragraphEndOf != paragraph)
+        {
+            _paragraphEndOf = paragraph;
+            _paragraphEndTexts.Clear();
+            // Backward document order without materialising the paragraph: last child first, descending into the last child.
+            var pending = new Stack<XElement>();
+            for (XNode? node = paragraph.LastNode; node is not null; node = node.PreviousNode) if (node is XElement child) pending.Push(child);
+            var reversed = new Stack<XElement>(pending);           // reversed order: last child on top
+            pending.Clear();
+            while (reversed.Count > 0)
+            {
+                XElement element = reversed.Pop();
+                string name = element.Name.LocalName;
+                if (element.Name.Namespace == W && name is "del" or "moveFrom" or "rPr" or "pPr" or "instrText") continue;   // not shown: skip the subtree
+                if (name == "t")
                 {
-                    string name = element.Name.LocalName;
-                    if (element.Ancestors().Any(a => a.Name == W + "del" || a.Name == W + "moveFrom")) continue;
-                    if (name == "t") { if (element.Value.Any(c => !char.IsWhiteSpace(c))) return false; }
-                    else if (name is "tab" or "ptab" or "br" or "cr" or "sym" or "drawing" or "pict" or "object" or "noBreakHyphen"
-                             or "footnoteReference" or "endnoteReference") return false;
+                    _paragraphEndTexts.Add(element);
+                    if (!string.IsNullOrWhiteSpace(element.Value)) break;
+                    continue;
                 }
-        return true;
+                if (name is "tab" or "ptab" or "br" or "cr" or "sym" or "drawing" or "pict" or "object" or "noBreakHyphen"
+                    or "footnoteReference" or "endnoteReference") break;
+                for (XNode? node = element.FirstNode; node is not null; node = node.NextNode) if (node is XElement child) reversed.Push(child);
+            }
+        }
+        return _paragraphEndTexts.Contains(textElement);
     }
 
     /// <summary>Text; CJK characters switch to the run's eastAsia face when it differs (see <see cref="WordRunFormatting.EastAsianFontSwitch"/>).</summary>

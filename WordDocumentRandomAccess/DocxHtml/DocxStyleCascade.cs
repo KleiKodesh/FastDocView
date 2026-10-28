@@ -16,6 +16,8 @@ public sealed class DocxStyleCascade
 
     private readonly Dictionary<string, XElement> _stylesById = new(StringComparer.Ordinal);
     private readonly Dictionary<string, WordParagraphFormatting> _resolvedParagraphStyles = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<XElement>> _styleChains = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string tableStyleId, DocxTableConditions conditions), List<XElement>> _tableCellProperties = new();
     private readonly string? _defaultParagraphStyleId;
     private readonly string? _defaultCharacterStyleId;
     private readonly DocxTheme? _theme;
@@ -135,8 +137,10 @@ public sealed class DocxStyleCascade
     /// <summary>The cell properties (w:tcPr) a table style gives a cell: whole-table first, then the applying conditional parts.</summary>
     public List<XElement> TableStyleCellProperties(string? tableStyleId, DocxTableConditions conditions)
     {
+        if (tableStyleId is null) return [];
+        if (_tableCellProperties.TryGetValue((tableStyleId, conditions), out List<XElement>? cached)) return cached;
         var layers = new List<XElement>();
-        if (tableStyleId is null) return layers;
+        _tableCellProperties[(tableStyleId, conditions)] = layers;
         List<XElement> chain = StyleChain(tableStyleId);
         foreach (XElement style in chain) if (style.Element(W + "tcPr") is { } tcPr) layers.Add(tcPr);
         foreach (XElement part in TableConditionalParts(chain, conditions)) if (part.Element(W + "tcPr") is { } tcPr) layers.Add(tcPr);
@@ -233,7 +237,17 @@ public sealed class DocxStyleCascade
 
     public bool IsDocumentRightToLeft => ResolveParagraphStyle(null).IsRightToLeft || DocumentDefaults.RunFormatting.IsRightToLeft;
 
+    /// <summary>A style and its basedOn ancestors, base first — cached per style (asked for every run and paragraph).</summary>
     private List<XElement> StyleChain(string? styleId)
+    {
+        if (styleId is null) return [];
+        if (_styleChains.TryGetValue(styleId, out List<XElement>? cached)) return cached;
+        List<XElement> built = BuildStyleChain(styleId);
+        _styleChains[styleId] = built;
+        return built;
+    }
+
+    private List<XElement> BuildStyleChain(string? styleId)
     {
         var chain = new List<XElement>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
