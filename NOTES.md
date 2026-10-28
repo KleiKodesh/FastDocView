@@ -410,14 +410,24 @@ the tag rules (tag ≤ 2048 code units, comment ≤ 64 KB, else text). Lines ove
 over 256 KB anywhere outside a tag (UTF-8: never inside a sequence). Implied end tags (li, dt/dd,
 td/th, tr, p closed by block starts) follow the HTML rules, scoped; stack depth capped at 32.
 
-**Encoding (.txt) follows Notepad++** (user: the reference for .txt only), reimplemented from its source
-(Buffer.cpp `FileManager::loadFileData`/`detectCodepage`, Utf8_16.cpp `Utf8_16_Read::determineEncoding`,
-`utf8_7bits_8bits`): BOM (FE FF, FF FE, EF BB BF; no UTF-32) → UTF-16 LE without BOM (even length,
-byte0≠0, byte1=0, plus a statistics test — Notepad++ uses Win32 IsTextUnicode, approximated here) →
-structural UTF-8 on the first 128 KB+4 (NUL = not UTF-8) → ANSI = windows-1255. Not reimplemented:
-uchardet (Notepad++ runs it first when "autodetect character encoding" is on; it can answer
-windows-1255 or ISO-8859-8 for Hebrew, threshold 0.60 — MPL 1.1 code). For Hebrew text both paths end
-at windows-1255 except visual-Hebrew files (uchardet: ISO-8859-8, same letters). LibreOffice
+**Encoding (.txt) = Notepad++, via the TextEncodingDetection library** (sibling repo
+github.com/KleiKodesh/TextEncodingDetection, `ProjectReference` like SeekableDeflate; 2026-10-28).
+Verified in Notepad++ source (Buffer.cpp `copyFileContentToScintilla`/`detectCodepage`/
+`resolveLoadedEncoding`, Utf8_16.cpp `determineEncoding`/`utf8_7bits_8bits`, EncodingMapper.cpp,
+Parameters.h defaults): empty → UTF-8; BOM (FE FF, FF FE, EF BB BF; no UTF-32) → uchardet on the
+first 128 KB+4 (autodetect is on by default; > 0.60; TIS-620 dropped; names without a Notepad++
+mapping such as KOI8-R / EUC-JP fall through) → UTF-16 LE without BOM (even length, byte0≠0,
+byte1=0, IsTextUnicode statistics, emulated and checked against Win32) → UTF-8 structure (NUL or a
+sequence cut by the block end = not UTF-8; 7-bit opens as UTF-8) → ANSI = windows-1255. The uchardet
+is a port of the copy Notepad++ bundles (not modern uchardet), checked against that C++ compiled
+with MSVC on a 2,628-case matrix + uchardet's test folder. Codes it can return: 65001, 1200, 1201,
+1251, 1252, 1253, 1255, 28595, 28597, 28598, 10007, 866, 855, 932, 936, 51949, 950 — all decode on
+net48 and net10 (`FromCodePage`). The index keeps the code page and the reason (e.g.
+`uchardet windows-1255 (0.99)`). Change vs the old reimplementation: a UTF-8 sequence cut by the
+128 KB sample end now counts against UTF-8 (as in Notepad++), but uchardet decides UTF-8 first on
+real files; on 500 real files the result changed for 0. Double-byte code pages (932/936/949/950/51949)
+never split a block between lead and trail byte (trails are >= 0x40, so CR/LF/space/'<' never fall
+inside a character). Index format v2 (re-detects old .txt indexes). LibreOffice
 (tools/source/stream/stream.cxx `SvStream::DetectEncoding`, called from sw/source/filter/basflt/iodetect.cxx
 `SwIoSystem::IsDetectableText`, sw/source/filter/ascii/parasc.cxx) does BOM then ICU ucsdet with no
 confidence threshold, fallback the system ANSI code page. `<meta charset>` is not honoured for .txt
@@ -439,7 +449,7 @@ Measured (.txt, sidecar forced): largest real txt 4.6 GB / 6.9 M blocks — cold
 Corpus sample (largest 200 + random 300 of 11,276 txt): 0 crashes; windows-1255 234, UTF-8 201,
 7-bit 44, UTF-8 BOM 18, UTF-16 LE BOM 3.
 
-Open: uchardet-equivalent statistics (other languages / visual Hebrew); a Word table as one block is not
+Open: a Word table as one block is not
 bounded (one huge table = one big block); EstimatedTextLength counts bytes (UTF-8) or units (UTF-16).
 ## RTF (Rtf/, 2026-10-28)
 

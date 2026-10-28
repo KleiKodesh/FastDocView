@@ -114,7 +114,7 @@ if (odtBlocks > 0)
     }
 }
 
-if (textBlocks > 0) { MarkupIndexAndRenderTest.RunEdgeCases(); MarkupIndexAndRenderTest.RunText(textBlocks); }
+if (textBlocks > 0) { MarkupIndexAndRenderTest.RunEdgeCases(); MarkupIndexAndRenderTest.RunDoubleByteSplit(); MarkupIndexAndRenderTest.RunText(textBlocks); }
 if (mhtmlBlocks > 0) MarkupIndexAndRenderTest.RunMhtml(mhtmlBlocks);
 if (markupProfilePaths.Count > 0)
 {

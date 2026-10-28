@@ -21,7 +21,8 @@ public static class MarkupRandomAccessIndexBuilder
         file.Position = 0;
         var chunk = new byte[Math.Max(ChunkSize, MarkupTextEncoding.DetectionSampleBytes)];
         int sampleLength = ReadFully(file, chunk, MarkupTextEncoding.DetectionSampleBytes);
-        (int codePage, int bomLength, string reason) = MarkupTextEncoding.DetectPlainText(chunk.AsSpan(0, sampleLength), file.Length);
+        (int codePage, int bomLength, string reason) = MarkupTextEncoding.DetectPlainText(chunk.AsSpan(0, sampleLength),
+            sampleLength < MarkupTextEncoding.DetectionSampleBytes ? sampleLength : file.Length); // a short read (file shrank) = the file ends there
         Encoding encoding = MarkupTextEncoding.FromCodePage(codePage);
         int unitSize = codePage is MarkupTextEncoding.Utf16LittleEndian or MarkupTextEncoding.Utf16BigEndian ? 2 : 1;
         int sampleText = Math.Min(sampleLength - bomLength, RightToLeftSampleBytes) & ~(unitSize - 1);

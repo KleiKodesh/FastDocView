@@ -20,9 +20,10 @@
     <IsAotCompatible Condition="'$(TargetFramework)'=='net10.0'">true</IsAotCompatible>
   </PropertyGroup>
 
-  <!-- Seekable deflate + zip-entry location live in their own repo, cloned next to this one. -->
+  <!-- Seekable deflate + zip-entry location, and .txt encoding detection, live in their own repos, cloned next to this one. -->
   <ItemGroup>
     <ProjectReference Include="..\..\SeekableDeflate\SeekableDeflate\SeekableDeflate.csproj" />
+    <ProjectReference Include="..\..\TextEncodingDetection\TextEncodingDetection\TextEncodingDetection.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)'=='net48'">

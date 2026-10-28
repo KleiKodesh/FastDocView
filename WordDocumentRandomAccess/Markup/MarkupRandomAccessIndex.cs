@@ -15,7 +15,7 @@ public enum MarkupSourceKind : byte { PlainText = 0, WebArchive = 1 }
 public sealed class MarkupRandomAccessIndex
 {
     private const string Magic = "KHMKPIDX";
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2; // 2: .txt encoding by TextEncodingDetection (Notepad++ parity)
 
     public MarkupSourceKind Kind { get; }
     public long SourceFileLength { get; }

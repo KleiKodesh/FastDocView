@@ -77,6 +77,7 @@ public sealed class MarkupBlockScanner
     private bool _blockHasContent;
     private long _blockStartOffset;
     private bool _pendingCarriageReturn;
+    private readonly bool _isDoubleByte; private bool _isDoubleByteTrailNext;
     private int _carry = -1; private long _carryOffset;
 
     private int _headingLevel; private int _headingBlock = -1; private readonly List<byte> _headingBytes = [];
@@ -85,6 +86,7 @@ public sealed class MarkupBlockScanner
     {
         _mode = mode; _unitSize = unitSize; _bigEndian = bigEndian; _encoding = encoding;
         _isUtf8 = encoding.CodePage == 65001;
+        _isDoubleByte = encoding.CodePage is 932 or 936 or 949 or 950 or 51949;
         if (mode == MarkupBlockMode.Lines) { _isInBody = true; }
     }
 
@@ -237,6 +239,9 @@ public sealed class MarkupBlockScanner
 
     private void AddTextUnit(int unit, byte first, byte second)
     {
+        // Double-byte code pages (Shift_JIS, GBK, UHC/EUC-KR, Big5): a byte >= 0x81 that is not a
+        // trail starts a two-byte character; its trail (always >= 0x40) must stay in the same block.
+        if (_isDoubleByte) _isDoubleByteTrailNext = !_isDoubleByteTrailNext && IsDoubleByteLead(unit);
         if (BlockTextLengths.Count > 0) BlockTextLengths[BlockTextLengths.Count - 1]++;
         if (unit > ' ') _blockHasContent = true;
         if (_headingBlock >= 0 && _headingBytes.Count < MaximumHeadingBytes) AppendRaw(_headingBytes, first, second);
@@ -246,8 +251,13 @@ public sealed class MarkupBlockScanner
     private bool IsCharacterEnd(int unit)
     {
         if (_unitSize == 2) return unit < 0xD800 || unit > 0xDBFF;
+        if (_isDoubleByte) return !_isDoubleByteTrailNext;
         return unit < 0x80 || !_isUtf8;
     }
+
+    /// <summary>Lead-byte ranges: 932 81-9F and E0-FC; 936, 949/51949, 950 81-FE (Windows code page tables).</summary>
+    private bool IsDoubleByteLead(int unit) =>
+        _encoding.CodePage == 932 ? (unit >= 0x81 && unit <= 0x9F) || (unit >= 0xE0 && unit <= 0xFC) : unit >= 0x81 && unit <= 0xFE;
 
     private static bool IsAsciiLetter(int unit) => (unit | 0x20) >= 'a' && (unit | 0x20) <= 'z';
 

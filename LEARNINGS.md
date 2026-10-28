@@ -294,3 +294,10 @@ Append-only. Date, what we learned, what it changed.
   such strings with escaped backslashes or check with `grep -P "[^\x00-\x7F]"` after writing.
 - Corpus files on OneDrive can be placeholders: opening succeeds, the first read throws "The cloud
   file provider is not running". The corpus pass counts them as unreadable, not as crashes.
+- **Notepad++'s uchardet is not uchardet** (2026-10-28): it bundles an old Mozilla-derived copy
+  (an update to freedesktop 0.0.6 was reverted) whose multi-byte probers ignore eError, and its name
+  mapping silently drops KOI8-R, EUC-JP and ISO-2022-*. Parity means porting that copy; the
+  only trustworthy check was compiling it with MSVC as an oracle (TextEncodingDetection/tools).
+- IsTextUnicode with only IS_TEXT_UNICODE_STATISTICS is undocumented arithmetic; ReactOS's
+  RtlIsTextUnicode (3 x high-byte variation < low-byte variation, first 256 units) matched Win32 on
+  22,628 inputs.

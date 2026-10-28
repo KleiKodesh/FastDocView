@@ -66,6 +66,21 @@ public static class MarkupIndexAndRenderTest
         TestReport.Check(stacks[stacks.Length - 2] == "<ul><li>" + string.Concat(Enumerable.Repeat("<div>", 30)) && stacks[stacks.Length - 1] == "<ul><li>", "40 nested divs (32 kept on the stack) closed: the block after them is back in the list item");
     }
 
+    /// <summary>A Shift_JIS line far over the hard block limit with no spaces, shifted one byte so the limit falls mid-character: the split must not fall
+    /// between a lead and a trail byte (both halves would decode to a broken character).</summary>
+    public static void RunDoubleByteSplit()
+    {
+        TestReport.Step("Markup: double-byte line split (Shift_JIS)");
+        string kana = "a" + string.Concat(Enumerable.Repeat("\u3042\u3044\u3046\u3048\u304A\u304B\u304D", 60_000)) + "\r\n";
+        string path = Path.Combine(TestReport.OutputDirectory, "markup-shift-jis-long-line-v1.txt");
+        File.WriteAllBytes(path, MarkupTextEncoding.FromCodePage(932).GetBytes(kana));
+        using var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+        TestReport.Check(document.Index.CodePage == 932, $"detected Shift_JIS (got {document.Index.CodePage}, {document.Index.EncodingReason})");
+        IReadOnlyList<WordDocumentBlockHtml> all = document.RenderBlocks(0, document.BlockCount);
+        TestReport.Check(document.BlockCount > 2 && all.All(b => !b.Html.Contains('\uFFFD') && !b.Html.Contains('?') && !b.Html.Contains('\u30FB')),
+                         $"{document.BlockCount} blocks, no character broken at a block boundary");
+    }
+
     private static void OpenBothModes(string path, MarkupSourceKind kind, Action<MarkupWindowedDocument> verify)
     {
         foreach (WordIndexMode mode in new[] { WordIndexMode.InMemory, WordIndexMode.Sidecar })

@@ -54,10 +54,11 @@ view over SQLite.
 | Folder | Owns |
 |---|---|
 | `..\SeekableDeflate` (own repo, sibling folder) | managed RFC 1951 inflater with zran checkpoints, seekable stream, zip-entry location — referenced as a `ProjectReference`, no NuGet. Clone it next to this repo. |
+| `..\TextEncodingDetection` (own repo, sibling folder) | .txt encoding detection identical to Notepad++ (ported Notepad++ uchardet) — `ProjectReference`, no NuGet. Clone it next to this repo (worktrees: next to them, in `..\WordDocumentRandomAccess-work`). |
 | `…/Docx` | body + notes scanners, index (format v4) + builder, block / note readers, drawing stripper, `DocxWindowedDocument` |
 | `…/Html`, `…/DocxHtml` | format-neutral formatting models + CSS; styles / table styles cascade; block, table, note → HTML |
 | `…/Odt` | OpenDocument text (.odt/.ott/.fodt): package detection, body scanner, list numbering, index + builder, style cascade, block reader + renderer, `OdtWindowedDocument` |
-| `…/Markup` | .txt read as HTML (one block per line, Notepad++-style encoding detection) and Word web archives (MHTML: streaming quoted-printable / base64 with per-block resume points); scanner, renderer, index + builder, `MarkupWindowedDocument` |
+| `…/Markup` | .txt read as HTML (one block per line, encoding by TextEncodingDetection = Notepad++) and Word web archives (MHTML: streaming quoted-printable / base64 with per-block resume points); scanner, renderer, index + builder, `MarkupWindowedDocument` |
 | `…/Rtf` | RTF (.rtf): streaming parser (group-state stack, control-word table), index + builder (byte ranges + interned start-state snapshots), header tables, list numbering, block renderer, `RtfWindowedDocument` |
 | `…/DocBinary` | compound file, FIB, piece table, FKPs (+ huge PAPX), styles, fonts, sprms, notes, block index, `DocBinaryWindowedDocument` |
 | `samples/` | the two real test files (דור המלקטים .doc 40 MB, .docx 87 MB body) — the demo's default |
