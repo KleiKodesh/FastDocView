@@ -28,7 +28,14 @@ export interface WordDocumentSummary {
   headingCount: number
   footnoteCount: number
   endnoteCount: number
+  /** Blocks whose position is final; equals blockCount once the index is complete. */
+  knownBlockCount: number
+  /** False while a .docx first open builds its index on demand (blockCount is then an estimate). */
+  isIndexComplete: boolean
 }
+
+/** Index state carried by every blocks response (headers): the on-demand scan moves with each request. */
+export interface WordIndexState { knownBlockCount: number; estimatedBlockCount: number; isIndexComplete: boolean }
 
 export type WordNoteKind = 'footnote' | 'endnote'
 
@@ -79,12 +86,18 @@ export function fetchHeadings(id: number): Promise<WordHeading[]> {
   return fetch(`/api/documents/${id}/headings`).then(readJson<WordHeading[]>)
 }
 
-export async function fetchBlocks(id: number, first: number, count: number): Promise<{ blocks: WordBlock[]; renderMilliseconds: number; roundTripMilliseconds: number }> {
+export async function fetchBlocks(id: number, first: number, count: number): Promise<{ blocks: WordBlock[]; renderMilliseconds: number; roundTripMilliseconds: number; indexState: WordIndexState | null }> {
   const started = performance.now()
   const response = await fetch(`/api/documents/${id}/blocks?first=${first}&count=${count}`)
   const blocks = await readJson<WordBlock[]>(response)
+  const estimated = response.headers.get('X-Estimated-Block-Count')
   return {
     blocks,
+    indexState: estimated === null ? null : {
+      knownBlockCount: Number(response.headers.get('X-Known-Block-Count') ?? 0),
+      estimatedBlockCount: Number(estimated),
+      isIndexComplete: response.headers.get('X-Index-Complete') === 'true',
+    },
     renderMilliseconds: Number(response.headers.get('X-Render-Milliseconds') ?? 0),
     roundTripMilliseconds: performance.now() - started,
   }
