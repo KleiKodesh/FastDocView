@@ -311,7 +311,7 @@ public sealed class DocxStyleCascade
                     break;
                 case "highlight": formatting.HighlightCssColor = WordHtmlText.HighlightCss((string?)property.Attribute(W + "val")); break;
                 case "shd":
-                    if (DocxTheme.ResolveColorHex(property, "fill", theme, "themeFill", "themeFillTint", "themeFillShade") is { } fill) formatting.HighlightCssColor = "#" + fill;
+                    formatting.ShadingHex = FillHex(property, theme);
                     break;
                 case "rFonts":
                     // The theme attribute wins over the explicit one (rFonts §17.3.2.26: "If the asciiTheme attribute is also
@@ -358,11 +358,43 @@ public sealed class DocxStyleCascade
     /// <summary>A w:shd's fill as "RRGGBB" (themeFill + tint / shade first, then fill), or null for auto / clear / white.</summary>
     public static string? FillHex(XElement shading) => FillHex(shading, null);
 
+    /// <summary>
+    /// The color a w:shd paints (§17.3.5 / ST_Shd §17.18.78), as LibreOffice's CellColorHandler computes it: the pattern's
+    /// share of the pattern color (w:color / themeColor; auto = black) mixed over the fill (w:fill / themeFill; auto = white):
+    /// clear = fill only, solid = color only, pctN = N %, pct12 / pct37 / pct62 / pct87 = 12.5 / 37.5 / 62.5 / 87.5 %, stripes
+    /// and crosses ≈ 33.3 %; per channel (color·p + fill·(1000 − p)) / 1000. nil = no shading. A result of white is no background.
+    /// </summary>
     public static string? FillHex(XElement shading, DocxTheme? theme)
     {
+        string pattern = (string?)shading.Attribute(W + "val") ?? "clear";
+        if (pattern == "nil") return null;
         string? fill = DocxTheme.ResolveColorHex(shading, "fill", theme, "themeFill", "themeFillTint", "themeFillShade");
-        return fill is not null && !fill.Equals("FFFFFF", StringComparison.OrdinalIgnoreCase) ? fill : null;
+        int share = PatternShare(pattern);
+        string? result;
+        if (share == 0) result = fill;
+        else
+        {
+            int foreground = HexToRgb(DocxTheme.ResolveColorHex(shading, "color", theme) ?? "000000");
+            int background = HexToRgb(fill ?? "FFFFFF");
+            int Mix(int shift) => (((foreground >> shift) & 0xFF) * share + ((background >> shift) & 0xFF) * (1000 - share)) / 1000;
+            result = (Mix(16) << 16 | Mix(8) << 8 | Mix(0)).ToString("X6", CultureInfo.InvariantCulture);
+        }
+        return result is not null && !result.Equals("FFFFFF", StringComparison.OrdinalIgnoreCase) ? result : null;
     }
+
+    /// <summary>ST_Shd → the pattern color's share in thousandths (LibreOffice CellColorHandler::getProperties nWW8BrushStyle).</summary>
+    private static int PatternShare(string pattern) => pattern switch
+    {
+        "clear" => 0,
+        "solid" => 1000,
+        "pct12" => 125, "pct37" => 375, "pct62" => 625, "pct87" => 875,
+        "horzStripe" or "vertStripe" or "reverseDiagStripe" or "diagStripe" or "horzCross" or "diagCross"
+            or "thinHorzStripe" or "thinVertStripe" or "thinReverseDiagStripe" or "thinDiagStripe" or "thinHorzCross" or "thinDiagCross" => 333,
+        _ when pattern.StartsWith("pct", StringComparison.Ordinal) && int.TryParse(pattern.Substring(3), NumberStyles.Integer, CultureInfo.InvariantCulture, out int percent) => percent * 10,
+        _ => 0,
+    };
+
+    private static int HexToRgb(string hex) => int.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int rgb) ? rgb : 0;
 
     public static bool IsOn(XAttribute? value)
     {

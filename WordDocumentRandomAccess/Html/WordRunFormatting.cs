@@ -38,6 +38,7 @@ public sealed class WordRunFormatting
     public int ComplexScriptFontSizeHalfPoints;
     public string? ColorHex;                // "RRGGBB", null = auto
     public string? HighlightCssColor;
+    public string? ShadingHex;              // run shading (w:shd / sprmCShd) "RRGGBB"; a highlight is drawn instead when both are set
     public string? FontName;
     public string? ComplexScriptFontName;
     public bool IsComplexScript;            // .docx w:cs: complex-script properties without right-to-left direction
@@ -89,6 +90,9 @@ public sealed class WordRunFormatting
     /// <summary>w:em as CSS text-emphasis (+ position for marks drawn below the glyphs); empty when none.</summary>
     private string EmphasisCss()
         => EmphasisMarkCss is null ? "" : "text-emphasis:" + EmphasisMarkCss + ";" + (IsEmphasisMarkBelow ? "text-emphasis-position:under right;" : "");
+
+    /// <summary>The run's background: the highlight, else the shading.</summary>
+    private string? BackgroundCss => HighlightCssColor ?? (ShadingHex is null ? null : "#" + ShadingHex);
 
     /// <summary>Whether the complex-script set (bold / italic / size / font) applies to this run.</summary>
     public bool UsesComplexScriptProperties => IsRightToLeft || IsComplexScript;
@@ -151,7 +155,8 @@ public sealed class WordRunFormatting
 
         if (ColorHex is not null && (baseline is null || ColorHex != baseline.ColorHex)) css.Append("color:#").Append(ColorHex).Append(';');
         else if (ColorHex is null && baseline?.ColorHex is not null) css.Append("color:inherit;");
-        if (HighlightCssColor is not null && (baseline is null || HighlightCssColor != baseline.HighlightCssColor)) css.Append("background-color:").Append(HighlightCssColor).Append(';');
+        string? background = BackgroundCss, baselineBackground = baseline?.BackgroundCss;
+        if (background is not null && background != baselineBackground) css.Append("background-color:").Append(background).Append(';');
 
         string? font = EffectiveFontName;
         if (font is not null && (baseline is null || font != baseline.EffectiveFontName)) css.Append("font-family:'").Append(WordHtmlText.CssFontName(font)).Append("';");
