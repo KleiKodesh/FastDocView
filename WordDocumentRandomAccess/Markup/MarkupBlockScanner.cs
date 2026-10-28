@@ -21,9 +21,10 @@ public enum MarkupBlockMode : byte
 /// </summary>
 public sealed class MarkupBlockScanner
 {
-    public const int MaximumTagBytes = 2048;              // a '<' that does not close within this is text
+    public const int MaximumTagUnits = 2048;              // a '<' that does not close within this many code units (incl. '<' and '>') is text
     public const int MaximumCommentBytes = 64 * 1024;
     public const int LineBlockSplitBytes = 64 * 1024;     // a longer line is split at a space (bounded windows)
+    public const int LineBlockHardLimitBytes = 256 * 1024; // ... or anywhere outside a tag once this long (no spaces at all)
     private const int MaximumStackDepth = 32;
     private const int MaximumHeadingBytes = 400;
     private const int MaximumStyleBytes = 512 * 1024;
@@ -43,6 +44,7 @@ public sealed class MarkupBlockScanner
     private readonly int _unitSize;
     private readonly bool _bigEndian;
     private readonly Encoding _encoding;
+    private readonly bool _isUtf8;
 
     // outputs
     public List<long> BlockStartOffsets { get; } = [];
@@ -65,6 +67,7 @@ public sealed class MarkupBlockScanner
     private bool _isCapturingStyle;
 
     private readonly List<(string name, string tag)> _stack = [];
+    private int _unpushedDepth;                          // elements past MaximumStackDepth: their end tags are absorbed first
     private bool _isStackDirty;
     private int _stackId;
     private readonly Dictionary<string, int> _stackIds = new(StringComparer.Ordinal) { [""] = 0 };
@@ -81,6 +84,7 @@ public sealed class MarkupBlockScanner
     public MarkupBlockScanner(MarkupBlockMode mode, int unitSize, bool bigEndian, Encoding encoding)
     {
         _mode = mode; _unitSize = unitSize; _bigEndian = bigEndian; _encoding = encoding;
+        _isUtf8 = encoding.CodePage == 65001;
         if (mode == MarkupBlockMode.Lines) { _isInBody = true; }
     }
 
@@ -176,6 +180,7 @@ public sealed class MarkupBlockScanner
                     if (unit == '\n') EndLine(offset + _unitSize);
                     else if (unit == '\r') _pendingCarriageReturn = true;
                     else if (unit == ' ' && offset - _blockStartOffset >= LineBlockSplitBytes) EndLine(offset + _unitSize);
+                    else if (offset + _unitSize - _blockStartOffset >= LineBlockHardLimitBytes && IsCharacterEnd(unit)) EndLine(offset + _unitSize);
                 }
                 return;
 
@@ -216,12 +221,12 @@ public sealed class MarkupBlockScanner
                 return;
 
             case State.Tag:
+                if (_tagBytes.Count / _unitSize >= MaximumTagUnits) { AbandonTag(); ProcessUnit(unit, offset, first, second); return; }
                 AppendRaw(_tagBytes, first, second);
                 if (_isQuoted) { if (unit == _quoteUnit) _isQuoted = false; }
                 else if (unit == '>') { CompleteTag(); return; }
                 else if ((unit == '"' || unit == '\'') && _lastNonSpaceUnit == '=') { _isQuoted = true; _quoteUnit = unit; }
                 if (unit > ' ') _lastNonSpaceUnit = unit;
-                if (_tagBytes.Count > MaximumTagBytes) AbandonTag();
                 return;
 
             case State.RawText:
@@ -237,6 +242,13 @@ public sealed class MarkupBlockScanner
         if (_headingBlock >= 0 && _headingBytes.Count < MaximumHeadingBytes) AppendRaw(_headingBytes, first, second);
     }
 
+    /// <summary>True when a block may end right after this unit: not inside a UTF-8 sequence or a UTF-16 surrogate pair.</summary>
+    private bool IsCharacterEnd(int unit)
+    {
+        if (_unitSize == 2) return unit < 0xD800 || unit > 0xDBFF;
+        return unit < 0x80 || !_isUtf8;
+    }
+
     private static bool IsAsciiLetter(int unit) => (unit | 0x20) >= 'a' && (unit | 0x20) <= 'z';
 
     private void BeginTag(long offset, byte first, byte second)
@@ -250,9 +262,18 @@ public sealed class MarkupBlockScanner
     private void AbandonTag()
     {
         _state = State.Text;
-        if (BlockTextLengths.Count > 0) BlockTextLengths[BlockTextLengths.Count - 1] += _tagBytes.Count / _unitSize;
+        if (BlockTextLengths.Count > 0) BlockTextLengths[BlockTextLengths.Count - 1]++;
         _blockHasContent = true;
+        if (_tagBytes.Count <= _unitSize) { _tagBytes.Clear(); return; }
+        // the '<' is text; everything after it is scanned again, as the renderer does (it may hold line breaks or real tags)
+        byte[] rest = _tagBytes.GetRange(_unitSize, _tagBytes.Count - _unitSize).ToArray();
+        long restOffset = _tagStartOffset + _unitSize;
         _tagBytes.Clear();
+        for (int k = 0; k + _unitSize <= rest.Length; k += _unitSize)
+        {
+            byte a = rest[k], b = _unitSize == 2 ? rest[k + 1] : (byte)0;
+            ProcessUnit(_unitSize == 2 ? UnitOf(a, b) : a, restOffset + k, a, b);
+        }
     }
 
     private void CompleteBogus()
@@ -347,7 +368,7 @@ public sealed class MarkupBlockScanner
         }
         if (VoidElements.Contains(name) || isSelfClosing) return;
         PopForStart(name);
-        if (_stack.Count < MaximumStackDepth) { _stack.Add((name, tag)); _isStackDirty = true; }
+        if (_stack.Count < MaximumStackDepth) { _stack.Add((name, tag)); _isStackDirty = true; } else _unpushedDepth++;
         if (RawTextElements.Contains(name)) { _rawName = name; _rawMatch = 0; _state = State.RawText; }
     }
 
@@ -355,12 +376,25 @@ public sealed class MarkupBlockScanner
     private void PopForStart(string name)
     {
         if (_stack.Count == 0) return;
-        string top = _stack[_stack.Count - 1].name;
-        bool pop = (top == name && name is "p" or "li" or "dt" or "dd" or "option" or "tr" or "td" or "th")
-                   || (top == "p" && ClosesOpenParagraph.Contains(name))
-                   || (name is "td" or "th" && top is "td" or "th")
-                   || (name is "dt" or "dd" && top is "dt" or "dd");
-        if (pop) { _stack.RemoveAt(_stack.Count - 1); _isStackDirty = true; }
+        if (name == "li") PopThrough(["li"], ["ul", "ol", "table", "td", "th"]);
+        else if (name is "dt" or "dd") PopThrough(["dt", "dd"], ["dl", "table", "td", "th"]);
+        else if (name is "td" or "th") PopThrough(["td", "th"], ["tr", "table"]);
+        else if (name == "tr") PopThrough(["tr"], ["table", "tbody", "thead", "tfoot"]);
+        else if (name == "option" && _stack[_stack.Count - 1].name == "option") { _stack.RemoveAt(_stack.Count - 1); _isStackDirty = true; }
+        if (ClosesOpenParagraph.Contains(name) || name is "li" or "dt" or "dd") PopThrough(["p"], ParagraphScopeBoundaries);
+    }
+
+    private static readonly string[] ParagraphScopeBoundaries = ["table", "td", "th", "caption", "button", "object", "applet", "marquee", "template"];
+
+    /// <summary>Pops through the nearest open element named in <paramref name="targets"/>, unless a boundary element sits above it.</summary>
+    private void PopThrough(string[] targets, string[] boundaries)
+    {
+        for (int i = _stack.Count - 1; i >= 0; i--)
+        {
+            string open = _stack[i].name;
+            if (Array.IndexOf(targets, open) >= 0) { _stack.RemoveRange(i, _stack.Count - i); _isStackDirty = true; return; }
+            if (Array.IndexOf(boundaries, open) >= 0) return;
+        }
     }
 
     private void EndTag(string name)
@@ -373,6 +407,7 @@ public sealed class MarkupBlockScanner
         }
         _blockHasContent = true;
         if (_headingBlock >= 0 && name.Length == 2 && name[0] == 'h' && name[1] - '0' == _headingLevel) FinishHeading();
+        if (_unpushedDepth > 0) { _unpushedDepth--; return; }
         for (int i = _stack.Count - 1; i >= 0; i--)
         {
             if (_stack[i].name != name) continue;

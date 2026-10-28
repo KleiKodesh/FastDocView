@@ -57,9 +57,10 @@ view over SQLite.
 | `…/Docx` | body + notes scanners, index (format v4) + builder, block / note readers, drawing stripper, `DocxWindowedDocument` |
 | `…/Html`, `…/DocxHtml` | format-neutral formatting models + CSS; styles / table styles cascade; block, table, note → HTML |
 | `…/Odt` | OpenDocument text (.odt/.ott/.fodt): package detection, body scanner, list numbering, index + builder, style cascade, block reader + renderer, `OdtWindowedDocument` |
+| `…/Markup` | .txt read as HTML (one block per line, Notepad++-style encoding detection) and Word web archives (MHTML: streaming quoted-printable / base64 with per-block resume points); scanner, renderer, index + builder, `MarkupWindowedDocument` |
 | `…/DocBinary` | compound file, FIB, piece table, FKPs (+ huge PAPX), styles, fonts, sprms, notes, block index, `DocBinaryWindowedDocument` |
 | `samples/` | the two real test files (דור המלקטים .doc 40 MB, .docx 87 MB body) — the demo's default |
-| `WordDocumentRandomAccess.Tests` | console harness; must print ALL PASSED. `--real`, `--audit`, `--odt [N]`, `--corpus <list>`, `--huge N`, `--notes-streaming N` |
+| `WordDocumentRandomAccess.Tests` | console harness; must print ALL PASSED. `--real`, `--audit`, `--odt [N]`, `--text [N]`, `--mhtml [N]`, `--text-corpus <list>`, `--mime-scan <list>`, `--corpus <list>`, `--huge N`, `--notes-streaming N` |
 | `WordDocumentRandomAccess.DevServer` | C# localhost JSON host on 5188 (dev only; the real host will be the KitveiHakodesh service) |
 | `vue-demo` | **the live rig** — Vite on 5189 + the app's `WindowedScroller` (copied from `KitveiHakodesh/vue-frontend/src/components`, keep in sync — the copy carries one fix to port back: `landAt` re-lands on the new last row when fetching rows shrinks the count); `window.__wordDemo` hooks; `playwright/` checks |
 | `WordDocumentRandomAccess.Viewer` | old WinForms viewer — superseded, do not extend |

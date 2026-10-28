@@ -23,6 +23,7 @@ public static class WordWindowedDocumentOpener
         var header = new byte[4];
         using FileStream file = WordDocumentFileStream.OpenShared(filePath);
         _ = file.Read(header, 0, 4);
+        if (Path.GetExtension(filePath).Equals(".txt", StringComparison.OrdinalIgnoreCase)) return WordFileFormat.PlainText;   // any bytes are text; no signature applies
         if (header[0] == (byte)'P' && header[1] == (byte)'K')
             return OdtPackage.IsOpenDocumentTextPackage(file) ? WordFileFormat.OpenDocument : WordFileFormat.Docx;
         if ((header[0] == (byte)'<' || (header[0] == 0xEF && header[1] == 0xBB && header[2] == 0xBF)) && OdtPackage.IsFlatOpenDocumentText(file))
@@ -32,7 +33,6 @@ public static class WordWindowedDocumentOpener
         if (header[0] == (byte)'{' && header[1] == (byte)'\\') return WordFileFormat.RichText;
         string extension = Path.GetExtension(filePath).ToLowerInvariant();
         if (extension is ".mht" or ".mhtml") return WordFileFormat.WebArchive;        // archives may start with other headers (From:, Content-Type:)
-        if (extension == ".txt") return WordFileFormat.PlainText;                     // plain text has no signature
         return WordFileFormat.Unknown;
     }
 

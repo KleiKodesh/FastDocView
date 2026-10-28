@@ -126,7 +126,8 @@ public sealed class MarkupRandomAccessIndex
             MarkupRandomAccessIndex index = Read(reader.BaseStream);
             return index.Kind == kind && index.MatchesSource(documentPath) ? index : null;
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or EndOfStreamException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or EndOfStreamException
+                                           or OverflowException or ArgumentException or OutOfMemoryException)   // a damaged sidecar is rebuilt
         {
             return null;
         }

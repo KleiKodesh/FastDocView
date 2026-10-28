@@ -396,3 +396,48 @@ cached index scans only until the first 100 blocks are known and returns.
   blocks ~25 ms (was ~10 s for the full pass), window at 10 % ~1 s, at 50 % ~1 s more, completion
   from 50 % ~1.6 s; the 87 MB-body sample first window ~80 ms, 10 % ~170 ms, 50 % ~0.8 s, end ~0.4 s.
   Heap at 50 %: 27 MB (synthetic) / 13 MB (sample).
+
+## Plain text and Word web archives (Markup/)
+
+**.txt is read as HTML** (user's decision): embedded tags render, `<h1>`-`<h6>` feed the outline.
+One block per line; a line break inside a tag or a comment does not end a block. `MarkupBlockScanner`
+scans raw bytes (single-byte code pages and UTF-8: vectorised `IndexOfAny('<', '\n', '\r')` over text
+runs, no decoding) or 2-byte units (UTF-16), and stores per block the start tags open at its start
+(interned), so a window parses standalone; `MarkupBlockRenderer` reopens them, escapes a '<' that does
+not start a tag, drops comments / script / style, strips on* handlers and non-http(s) URL schemes
+(entities decoded first), replaces images with `[image]`, closes what is left open. Both sides share
+the tag rules (tag ≤ 2048 code units, comment ≤ 64 KB, else text). Lines over 64 KB split at a space,
+over 256 KB anywhere outside a tag (UTF-8: never inside a sequence). Implied end tags (li, dt/dd,
+td/th, tr, p closed by block starts) follow the HTML rules, scoped; stack depth capped at 32.
+
+**Encoding (.txt) follows Notepad++** (user: the reference for .txt only), reimplemented from its source
+(Buffer.cpp `FileManager::loadFileData`/`detectCodepage`, Utf8_16.cpp `Utf8_16_Read::determineEncoding`,
+`utf8_7bits_8bits`): BOM (FE FF, FF FE, EF BB BF; no UTF-32) → UTF-16 LE without BOM (even length,
+byte0≠0, byte1=0, plus a statistics test — Notepad++ uses Win32 IsTextUnicode, approximated here) →
+structural UTF-8 on the first 128 KB+4 (NUL = not UTF-8) → ANSI = windows-1255. Not reimplemented:
+uchardet (Notepad++ runs it first when "autodetect character encoding" is on; it can answer
+windows-1255 or ISO-8859-8 for Hebrew, threshold 0.60 — MPL 1.1 code). For Hebrew text both paths end
+at windows-1255 except visual-Hebrew files (uchardet: ISO-8859-8, same letters). LibreOffice
+(tools/source/stream/stream.cxx `SvStream::DetectEncoding`, called from sw/source/filter/basflt/iodetect.cxx
+`SwIoSystem::IsDetectableText`, sw/source/filter/ascii/parasc.cxx) does BOM then ICU ucsdet with no
+confidence threshold, fallback the system ANSI code page. `<meta charset>` is not honoured for .txt
+(Notepad++ only sniffs it for HTML/XML file types).
+
+**MHTML** (.mht/.mhtml, and .doc files beginning with "MIME"): `WebArchiveContainer` reads headers only
+(RFC 2045 §5.1 parameters, RFC 2046 §5.1.1 boundaries) and takes the first text/html part; its body is
+decoded streaming (`MimeTransferDecoder`, RFC 2045 §6.7 quoted-printable leniently, §6.8 base64) and
+scanned in Elements mode: a block per p / h1-6 / table / div / list element outside tables. Per block
+the index keeps a **resume point** = encoded offset × 4 + skip: quoted-printable restarts at the token
+that produced the byte (no decoder state survives a token boundary; soft breaks produce nothing),
+base64 at the 4-character group start with 0-2 bytes to skip. Charset from the part's Content-Type
+(fallback windows-1255). Word's head `<style>` is kept, scoped under `.word-document`, @-rules dropped.
+Measured: synthetic 20k-block QP / base64 1.1 MB: cold ~70 ms, reopen ~1 ms. The corpus has 1 such .doc
+(of 5,355 Word files).
+
+Measured (.txt, sidecar forced): largest real txt 4.6 GB / 6.9 M blocks — cold 5.7 s, reopen 101 ms,
+60-block window 0.35 ms avg; synthetic 37 MB / 1 M blocks — cold 311 ms, reopen 15 ms, window 0.24 ms.
+Corpus sample (largest 200 + random 300 of 11,276 txt): 0 crashes; windows-1255 234, UTF-8 201,
+7-bit 44, UTF-8 BOM 18, UTF-16 LE BOM 3.
+
+Open: uchardet-equivalent statistics (other languages / visual Hebrew); a Word table as one block is not
+bounded (one huge table = one big block); EstimatedTextLength counts bytes (UTF-8) or units (UTF-16).

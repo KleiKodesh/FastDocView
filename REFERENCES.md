@@ -62,3 +62,13 @@ The test file and the observed result go into the harness.
 - Word 6.0 / 95 (.doc with nFib < 0xC1) has **no** Microsoft specification; only reverse-engineered
   descriptions (LibreOffice's ww8 "Ver67" paths, the UK National Archives PRONOM entry fmt/39 —
   https://www.nationalarchives.gov.uk/PRONOM/fmt/39, NetFree-blocked here). Treat as unverified.
+
+## 6. Plain text and web archives
+
+| Source | Use it for | Link |
+|---|---|---|
+| **RFC 2045** (MIME part one) | Content-Type parameters (§5.1), quoted-printable (§6.7), base64 (§6.8) | https://www.rfc-editor.org/rfc/rfc2045 |
+| **RFC 2046** | multipart boundaries, close-delimiter, preamble (§5.1.1) | https://www.rfc-editor.org/rfc/rfc2046 |
+| **RFC 2557** (MHTML) | multipart/related web archives | https://www.rfc-editor.org/rfc/rfc2557 |
+| **Notepad++** (GPL — read, never copy) | the .txt encoding reference: `PowerEditor/src/ScintillaComponent/Buffer.cpp`, `PowerEditor/src/Utf8_16.cpp`; bundled uchardet is MPL 1.1 | https://github.com/notepad-plus-plus/notepad-plus-plus |
+| **LibreOffice** text import | comparison: `tools/source/stream/stream.cxx` (DetectEncoding, ICU ucsdet), `sw/source/filter/basflt/iodetect.cxx`, `sw/source/filter/ascii/parasc.cxx` | https://github.com/LibreOffice/core |

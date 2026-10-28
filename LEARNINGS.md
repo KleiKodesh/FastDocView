@@ -259,3 +259,15 @@ Append-only. Date, what we learned, what it changed.
   past the new end — a blank screen. Cause in the scroller's landing: its window was computed from
   the count before the rows were fetched. `landAt` now re-checks after the fetch and re-lands on the
   new last row. The app's own WindowedScroller has the same latent race when a count shrinks mid-landing.
+
+## 2026-10-28 — plain text and web archives
+
+- **A .txt can be 4.6 GB** (a corpus file in the machine's index): one raw-byte pass at ~800 MB/s
+  indexes it in 5.7 s; reopen 0.1 s. Short tag-dense lines are the slow case (~120 MB/s).
+- **Scanner and renderer must agree on what a tag is** — limits counted in the same units (code units,
+  not bytes), an abandoned '<' re-scanned from the next unit, comment caps on both sides. The review
+  found five ways they disagreed; each one shifts every later block's reopened stack.
+- **Sanitising needs entity decoding**: `java&#115;cript:` is a working link after the browser decodes it.
+- **Transfer-encoded HTML needs no decoder snapshot** when block starts are mapped to token starts:
+  quoted-printable has no state across tokens, base64 only a 4-character alignment (encoded offset + skip).
+- `UnicodeEncoding(bigEndian, byteOrderMark: false).GetPreamble()` is empty: a fixture "with BOM" had none.

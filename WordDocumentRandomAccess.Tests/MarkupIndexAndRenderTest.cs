@@ -42,6 +42,30 @@ public static class MarkupIndexAndRenderTest
         }
     }
 
+    /// <summary>Edge cases found in review: entity-hidden script URLs, implied end tags in lists, overlong lines, abandoned tags, deep nesting.</summary>
+    public static void RunEdgeCases()
+    {
+        TestReport.Step("Markup edge cases");
+        string safe = MarkupBlockRenderer.Render("", "<a href=\"java&#115;cript:alert(1)\">x</a><a href=\"javascript&#58;y\">y</a><a href=\" JaVa\tscript:z\">z</a>"
+                                                    + "<a href=\"https://e.org/a:b\">ok</a><span style=\"mso-font:x; color:red\">s</span><img src=x onerror=alert(1)><b onmouseover=x>b</b>");
+        TestReport.Check(!safe.Contains("script") && !safe.Contains("onerror") && !safe.Contains("onmouseover") && safe.Contains("https://e.org/a:b")
+                         && safe.Contains("mso-font:x; color:red"), "sanitizer: entity-hidden javascript: URLs and handlers removed, http links and styles kept");
+
+        string text = "<ul><li><p>a\n<li><p>b\n<li><p>c\n" + new string('x', 300_000) + "\nx <b " + new string('y', 2100) + "\n<i>i</i>\nend\n"
+                      + string.Concat(Enumerable.Repeat("<div>", 40)) + "deep\n" + string.Concat(Enumerable.Repeat("</div>", 40)) + "\nafter\n";
+        string path = Path.Combine(TestReport.OutputDirectory, "markup-edge-cases-v1.txt");
+        File.WriteAllText(path, text, new UTF8Encoding(false));
+        using var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+        string[] stacks = Enumerable.Range(0, document.BlockCount).Select(i => document.Index.Stacks[document.Index.BlockStackIds[i]]).ToArray();
+        TestReport.Check(stacks[1] == "<ul><li><p>" && stacks[2] == "<ul><li><p>", $"implied end tags: li closes p and li (stack '{stacks[2]}')");
+        int longBlocks = Enumerable.Range(0, document.BlockCount).Count(i => document.Index.BlockEnd(i) - document.Index.BlockStarts[i] > MarkupBlockScanner.LineBlockHardLimitBytes);
+        TestReport.Check(longBlocks == 0, "a 300 KB line without spaces is split into bounded blocks");
+        IReadOnlyList<WordDocumentBlockHtml> all = document.RenderBlocks(0, document.BlockCount);
+        int italic = all.ToList().FindIndex(b => b.Html.Contains("<i>i</i>"));
+        TestReport.Check(italic > 0 && stacks[italic] == "<ul><li><p>" && all[italic - 1].Html.Contains("x &lt;b yyy"), "a '<' that never closes is text; the lines after it are scanned again");
+        TestReport.Check(stacks[stacks.Length - 2] == "<ul><li>" + string.Concat(Enumerable.Repeat("<div>", 30)) && stacks[stacks.Length - 1] == "<ul><li>", "40 nested divs (32 kept on the stack) closed: the block after them is back in the list item");
+    }
+
     private static void OpenBothModes(string path, MarkupSourceKind kind, Action<MarkupWindowedDocument> verify)
     {
         foreach (WordIndexMode mode in new[] { WordIndexMode.InMemory, WordIndexMode.Sidecar })

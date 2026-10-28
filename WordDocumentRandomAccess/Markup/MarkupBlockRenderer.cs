@@ -13,7 +13,7 @@ public static class MarkupBlockRenderer
 {
     private static readonly HashSet<string> DroppedTags = new(StringComparer.Ordinal)
         { "html", "head", "body", "meta", "link", "base", "iframe", "frame", "frameset", "object", "embed", "applet", "form", "input", "button", "select", "option" };
-    private static readonly HashSet<string> DroppedWithContent = new(StringComparer.Ordinal) { "script", "style", "title", "noscript" };
+    private static readonly HashSet<string> DroppedWithContent = new(StringComparer.Ordinal) { "script", "style", "title" };
     private static readonly HashSet<string> VoidElements = new(StringComparer.Ordinal)
         { "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr" };
 
@@ -46,13 +46,15 @@ public static class MarkupBlockRenderer
             char d = i + 1 < text.Length ? text[i + 1] : '\0';
             if (d == '!' && string.CompareOrdinal(text, i, "<!--", 0, 4) == 0)
             {
-                int close = text.IndexOf("-->", i + 4, StringComparison.Ordinal);
+                int close = text.IndexOf("-->", i + 4, Math.Min(text.Length - i - 4, MarkupBlockScanner.MaximumCommentBytes + 3), StringComparison.Ordinal);
+                if (close < 0 && text.Length - i - 4 > MarkupBlockScanner.MaximumCommentBytes) { html.Append("&lt;"); i++; continue; }   // the scanner gave up on it: text
                 i = close < 0 ? text.Length : close + 3;
                 continue;
             }
             if (d == '!' || d == '?')
             {
-                int close = text.IndexOf('>', i + 2);
+                int close = text.IndexOf('>', i + 2, Math.Min(text.Length - i - 2, MarkupBlockScanner.MaximumCommentBytes + 1));
+                if (close < 0 && text.Length - i - 2 > MarkupBlockScanner.MaximumCommentBytes) { html.Append("&lt;"); i++; continue; }
                 i = close < 0 ? text.Length : close + 1;
                 continue;
             }
@@ -94,7 +96,7 @@ public static class MarkupBlockRenderer
     private static int FindTagEnd(string text, int start)
     {
         bool quoted = false; char quote = '\0', lastNonSpace = 'a';
-        int limit = Math.Min(text.Length, start + MarkupBlockScanner.MaximumTagBytes);
+        int limit = Math.Min(text.Length, start + MarkupBlockScanner.MaximumTagUnits);
         for (int i = start + 1; i < limit; i++)
         {
             char c = text[i];
@@ -125,10 +127,31 @@ public static class MarkupBlockRenderer
         return false;
     }
 
+    private static readonly HashSet<string> UrlAttributes = new(StringComparer.Ordinal)
+        { "href", "src", "action", "formaction", "xlink:href", "data", "background", "lowsrc", "dynsrc", "poster", "cite", "longdesc", "to", "from", "values", "by", "srcset", "codebase" };
+
+    /// <summary>
+    /// False for a value that resolves to a script-capable URL: entities decoded (browsers decode them in
+    /// attributes), whitespace and controls removed, then the scheme checked: http(s), mailto, file, ftp,
+    /// cid, mid and data:image (not svg) pass, as does any value without a URL scheme; anything else is dropped.
+    /// </summary>
+    private static bool IsSafeValue(string value)
+    {
+        string decoded = System.Net.WebUtility.HtmlDecode(value);
+        string compact = new string(decoded.Where(ch => !char.IsWhiteSpace(ch) && !char.IsControl(ch)).ToArray()).ToLowerInvariant();
+        int colon = compact.IndexOf(':');
+        if (colon <= 0) return true;
+        string scheme = compact.Substring(0, colon);
+        if (!char.IsLetter(scheme[0]) || scheme.Any(ch => !(ch is >= 'a' and <= 'z' || char.IsDigit(ch) || ch is '+' or '-' or '.'))) return true;   // not a URL scheme
+        if (scheme is "http" or "https" or "mailto" or "file" or "ftp" or "cid" or "mid") return true;
+        if (scheme == "data") return compact.StartsWith("data:image/", StringComparison.Ordinal) && !compact.StartsWith("data:image/svg", StringComparison.Ordinal);
+        return false;
+    }
+
     /// <summary>The tag as written, minus event handlers (on*) and script URLs.</summary>
     private static string Sanitize(string tag, string name)
     {
-        if (!HasEventAttribute(tag) && tag.IndexOf("script", StringComparison.OrdinalIgnoreCase) < 0) return tag;
+        if (!HasEventAttribute(tag) && tag.IndexOf(':') < 0 && tag.IndexOf('&') < 0) return tag;      // no handler, no scheme, no entity: nothing to remove
         var result = new StringBuilder(tag.Length);
         result.Append('<').Append(name);
         int i = 1 + name.Length;
@@ -164,8 +187,7 @@ public static class MarkupBlockRenderer
             else i = valueStart;
             if (attribute.Length == 0) { i++; continue; }
             if (attribute.StartsWith("on", StringComparison.OrdinalIgnoreCase)) continue;
-            string compact = new string(value.Where(ch => !char.IsWhiteSpace(ch) && !char.IsControl(ch)).ToArray());
-            if (compact.IndexOf("script:", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+            if (UrlAttributes.Contains(attribute.ToLowerInvariant()) && !IsSafeValue(value)) continue;
             result.Append(' ').Append(attribute);
             if (valueStart != i) result.Append("=\"").Append(value.Replace("\"", "&quot;")).Append('"');
         }
