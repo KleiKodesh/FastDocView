@@ -136,4 +136,43 @@ public static class RtfIndexAndRenderTest
             $"<!doctype html><meta charset=utf-8><style>{document.Stylesheet}</style><div class=word-document dir=rtl>{string.Concat(prefixHtml)}</div>");
         return prefixHtml;
     }
+
+    private sealed class NullSink : RtfSink
+    {
+        public override bool WantsText => false;
+    }
+
+    /// <summary>Where the index pass spends its time: the bare parser (no sink work) against the full index build, best of 3.</summary>
+    public static void Profile(string path)
+    {
+        TestReport.Step($"RTF index-pass profile: {Path.GetFileName(path)} ({new FileInfo(path).Length >> 10} KB)");
+        byte[] bytes = File.ReadAllBytes(path);
+        double parseOnly = double.MaxValue, build = double.MaxValue;
+        for (int run = 0; run < 3; run++)
+        {
+            var watch = Stopwatch.StartNew();
+            new RtfParser(new NullSink(), new RtfDocumentTables(), readsHeaderTables: true).Run(new MemoryStream(bytes), 0, bytes.Length);
+            parseOnly = Math.Min(parseOnly, watch.Elapsed.TotalMilliseconds);
+            watch.Restart();
+            RtfRandomAccessIndex index = RtfRandomAccessIndexBuilder.Build(new MemoryStream(bytes), bytes.Length, 0);
+            build = Math.Min(build, watch.Elapsed.TotalMilliseconds);
+            if (run == 0) Console.WriteLine($"   {index.BlockCount:N0} blocks, {index.States.Length:N0} distinct start states");
+        }
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "profile-index-cache"), ForcedMode = WordIndexMode.Sidecar };
+        string indexPath = policy.IndexPathFor(path);
+        if (File.Exists(indexPath)) File.Delete(indexPath);
+        var open = Stopwatch.StartNew();
+        double cold, reopen, window;
+        using (IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy)) cold = open.Elapsed.TotalMilliseconds;
+        open.Restart();
+        using (IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy))
+        {
+            reopen = open.Elapsed.TotalMilliseconds;
+            open.Restart();
+            document.RenderBlocks(Math.Max(0, document.BlockCount / 2 - 20), 40);
+            window = open.Elapsed.TotalMilliseconds;
+        }
+        Console.WriteLine($"   sidecar: cold open {cold:0} ms, reopen {reopen:0.#} ms, 40-block window at the middle {window:0.#} ms");
+        Console.WriteLine($"   parser only {parseOnly:0} ms ({bytes.Length / 1048576.0 / (parseOnly / 1000):0} MB/s), full index {build:0} ms ({bytes.Length / 1048576.0 / (build / 1000):0} MB/s)");
+    }
 }

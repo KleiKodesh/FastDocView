@@ -103,12 +103,20 @@ internal sealed class RtfParser
     /// <summary>The group-state stack, row definition and open contexts, as bytes — what a window needs to resume here.</summary>
     public byte[] Snapshot()
     {
+        byte[] bytes = new byte[SnapshotSize];
+        WriteSnapshot(bytes);
+        return bytes;
+    }
+
+    public int SnapshotSize => 4 + (_depth + 1) * RtfGroupState.Size + 4 * 4 + 1 + 4 + _cellBoundaries.Count * 6;
+
+    /// <summary>Writes the snapshot into <paramref name="bytes"/> (at least <see cref="SnapshotSize"/> long).</summary>
+    public void WriteSnapshot(Span<byte> bytes)
+    {
         int frames = _depth + 1;
-        int size = 4 + frames * RtfGroupState.Size + 4 * 4 + 1 + 4 + _cellBoundaries.Count * 6;
-        byte[] bytes = new byte[size];
         int at = 0;
         WriteInt(bytes, ref at, frames);
-        MemoryMarshal.AsBytes(_stack.AsSpan(0, frames)).CopyTo(bytes.AsSpan(at));
+        MemoryMarshal.AsBytes(_stack.AsSpan(0, frames)).CopyTo(bytes.Slice(at));
         at += frames * RtfGroupState.Size;
         WriteInt(bytes, ref at, _footnoteDepth);
         WriteInt(bytes, ref at, _listTextDepth);
@@ -121,7 +129,6 @@ internal sealed class RtfParser
             WriteInt(bytes, ref at, _cellBoundaries[i]);
             bytes[at++] = (byte)_cellShading[i]; bytes[at++] = (byte)(_cellShading[i] >> 8);
         }
-        return bytes;
     }
 
     public void RestoreSnapshot(byte[] bytes)
@@ -149,7 +156,7 @@ internal sealed class RtfParser
         _textByteCount = 0;
     }
 
-    private static void WriteInt(byte[] bytes, ref int at, int value)
+    private static void WriteInt(Span<byte> bytes, ref int at, int value)
     {
         bytes[at++] = (byte)value; bytes[at++] = (byte)(value >> 8); bytes[at++] = (byte)(value >> 16); bytes[at++] = (byte)(value >> 24);
     }
@@ -198,6 +205,9 @@ internal sealed class RtfParser
     }
 
     private static readonly bool[] IsTextStop = BuildStops("\\{}\r\n");
+#if NET
+    private static readonly System.Buffers.SearchValues<byte> SkipStops = System.Buffers.SearchValues.Create("\\{}"u8);
+#endif
     private static readonly bool[] IsSkipStop = BuildStops("\\{}");
 
     private static bool[] BuildStops(string characters)
@@ -238,13 +248,14 @@ internal sealed class RtfParser
                 default:
                 {
                     int start = _position;
+                    // a plain loop: Hebrew text arrives as short runs between 'hh escapes, too short for a vectorised search
                     bool[] stops = IsTextStop;
                     int end = _end;
                     byte[] buffer = _buffer;
                     int at = start + 1;
                     while (at < end && !stops[buffer[at]]) at++;
                     _position = at;
-                    if (_depth >= 0) AddTextBytes(buffer.AsSpan(start, at - start));
+                    if (_depth >= 0) AddTextBytes(_buffer.AsSpan(start, at - start));
                     break;
                 }
             }
@@ -310,9 +321,17 @@ internal sealed class RtfParser
                 if (next >= 0 && HexValue(next) >= 0) { _position++; value = value * 16 + HexValue(next); }
                 if (value < 0) value = 0;
                 if (_skipCount > 0) { _skipCount--; return; }
-                Span<byte> one = stackalloc byte[1];
-                one[0] = (byte)value;
-                AddTextBytes(one);
+                // Hebrew / Arabic text is written as long runs of 'hh: decode the whole run in one go
+                Span<byte> run = stackalloc byte[256];
+                int count = 0;
+                run[count++] = (byte)value;
+                while (count < run.Length && _position + 4 <= _end && _buffer[_position] == 0x5C && _buffer[_position + 1] == 0x27
+                       && HexValue(_buffer[_position + 2]) is var h and >= 0 && HexValue(_buffer[_position + 3]) is var l and >= 0)
+                {
+                    run[count++] = (byte)(h * 16 + l);
+                    _position += 4;
+                }
+                AddTextBytes(run.Slice(0, count));
                 return;
             }
             FlushText();
@@ -767,7 +786,12 @@ internal sealed class RtfParser
             if (_position >= _end && !Fill()) return;
             byte[] buffer = _buffer;
             int at = _position, end = _end;
+#if NET
+            int found = buffer.AsSpan(at, end - at).IndexOfAny(SkipStops);
+            at = found < 0 ? end : at + found;
+#else
             while (at < end && !stops[buffer[at]]) at++;
+#endif
             _position = at;
             if (at >= end) continue;
             byte b = buffer[at];

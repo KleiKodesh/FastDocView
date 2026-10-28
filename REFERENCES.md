@@ -32,6 +32,7 @@ https://learn.microsoft.com/en-us/openspecs/office_standards/
 | **ISO/IEC 29500** (Office Open XML), Parts 1–4 — freely downloadable from ISO's ITTF | the .docx standard itself (Part 1 WordprocessingML §17, DrawingML §20; Part 2 packaging/OPC; Part 4 transitional) | https://standards.iso.org/ittf/PubliclyAvailableStandards/ |
 | **ECMA-376** (same content, Ecma edition) | as above; editions 1–5 | https://ecma-international.org/publications-and-standards/standards/ecma-376/ |
 | **OASIS ODF 1.3** (OpenDocument) — ODF 1.2 is ISO/IEC 26300:2015 | .odt / .ott / .fodt: schema, packaging, encryption | https://docs.oasis-open.org/office/OpenDocument/v1.3/ |
+| **Microsoft RTF Specification** — 1.9.1 (2008, Word 2007) is the last; its download is NetFree-blocked here, the 1.5 text (Word 97) is readable | .rtf: syntax, `\uc` skipping, charsets, tables, lists, notes | 1.5: https://www.biblioscape.com/rtf15_spec.htm ; 1.9.1: https://www.microsoft.com/en-us/download/details.aspx?id=10725 |
 | **RFC 1951** DEFLATE | the inflater (SeekableDeflate) | https://www.rfc-editor.org/rfc/rfc1951 |
 | **PKWARE APPNOTE.TXT** (zip, Zip64) | zip central directory / entries *(NetFree-blocked here)* | https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT |
 | **Unicode UAX #9** Bidirectional Algorithm | RTL / mixed Hebrew-Latin ordering in the HTML | https://www.unicode.org/reports/tr9/ |
@@ -49,6 +50,7 @@ The test file and the observed result go into the harness.
 | Project | Use it for | Link |
 |---|---|---|
 | **LibreOffice** — `sw/source/filter/ww8` (.doc: `sprmids.hxx`, `ww8scan.cxx`, `ww8par*.cxx`), `sw/source/writerfilter` (.docx: `dmapper/DomainMapper.cxx`, `ThemeHandler.cxx`, `ooxml/model.xml`), `xmloff/source/text` (.odt) | how a mature importer interprets each construct; opcode tables (look up, never recall) | https://github.com/LibreOffice/core |
+| **LibreOffice RTF** — `sw/source/writerfilter/rtftok` (`rtftokenizer.cxx` keyword table + tokenizer, `rtfdispatch*.cxx`, `rtfdocumentimpl.cxx`, `rtfcharsets.cxx`); export `sw/source/filter/ww8/rtfattributeoutput.cxx` | how each RTF control word is read: destination set, run types (`\rtlch`/`\ltrch`), charsets, list levels | https://github.com/LibreOffice/core/tree/master/sw/source/writerfilter/rtftok |
 | **LibreOffice test documents** — `sw/qa/extras/*/data` | thousands of real edge-case .doc / .docx / .odt files with known expectations | https://github.com/LibreOffice/core/tree/master/sw/qa/extras/ooxmlexport/data |
 | **zlib** `examples/zran.c` | the checkpoint / resume technique | https://github.com/madler/zlib/blob/develop/examples/zran.c |
 | **Apache POI** (HWPF / XWPF) | a second .doc / .docx reading of the same structures | https://github.com/apache/poi |

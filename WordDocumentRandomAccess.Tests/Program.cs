@@ -28,6 +28,7 @@ string? listLabelsFallback = null;
 int corpusMax = int.MaxValue;
 int odtBlocks = 0, rtfBlocks = 0;
 var rtfAuditPaths = new List<string>();
+var rtfProfilePaths = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -54,6 +55,7 @@ for (int i = 0; i < args.Length; i++)
             rtfBlocks = 20_000;
             if (i + 1 < args.Length && int.TryParse(args[i + 1], out int rtfCount)) { rtfBlocks = rtfCount; i++; }
             break;
+        case "--rtf-profile": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfProfilePaths.Add(args[++i]); break;
         case "--rtf-audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfAuditPaths.Add(args[++i]); break;
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
         case "--list-labels-fallback": listLabelsFallback = args[++i]; break;   // a path list to scan for a .doc with lists when the --real ones have none
@@ -79,6 +81,7 @@ if (profilePaths.Count > 0) OpenTimingProfile.Run(profilePaths.Where(File.Exists
 if (indexProfilePaths.Count > 0) IndexPassProfile.Run(indexProfilePaths.Where(File.Exists));
 if (corpusList is not null && rtfBlocks == 0) WordFormattingAudit.RunCorpus(corpusList, corpusMax);
 if (rtfBlocks > 0) RtfIndexAndRenderTest.Run(rtfBlocks);
+foreach (string path in rtfProfilePaths.Where(File.Exists)) RtfIndexAndRenderTest.Profile(path);
 if (rtfAuditPaths.Count > 0) RtfFormattingAudit.Run(rtfAuditPaths.Where(File.Exists));
 if (rtfBlocks > 0 && corpusList is not null) RtfFormattingAudit.RunCorpus(corpusList, corpusMax);
 if (odtBlocks > 0)

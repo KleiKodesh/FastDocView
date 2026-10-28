@@ -26,7 +26,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     private readonly List<int> _textLengths = new(), _stateIds = new(), _labelIds = new();
     private readonly List<byte> _listLevels = new();
     private readonly List<byte[]> _states = new();
-    private readonly Dictionary<string, int> _stateIdByContent = new();
+    private readonly Dictionary<ulong, List<int>> _stateIdsByHash = new();
+    private byte[] _snapshotBuffer = new byte[1024];
     private readonly List<string> _labels = new();
     private readonly Dictionary<string, int> _labelIdByText = new();
     private readonly List<WordDocumentHeading> _headings = new();
@@ -78,14 +79,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     private void TakeStart()
     {
         _start = _parser.Position;
-        byte[] snapshot = _parser.Snapshot();
-        string key = Convert.ToBase64String(snapshot);
-        if (!_stateIdByContent.TryGetValue(key, out _stateId))
-        {
-            _stateId = _states.Count;
-            _states.Add(snapshot);
-            _stateIdByContent[key] = _stateId;
-        }
+        _stateId = InternState();
         _hasStart = true;
         _hasContent = false;
         _isRow = false;
@@ -116,6 +110,24 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         else _hasStart = false;
     }
 
+    /// <summary>The id of the parser's current snapshot; equal stacks share one stored copy (most blocks start alike).</summary>
+    private int InternState()
+    {
+        int size = _parser.SnapshotSize;
+        if (_snapshotBuffer.Length < size) _snapshotBuffer = new byte[Math.Max(size, _snapshotBuffer.Length * 2)];
+        Span<byte> snapshot = _snapshotBuffer.AsSpan(0, size);
+        _parser.WriteSnapshot(snapshot);
+        ulong hash = 14695981039346656037;
+        foreach (byte b in snapshot) hash = (hash ^ b) * 1099511628211;
+        if (!_stateIdsByHash.TryGetValue(hash, out List<int>? candidates)) _stateIdsByHash[hash] = candidates = new List<int>(1);
+        foreach (int candidate in candidates)
+            if (_states[candidate].AsSpan().SequenceEqual(snapshot)) return candidate;
+        int id = _states.Count;
+        _states.Add(snapshot.ToArray());
+        candidates.Add(id);
+        return id;
+    }
+
     private int InternLabel(string label)
     {
         if (!_labelIdByText.TryGetValue(label, out int id))
@@ -137,8 +149,16 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             if (_parser.IsInListText) return true;
             if (_paragraphText.Length >= HeadingTextLimit) return false;
             ref readonly RtfGroupState state = ref _parser.Current;
-            return state.OutlineLevel is >= 0 and <= 8 || _tables.OutlineLevelOfStyle(state.Style) >= 0;
+            return state.OutlineLevel is >= 0 and <= 8 || OutlineLevelOfStyle(state.Style) >= 0;
         }
+    }
+
+    private int _memoStyle = int.MinValue, _memoOutline;
+
+    private int OutlineLevelOfStyle(int style)
+    {
+        if (style != _memoStyle) { _memoStyle = style; _memoOutline = _tables.OutlineLevelOfStyle(style); }
+        return _memoOutline;
     }
 
     public override void DocumentStarted() => TakeStart();
@@ -185,7 +205,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         }
         _paragraphs++;
         if (state.Has(RtfStateFlags.RightToLeftParagraph)) _rightToLeftParagraphs++;
-        int outline = state.OutlineLevel is >= 0 and <= 8 ? state.OutlineLevel : state.OutlineLevel == 9 ? -1 : _tables.OutlineLevelOfStyle(state.Style);
+        int outline = state.OutlineLevel is >= 0 and <= 8 ? state.OutlineLevel : state.OutlineLevel == 9 ? -1 : OutlineLevelOfStyle(state.Style);
         if (outline >= 0)
         {
             string text = _paragraphText.ToString().Trim();
