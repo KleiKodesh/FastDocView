@@ -66,6 +66,18 @@ public static class DocxTableFormatting
 
     public static string CellCss(XElement? tcPr, Borders tableBorders) => CellCss(tcPr, tableBorders, null);
 
+    /// <summary>
+    /// w:textDirection (ST_TextDirection, transitional and strict names) as CSS writing-mode. Mapping read in
+    /// LibreOffice DomainMapper.cxx: tbRl → TB_RL, tbRlV → TB_RL90, btLr → BT_LR, tbLrV → TB_LR, lrTb / lrTbV → LR_TB.
+    /// </summary>
+    public static string? TextDirectionCss(string? value) => value switch
+    {
+        "tbRl" or "rl" or "tbRlV" or "rlV" => "writing-mode:vertical-rl;",
+        "btLr" or "lr" => "writing-mode:sideways-lr;",
+        "tbLrV" or "lrV" => "writing-mode:vertical-lr;",
+        _ => null,                               // lrTb / tb / lrTbV / tbV: horizontal, the default
+    };
+
     public static string CellCss(XElement? tcPr, Borders tableBorders, DocxTheme? theme)
     {
         var css = new StringBuilder();
@@ -73,6 +85,7 @@ public static class DocxTableFormatting
         if (tcPr?.Element(W + "shd") is { } shading && DocxStyleCascade.FillHex(shading, theme) is { } fill) css.Append("background:#").Append(fill).Append(';');
         string? verticalAlign = (string?)tcPr?.Element(W + "vAlign")?.Attribute(W + "val");
         if (verticalAlign is "center" or "bottom") css.Append("vertical-align:").Append(verticalAlign == "center" ? "middle" : "bottom").Append(';');
+        if (TextDirectionCss((string?)tcPr?.Element(W + "textDirection")?.Attribute(W + "val")) is { } direction) css.Append(direction);
 
         Borders cell = ReadBorders(tcPr?.Element(W + "tcBorders"), theme);
         // A cell takes its own border, else the table's inside border, else the table's outer one.

@@ -296,8 +296,16 @@ public sealed class DocxBlockHtmlRenderer
         List<XElement> rows = table.Elements(W + "tr").ToList();
         for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
         {
-            html.Append("<tr>");
-            int column = 0;
+            XElement? trPr = rows[rowIndex].Element(W + "trPr");
+            // Row height: a minimum unless hRule="exact" (LibreOffice MeasureHandler: only "exact" is fixed;
+            // absent or "auto"/"atLeast" is a minimum). A table row's CSS height is already a minimum.
+            int? rowHeight = DocxStyleCascade.TwipsAttribute(trPr?.Element(W + "trHeight"), "val");
+            bool isExactHeight = rowHeight is > 0 && (string?)trPr?.Element(W + "trHeight")?.Attribute(W + "hRule") == "exact";
+            html.Append(rowHeight is > 0 ? $"<tr style=\"height:{WordParagraphFormatting.TwipsToPt(rowHeight.Value)}pt\">" : "<tr>");
+            // w:gridBefore / w:gridAfter: grid columns the row leaves empty before its first / after its last cell.
+            int gridBefore = GridSkip(trPr, "gridBefore");
+            if (gridBefore > 0) AppendGridGap(html, gridBefore, trPr?.Element(W + "wBefore"));
+            int column = gridBefore;
             foreach (XElement cell in rows[rowIndex].Elements(W + "tc"))
             {
                 XElement? tcPr = cell.Element(W + "tcPr");
@@ -316,15 +324,34 @@ public sealed class DocxBlockHtmlRenderer
                 html.Append('>');
                 string? previous = _previousStyleKey;
                 _previousStyleKey = null;
+                // An exact row height clips what does not fit, as Word does. A cell merged down over several
+                // rows is as tall as all of them, so only a single-row cell is clipped to this row's height.
+                bool isClipped = isExactHeight && rowSpan == 1;
+                if (isClipped) html.Append("<div style=\"max-height:").Append(WordParagraphFormatting.TwipsToPt(rowHeight!.Value)).Append("pt;overflow:hidden\">");
                 yield return new(RenderBlocks(cell.Elements(), html));
+                if (isClipped) html.Append("</div>");
                 _previousStyleKey = previous;
                 html.Append("</td>");
                 column += span;
             }
+            int gridAfter = GridSkip(trPr, "gridAfter");
+            if (gridAfter > 0) AppendGridGap(html, gridAfter, trPr?.Element(W + "wAfter"));
             html.Append("</tr>");
         }
         html.Append("</table>");
         _tableStyleId = outerTableStyle;
+    }
+
+    private static int GridSkip(XElement? trPr, string name) => Math.Max(0, DocxStyleCascade.TwipsAttribute(trPr?.Element(W + name), "val") ?? 0);
+
+    /// <summary>The empty, borderless grid columns a row skips (w:gridBefore / w:gridAfter), w:wBefore / w:wAfter wide.</summary>
+    private static void AppendGridGap(StringBuilder html, int columns, XElement? width)
+    {
+        html.Append("<td class=\"grid-gap\"");
+        if (columns > 1) html.Append(" colspan=\"").Append(columns).Append('"');
+        html.Append(" style=\"border:none;padding:0;");
+        if (DocxTableFormatting.WidthCss(width) is { } css) html.Append("width:").Append(css).Append(';');
+        html.Append("\"></td>");
     }
 
     private static XElement? LastTableProperty(List<XElement> layers, string name)
@@ -335,7 +362,7 @@ public sealed class DocxBlockHtmlRenderer
         int span = 1;
         for (int rowIndex = startRow + 1; rowIndex < rows.Count; rowIndex++)
         {
-            int column = 0;
+            int column = GridSkip(rows[rowIndex].Element(W + "trPr"), "gridBefore");
             bool continues = false;
             foreach (XElement cell in rows[rowIndex].Elements(W + "tc"))
             {

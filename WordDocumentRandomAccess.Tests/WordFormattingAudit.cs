@@ -31,7 +31,9 @@ public static class WordFormattingAudit
          // revision marks on the paragraph mark itself; move ranges (the moved text itself is rendered)
          "ins", "del", "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
          // no pages, no comments in a reading view
-         "pgNum", "commentReference", "annotationRef", "fitText", "moveFrom", "moveTo"];
+         "pgNum", "commentReference", "annotationRef", "fitText", "moveFrom", "moveTo",
+         // pagination of table rows: repeat as header on each page, never split across pages — no pages in a flow view
+         "tblHeader", "cantSplit"];
     private static readonly HashSet<string> HandledRunProperties =
         ["rStyle", "b", "bCs", "i", "iCs", "u", "strike", "dstrike", "vanish", "webHidden", "rtl", "vertAlign", "sz", "szCs", "color",
          "highlight", "shd", "rFonts", "smallCaps", "caps", "spacing", "cs", "position", "outline", "shadow", "emboss", "imprint", "bdr", "textFill", "em"];
@@ -49,7 +51,8 @@ public static class WordFormattingAudit
     private static readonly HashSet<string> HandledTableParts =
         ["tblPr", "tblGrid", "tr", "tc", "tcPr", "gridSpan", "vMerge", "shd", "bidiVisual", "gridCol", "trPr", "p", "tbl",
          "tcW", "tcBorders", "vAlign", "tblW", "tblBorders", "tblInd", "tblCellMar", "tblStyle", "jc", "sdt",
-         "tcMar", "noWrap", "tblCellSpacing", "tblLayout", "bookmarkStart", "bookmarkEnd"];
+         "tcMar", "noWrap", "tblCellSpacing", "tblLayout", "bookmarkStart", "bookmarkEnd",
+         "trHeight", "gridBefore", "gridAfter", "wBefore", "wAfter", "textDirection"];
 
     private static readonly HashSet<ushort> HandledParagraphSprms =
         [0x2403, 0x2461, 0x2441, 0x840F, 0x845E, 0x840E, 0x845D, 0x8411, 0x8460, 0xA413, 0xA414, 0x6412, 0x2416, 0x260A, 0x460B, 0x2640, 0x4600,
