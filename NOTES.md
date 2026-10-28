@@ -205,15 +205,47 @@ positions (CP) to file offsets, each piece either 8-bit cp1252 or UTF-16. So:
   inside that piece (§2.4.6.1 / §2.4.6.2). The samples have no Prm (0 of 1,962 pieces); the
   corpus pass is the only coverage so far.
 
-## Integration plan (the app)
+## App integration plan — the FastDocView page (approved 2026-10-28)
 
-The block API is shaped like `seforimApi.getLinesPaged` (`index` + `html`) on purpose: a
-Word-document adapter can slot into the lines view's windowed scroller, with headings feeding
-the TOC. The WinForms/WebView2 viewer here is only a stand-in; its `viewer.js` shows the
-protocol (`requestBlocks` → `blocks`) and a minimal estimate-then-measure windowing.
+**Book view is NEVER FastDocView.** FastDocView is its own page: feature folder
+`vue-frontend/src/features/fast-doc-view/`, route `/fast-doc-view`, own stores and names. It only
+borrows the book view's design and the shared components. (The old idea of slotting documents into
+the lines view as synthetic books is dropped.)
 
-Open questions carried over from `docx-as-lines` (2026-08-27): synthetic book ids vs per-doc
-SQLite; footnotes as commentary links.
+User decisions (2026-10-28):
+1. Word-family files (.doc .docx .docm .dot* .odt .ott .fodt .rtf) open in FastDocView by default;
+   "open as PDF" (the existing Word → PDF conversion, print layout) stays as an option.
+2. .txt moves to FastDocView too (today's `/txt-view` holds the whole file in memory).
+3. Rename this repo to FastDocView before the app references it.
+
+Backend (KitveiHakodesh: Core owns everything, the service is transport only):
+- Core (net10, AOT) ProjectReferences FastDocView (+ SeekableDeflate, TextEncodingDetection).
+  `Core/FastDocView/`: open-document registry with idle close; index cache under app data.
+- Service ops, one Dispatcher case each: open (summary), blocks(first, count), headings, weights,
+  close, and search (new library feature: windowed search over blocks, never the whole text).
+  Access through `LocalFileGrants`. File changed on disk → a typed error → the page reopens.
+  The hosted relay (ServiceRpcRelay) needs no change.
+
+Frontend:
+- `FastDocViewPage.vue`, a document composable (bounded block cache near the window),
+  `webview-host/fastDocViewApi.ts` (modelled on `seforimApi.getLinesPaged`); route in `tabStore`
+  `TabRoute`, `AppPageView` (keyed per tab), recents, restore by `localFilePath`; he + en texts.
+- Routing in `localFileStore`: Word family and .txt → `/fast-doc-view`; "open as PDF" keeps the
+  conversion path.
+
+Shared with the book view — reuse as-is: WindowedScroller (+ bar: headings → `landmarkTiers`,
+`EstimatedTextLength` → `rowWeights`), SplitPane (text above, notes pane below), TreeView, useZoom,
+useVirtualizedTextSelection, useLineCopy, ContextMenu, FloatingSearchBar, root font/theme variables.
+Move to shared first (small): text-column CSS (from BookViewLinesContent), BookViewSidePanel,
+toolbar overflow/drag helpers, select-all / Ctrl+F keys, zoom key (per tab/file, not bookId),
+a per-file saved-position field in tabStatePersistence.
+Generalise (medium): TOC tree over headings, scrollbar heading tooltip, title-bar breadcrumb branch,
+search bar UI + match navigation, footnote hover (useNoteTooltip), position capture/restore.
+Own to FastDocView: a simple toolbar in the same style, the notes pane, document search.
+Not shared (library-specific): commentary, annotations, bookmarks, word links, versions, related books.
+
+Order: rename → .odt on-demand index → shared refactors (book view live-checked after) → Core +
+service ops → page → routing → live Playwright checks.
 
 ## Specifications used
 
