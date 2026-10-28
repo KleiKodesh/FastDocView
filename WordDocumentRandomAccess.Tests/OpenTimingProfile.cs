@@ -44,14 +44,10 @@ public static class OpenTimingProfile
         Time(steps, "decide (zip dir)", () => DocxRandomAccessIndexBuilder.TextPartsBytes(package));
         using (var zip = Time(steps, "zip dir", () => new System.IO.Compression.ZipArchive(package, System.IO.Compression.ZipArchiveMode.Read, leaveOpen: true)))
         {
-            System.Xml.Linq.XDocument? stylesXml = Time(steps, "styles.xml load", () => LoadPart(zip, "word/styles.xml"));
-            Time(steps, "style cascade", () => new DocxHtml.DocxStyleCascade(stylesXml));
-            System.Xml.Linq.XDocument? numberingXml = Time(steps, "numbering.xml load", () => LoadPart(zip, "word/numbering.xml"));
-            Time(steps, "numbering defs", () => new DocxHtml.DocxNumberingDefinitions(numberingXml));
-            Time(steps, "settings", () => new DocxHtml.DocxNoteNumberFormats(zip));
+            Time(steps, "styles.xml full DOM (old)", () => LoadPart(zip, "word/styles.xml"));
         }
         package.Position = 0;
-        DocxDocumentParts parts = Time(steps, "parts (all)", () => new DocxDocumentParts(package));
+        DocxDocumentParts parts = Time(steps, "parts (styles streamed + settings)", () => new DocxDocumentParts(package));
         var info = new FileInfo(path);
         var decision = new WordIndexDecision(path, WordIndexMode.Sidecar, true, 0, 0, "");
         using DocxWindowedDocument document = Time(steps, "construct", () => DocxWindowedDocument.OpenFromStream(

@@ -5,10 +5,14 @@ namespace WordDocumentRandomAccess.Deflate;
 /// offset, and that calls <see cref="BlockBoundaryReached"/> before each new block — the only
 /// moments where <see cref="CaptureCheckpoint"/> yields a resumable state — and can later resume
 /// from such a checkpoint via <see cref="ResumeFrom"/>. Managed code only, no zlib dependency.
+/// The hot loop writes literals straight through, copies non-overlapping matches in bulk and keeps
+/// the 32 KB window circular with a mask instead of a modulo.
 /// </summary>
 public sealed class DeflateCheckpointInflater
 {
     private enum State { BlockHeader, StoredBlock, HuffmanBlock, Finished }
+
+    private const int WindowMask = DeflateCheckpoint.WindowSize - 1;
 
     private static readonly ushort[] LengthBase =
         [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
@@ -53,8 +57,8 @@ public sealed class DeflateCheckpointInflater
             throw new InvalidOperationException("A checkpoint can only be captured at a block boundary.");
         int windowLength = (int)Math.Min(_totalOut, DeflateCheckpoint.WindowSize);
         var window = new byte[windowLength];
-        int start = (_windowPosition - windowLength + _window.Length) % _window.Length;
-        for (int i = 0; i < windowLength; i++) window[i] = _window[(start + i) % _window.Length];
+        int start = (_windowPosition - windowLength) & WindowMask;
+        for (int i = 0; i < windowLength; i++) window[i] = _window[(start + i) & WindowMask];
         return new DeflateCheckpoint(_bits.CompressedBytePosition, _bits.LeftoverBitCount, _bits.LeftoverBits,
                                      _totalOut, window);
     }
@@ -64,7 +68,7 @@ public sealed class DeflateCheckpointInflater
         _bits.SeekTo(checkpoint.CompressedBytePosition, checkpoint.LeftoverBitCount, checkpoint.LeftoverBits);
         Array.Clear(_window, 0, _window.Length);
         Buffer.BlockCopy(checkpoint.Window, 0, _window, 0, checkpoint.Window.Length);
-        _windowPosition = checkpoint.Window.Length % _window.Length;
+        _windowPosition = checkpoint.Window.Length & WindowMask;
         _totalOut = checkpoint.UncompressedOffset;
         _state = State.BlockHeader;
         _isFinalBlock = false;
@@ -144,6 +148,7 @@ public sealed class DeflateCheckpointInflater
         int filled = 0;
         while (filled < lengths.Length)
         {
+            _bits.EnsureBits(15);
             int symbol = codeLengthDecoder.Decode(_bits);
             if (symbol < 16) { lengths[filled++] = (byte)symbol; continue; }
             int repeat;
@@ -174,37 +179,85 @@ public sealed class DeflateCheckpointInflater
 
     private int ReadHuffman(byte[] destination, int offset, int count)
     {
+        DeflateHuffmanDecoder literals = _literalDecoder!, distances = _distanceDecoder!;
+        DeflateBitReader bits = _bits;
+        byte[] window = _window;
+        int windowPosition = _windowPosition;   // literals update this local; it is flushed to the field before any match copy
         int written = 0;
+        int unflushedLiterals = 0;
         while (written < count)
         {
-            int symbol = _literalDecoder!.Decode(_bits);
+            // One refill (≥ 57 bits) covers the longest symbol + extra bits + distance + its extra bits (≤ 48).
+            bits.Refill();
+            int symbol = literals.Decode(bits);
             if (symbol < 256)
             {
-                destination[offset + written++] = EmitByte((byte)symbol);
+                byte value = (byte)symbol;
+                destination[offset + written++] = value;
+                window[windowPosition] = value;
+                windowPosition = (windowPosition + 1) & WindowMask;
+                unflushedLiterals++;
                 continue;
             }
-            if (symbol == 256) { _state = State.BlockHeader; return written; }
+            if (symbol == 256) { _state = State.BlockHeader; break; }
 
             int lengthIndex = symbol - 257;
             if (lengthIndex >= LengthBase.Length) throw new InvalidDataException("Deflate: bad length symbol.");
-            _pendingCopyLength = LengthBase[lengthIndex] + _bits.ReadBits(LengthExtraBits[lengthIndex]);
-            int distanceSymbol = _distanceDecoder!.Decode(_bits);
+            int length = LengthBase[lengthIndex] + bits.ReadBits(LengthExtraBits[lengthIndex]);
+            int distanceSymbol = distances.Decode(bits);
             if (distanceSymbol >= DistanceBase.Length) throw new InvalidDataException("Deflate: bad distance symbol.");
-            _pendingCopyDistance = DistanceBase[distanceSymbol] + _bits.ReadBits(DistanceExtraBits[distanceSymbol]);
-            if (_pendingCopyDistance > _totalOut) throw new InvalidDataException("Deflate: distance before start of output.");
+            int distance = DistanceBase[distanceSymbol] + bits.ReadBits(DistanceExtraBits[distanceSymbol]);
+
+            _windowPosition = windowPosition;
+            _totalOut += unflushedLiterals;
+            unflushedLiterals = 0;
+            if (distance > _totalOut) throw new InvalidDataException("Deflate: distance before start of output.");
+            _pendingCopyLength = length;
+            _pendingCopyDistance = distance;
             written += CopyFromWindow(destination, offset + written, count - written);
+            windowPosition = _windowPosition;
         }
+        _windowPosition = windowPosition;
+        _totalOut += unflushedLiterals;
         return written;
     }
 
     private int CopyFromWindow(byte[] destination, int offset, int count)
     {
         int toCopy = Math.Min(count, _pendingCopyLength);
-        int source = (_windowPosition - _pendingCopyDistance + _window.Length) % _window.Length;
-        for (int i = 0; i < toCopy; i++)
+        int distance = _pendingCopyDistance;
+        int source = (_windowPosition - distance) & WindowMask;
+        bool wraps = source + toCopy > _window.Length || _windowPosition + toCopy > _window.Length;
+        if (!wraps)
         {
-            destination[offset + i] = EmitByte(_window[source]);
-            source = (source + 1) % _window.Length;
+            if (distance >= toCopy)
+            {
+                Buffer.BlockCopy(_window, source, _window, _windowPosition, toCopy);
+            }
+            else
+            {
+                // Overlapping match (a repeating pattern of `distance` bytes): write the first period,
+                // then double what is already written — O(log n) block copies instead of a byte loop.
+                Buffer.BlockCopy(_window, source, _window, _windowPosition, distance);
+                int done = distance;
+                while (done < toCopy)
+                {
+                    int chunk = Math.Min(done, toCopy - done);
+                    Buffer.BlockCopy(_window, _windowPosition, _window, _windowPosition + done, chunk);
+                    done += chunk;
+                }
+            }
+            Buffer.BlockCopy(_window, _windowPosition, destination, offset, toCopy);
+            _windowPosition = (_windowPosition + toCopy) & WindowMask;
+            _totalOut += toCopy;
+        }
+        else
+        {
+            for (int i = 0; i < toCopy; i++)
+            {
+                destination[offset + i] = EmitByte(_window[source]);
+                source = (source + 1) & WindowMask;
+            }
         }
         _pendingCopyLength -= toCopy;
         return toCopy;
@@ -213,7 +266,7 @@ public sealed class DeflateCheckpointInflater
     private byte EmitByte(byte value)
     {
         _window[_windowPosition] = value;
-        _windowPosition = (_windowPosition + 1) % _window.Length;
+        _windowPosition = (_windowPosition + 1) & WindowMask;
         _totalOut++;
         return value;
     }

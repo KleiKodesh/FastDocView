@@ -97,6 +97,11 @@ view over SQLite.
   commit that was not QA'd is not pushed.
 - **Work in parallel where pieces are independent** (user, 2026-10-28): separate formats,
   speed vs coverage, research vs implementation go to parallel subagents with narrow briefs;
-  only sequential, shared-file work stays in the main thread.
+  only sequential, shared-file work stays in the main thread. **At most 2 agents at a time**
+  in a session (user, 2026-10-28) — the machine must stay usable; queue the rest. Agents work
+  in their own worktree under `..\WordDocumentRandomAccess-work\<topic>` (branch `work/<topic>`),
+  commit there, never push or merge; the main thread merges after QA.
+- **Commit as you go** (user, 2026-10-28): small commits after each verified step (a feature,
+  a fix, a measured speed-up), not one big commit at the end — each QA'd per the rule above.
 - Commits: author KleiKodesh, **no Co-Authored-By trailer**; push freely to this repo.
 - Don't build or verify unless asked; when asked, run the harness and the Playwright checks.

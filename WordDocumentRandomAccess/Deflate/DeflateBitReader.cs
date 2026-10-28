@@ -1,9 +1,13 @@
+using System.Buffers.Binary;
+
 namespace WordDocumentRandomAccess.Deflate;
 
 /// <summary>
 /// LSB-first bit reader over a bounded region of a stream, with the one feature a plain reader
 /// lacks: it can report its exact position (byte + leftover bits) and be re-seated there later —
-/// what makes a <see cref="DeflateCheckpoint"/> possible.
+/// what makes a <see cref="DeflateCheckpoint"/> possible. Refills seven bytes at a time from a
+/// 64 KB buffer, so the hot decode loop touches the stream rarely and the bit buffer almost never
+/// runs dry mid-symbol.
 /// </summary>
 internal sealed class DeflateBitReader
 {
@@ -16,7 +20,7 @@ internal sealed class DeflateBitReader
     private long _nextLoadPosition;   // absolute stream position of _buffer[_bufferLength]
 
     private ulong _bitBuffer;
-    private int _bitCount;
+    private int _bitCount;            // valid low bits of _bitBuffer; bits above are always zero
 
     public DeflateBitReader(Stream input, long regionStart, long regionLength)
     {
@@ -43,20 +47,35 @@ internal sealed class DeflateBitReader
 
     public int LeftoverBits => (int)(_bitBuffer & ((1UL << LeftoverBitCount) - 1));
 
-    public void EnsureBits(int count)
+    /// <summary>Tops the bit buffer up to at least 57 bits when input remains (seven bytes at once when they are in the buffer).</summary>
+    public void Refill()
     {
-        while (_bitCount < count)
+        while (_bitCount <= 56)
         {
-            if (_bufferPosition == _bufferLength && !Fill())
+            int available = _bufferLength - _bufferPosition;
+            if (available >= 8)
             {
-                // Past the end of the data: feed zero bits so a final peek can still complete.
-                // A real code never needs them; a truncated stream errors out on the next symbol.
-                if (_bitCount < count) { _bitCount += 8; continue; }
+                int bytes = (63 - _bitCount) >> 3;                                      // 1..7
+                ulong value = BinaryPrimitives.ReadUInt64LittleEndian(_buffer.AsSpan(_bufferPosition)) & ((1UL << (bytes * 8)) - 1);
+                _bitBuffer |= value << _bitCount;
+                _bitCount += bytes * 8;
+                _bufferPosition += bytes;
                 return;
             }
+            if (available == 0 && !Fill()) return;
             _bitBuffer |= (ulong)_buffer[_bufferPosition++] << _bitCount;
             _bitCount += 8;
         }
+    }
+
+    /// <summary>Makes at least <paramref name="count"/> (≤ 32) bits available, padding with zero bits past the end of the data.</summary>
+    public void EnsureBits(int count)
+    {
+        if (_bitCount >= count) return;
+        Refill();
+        // Past the end of the data: zero bits let a final peek complete; a real code never needs them,
+        // and a truncated stream errors out on the next symbol.
+        if (_bitCount < count) _bitCount = count;
     }
 
     public int PeekBits(int count) => (int)(_bitBuffer & ((1UL << count) - 1));

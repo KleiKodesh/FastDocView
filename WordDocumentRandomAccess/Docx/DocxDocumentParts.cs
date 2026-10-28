@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Xml;
 using System.Xml.Linq;
 using WordDocumentRandomAccess.DocxHtml;
 
@@ -27,7 +28,7 @@ public sealed class DocxDocumentParts
     {
         _package = package;
         using var zip = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
-        Styles = new DocxStyleCascade(LoadPart(zip, "word/styles.xml"));
+        Styles = new DocxStyleCascade(LoadStyles(zip));
         NoteNumberFormats = new DocxNoteNumberFormats(zip);
     }
 
@@ -48,6 +49,32 @@ public sealed class DocxDocumentParts
                 (numId, level) = Styles.NumberingOf(styleId);
             return numId > 0 ? counter.Next(numId, level) : null;
         };
+    }
+
+    /// <summary>
+    /// styles.xml through a forward-only reader keeping only w:docDefaults and the w:style elements:
+    /// w:latentStyles (often most of the part — hundreds of built-in style switches) is skipped
+    /// without building nodes. Same XDocument shape for DocxStyleCascade, a fraction of the cost.
+    /// </summary>
+    private static XDocument? LoadStyles(ZipArchive zip)
+    {
+        ZipArchiveEntry? entry = zip.GetEntry("word/styles.xml");
+        if (entry is null) return null;
+        using Stream stream = entry.Open();
+        using XmlReader reader = XmlReader.Create(stream, new XmlReaderSettings { IgnoreWhitespace = true, IgnoreComments = true, DtdProcessing = DtdProcessing.Ignore });
+        if (!reader.ReadToFollowing("styles", DocxStyleCascade.W.NamespaceName)) return null;
+        var root = new XElement(DocxStyleCascade.W + "styles");
+        if (reader.IsEmptyElement) return new XDocument(root);
+        reader.Read();
+        while (!reader.EOF && !(reader.NodeType == XmlNodeType.EndElement && reader.Depth == 0))
+        {
+            if (reader.NodeType == XmlNodeType.Element && reader.Depth == 1
+                && reader.NamespaceURI == DocxStyleCascade.W.NamespaceName && reader.LocalName is "docDefaults" or "style")
+                root.Add(XNode.ReadFrom(reader));                 // advances past the element
+            else if (reader.NodeType == XmlNodeType.Element && reader.Depth == 1) reader.Skip();   // latentStyles and anything else
+            else reader.Read();
+        }
+        return new XDocument(root);
     }
 
     private static XDocument? LoadPart(ZipArchive zip, string name)

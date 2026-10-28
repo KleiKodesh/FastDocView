@@ -54,9 +54,9 @@ internal sealed class DeflateHuffmanDecoder
         }
     }
 
+    /// <summary>Decodes one symbol; the caller has already refilled the reader (≥ 15 bits unless the data ended).</summary>
     public int Decode(DeflateBitReader bits)
     {
-        bits.EnsureBits(FastBits);
         ushort entry = _fast[bits.PeekBits(FastBits)];
         if (entry != 0)
         {
