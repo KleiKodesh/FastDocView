@@ -289,7 +289,10 @@ internal sealed class DocxBodyBlockScanner
         if (!_isInsideTextRun || BlockTextLengths.Count == 0) return;
         BlockTextLengths[BlockTextLengths.Count - 1] += text.Length;
         if (_currentHeadingLevel > 0 && _headingText.Length < MaxHeadingTextBytes)
-            _headingText.Write(text.Slice(0, (int)Math.Min(text.Length, MaxHeadingTextBytes - _headingText.Length)));
+        {
+            ReadOnlySpan<byte> kept = text.Slice(0, (int)Math.Min(text.Length, MaxHeadingTextBytes - _headingText.Length));
+            foreach (byte b in kept) _headingText.WriteByte(b);       // net48 MemoryStream has no span overload; ≤ 600 bytes
+        }
     }
 
     private void OnTagNameComplete()

@@ -103,5 +103,11 @@ view over SQLite.
   commit there, never push or merge; the main thread merges after QA.
 - **Commit as you go** (user, 2026-10-28): small commits after each verified step (a feature,
   a fix, a measured speed-up), not one big commit at the end — each QA'd per the rule above.
+- **No speed hacks — no threading to hide slowness** (user, 2026-10-28): if something is slow,
+  the implementation is bad; fix the algorithm / data structure / allocations. No extra threads,
+  producer–consumer pipelines or parallel loops to mask a slow pass. (A two-thread inflate/scan
+  hand-off was tried and reverted for this reason.)
+- **A failed build stops the commit**: never chain `build | grep … && git commit` — grep
+  succeeds even when the build fails. Check the build's exit status, both targets (net48 + net10).
 - Commits: author KleiKodesh, **no Co-Authored-By trailer**; push freely to this repo.
 - Don't build or verify unless asked; when asked, run the harness and the Playwright checks.
