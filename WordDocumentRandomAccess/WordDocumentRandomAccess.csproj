@@ -3,9 +3,8 @@
   <!-- Random access into Word files without keeping a decompressed copy, for windowed
        (virtual-scroll) HTML rendering of huge documents.
 
-         • Deflate/    — a managed inflater that can be checkpointed at block boundaries and
-                         resumed from a checkpoint (the zlib "zran" technique).
-         • Zip/        — finds word/document.xml inside the .docx zip (data offset, method, sizes).
+         • (SeekableDeflate repo, sibling folder) — the checkpointing inflater, the seekable stream
+                         and zip-entry location; referenced as a project, not a package.
          • Docx/       — one indexing pass records checkpoints + every body-level block
                          (paragraph / table / ...) offset; afterwards any block is read in ms.
          • DocxHtml/   — styles.xml cascade + block → HTML (no page layout, no footnote bodies yet).
@@ -20,6 +19,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsAotCompatible Condition="'$(TargetFramework)'=='net10.0'">true</IsAotCompatible>
   </PropertyGroup>
+
+  <!-- Seekable deflate + zip-entry location live in their own repo, cloned next to this one. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\SeekableDeflate\SeekableDeflate\SeekableDeflate.csproj" />
+  </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)'=='net48'">
     <Reference Include="System.IO.Compression" />

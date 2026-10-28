@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using WordDocumentRandomAccess.Deflate;
+using SeekableDeflate;
 using WordDocumentRandomAccess.Docx;
-using WordDocumentRandomAccess.Zip;
+using SeekableDeflate;
 
 namespace WordDocumentRandomAccess.Tests;
 
