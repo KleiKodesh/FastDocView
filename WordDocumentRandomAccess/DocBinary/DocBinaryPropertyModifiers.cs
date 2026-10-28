@@ -97,7 +97,7 @@ public static class DocBinaryPropertyModifiers
                 case 0x083A: formatting.IsSmallCaps = Toggle(grpprl[operandAt], formatting.IsSmallCaps, styleBaseline?.IsSmallCaps); break;
                 case 0x083B: formatting.IsAllCaps = Toggle(grpprl[operandAt], formatting.IsAllCaps, styleBaseline?.IsAllCaps); break;
                 case 0x8840: formatting.CharacterSpacingTwips = BitConverter.ToInt16(grpprl, operandAt); break;
-                case 0x4840: formatting.PositionHalfPoints = BitConverter.ToInt16(grpprl, operandAt); break;                            // sprmCHpsPos
+                case 0x4845: formatting.PositionHalfPoints = BitConverter.ToInt16(grpprl, operandAt); break;                            // sprmCHpsPos (LibreOffice sprmids.hxx)
                 case 0x0868: formatting.IsHidden = Toggle(grpprl[operandAt], formatting.IsHidden, styleBaseline?.IsHidden); break;     // sprmCFWebHidden
                 case 0x2A53: formatting.IsStrikethrough = Toggle(grpprl[operandAt], formatting.IsStrikethrough, styleBaseline?.IsStrikethrough); break;   // double strike
                 case 0x0838: formatting.IsOutline = Toggle(grpprl[operandAt], formatting.IsOutline, styleBaseline?.IsOutline); break;

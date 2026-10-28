@@ -12,15 +12,29 @@ namespace WordDocumentRandomAccess.Docx;
 public sealed class DocxDocumentParts
 {
     public DocxStyleCascade Styles { get; }
-    public DocxNumberingDefinitions Numbering { get; }
     public DocxNoteNumberFormats NoteNumberFormats { get; }
+
+    /// <summary>
+    /// numbering.xml is only needed by the index pass (list labels are stored in the index), so it
+    /// is parsed on first use — a reopen from a cached index never pays for it (~75 ms on big files).
+    /// </summary>
+    public DocxNumberingDefinitions Numbering => _numbering ??= LoadNumbering();
+
+    private readonly Stream _package;
+    private DocxNumberingDefinitions? _numbering;
 
     public DocxDocumentParts(Stream package)
     {
+        _package = package;
         using var zip = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
         Styles = new DocxStyleCascade(LoadPart(zip, "word/styles.xml"));
-        Numbering = new DocxNumberingDefinitions(LoadPart(zip, "word/numbering.xml"));
         NoteNumberFormats = new DocxNoteNumberFormats(zip);
+    }
+
+    private DocxNumberingDefinitions LoadNumbering()
+    {
+        using var zip = new ZipArchive(_package, ZipArchiveMode.Read, leaveOpen: true);
+        return new DocxNumberingDefinitions(LoadPart(zip, "word/numbering.xml"));
     }
 
     /// <summary>The scanner's hook: paragraph style / direct numPr → the next label of that list.</summary>

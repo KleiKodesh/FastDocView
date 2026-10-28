@@ -15,7 +15,7 @@ namespace WordDocumentRandomAccess.Docx;
 public sealed class DocxRandomAccessIndex
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 4;
+    private const int FormatVersion = 5;
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -124,12 +124,11 @@ public sealed class DocxRandomAccessIndex
         writer.Write(ListLabels.Length);
         foreach (string label in ListLabels) writer.Write(label);
 
-        writer.Write(BlockStartOffsets.Length);
-        foreach (long offset in BlockStartOffsets) writer.Write(offset);
-        foreach (WordDocumentBlockKind kind in BlockKinds) writer.Write((byte)kind);
-        foreach (int length in BlockTextLengths) writer.Write(length);
-        foreach (short styleId in BlockStyleIds) writer.Write(styleId);
-        foreach (int labelId in BlockListLabelIds) writer.Write(labelId);
+        IndexBinaryArrays.Write(writer, BlockStartOffsets);
+        IndexBinaryArrays.Write(writer, BlockKinds);
+        IndexBinaryArrays.Write(writer, BlockTextLengths);
+        IndexBinaryArrays.Write(writer, BlockStyleIds);
+        IndexBinaryArrays.Write(writer, BlockListLabelIds);
 
         writer.Write(Headings.Length);
         foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
@@ -163,17 +162,11 @@ public sealed class DocxRandomAccessIndex
         var listLabels = new string[reader.ReadInt32()];
         for (int i = 0; i < listLabels.Length; i++) listLabels[i] = reader.ReadString();
 
-        int blockCount = reader.ReadInt32();
-        var starts = new long[blockCount];
-        var kinds = new WordDocumentBlockKind[blockCount];
-        var textLengths = new int[blockCount];
-        var styleIds = new short[blockCount];
-        var labelIds = new int[blockCount];
-        for (int i = 0; i < blockCount; i++) starts[i] = reader.ReadInt64();
-        for (int i = 0; i < blockCount; i++) kinds[i] = (WordDocumentBlockKind)reader.ReadByte();
-        for (int i = 0; i < blockCount; i++) textLengths[i] = reader.ReadInt32();
-        for (int i = 0; i < blockCount; i++) styleIds[i] = reader.ReadInt16();
-        for (int i = 0; i < blockCount; i++) labelIds[i] = reader.ReadInt32();
+        long[] starts = IndexBinaryArrays.Read<long>(reader);
+        WordDocumentBlockKind[] kinds = IndexBinaryArrays.Read<WordDocumentBlockKind>(reader);
+        int[] textLengths = IndexBinaryArrays.Read<int>(reader);
+        short[] styleIds = IndexBinaryArrays.Read<short>(reader);
+        int[] labelIds = IndexBinaryArrays.Read<int>(reader);
 
         var headings = new WordDocumentHeading[reader.ReadInt32()];
         for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
@@ -249,8 +242,8 @@ public sealed class DocxRandomAccessIndex
         if (!File.Exists(indexPath)) return null;
         try
         {
-            using var file = File.OpenRead(indexPath);
-            DocxRandomAccessIndex index = Read(file);
+            using BinaryReader reader = IndexBinaryArrays.OpenInMemory(indexPath);
+            DocxRandomAccessIndex index = Read(reader.BaseStream);
             return index.MatchesSource(documentPath) ? index : null;
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or EndOfStreamException)

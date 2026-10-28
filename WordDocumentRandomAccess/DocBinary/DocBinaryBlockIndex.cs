@@ -13,7 +13,7 @@ namespace WordDocumentRandomAccess.DocBinary;
 public sealed class DocBinaryBlockIndex
 {
     private const string Magic = "KHDOCIDX";
-    private const int FormatVersion = 2;
+    private const int FormatVersion = 3;
     private const int MaxHeadingTextLength = 300;
 
     public long SourceFileLength { get; }
@@ -129,10 +129,9 @@ public sealed class DocBinaryBlockIndex
             writer.Write(SourceFileLength);
             writer.Write(SourceLastWriteTicksUtc);
             writer.Write(MainTextCharacterCount);
-            writer.Write(BlockStartCps.Length);
-            foreach (int cp in BlockStartCps) writer.Write(cp);
-            foreach (WordDocumentBlockKind kind in BlockKinds) writer.Write((byte)kind);
-            foreach (int length in BlockTextLengths) writer.Write(length);
+            IndexBinaryArrays.Write(writer, BlockStartCps);
+            IndexBinaryArrays.Write(writer, BlockKinds);
+            IndexBinaryArrays.Write(writer, BlockTextLengths);
             writer.Write(Headings.Length);
             foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
         }
@@ -145,17 +144,13 @@ public sealed class DocBinaryBlockIndex
         if (!File.Exists(indexPath)) return null;
         try
         {
-            using var reader = new BinaryReader(File.OpenRead(indexPath), Encoding.UTF8);
+            using BinaryReader reader = IndexBinaryArrays.OpenInMemory(indexPath);
             if (reader.ReadString() != Magic || reader.ReadInt32() != FormatVersion) return null;
             long length = reader.ReadInt64(), ticks = reader.ReadInt64();
             int mainText = reader.ReadInt32();
-            int count = reader.ReadInt32();
-            var starts = new int[count];
-            var kinds = new WordDocumentBlockKind[count];
-            var lengths = new int[count];
-            for (int i = 0; i < count; i++) starts[i] = reader.ReadInt32();
-            for (int i = 0; i < count; i++) kinds[i] = (WordDocumentBlockKind)reader.ReadByte();
-            for (int i = 0; i < count; i++) lengths[i] = reader.ReadInt32();
+            int[] starts = IndexBinaryArrays.Read<int>(reader);
+            WordDocumentBlockKind[] kinds = IndexBinaryArrays.Read<WordDocumentBlockKind>(reader);
+            int[] lengths = IndexBinaryArrays.Read<int>(reader);
             var headings = new WordDocumentHeading[reader.ReadInt32()];
             for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
             var index = new DocBinaryBlockIndex(length, ticks, mainText, starts, kinds, lengths, headings);

@@ -68,9 +68,9 @@ public static class WordFormattingAudit
          // ignored by design: revision ids, language ids, proofing, script hint, east-asian/other-script fonts, field data, picture location
          0x6816, 0x6815, 0x6817, 0x286F, 0x486E, 0x4874, 0x485F, 0x486D, 0x4873, 0x0875, 0x4A50, 0x4A51, 0x0811, 0x0802, 0x0806, 0x6A03,
          0x6A09, 0x0800, 0x0801, 0x4804, 0x6805, 0x4807, 0x080A, 0x0882, 0x484B,
-         0x4840, 0x0868, 0x2A53, 0x0838, 0x0839, 0x0858, 0x0854, 0x6865, 0xCA72,
-         // ignored by design: kerning, character scale, underline color, deletion revision attribution, east-asian layout, script hints
-         0x4845, 0x4852, 0x6877, 0x6864, 0x4863, 0x4A95, 0xCA89, 0x2A83, 0x2A86, 0x0856, 0x2859, 0x0016, 0x0146];
+         0x4845, 0x0868, 0x2A53, 0x0838, 0x0839, 0x0858, 0x0854, 0x6865, 0xCA72,
+         // ignored by design: kerning (0x484B), character scale, underline color, deletion revision attribution, east-asian layout, script hints
+         0x4852, 0x6877, 0x6864, 0x4863, 0x4A95, 0xCA89, 0x2A83, 0x2A86, 0x0856, 0x2859, 0x0016, 0x0146];
 
     /// <summary>Unhandled constructs: occurrences and the number of files that use each.</summary>
     private sealed class AuditTally
@@ -267,7 +267,7 @@ public static class WordFormattingAudit
         0x6805 => "CDttmRMark", 0x0806 => "CFData", 0x4807 => "CIdslRMark", 0x6A09 => "CSymbol", 0x080A => "CFOle2",
         0x2A0C => "CHighlight", 0x6815 => "CRsidProp", 0x6816 => "CRsidText", 0x6817 => "CRsidRMDel",
         0x0838 => "CFOutline", 0x0839 => "CFShadow", 0x083A => "CFSmallCaps", 0x083B => "CFCaps", 0x0875 => "CFNoProof",
-        0x8840 => "CDxaSpace char spacing", 0x4845 => "CHpsKern", 0xCA47 => "CMajority", 0x2A53 => "CFtcDefault?", 0x2859 => "CFtcDefault/sfxtText",
+        0x8840 => "CDxaSpace char spacing", 0x4845 => "CHpsPos", 0xCA47 => "CMajority", 0x2A53 => "CFtcDefault?", 0x2859 => "CFtcDefault/sfxtText",
         0x0854 => "CFImprint", 0x0858 => "CFEmboss", 0x2A33 => "CPlain", 0x2A34 => "CKcd", 0x4852 => "CCharScale", 0xCA71 => "CShd",
         0x6877 => "CUnderlineColor", 0x6865 => "CBrc80", 0xCA72 => "CBrc", 0x2A79 => "CCnf?", 0x0882 => "CFComplexScripts",
         0x2407 => "PFKeepFollow?", 0x2405 => "PFKeep", 0x2406 => "PFKeepFollow", 0x2407 + 1 => "PFPageBreakBefore", 0x240C => "PFNoLineNumb",
@@ -275,7 +275,7 @@ public static class WordFormattingAudit
         0x6426 => "PBrcBottom80", 0x6427 => "PBrcRight80", 0x6428 => "PBrcBetween80", 0x442D => "PShd80", 0xC64D => "PShd",
         0x2431 => "PFWidowControl", 0x2433 => "PFKinsoku", 0x2434 => "PFWordWrap", 0x2435 => "PFOverflowPunct", 0x2436 => "PFTopLinePunct",
         0x2437 => "PFAutoSpaceDE", 0x2438 => "PFAutoSpaceDN", 0x4439 => "PWAlignFont", 0x2448 => "PISnapBaseLine?", 0x245B => "PFContextualSpacing",
-        0x6467 => "PRsid", 0x6470 => "PTableProps?", 0x2462 => "PFDyaBeforeAuto?", 0x4458 => "PDcs drop cap",
+        0x6467 => "PRsid", 0x6470 => "PTableProps?", 0x2462 => "PFDyaBeforeAuto?", 0x442C => "PDcs drop cap",
         0x245C => "PFDyaBeforeAuto", 0x245D => "PFDyaAfterAuto"[..0] + "PDxaRight", 0x2471 => "PFMirrorIndents?",
         0xD234 => "TDefTableShd?", 0xD606 => "TSetBrc?", 0xD608 => "TDefTable", 0xD609 => "TDefTableShd80", 0x5400 => "TJc80",
         0x9601 => "TDxaLeft", 0x9602 => "TDxaGapHalf", 0x3403 => "TFCantSplit90", 0x3404 => "TTableHeader", 0xD605 => "TTableBorders80",
