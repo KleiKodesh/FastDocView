@@ -36,6 +36,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
     {
         using var compoundFile = new CompoundFileReader(filePath);
+        ThrowWhenEncryptedPackage(compoundFile);
         using Stream wordDocument = compoundFile.OpenRootStream("WordDocument") ?? throw new InvalidDataException("No WordDocument stream.");
         var fib = new DocBinaryFileInformationBlock(wordDocument);
         bool hasCachedIndex = DocBinaryBlockIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
@@ -80,6 +81,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     {
         FilePath = displayPath;
         _compoundFile = new CompoundFileReader(file);
+        ThrowWhenEncryptedPackage(_compoundFile);
         _wordDocument = _compoundFile.OpenRootStream("WordDocument") ?? throw new InvalidDataException("No WordDocument stream — not a Word binary file.");
         FileInformationBlock = new DocBinaryFileInformationBlock(_wordDocument);
         _tableStream = _compoundFile.OpenRootStream(FileInformationBlock.TableStreamName)
@@ -103,6 +105,16 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
 
         IsRightToLeft = DetectRightToLeft();
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(0).RunFormatting, IsRightToLeft);
+    }
+
+    /// <summary>
+    /// A password-protected .docx/.docm is an OLE compound file holding EncryptionInfo and
+    /// EncryptedPackage streams ([MS-OFFCRYPTO] §2.3.4 / §2.3.4.4), often with a decoy WordDocument stream.
+    /// </summary>
+    internal static void ThrowWhenEncryptedPackage(CompoundFileReader compoundFile)
+    {
+        if (compoundFile.HasRootStream("EncryptedPackage") && compoundFile.HasRootStream("EncryptionInfo"))
+            throw new NotSupportedException("Encrypted (password-protected) Word 2007+ documents are not supported.");
     }
 
     /// <summary>Normal style bidi, else a Hebrew/Arabic share of the first few thousand characters.</summary>

@@ -50,8 +50,29 @@ public static class WordWindowedDocumentOpener
             WordFileFormat.WebArchive => MarkupWindowedDocument.Open(filePath, MarkupSourceKind.WebArchive, policy, progress, cancellation),
             WordFileFormat.PlainText => MarkupWindowedDocument.Open(filePath, MarkupSourceKind.PlainText, policy, progress, cancellation),
             WordFileFormat.RichText => RtfWindowedDocument.Open(filePath, policy, progress, cancellation),
-            _ => throw new InvalidDataException("Not a Word or OpenDocument text (neither a zip package, an OLE compound file nor a flat OpenDocument)."),
+            _ => throw DescribeUnknown(filePath),
         };
+    }
+
+    /// <summary>
+    /// The error for a file no reader takes, naming what it is when its first bytes tell: Word 2003
+    /// XML, HTML, or a Word for Windows 1.x / 2.0 file (a FIB with no compound file around it; wIdent
+    /// 0xA59B/0xA59C = Word 1, 0xA5DB = Word 2 per LibreOffice ww8scan.cxx WW8Fib::GetFIBVersion).
+    /// </summary>
+    private static Exception DescribeUnknown(string filePath)
+    {
+        var head = new byte[4096];
+        int count;
+        using (FileStream file = WordDocumentFileStream.OpenShared(filePath)) count = file.Read(head, 0, head.Length);
+        ushort identifier = count >= 2 ? BitConverter.ToUInt16(head, 0) : (ushort)0;
+        if (identifier is 0xA59B or 0xA59C) return new NotSupportedException("Word for Windows 1.x documents are not supported.");
+        if (identifier == 0xA5DB) return new NotSupportedException("Word for Windows 2.0 documents are not supported.");
+        string text = System.Text.Encoding.UTF8.GetString(head, 0, count);
+        if (text.Contains("schemas.microsoft.com/office/word/2003/wordml"))
+            return new NotSupportedException("Word 2003 XML documents (WordprocessingML 2003) are not supported.");
+        if (text.IndexOf("<html", StringComparison.OrdinalIgnoreCase) >= 0 || text.IndexOf("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) >= 0)
+            return new NotSupportedException("HTML pages saved with a Word extension are not supported.");
+        return new InvalidDataException("Not a Word, RTF, text or OpenDocument file (no known signature).");
     }
 
     /// <summary>What opening this file would do under the policy — reads only headers, no index pass.</summary>

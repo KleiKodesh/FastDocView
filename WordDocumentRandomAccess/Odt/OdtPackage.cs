@@ -20,7 +20,7 @@ public static class OdtPackage
     public const string TextMimeType = "application/vnd.oasis.opendocument.text";
     public const string TextTemplateMimeType = "application/vnd.oasis.opendocument.text-template";
     private const int MaxManifestBytes = 4 << 20;
-    private const int FlatSniffBytes = 8192;
+    private const string OfficeNamespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
     private const int MimeTypeReadBytes = 1024;
     private const string ManifestNamespace = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0";
 
@@ -58,7 +58,8 @@ public static class OdtPackage
                 if (read <= 0) break;
                 filled += read;
             }
-            return Encoding.ASCII.GetString(bytes, 0, filled).Trim();
+            string mimeType = Encoding.ASCII.GetString(bytes, 0, filled).Trim();
+            return mimeType.Length > 0 ? mimeType : ReadManifestRootMediaType(zip);   // an empty mimetype says nothing (LibreOffice: the manifest's type wins anyway)
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException) { return null; }
     }
@@ -82,17 +83,22 @@ public static class OdtPackage
         catch (Exception exception) when (exception is InvalidDataException or IOException or XmlException) { return null; }
     }
 
-    /// <summary>True when the file is a flat OpenDocument text: XML whose root is office:document with a text mimetype.</summary>
+    /// <summary>
+    /// True when the file is a flat OpenDocument text: XML whose root element is office:document
+    /// (in the office namespace, whatever its prefix, and however its attributes are laid out over
+    /// lines) with an office:mimetype naming a text or text template. Only the root start tag is read.
+    /// </summary>
     public static bool IsFlatOpenDocumentText(Stream file)
     {
-        var head = new byte[FlatSniffBytes];
         file.Position = 0;
-        int count = file.Read(head, 0, head.Length);
-        string text = Encoding.UTF8.GetString(head, 0, count);
-        int root = text.IndexOf("<office:document ", StringComparison.Ordinal);
-        if (root < 0) root = text.IndexOf("<office:document>", StringComparison.Ordinal);
-        return root >= 0 && (text.IndexOf(TextMimeType + "\"", root, StringComparison.Ordinal) >= 0
-                          || text.IndexOf(TextTemplateMimeType + "\"", root, StringComparison.Ordinal) >= 0);
+        try
+        {
+            using XmlReader reader = WordDocumentXml.CreateReader(file, tolerateUndeclaredPrefixes: true);
+            if (reader.MoveToContent() != XmlNodeType.Element || reader.LocalName != "document" || reader.NamespaceURI != OfficeNamespace) return false;
+            string? mimeType = reader.GetAttribute("mimetype", OfficeNamespace)?.Trim();
+            return mimeType is TextMimeType or TextTemplateMimeType;
+        }
+        catch (XmlException) { return false; }           // not XML (or broken before its root tag): not a flat OpenDocument
     }
 
     /// <summary>content.xml of a package; throws when the package is password-protected or has no content.xml.</summary>

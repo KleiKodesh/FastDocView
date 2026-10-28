@@ -294,3 +294,15 @@ Append-only. Date, what we learned, what it changed.
   such strings with escaped backslashes or check with `grep -P "[^\x00-\x7F]"` after writing.
 - Corpus files on OneDrive can be placeholders: opening succeeds, the first read throws "The cloud
   file provider is not running". The corpus pass counts them as unreadable, not as crashes.
+
+## 2026-10-28 — third-party corpus (LibreOffice / POI / Tika, 4,971 files)
+
+- **ODF mimetype is looked up by name**: 15 real .odt/.ott deflate it or store it late; LibreOffice
+  (ZipPackage::parseManifest) does no position/compression check and falls back to the manifest root.
+- **.docx part names come from relationships** (_rels/.rels → main part → its rels), not word/... names.
+- **Every FIB (fc, lcb) is untrusted**: range-check against the stream, truncate PLCs at the first
+  unsorted CP, clamp FKP crun to what fits the page (all as LibreOffice ww8scan.cxx does). Raw
+  Overflow/IndexOutOfRange exceptions were all unchecked FIB values.
+- **LibreOffice's CVE-*/EDB-* test files are RC4-encrypted (key "CVE")** by its filters-test harness —
+  not documents as stored; they show up as Unknown.
+- The corpus pass now fails on any raw exception type; `--corpus-sample 300` is the quick run.

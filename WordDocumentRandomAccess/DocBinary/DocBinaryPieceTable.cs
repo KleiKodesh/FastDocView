@@ -65,7 +65,7 @@ public sealed class DocBinaryPieceTable
         int pcdStart = plcStart + 4 * ((plcLength - 4) / 12 + 1);
         // CPs out of order end the usable table (LibreOffice WW8PLCFpcd::TruncToSortedRange).
         int pieceCount = DocBinaryStructureReader.SortedEntryCount(i => BitConverter.ToInt32(bytes, plcStart + i * 4), (plcLength - 4) / 12);
-        if (pieceCount == 0) throw new InvalidDataException("Damaged Word document: the piece table's character positions are out of order from the first piece.");
+        if (pieceCount == 0) throw new InvalidDataException("Damaged Word document: the piece table has no usable piece (none listed, or its character positions are out of order from the first).");
         _pieces = new Piece[pieceCount];
         for (int i = 0; i < pieceCount; i++)
         {

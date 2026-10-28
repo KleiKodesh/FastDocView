@@ -110,7 +110,7 @@ public static class WordFormattingAudit
     /// files — plus an open-and-render attempt per file through the library to catch crashes.
     /// Below-normal priority, one file at a time, progress every 100 files.
     /// </summary>
-    public static void RunCorpus(string listPath, int maxFiles)
+    public static void RunCorpus(string listPath, int maxFiles, int sampleSize = 0)
     {
         try { System.Diagnostics.Process.GetCurrentProcess().PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal; } catch { }
         // A list file (one path per line), or a folder such as test-data/ whose supported documents are all taken.
@@ -120,11 +120,18 @@ public static class WordFormattingAudit
                 .OrderBy(path => path, StringComparer.Ordinal)
             : File.ReadAllLines(listPath).Where(line => line.Length > 0);
         string[] paths = candidates.Take(maxFiles).ToArray();
+        if (sampleSize > 0 && sampleSize < paths.Length)
+        {
+            var random = new Random(20261028);                 // fixed seed: the same sample every run
+            paths = paths.OrderBy(_ => random.Next()).Take(sampleSize).OrderBy(path => path, StringComparer.Ordinal).ToArray();
+        }
         TestReport.Step($"Corpus audit: {paths.Length:N0} files from {listPath}");
         var docxTally = new AuditTally();
         var docTally = new AuditTally();
         var failures = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         var formats = new Dictionary<string, int>(StringComparer.Ordinal);
+        var unknownFiles = new List<string>();
+        var rawTraces = new List<string>();          // where each raw exception was thrown, for tracing the missing validation
         var policy = new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory, CacheDirectory = Path.Combine(TestReport.OutputDirectory, "corpus-index-cache") };
         var watch = System.Diagnostics.Stopwatch.StartNew();
         int done = 0;
@@ -137,16 +144,19 @@ public static class WordFormattingAudit
             try { format = WordWindowedDocumentOpener.DetectFormat(path); }
             catch (Exception exception) { AddFailure(failures, "detect: " + exception.GetType().Name, path); continue; }
             Count(formats, format.ToString());
-            if (format is not (WordWindowedDocumentOpener.WordFileFormat.Docx or WordWindowedDocumentOpener.WordFileFormat.DocBinary)) continue;
+            if (format == WordWindowedDocumentOpener.WordFileFormat.Unknown) unknownFiles.Add(path);   // still opened: its error must say what it is
 
-            AuditTally tally = format == WordWindowedDocumentOpener.WordFileFormat.Docx ? docxTally : docTally;
-            tally.BeginFile();
-            try
+            if (format is WordWindowedDocumentOpener.WordFileFormat.Docx or WordWindowedDocumentOpener.WordFileFormat.DocBinary)
             {
-                if (format == WordWindowedDocumentOpener.WordFileFormat.Docx) AuditDocx(path, tally, printParts: false);
-                else AuditDocBinary(path, tally, printRuns: false);
+                AuditTally tally = format == WordWindowedDocumentOpener.WordFileFormat.Docx ? docxTally : docTally;
+                tally.BeginFile();
+                try
+                {
+                    if (format == WordWindowedDocumentOpener.WordFileFormat.Docx) AuditDocx(path, tally, printParts: false);
+                    else AuditDocBinary(path, tally, printRuns: false);
+                }
+                catch (Exception exception) { AddFailure(failures, $"audit {format}: {exception.GetType().Name}: {Shorten(exception.Message)}", path); }
             }
-            catch (Exception exception) { AddFailure(failures, $"audit {format}: {exception.GetType().Name}: {Shorten(exception.Message)}", path); }
 
             try
             {
@@ -154,7 +164,12 @@ public static class WordFormattingAudit
                 document.RenderBlocks(0, 40);
                 if (document.BlockCount > 80) document.RenderBlocks(document.BlockCount / 2, 40);
             }
-            catch (Exception exception) { AddFailure(failures, $"open {format}: {exception.GetType().Name}: {Shorten(exception.Message)}", path); }
+            catch (Exception exception)
+            {
+                string reason = $"open {format}: {exception.GetType().Name}: {Shorten(exception.Message)}";
+                AddFailure(failures, reason, path);
+                if (!IsClearFailure(reason)) rawTraces.Add($"{path}\n{exception}");
+            }
         }
 
         Console.WriteLine($"   done in {watch.Elapsed:mm\\:ss}");
@@ -165,6 +180,24 @@ public static class WordFormattingAudit
         if (failures.Count == 0) Console.WriteLine("      none");
         foreach ((string reason, List<string> files) in failures.OrderByDescending(f => f.Value.Count))
             Console.WriteLine($"      {files.Count,6:N0}  {reason}   e.g. {files[0]}");
+        // Every failing and unrecognised file by name, for tracing each one (the console shows one example per reason).
+        string listing = Path.Combine(TestReport.OutputDirectory, "corpus-failures.txt");
+        File.WriteAllLines(listing, failures.OrderBy(f => f.Key, StringComparer.Ordinal).SelectMany(f => f.Value.Select(file => $"{f.Key}\t{file}"))
+                                            .Concat(unknownFiles.Select(file => $"unknown format\t{file}"))
+                                            .Concat(rawTraces.Select(trace => "raw exception\t" + trace)));
+        Console.WriteLine($"   every failing / unknown file: {listing}");
+        // Damaged input must fail with a clear, typed error — a raw runtime exception means a missing validation.
+        var rawFailures = failures.Where(f => !IsClearFailure(f.Key)).ToList();
+        TestReport.Check(rawFailures.Count == 0, $"every failure is InvalidDataException / NotSupportedException / IOException ({rawFailures.Sum(f => f.Value.Count)} raw)");
+    }
+
+    private static readonly string[] ClearFailureTypes = [nameof(InvalidDataException), nameof(NotSupportedException), nameof(IOException), nameof(EndOfStreamException), nameof(FileNotFoundException)];
+
+    /// <summary>Reason keys look like "open Docx: InvalidDataException: …" — the exception type is the second field.</summary>
+    private static bool IsClearFailure(string reason)
+    {
+        string[] fields = reason.Split(new[] { ": " }, 3, StringSplitOptions.None);
+        return fields.Length >= 2 && ClearFailureTypes.Contains(fields[1]);
     }
 
     private static void Count(Dictionary<string, int> counts, string key) => counts[key] = counts.TryGetValue(key, out int count) ? count + 1 : 1;
@@ -190,6 +223,14 @@ public static class WordFormattingAudit
             using Stream stream = entry.Open();
             using XmlReader reader = XmlReader.Create(stream, new XmlReaderSettings { IgnoreWhitespace = true, DtdProcessing = DtdProcessing.Ignore });
             var parents = new Stack<string>();
+            try { AuditPart(reader, parents, tally); }
+            catch (XmlException exception) { throw WordDocumentXml.Malformed(part, exception); }     // a damaged part, same classification as the reader's
+        }
+    }
+
+    private static void AuditPart(XmlReader reader, Stack<string> parents, AuditTally tally)
+    {
+        {
             while (reader.Read())
             {
                 if (reader.NodeType == XmlNodeType.EndElement) { if (parents.Count > 0) parents.Pop(); continue; }

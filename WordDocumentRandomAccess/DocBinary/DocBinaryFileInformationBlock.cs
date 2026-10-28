@@ -46,7 +46,15 @@ public sealed class DocBinaryFileInformationBlock
         wordDocumentStream.Position = 0;
         int read = 0;
         while (read < fib.Length) { int n = wordDocumentStream.Read(fib, read, fib.Length - read); if (n <= 0) break; read += n; }
-        if (read < 0x1AA || BitConverter.ToUInt16(fib, 0) != WordIdentifier) throw new InvalidDataException("Not a Word binary document (bad FIB).");
+        ushort identifier = read >= 4 ? BitConverter.ToUInt16(fib, 0) : (ushort)0;
+        // Word 6.0 / 95 FIBs: wIdent 0xA5DC, or 0xA697-0xA699 — the magic values LibreOffice's
+        // ww8par.cxx accepts besides Word 1/2's; nFib 101-104 (seen in the corpus: 101 Word 6, 104 Word 95).
+        if (identifier is 0xA5DC or >= 0xA697 and <= 0xA699)
+            throw new NotSupportedException($"Word 6.0 / Word 95 documents are not supported yet (wIdent 0x{identifier:X4}, nFib {BitConverter.ToUInt16(fib, 2)}); only Word 97 and later.");
+        if (identifier is 0xA59B or 0xA59C or 0xA5DB)       // Word 1 / Word 2 FIBs (LibreOffice ww8scan.cxx GetFIBVersion)
+            throw new NotSupportedException($"Word for Windows {(identifier == 0xA5DB ? "2.0" : "1.x")} documents are not supported.");
+        if (read < 0x1AA || identifier != WordIdentifier)
+            throw new InvalidDataException($"Not a Word 97+ binary document: the WordDocument stream starts with 0x{identifier:X4}, not the FIB identifier 0xA5EC.");
 
         Version = BitConverter.ToUInt16(fib, 2);
         if (Version < FirstWord97Version) throw new NotSupportedException("Word 6/95 documents are not supported (only Word 97 and later).");

@@ -85,6 +85,7 @@ public sealed record DocxPackagePartNames(string Document, string? Footnotes, st
         segments.RemoveAt(segments.Count - 1);                 // the source part's own file name
         foreach (string segment in target.Split('/'))
         {
+            if (segment is "" or ".") continue;                 // "./styles.xml", "a//b": same folder (URI dot-segment removal, RFC 3986 §5.2.4)
             if (segment == "..") { if (segments.Count > 0) segments.RemoveAt(segments.Count - 1); }
             else segments.Add(segment);
         }
