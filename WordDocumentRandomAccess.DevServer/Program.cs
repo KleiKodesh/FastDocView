@@ -24,6 +24,11 @@ builder.Logging.SetMinimumLevel(LogLevel.Warning);
 WebApplication app = builder.Build();
 app.UseCors();
 
+// Relative paths ("samples/…") resolve against the repository root, so the demo's sample buttons
+// carry no machine-specific folders.
+string repositoryRoot = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, ".."));
+string ResolvePath(string path) => Path.IsPathRooted(path) ? path : Path.GetFullPath(Path.Combine(repositoryRoot, path));
+
 var documents = new ConcurrentDictionary<int, IWordWindowedDocument>();
 var cacheDirectory = Path.Combine(AppContext.BaseDirectory, "index-cache");
 var lastProgress = new WordDocumentIndexProgress(0, 0, 0);
@@ -31,6 +36,7 @@ int nextId = 0;
 
 app.MapGet("/api/folder", (string path) =>
 {
+    path = ResolvePath(path);
     if (!Directory.Exists(path)) return Results.NotFound(new ErrorBody($"Folder not found: {path}"));
     var policy = new WordIndexPolicy { CacheDirectory = cacheDirectory };
     List<FolderEntry> entries = WordWindowedDocumentOpener.DecideFolder(path, policy, recursive: true, maxFiles: 500)
@@ -41,6 +47,7 @@ app.MapGet("/api/folder", (string path) =>
 
 app.MapPost("/api/documents", (OpenRequest request) =>
 {
+    request = request with { Path = ResolvePath(request.Path) };
     if (!File.Exists(request.Path)) return Results.NotFound(new ErrorBody($"File not found: {request.Path}"));
     var policy = new WordIndexPolicy { CacheDirectory = cacheDirectory, ForcedMode = request.ForceSidecar == true ? WordIndexMode.Sidecar : null };
     if (request.RebuildIndex == true && File.Exists(policy.IndexPathFor(request.Path))) File.Delete(policy.IndexPathFor(request.Path));
