@@ -56,6 +56,33 @@ the cached index: ~50 ms. Cold build runs at about 40 MB/s of XML with a few MB 
 Measured (synthetic, 50 000 blocks, 22 MB XML): build 0.5 s, index 1.2 MB, random window of 40
 blocks worst 30 ms, consecutive windows ~2 ms each.
 
+## When indexing is worth it (WordIndexPolicy)
+
+The checkpoint index only pays off for big bodies. `WordIndexPolicy` decides per file from the
+uncompressed body size (read from the zip central directory / the FIB, no index pass):
+
+- **InMemory** (default below 8 MB of body): one pass that scans *and* keeps the inflated body
+  for the session; nothing is written. ~40 MB/s, so ≤ 200 ms. A 4 MB Hebrew docx opens in
+  ~250 ms this way.
+- **Sidecar** (≥ 8 MB, or forced, or already cached): checkpoints + sidecar file; re-open in
+  tens of ms whatever the size.
+
+The host overrides the threshold / forces a mode (`ForcedMode`) and gets the decision with its
+reason (`WordIndexDecision`). `WordWindowedDocumentOpener.DecideFolder` lists every Word file
+under a folder with its decision for a picker; `BuildSidecarIndexes` builds the chosen ones with
+per-file progress. The demo viewer shows this under File → Open folder.
+
+## Multiplatform / WASM
+
+The core takes `Stream`s (`DocxWindowedDocument.OpenFromStream`, `DocBinaryWindowedDocument.
+OpenFromStream`, `DocxRandomAccessIndex.Write/Read`) and has no P/Invoke, reflection or drawing,
+so it compiles for `browser-wasm` unchanged; file-system conveniences (`Open(path)`, sidecar
+cache folder) live only in the opener/documents' path overloads. A browser project is **not in
+the repo yet**: the `wasm-tools` workload is not installed on this machine (installing writes to
+Program Files → elevation). Next step once installed: a `net10.0-browser` project exposing
+`open(bytes)` / `renderBlocks(first, count)` through `[JSExport]`, with the index kept in memory
+or handed back to JS for IndexedDB.
+
 ## Rendering (Html/, DocxHtml/)
 
 `DocxStyleCascade` loads `styles.xml` whole (it is small) and resolves docDefaults → basedOn
@@ -63,14 +90,19 @@ chain → direct pPr/rPr into the format-neutral `WordParagraphFormatting` / `Wo
 Runs emit only the CSS that differs from the paragraph's base run, so most runs have no inline
 style. Headings become `<h1>`–`<h6>` from `w:outlineLvl` or built-in "heading N" names.
 
+**List numbering is counted at index time.** A list paragraph only says "list 7, level 0"; its
+number is the count of earlier items, which a windowed renderer never sees. So the scanner runs
+`DocxListCounter` (one counter vector per abstractNum, deeper levels reset, `w:start` and
+per-num `startOverride` honoured; style-inherited numPr via `DocxStyleCascade.NumberingOf`) and
+stores the finished label per block (`"3."`, `"2.a"`, `"ט״ו."`). Formats: decimal, letters,
+roman, hebrew1 (gematria with geresh/gershayim), hebrew2, bullets, `%1.%2` patterns. Not done:
+`w:lvlRestart`, legal numbering, `.doc` lists (LFO/LST tables).
+
 Deliberately not done yet:
 
 - **Footnotes / endnotes** — only a `[*]` marker with `data-note-id`. **Deferred by the user
   (2026-10-28), to be reminded.** The old `DocConvertLib/OoxmlHtmlConverter.cs` already extracts
   note bodies and is the model.
-- **Numbering** — windowed rendering cannot count list items that were never rendered, so
-  numbered levels show a neutral "–" marker and bullets a "•". Correct numbers need an
-  index-time counter per (numId, level) — easy to add to the scanner later.
 - **Images** — `[image]` placeholder. Needs the rels part + a blob endpoint.
 - **Fields** — `w:fldSimple`/`instrText` show their result text only.
 - **Fonts in .doc** — ftc → `Sttbfffn` not resolved (default font used).

@@ -11,7 +11,8 @@ public static class DocxIndexAndRenderTest
 {
     public static void Run(int blockCount)
     {
-        string path = Path.Combine(TestReport.OutputDirectory, $"synthetic-{blockCount}.docx");
+        // the generator's structure is part of the checks — bump the suffix when it changes so a stale file is never reused
+        string path = Path.Combine(TestReport.OutputDirectory, $"synthetic-{blockCount}-v2.docx");
         string cacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache");
         TestReport.Step($"Synthetic docx with {blockCount:N0} blocks");
         if (!File.Exists(path)) TestReport.Timed("generate", () => SyntheticDocxGenerator.Write(path, blockCount));
@@ -26,15 +27,17 @@ public static class DocxIndexAndRenderTest
             long megabyte = p.BytesDone >> 24;
             if (megabyte != lastReported) { lastReported = megabyte; Console.WriteLine($"      indexing {p.BytesDone >> 20} / {p.BytesTotal >> 20} MB, {p.BlocksFound:N0} blocks"); }
         });
-        DocxRandomAccessIndex index = TestReport.Timed("index build (cold)", () => DocxRandomAccessIndexBuilder.Build(path, progress));
-        index.Save(indexPath);
+        var policy = new WordIndexPolicy { CacheDirectory = cacheDirectory, ForcedMode = WordIndexMode.Sidecar };
+        DocxRandomAccessIndex index;
+        using (var cold = (DocxWindowedDocument)TestReport.Timed("index build (cold)", () => WordWindowedDocumentOpener.Open(path, policy, progress))) index = cold.Index;
         Console.WriteLine($"   document.xml {index.DocumentEntry.UncompressedSize >> 20} MB uncompressed, index file {new FileInfo(indexPath).Length >> 10} KB, {index.Checkpoints.Count} checkpoints");
         TestReport.Check(index.BlockCount == SyntheticDocxGenerator.ExpectedBlockCount(blockCount), $"block count {index.BlockCount:N0} == expected {SyntheticDocxGenerator.ExpectedBlockCount(blockCount):N0}");
         TestReport.Check(index.BlockKinds[199] == WordDocumentBlockKind.Table, "block 199 is a table");
         TestReport.Check(index.BlockKinds[index.BlockCount - 1] == WordDocumentBlockKind.Other, "last block (sectPr) is Other");
         TestReport.Check(index.StyleIdOf(50) == "Heading1", "block 50 has style Heading1");
 
-        using DocxWindowedDocument document = TestReport.Timed("open from cached index", () => DocxWindowedDocument.Open(path, cacheDirectory));
+        using DocxWindowedDocument document = TestReport.Timed("open from cached index", () => DocxWindowedDocument.Open(path, policy));
+        TestReport.Check(document.Decision.HasCachedIndex, "cached index used");
         TestReport.Check(document.IsRightToLeft, "document detected as right-to-left");
 
         var random = new Random(3);
@@ -50,6 +53,7 @@ public static class DocxIndexAndRenderTest
             {
                 if (block.Kind == WordDocumentBlockKind.Other) continue;
                 string expected = block.Kind == WordDocumentBlockKind.Table ? $"טבלה {block.BlockIndex} " : $"פסקה {block.BlockIndex}";
+                if (block.BlockIndex % 10 == 3 && block.BlockIndex % 50 != 0 && !block.Html.Contains("list-marker")) { allContainOrdinal = false; Console.WriteLine($"   block {block.BlockIndex} lacks its list marker"); }
                 if (!block.Html.Contains(expected)) { allContainOrdinal = false; Console.WriteLine($"   block {block.BlockIndex} lacks '{expected}': {Truncate(block.Html)}"); }
             }
         }

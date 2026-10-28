@@ -30,6 +30,7 @@ public sealed class ViewerMainForm : Form
         var menu = new MenuStrip();
         var fileMenu = new ToolStripMenuItem("&File");
         fileMenu.DropDownItems.Add("&Open…", null, (_, _) => OnOpenClicked());
+        fileMenu.DropDownItems.Add("Open &folder (index decisions)…", null, (_, _) => OnOpenFolderClicked());
         fileMenu.DropDownItems.Add("&Rebuild index and reopen", null, (_, _) => OnRebuildIndexClicked());
         fileMenu.DropDownItems.Add(new ToolStripSeparator());
         fileMenu.DropDownItems.Add("E&xit", null, (_, _) => Close());
@@ -64,6 +65,15 @@ public sealed class ViewerMainForm : Form
         if (dialog.ShowDialog(this) == DialogResult.OK) _ = OpenDocumentAsync(dialog.FileName, rebuildIndex: false);
     }
 
+    private void OnOpenFolderClicked()
+    {
+        using var dialog = new FolderBrowserDialog();
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        var folderForm = new ViewerFolderIndexForm(dialog.SelectedPath, WordIndexPolicy.Default);
+        folderForm.FileChosen += path => _ = OpenDocumentAsync(path, rebuildIndex: false);
+        folderForm.Show(this);
+    }
+
     private void OnRebuildIndexClicked()
     {
         if (_document?.FilePath is { } path) _ = OpenDocumentAsync(path, rebuildIndex: true);
@@ -88,9 +98,15 @@ public sealed class ViewerMainForm : Form
             SetStatus($"Indexing… {p.BytesDone >> 20} / {p.BytesTotal >> 20} MB, {p.BlocksFound:N0} blocks"));
         try
         {
-            IWordWindowedDocument document = await Task.Run(() => WordWindowedDocumentOpener.Open(filePath, progress: progress));
+            IWordWindowedDocument document = await Task.Run(() => WordWindowedDocumentOpener.Open(filePath, WordIndexPolicy.Default, progress));
             _document = document;
-            SetStatus($"Opened in {watch.ElapsedMilliseconds} ms — {document.BlockCount:N0} blocks, {(document.IsRightToLeft ? "RTL" : "LTR")}, {document.GetType().Name}");
+            string mode = document switch
+            {
+                Docx.DocxWindowedDocument docx => $"{docx.Decision.Mode} ({docx.Decision.Reason})",
+                DocBinary.DocBinaryWindowedDocument doc => $"{doc.Decision.Mode} ({doc.Decision.Reason})",
+                _ => "",
+            };
+            SetStatus($"Opened in {watch.ElapsedMilliseconds} ms — {document.BlockCount:N0} blocks, {(document.IsRightToLeft ? "RTL" : "LTR")}, {mode}");
             _bridge?.SetDocument(document);
         }
         catch (Exception exception)

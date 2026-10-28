@@ -15,7 +15,7 @@ public sealed class CompoundFileReader : IDisposable
     private const uint FreeSector = 0xFFFFFFFF;
     private const int DirectoryEntrySize = 128;
 
-    private readonly FileStream _file;
+    private readonly Stream _file;
     private readonly int _sectorSize;
     private readonly int _miniSectorSize;
     private readonly uint _miniStreamCutoff;
@@ -34,8 +34,12 @@ public sealed class CompoundFileReader : IDisposable
     }
 
     public CompoundFileReader(string path)
+        : this(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16)) { }
+
+    /// <summary>Over any seekable stream (owned by this reader); what a WASM host passes in.</summary>
+    public CompoundFileReader(Stream file)
     {
-        _file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+        _file = file;
         var header = new byte[512];
         ReadAt(_file, 0, header, 512);
         if (!header.AsSpan(0, 8).SequenceEqual(Signature)) throw new InvalidDataException("Not an OLE compound file.");

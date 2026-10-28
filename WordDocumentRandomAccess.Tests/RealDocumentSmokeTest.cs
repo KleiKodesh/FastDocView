@@ -11,16 +11,18 @@ public static class RealDocumentSmokeTest
 {
     public static void Run(IEnumerable<string> paths)
     {
-        string cacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache");
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
         foreach (string path in paths)
         {
             TestReport.Step($"Real file: {Path.GetFileName(path)} ({new FileInfo(path).Length >> 10} KB)");
             try
             {
-                string indexPath = WordDocumentIndexCacheLocation.IndexPathFor(path, cacheDirectory);
+                string indexPath = policy.IndexPathFor(path);
                 if (File.Exists(indexPath)) File.Delete(indexPath);
-                using IWordWindowedDocument document = TestReport.Timed("open (cold index)", () => WordWindowedDocumentOpener.Open(path, cacheDirectory));
-                using IWordWindowedDocument reopened = TestReport.Timed("re-open (cached index)", () => WordWindowedDocumentOpener.Open(path, cacheDirectory));
+                WordIndexDecision decision = WordWindowedDocumentOpener.Decide(path, policy);
+                Console.WriteLine($"   policy: {decision.Mode} — {decision.Reason}");
+                using IWordWindowedDocument document = TestReport.Timed("open (cold)", () => WordWindowedDocumentOpener.Open(path, policy));
+                using IWordWindowedDocument reopened = TestReport.Timed("re-open", () => WordWindowedDocumentOpener.Open(path, policy));
                 Console.WriteLine($"   {document.GetType().Name}: {document.BlockCount:N0} blocks, rtl={document.IsRightToLeft}");
                 TestReport.Check(document.BlockCount > 0, "has blocks");
 

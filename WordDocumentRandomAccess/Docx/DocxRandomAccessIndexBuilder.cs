@@ -4,10 +4,11 @@ using WordDocumentRandomAccess.Zip;
 namespace WordDocumentRandomAccess.Docx;
 
 /// <summary>
-/// The one sequential pass over word/document.xml: inflates it chunk by chunk (never holding more
-/// than one chunk), captures a deflate checkpoint roughly every <see cref="CheckpointSpanBytes"/>
-/// of output, and feeds every chunk to <see cref="DocxBodyBlockScanner"/>. Memory stays at a few MB
-/// regardless of document size, which keeps it inside the project's light-compute rule.
+/// The one sequential pass over word/document.xml: inflates it chunk by chunk, feeds every chunk to
+/// <see cref="DocxBodyBlockScanner"/>, and either captures a deflate checkpoint roughly every
+/// <see cref="DefaultCheckpointSpanBytes"/> (sidecar mode: memory stays at a few MB whatever the
+/// document size) or keeps the whole body in a buffer (in-memory mode for small documents, where
+/// a checkpoint index would cost more than it saves — see <see cref="WordIndexPolicy"/>).
 /// </summary>
 public static class DocxRandomAccessIndexBuilder
 {
@@ -15,74 +16,88 @@ public static class DocxRandomAccessIndexBuilder
     public const long DefaultCheckpointSpanBytes = 1 << 20;
     private const int ChunkSize = 1 << 18;
 
-    public static DocxRandomAccessIndex Build(string documentPath, IProgress<WordDocumentIndexProgress>? progress = null,
+    /// <summary>Sidecar mode: checkpoints, no body copy.</summary>
+    public static DocxRandomAccessIndex Build(Stream package, DocxDocumentParts parts, long sourceLength, long sourceLastWriteTicksUtc,
+                                              IProgress<WordDocumentIndexProgress>? progress = null,
                                               long checkpointSpanBytes = DefaultCheckpointSpanBytes,
                                               CancellationToken cancellation = default)
+        => Scan(package, parts, sourceLength, sourceLastWriteTicksUtc, progress, checkpointSpanBytes, bodyCopy: null, cancellation);
+
+    /// <summary>In-memory mode: no checkpoints; the uncompressed body is returned alongside the index.</summary>
+    public static (DocxRandomAccessIndex index, byte[] body) BuildInMemory(Stream package, DocxDocumentParts parts, long sourceLength,
+                                                                           long sourceLastWriteTicksUtc,
+                                                                           IProgress<WordDocumentIndexProgress>? progress = null,
+                                                                           CancellationToken cancellation = default)
     {
-        var info = new FileInfo(documentPath);
-        using FileStream file = new(documentPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
-        ZipEntryLocation entry = ZipEntryLocator.Locate(file, DocumentEntryName)
+        var body = new MemoryStream();
+        DocxRandomAccessIndex index = Scan(package, parts, sourceLength, sourceLastWriteTicksUtc, progress, long.MaxValue, body, cancellation);
+        return (index, body.ToArray());
+    }
+
+    public static ZipEntryLocation LocateDocumentEntry(Stream package)
+    {
+        ZipEntryLocation entry = ZipEntryLocator.Locate(package, DocumentEntryName)
                                  ?? throw new InvalidDataException("Not a Word document (no word/document.xml).");
         if (!entry.IsDeflate && !entry.IsStored)
             throw new InvalidDataException($"Unsupported zip compression method {entry.CompressionMethod}.");
+        return entry;
+    }
 
-        var scanner = new DocxBodyBlockScanner();
+    private static DocxRandomAccessIndex Scan(Stream package, DocxDocumentParts parts, long sourceLength, long sourceLastWriteTicksUtc,
+                                              IProgress<WordDocumentIndexProgress>? progress, long checkpointSpanBytes,
+                                              MemoryStream? bodyCopy, CancellationToken cancellation)
+    {
+        ZipEntryLocation entry = LocateDocumentEntry(package);
+        var scanner = new DocxBodyBlockScanner(parts.CreateListLabelResolver());
         var checkpoints = new List<DeflateCheckpoint>();
         var chunk = new byte[ChunkSize];
         long totalOut = 0;
 
+        void Consume(int read)
+        {
+            scanner.Feed(chunk, read);
+            bodyCopy?.Write(chunk, 0, read);
+            totalOut += read;
+            progress?.Report(new WordDocumentIndexProgress(totalOut, entry.UncompressedSize, scanner.BlockStartOffsets.Count));
+        }
+
         if (entry.IsDeflate)
         {
-            var inflater = new DeflateCheckpointInflater(file, entry.DataOffset, entry.CompressedSize);
+            var inflater = new DeflateCheckpointInflater(package, entry.DataOffset, entry.CompressedSize);
             long nextCheckpointAt = 0;
-            inflater.BlockBoundaryReached += source =>
-            {
-                if (source.TotalOut < nextCheckpointAt) return;
-                checkpoints.Add(source.CaptureCheckpoint());
-                nextCheckpointAt = source.TotalOut + checkpointSpanBytes;
-            };
+            if (bodyCopy is null)
+                inflater.BlockBoundaryReached += source =>
+                {
+                    if (source.TotalOut < nextCheckpointAt) return;
+                    checkpoints.Add(source.CaptureCheckpoint());
+                    nextCheckpointAt = source.TotalOut + checkpointSpanBytes;
+                };
             while (true)
             {
                 cancellation.ThrowIfCancellationRequested();
                 int read = inflater.Read(chunk, 0, chunk.Length);
                 if (read == 0) break;
-                scanner.Feed(chunk, read);
-                totalOut += read;
-                progress?.Report(new WordDocumentIndexProgress(totalOut, entry.UncompressedSize, scanner.BlockStartOffsets.Count));
+                Consume(read);
             }
         }
         else
         {
-            using var stored = new ZipStoredEntryStream(file, entry.DataOffset, entry.CompressedSize);
+            using var stored = new ZipStoredEntryStream(package, entry.DataOffset, entry.CompressedSize);
             while (true)
             {
                 cancellation.ThrowIfCancellationRequested();
                 int read = stored.Read(chunk, 0, chunk.Length);
                 if (read == 0) break;
-                scanner.Feed(chunk, read);
-                totalOut += read;
-                progress?.Report(new WordDocumentIndexProgress(totalOut, entry.UncompressedSize, scanner.BlockStartOffsets.Count));
+                Consume(read);
             }
         }
 
         if (scanner.BodyEndOffset < 0) throw new InvalidDataException("word/document.xml has no closing <w:body>.");
 
         return new DocxRandomAccessIndex(
-            info.Length, info.LastWriteTimeUtc.Ticks, entry, scanner.RootOpenTag, scanner.BodyEndOffset, checkpoints,
+            sourceLength, sourceLastWriteTicksUtc, entry, scanner.RootOpenTag, scanner.BodyEndOffset, checkpoints,
             scanner.BlockStartOffsets.ToArray(), scanner.BlockKinds.ToArray(), scanner.BlockTextLengths.ToArray(),
-            scanner.BlockStyleIds.ToArray(), scanner.StyleIdTable.ToArray());
-    }
-
-    /// <summary>Loads the cached index when it still matches the file, otherwise builds and saves it.</summary>
-    public static DocxRandomAccessIndex LoadOrBuild(string documentPath, string? cacheDirectory = null,
-                                                    IProgress<WordDocumentIndexProgress>? progress = null,
-                                                    CancellationToken cancellation = default)
-    {
-        string indexPath = WordDocumentIndexCacheLocation.IndexPathFor(documentPath, cacheDirectory);
-        DocxRandomAccessIndex? cached = DocxRandomAccessIndex.TryLoad(indexPath, documentPath);
-        if (cached is not null) return cached;
-        DocxRandomAccessIndex built = Build(documentPath, progress, cancellation: cancellation);
-        built.Save(indexPath);
-        return built;
+            scanner.BlockStyleIds.ToArray(), scanner.StyleIdTable.ToArray(),
+            scanner.BlockListLabelIds.ToArray(), scanner.ListLabels.ToArray());
     }
 }

@@ -40,5 +40,6 @@ one concept one name, no `utils`).
 - Never hold whole-document text or XML in memory; bounded caches only (same rule as the app's
   windowed data).
 - Long runs report progress per step (`IProgress<WordDocumentIndexProgress>`).
+- Default sidecar threshold is 8 MB of body (`WordIndexPolicy`); change it with a measurement, not a guess.
 - Footnotes are deferred on purpose — remind the user before starting unrelated rendering work.
 - Don't build or verify unless asked; when asked, run the harness and the viewer screenshot.

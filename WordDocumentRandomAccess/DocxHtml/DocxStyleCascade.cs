@@ -91,6 +91,13 @@ public sealed class DocxStyleCascade
         return 0;
     }
 
+    /// <summary>Numbering a paragraph inherits from its style (numId, ilvl); (-1, 0) when none.</summary>
+    public (int numId, int level) NumberingOf(string? styleId)
+    {
+        WordParagraphFormatting formatting = ResolveParagraphStyle(styleId);
+        return (formatting.NumberingId, formatting.NumberingLevel);
+    }
+
     public bool IsDocumentRightToLeft => ResolveParagraphStyle(null).IsRightToLeft || DocumentDefaults.RunFormatting.IsRightToLeft;
 
     private List<XElement> StyleChain(string? styleId)

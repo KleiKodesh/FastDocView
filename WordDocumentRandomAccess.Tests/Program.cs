@@ -24,6 +24,7 @@ for (int i = 0; i < args.Length; i++)
 if (!skipSynthetic)
 {
     DeflateInflaterRoundTripTest.Run(deflateMegabytes);
+    DocxNumberingAndPolicyTest.Run();
     DocxIndexAndRenderTest.Run(blocks);
 }
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));

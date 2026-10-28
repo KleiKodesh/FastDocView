@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Xml.Linq;
 using WordDocumentRandomAccess.DocxHtml;
 using WordDocumentRandomAccess.Html;
@@ -6,8 +5,11 @@ using WordDocumentRandomAccess.Html;
 namespace WordDocumentRandomAccess.Docx;
 
 /// <summary>
-/// A .docx opened for windowed rendering: the (cached or freshly built) random-access index, the
-/// small parts loaded whole (styles, numbering), and a block reader over the compressed body.
+/// A .docx opened for windowed rendering. Two ways in:
+///   • <see cref="Open"/> — file-system hosts: the policy picks in-memory vs sidecar, the sidecar
+///     is cached next to the other indexes;
+///   • <see cref="OpenFromStream"/> — any host (WASM): the caller supplies the package stream and
+///     an optional previously saved index; nothing touches a file system.
 /// </summary>
 public sealed class DocxWindowedDocument : IWordWindowedDocument
 {
@@ -21,29 +23,76 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     public int BlockCount => _index.BlockCount;
     public bool IsRightToLeft { get; }
     public string Stylesheet { get; }
+    public WordIndexDecision Decision { get; }
     public DocxRandomAccessIndex Index => _index;
 
-    public static DocxWindowedDocument Open(string filePath, string? cacheDirectory = null,
+    public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
+    {
+        using FileStream file = OpenRead(filePath);
+        long bodyBytes = DocxRandomAccessIndexBuilder.LocateDocumentEntry(file).UncompressedSize;
+        bool hasCachedIndex = DocxRandomAccessIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
+        return policy.Decide(filePath, bodyBytes, hasCachedIndex);
+    }
+
+    public static DocxWindowedDocument Open(string filePath, WordIndexPolicy? policy = null,
                                             IProgress<WordDocumentIndexProgress>? progress = null,
                                             CancellationToken cancellation = default)
     {
-        DocxRandomAccessIndex index = DocxRandomAccessIndexBuilder.LoadOrBuild(filePath, cacheDirectory, progress, cancellation);
-        return new DocxWindowedDocument(filePath, index);
+        policy ??= WordIndexPolicy.Default;
+        var info = new FileInfo(filePath);
+        string indexPath = policy.IndexPathFor(filePath);
+        DocxRandomAccessIndex? cached = DocxRandomAccessIndex.TryLoad(indexPath, filePath);
+        FileStream package = OpenRead(filePath);
+        try
+        {
+            long bodyBytes = cached?.DocumentEntry.UncompressedSize ?? DocxRandomAccessIndexBuilder.LocateDocumentEntry(package).UncompressedSize;
+            WordIndexDecision decision = policy.Decide(filePath, bodyBytes, cached is not null);
+            DocxWindowedDocument document = OpenFromStream(package, filePath, decision, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
+            if (decision.Mode == WordIndexMode.Sidecar && cached is null) document._index.Save(indexPath);
+            return document;
+        }
+        catch
+        {
+            package.Dispose();
+            throw;
+        }
     }
 
-    public DocxWindowedDocument(string filePath, DocxRandomAccessIndex index)
+    /// <summary>
+    /// Host-agnostic entry. <paramref name="package"/> must be seekable and stays open for the
+    /// document's lifetime in sidecar mode (it is disposed with the document); in in-memory mode
+    /// it is only read during this call. <paramref name="cachedIndex"/> is used when it matches.
+    /// </summary>
+    public static DocxWindowedDocument OpenFromStream(Stream package, string displayPath, WordIndexDecision decision,
+                                                      DocxRandomAccessIndex? cachedIndex, long sourceLength, long sourceLastWriteTicksUtc,
+                                                      IProgress<WordDocumentIndexProgress>? progress = null,
+                                                      CancellationToken cancellation = default)
+    {
+        var parts = new DocxDocumentParts(package);
+        if (cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc))
+            return new DocxWindowedDocument(displayPath, cachedIndex, DocxBlockXmlReader.OverPackage(package, cachedIndex), parts, decision);
+
+        if (decision.Mode == WordIndexMode.InMemory)
+        {
+            (DocxRandomAccessIndex index, byte[] body) = DocxRandomAccessIndexBuilder.BuildInMemory(package, parts, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
+            package.Dispose();
+            return new DocxWindowedDocument(displayPath, index, DocxBlockXmlReader.OverBody(body, index), parts, decision);
+        }
+
+        DocxRandomAccessIndex built = DocxRandomAccessIndexBuilder.Build(package, parts, sourceLength, sourceLastWriteTicksUtc, progress, cancellation: cancellation);
+        return new DocxWindowedDocument(displayPath, built, DocxBlockXmlReader.OverPackage(package, built), parts, decision);
+    }
+
+    private DocxWindowedDocument(string filePath, DocxRandomAccessIndex index, DocxBlockXmlReader blockReader, DocxDocumentParts parts, WordIndexDecision decision)
     {
         FilePath = filePath;
         _index = index;
-        using (var file = File.OpenRead(filePath))
-        using (var zip = new ZipArchive(file, ZipArchiveMode.Read))
-        {
-            _styles = new DocxStyleCascade(LoadPart(zip, "word/styles.xml"));
-            _renderer = new DocxBlockHtmlRenderer(_styles, new DocxNumberingDefinitions(LoadPart(zip, "word/numbering.xml")));
-        }
+        _blockReader = blockReader;
+        _styles = parts.Styles;
+        _renderer = new DocxBlockHtmlRenderer(_styles);
+        Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
-        _blockReader = new DocxBlockXmlReader(filePath, index);
     }
 
     public int EstimatedTextLength(int blockIndex) => _index.BlockTextLengths[blockIndex];
@@ -52,7 +101,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     {
         var result = new List<WordDocumentBlockHtml>(count);
         foreach ((int blockIndex, XElement element) in _blockReader.ReadBlocks(firstBlockIndex, count))
-            result.Add(new WordDocumentBlockHtml(blockIndex, _index.BlockKinds[blockIndex], _renderer.Render(element)));
+            result.Add(new WordDocumentBlockHtml(blockIndex, _index.BlockKinds[blockIndex], _renderer.Render(element, _index.ListLabelOf(blockIndex))));
         return result;
     }
 
@@ -77,13 +126,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         return headings;
     }
 
-    private static XDocument? LoadPart(ZipArchive zip, string name)
-    {
-        ZipArchiveEntry? entry = zip.GetEntry(name);
-        if (entry is null) return null;
-        using Stream stream = entry.Open();
-        return XDocument.Load(stream);
-    }
+    private static FileStream OpenRead(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
 
     public void Dispose() => _blockReader.Dispose();
 }

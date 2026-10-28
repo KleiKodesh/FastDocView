@@ -6,14 +6,17 @@ namespace WordDocumentRandomAccess.Docx;
 /// Streaming byte-level scan of word/document.xml. It never builds a DOM: it tracks element depth
 /// and records the uncompressed byte offset where each child of &lt;w:body&gt; starts, the body's
 /// end, the root element's opening tag (its namespace declarations are needed to parse a block in
-/// isolation), the paragraph style id of each paragraph (for headings) and a rough text length
-/// (for scroll-height estimates). Fed in arbitrary chunks; state carries across chunk boundaries.
+/// isolation), each paragraph's style id (for headings), its list label (counted here, because a
+/// windowed renderer never sees the earlier items) and a rough text length (for scroll-height
+/// estimates). Fed in arbitrary chunks; state carries across chunk boundaries.
 /// </summary>
 internal sealed class DocxBodyBlockScanner
 {
     private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData }
 
     private const int MaxRootTagBytes = 1 << 16;
+
+    private readonly DocxListLabelResolver? _listLabelResolver;
 
     private State _state = State.Text;
     private long _offset;                       // uncompressed offset of the next byte to be fed
@@ -28,20 +31,32 @@ internal sealed class DocxBodyBlockScanner
     private readonly StringBuilder _tagName = new(32);
     private bool _isTagNameComplete;
     private readonly StringBuilder _tagAttributes = new();
-    private bool _isCapturingAttributes;
+    private string? _capturedAttributeTag;      // which tag's attributes are being captured (w:pStyle / w:numId / w:ilvl)
     private readonly MemoryStream _rootOpenTag = new();
     private bool _isRootTagDone;
     private bool _isInsideTextRun;              // inside <w:t>…</w:t>
+
+    // the current body-level paragraph's pPr, resolved into a label when </w:pPr> closes
+    private string? _currentStyleId;
+    private int _currentNumId = -1;
+    private int _currentLevel;
 
     public List<long> BlockStartOffsets { get; } = new();
     public List<WordDocumentBlockKind> BlockKinds { get; } = new();
     public List<int> BlockTextLengths { get; } = new();
     public List<short> BlockStyleIds { get; } = new();           // index into StyleIdTable, -1 = none
     public List<string> StyleIdTable { get; } = new();
+    public List<int> BlockListLabelIds { get; } = new();         // index into ListLabels, -1 = not a list item
+    public List<string> ListLabels { get; } = new();
     public long BodyEndOffset { get; private set; } = -1;
     public string RootOpenTag => Encoding.UTF8.GetString(_rootOpenTag.ToArray());
 
     private readonly Dictionary<string, short> _styleIdLookup = new(StringComparer.Ordinal);
+
+    public DocxBodyBlockScanner(DocxListLabelResolver? listLabelResolver = null)
+    {
+        _listLabelResolver = listLabelResolver;
+    }
 
     public void Feed(byte[] chunk, int count)
     {
@@ -69,7 +84,7 @@ internal sealed class DocxBodyBlockScanner
                     _isTagNameComplete = false;
                     _isClosingTag = false;
                     _previousWasSlash = false;
-                    _isCapturingAttributes = false;
+                    _capturedAttributeTag = null;
                     _tagAttributes.Clear();
                     if (b == (byte)'!') { _state = State.Comment; _markerMatched = 0; }        // <!-- or <![CDATA[ (decided below)
                     else if (b == (byte)'?') { _state = State.ProcessingInstruction; _markerMatched = 0; }
@@ -90,18 +105,18 @@ internal sealed class DocxBodyBlockScanner
                 case State.TagBody:
                     if (b == (byte)'"' || b == (byte)'\'') { _quoteChar = b; _state = State.TagQuote; }
                     else if (b == (byte)'>') { OnTagEnd(); _state = State.Text; }
-                    if (_isCapturingAttributes && b != (byte)'>') _tagAttributes.Append((char)b);
+                    if (_capturedAttributeTag is not null && b != (byte)'>') _tagAttributes.Append((char)b);
                     _previousWasSlash = b == (byte)'/';
                     break;
 
                 case State.TagQuote:
-                    if (_isCapturingAttributes) _tagAttributes.Append((char)b);
+                    if (_capturedAttributeTag is not null) _tagAttributes.Append((char)b);
                     if (b == _quoteChar) _state = State.TagBody;
                     break;
 
                 case State.Comment:
                     // Entered on "<!": "<![CDATA[" ends with "]]>", "<!--" ends with "-->"; both end on '>'
-                    // after their marker. The 7th byte tells CDATA ("[") from a comment ("-").
+                    // after their marker. The byte after '!' tells CDATA ("[") from a comment ("-").
                     if (_markerMatched == 0 && b == (byte)'[') { _state = State.CData; _markerMatched = 0; break; }
                     if (b == (byte)'-') _markerMatched = Math.Min(2, _markerMatched + 1);
                     else if (b == (byte)'>' && _markerMatched == 2) _state = State.Text;
@@ -128,10 +143,12 @@ internal sealed class DocxBodyBlockScanner
     {
         if (_isTagNameComplete) return;
         _isTagNameComplete = true;
+        if (_isClosingTag || _bodyDepth < 0) return;
         string name = _tagName.ToString();
-        if (_isClosingTag) return;
-        // Only one tag's attributes are ever interesting: a body-level paragraph's <w:pStyle>.
-        _isCapturingAttributes = _bodyDepth >= 0 && _depth == _bodyDepth + 2 && name == "w:pStyle";
+        // Only a body-level paragraph's pPr children are interesting: <w:pStyle> (depth body+2) and
+        // <w:numPr>'s <w:numId>/<w:ilvl> (depth body+3).
+        if (_depth == _bodyDepth + 2 && name == "w:pStyle") _capturedAttributeTag = name;
+        else if (_depth == _bodyDepth + 3 && name is "w:numId" or "w:ilvl") _capturedAttributeTag = name;
     }
 
     private void OnTagEnd()
@@ -144,18 +161,19 @@ internal sealed class DocxBodyBlockScanner
             if (name == "w:t") _isInsideTextRun = false;
             _depth--;
             if (name == "w:body" && _bodyDepth >= 0) { BodyEndOffset = _tagStartOffset; _bodyDepth = -1; }
+            else if (name == "w:pPr" && _bodyDepth >= 0 && _depth == _bodyDepth + 1) OnParagraphPropertiesClosed();
             return;
         }
 
         if (_depth == 0) _isRootTagDone = true;
 
         if (_bodyDepth >= 0 && _depth == _bodyDepth) OnBodyChildStarted(name);
-        else if (_isCapturingAttributes) OnParagraphStyle(_tagAttributes.ToString());
+        else if (_capturedAttributeTag is not null) OnCapturedAttribute(_capturedAttributeTag, _tagAttributes.ToString());
 
         if (name == "w:body" && _bodyDepth < 0) _bodyDepth = _depth + 1;
         if (name == "w:t" && !isSelfClosing) _isInsideTextRun = true;
         if (!isSelfClosing) _depth++;
-        _isCapturingAttributes = false;
+        _capturedAttributeTag = null;
     }
 
     private void OnBodyChildStarted(string name)
@@ -170,22 +188,48 @@ internal sealed class DocxBodyBlockScanner
         });
         BlockTextLengths.Add(0);
         BlockStyleIds.Add(-1);
+        BlockListLabelIds.Add(-1);
+        _currentStyleId = null;
+        _currentNumId = -1;
+        _currentLevel = 0;
     }
 
-    private void OnParagraphStyle(string attributes)
+    private void OnCapturedAttribute(string tag, string attributes)
     {
-        int valueStart = attributes.IndexOf("w:val=", StringComparison.Ordinal);
-        if (valueStart < 0 || BlockStyleIds.Count == 0) return;
-        valueStart += 7;                                                   // past w:val=" (or ')
-        int valueEnd = attributes.IndexOfAny(['"', '\''], valueStart);
-        if (valueEnd < 0) return;
-        string styleId = attributes.Substring(valueStart, valueEnd - valueStart);
-        if (!_styleIdLookup.TryGetValue(styleId, out short tableIndex))
+        string? value = AttributeValue(attributes, "w:val=");
+        if (value is null || BlockStyleIds.Count == 0) return;
+        switch (tag)
         {
-            tableIndex = (short)StyleIdTable.Count;
-            StyleIdTable.Add(styleId);
-            _styleIdLookup[styleId] = tableIndex;
+            case "w:pStyle":
+                _currentStyleId = value;
+                if (!_styleIdLookup.TryGetValue(value, out short tableIndex))
+                {
+                    tableIndex = (short)StyleIdTable.Count;
+                    StyleIdTable.Add(value);
+                    _styleIdLookup[value] = tableIndex;
+                }
+                BlockStyleIds[BlockStyleIds.Count - 1] = tableIndex;
+                break;
+            case "w:numId": if (int.TryParse(value, out int numId)) _currentNumId = numId; break;
+            case "w:ilvl": if (int.TryParse(value, out int level)) _currentLevel = level; break;
         }
-        BlockStyleIds[BlockStyleIds.Count - 1] = tableIndex;
+    }
+
+    private void OnParagraphPropertiesClosed()
+    {
+        if (_listLabelResolver is null || BlockListLabelIds.Count == 0) return;
+        string? label = _listLabelResolver(_currentStyleId, _currentNumId, _currentLevel);
+        if (label is null) return;
+        BlockListLabelIds[BlockListLabelIds.Count - 1] = ListLabels.Count;
+        ListLabels.Add(label);
+    }
+
+    private static string? AttributeValue(string attributes, string attributeWithEquals)
+    {
+        int valueStart = attributes.IndexOf(attributeWithEquals, StringComparison.Ordinal);
+        if (valueStart < 0) return null;
+        valueStart += attributeWithEquals.Length + 1;                                  // past the opening quote
+        int valueEnd = attributes.IndexOfAny(['"', '\''], valueStart);
+        return valueEnd < 0 ? null : attributes.Substring(valueStart, valueEnd - valueStart);
     }
 }

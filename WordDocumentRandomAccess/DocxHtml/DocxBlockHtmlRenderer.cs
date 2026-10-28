@@ -14,18 +14,20 @@ public sealed class DocxBlockHtmlRenderer
     private static readonly XNamespace W = DocxStyleCascade.W;
 
     private readonly DocxStyleCascade _styles;
-    private readonly DocxNumberingDefinitions _numbering;
+    private string? _listLabel;     // the index-time label of the block being rendered (its first paragraph)
 
-    public DocxBlockHtmlRenderer(DocxStyleCascade styles, DocxNumberingDefinitions numbering)
+    public DocxBlockHtmlRenderer(DocxStyleCascade styles)
     {
         _styles = styles;
-        _numbering = numbering;
     }
 
-    public string Render(XElement block)
+    /// <param name="listLabel">The label counted at index time ("3.", "ב."), or null when the block is not a list item.</param>
+    public string Render(XElement block, string? listLabel = null)
     {
         var html = new StringBuilder(1024);
+        _listLabel = listLabel;
         RenderBlock(block, html);
+        _listLabel = null;
         return html.ToString();
     }
 
@@ -62,8 +64,11 @@ public sealed class DocxBlockHtmlRenderer
         string tag = headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
 
         WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(), null, formatting.IsRightToLeft);
-        string? marker = _numbering.MarkerFor(formatting.NumberingId, formatting.NumberingLevel);
-        if (marker is not null) html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(marker)).Append("</span> ");
+        if (_listLabel is { Length: > 0 } label)
+        {
+            html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(label)).Append("</span> ");
+            _listLabel = null;                                      // only the block's first paragraph carries it
+        }
         RenderInlineChildren(paragraph, html, formatting.RunFormatting);
         html.Append("</").Append(tag).Append('>');
     }

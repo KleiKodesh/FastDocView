@@ -4,8 +4,9 @@ namespace WordDocumentRandomAccess.DocBinary;
 
 /// <summary>
 /// A binary .doc opened for windowed rendering. The piece table already gives random access to the
-/// text; the only pass is the paragraph-boundary scan (cached as a sidecar). Everything else — PAPX,
-/// CHPX, styles — is looked up on demand through the bin tables.
+/// text; the only pass is the paragraph-boundary scan, kept in memory for small files and saved as
+/// a sidecar for big ones (policy). Everything else — PAPX, CHPX, styles — is looked up on demand
+/// through the bin tables. <see cref="OpenFromStream"/> is the host-agnostic (WASM) entry.
 /// </summary>
 public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
 {
@@ -21,18 +22,54 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     public int BlockCount => _index.ParagraphCount;
     public bool IsRightToLeft { get; }
     public string Stylesheet { get; }
+    public WordIndexDecision Decision { get; }
     public DocBinaryFileInformationBlock FileInformationBlock { get; }
     public DocBinaryPieceTable PieceTable { get; }
 
-    public static DocBinaryWindowedDocument Open(string filePath, string? cacheDirectory = null,
+    public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
+    {
+        using var compoundFile = new CompoundFileReader(filePath);
+        using Stream wordDocument = compoundFile.OpenRootStream("WordDocument") ?? throw new InvalidDataException("No WordDocument stream.");
+        var fib = new DocBinaryFileInformationBlock(wordDocument);
+        bool hasCachedIndex = DocBinaryParagraphIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
+        return policy.Decide(filePath, (long)fib.MainTextCharacterCount * 2, hasCachedIndex);
+    }
+
+    public static DocBinaryWindowedDocument Open(string filePath, WordIndexPolicy? policy = null,
                                                  IProgress<WordDocumentIndexProgress>? progress = null,
                                                  CancellationToken cancellation = default)
-        => new(filePath, cacheDirectory, progress, cancellation);
-
-    private DocBinaryWindowedDocument(string filePath, string? cacheDirectory, IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
     {
-        FilePath = filePath;
-        _compoundFile = new CompoundFileReader(filePath);
+        policy ??= WordIndexPolicy.Default;
+        var info = new FileInfo(filePath);
+        string indexPath = policy.IndexPathFor(filePath);
+        DocBinaryParagraphIndex? cached = DocBinaryParagraphIndex.TryLoad(indexPath, filePath);
+        var file = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+        try
+        {
+            var document = new DocBinaryWindowedDocument(file, filePath, policy, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
+            if (document.Decision.Mode == WordIndexMode.Sidecar && cached is null) document._index.Save(indexPath);
+            return document;
+        }
+        catch
+        {
+            file.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Host-agnostic entry: the stream stays open for the document's lifetime and is disposed with it.</summary>
+    public static DocBinaryWindowedDocument OpenFromStream(Stream file, string displayPath, WordIndexPolicy policy,
+                                                           DocBinaryParagraphIndex? cachedIndex, long sourceLength, long sourceLastWriteTicksUtc,
+                                                           IProgress<WordDocumentIndexProgress>? progress = null,
+                                                           CancellationToken cancellation = default)
+        => new(file, displayPath, policy, cachedIndex, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
+
+    private DocBinaryWindowedDocument(Stream file, string displayPath, WordIndexPolicy policy, DocBinaryParagraphIndex? cachedIndex,
+                                      long sourceLength, long sourceLastWriteTicksUtc,
+                                      IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
+    {
+        FilePath = displayPath;
+        _compoundFile = new CompoundFileReader(file);
         _wordDocument = _compoundFile.OpenRootStream("WordDocument") ?? throw new InvalidDataException("No WordDocument stream — not a Word binary file.");
         FileInformationBlock = new DocBinaryFileInformationBlock(_wordDocument);
         _tableStream = _compoundFile.OpenRootStream(FileInformationBlock.TableStreamName)
@@ -42,14 +79,10 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         var pages = new DocBinaryFormattedDiskPages(_wordDocument, _tableStream, FileInformationBlock);
         _renderer = new DocBinaryParagraphHtmlRenderer(PieceTable, pages, _styles);
 
-        string indexPath = WordDocumentIndexCacheLocation.IndexPathFor(filePath, cacheDirectory);
-        DocBinaryParagraphIndex? cached = DocBinaryParagraphIndex.TryLoad(indexPath, filePath);
-        if (cached is null)
-        {
-            cached = DocBinaryParagraphIndex.Build(filePath, PieceTable, FileInformationBlock.MainTextCharacterCount, progress, cancellation);
-            cached.Save(indexPath);
-        }
-        _index = cached;
+        bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc);
+        Decision = policy.Decide(displayPath, (long)FileInformationBlock.MainTextCharacterCount * 2, isCacheValid);
+        _index = isCacheValid ? cachedIndex!
+               : DocBinaryParagraphIndex.Build(PieceTable, FileInformationBlock.MainTextCharacterCount, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
 
         IsRightToLeft = DetectRightToLeft();
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(0).RunFormatting, IsRightToLeft);
@@ -86,8 +119,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
 
     private List<WordDocumentHeading> CollectHeadings()
     {
-        // Heading detection needs each paragraph's PAPX; that is one page lookup per paragraph,
-        // cached per 512-byte page, so a full pass stays cheap even for large documents.
+        // One PAPX page lookup per paragraph, cached per 512-byte page, so a full pass stays cheap.
         var headings = new List<WordDocumentHeading>();
         for (int blockIndex = 0; blockIndex < BlockCount; blockIndex++)
         {

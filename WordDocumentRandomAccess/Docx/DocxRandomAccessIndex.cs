@@ -5,15 +5,16 @@ using WordDocumentRandomAccess.Zip;
 namespace WordDocumentRandomAccess.Docx;
 
 /// <summary>
-/// The sidecar index of one .docx: where word/document.xml sits in the zip, the deflate
-/// checkpoints, and every body-level block's uncompressed offset + kind + style + text length.
-/// Saved as a small binary file (<see cref="Save"/>/<see cref="Load"/>); about 3 % of the
-/// uncompressed XML size at the default 1 MB checkpoint spacing (32 KB window per checkpoint).
+/// The index of one .docx body: where word/document.xml sits in the zip, the deflate checkpoints
+/// (none in in-memory mode), and every body-level block's uncompressed offset + kind + style +
+/// list label + text length. Serialised to/from a <see cref="Stream"/> (the sidecar file on disk,
+/// or whatever store a WASM host provides); about 3 % of the uncompressed XML at the default 1 MB
+/// checkpoint spacing.
 /// </summary>
 public sealed class DocxRandomAccessIndex
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -26,13 +27,15 @@ public sealed class DocxRandomAccessIndex
     public int[] BlockTextLengths { get; }
     public short[] BlockStyleIds { get; }
     public string[] StyleIdTable { get; }
+    public int[] BlockListLabelIds { get; }
+    public string[] ListLabels { get; }
 
     public int BlockCount => BlockStartOffsets.Length;
 
     public DocxRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, ZipEntryLocation documentEntry,
                                  string rootOpenTag, long bodyEndOffset, IReadOnlyList<DeflateCheckpoint> checkpoints,
                                  long[] blockStartOffsets, WordDocumentBlockKind[] blockKinds, int[] blockTextLengths,
-                                 short[] blockStyleIds, string[] styleIdTable)
+                                 short[] blockStyleIds, string[] styleIdTable, int[] blockListLabelIds, string[] listLabels)
     {
         SourceFileLength = sourceFileLength;
         SourceLastWriteTicksUtc = sourceLastWriteTicksUtc;
@@ -45,6 +48,8 @@ public sealed class DocxRandomAccessIndex
         BlockTextLengths = blockTextLengths;
         BlockStyleIds = blockStyleIds;
         StyleIdTable = styleIdTable;
+        BlockListLabelIds = blockListLabelIds;
+        ListLabels = listLabels;
     }
 
     public long BlockEndOffset(int blockIndex)
@@ -56,75 +61,68 @@ public sealed class DocxRandomAccessIndex
         return tableIndex >= 0 ? StyleIdTable[tableIndex] : null;
     }
 
+    public string? ListLabelOf(int blockIndex)
+    {
+        int labelIndex = BlockListLabelIds[blockIndex];
+        return labelIndex >= 0 ? ListLabels[labelIndex] : null;
+    }
+
+    public bool MatchesSource(long fileLength, long lastWriteTicksUtc)
+        => fileLength == SourceFileLength && lastWriteTicksUtc == SourceLastWriteTicksUtc;
+
     public bool MatchesSource(string documentPath)
     {
         var info = new FileInfo(documentPath);
-        return info.Exists && info.Length == SourceFileLength && info.LastWriteTimeUtc.Ticks == SourceLastWriteTicksUtc;
+        return info.Exists && MatchesSource(info.Length, info.LastWriteTimeUtc.Ticks);
     }
 
-    public void Save(string indexPath)
+    // ── serialisation ─────────────────────────────────────────────────────────────────
+
+    public void Write(Stream destination)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
-        string temporaryPath = indexPath + ".tmp";
-        using (var file = File.Create(temporaryPath))
-        using (var writer = new BinaryWriter(file, Encoding.UTF8))
+        var writer = new BinaryWriter(destination, Encoding.UTF8, leaveOpen: true);
+        writer.Write(Magic);
+        writer.Write(FormatVersion);
+        writer.Write(SourceFileLength);
+        writer.Write(SourceLastWriteTicksUtc);
+        writer.Write(DocumentEntry.Name);
+        writer.Write(DocumentEntry.DataOffset);
+        writer.Write(DocumentEntry.CompressedSize);
+        writer.Write(DocumentEntry.UncompressedSize);
+        writer.Write(DocumentEntry.CompressionMethod);
+        writer.Write(DocumentEntry.Crc32);
+        writer.Write(RootOpenTag);
+        writer.Write(BodyEndOffset);
+
+        writer.Write(Checkpoints.Count);
+        foreach (DeflateCheckpoint checkpoint in Checkpoints)
         {
-            writer.Write(Magic);
-            writer.Write(FormatVersion);
-            writer.Write(SourceFileLength);
-            writer.Write(SourceLastWriteTicksUtc);
-            writer.Write(DocumentEntry.Name);
-            writer.Write(DocumentEntry.DataOffset);
-            writer.Write(DocumentEntry.CompressedSize);
-            writer.Write(DocumentEntry.UncompressedSize);
-            writer.Write(DocumentEntry.CompressionMethod);
-            writer.Write(DocumentEntry.Crc32);
-            writer.Write(RootOpenTag);
-            writer.Write(BodyEndOffset);
-
-            writer.Write(Checkpoints.Count);
-            foreach (DeflateCheckpoint checkpoint in Checkpoints)
-            {
-                writer.Write(checkpoint.CompressedBytePosition);
-                writer.Write((byte)checkpoint.LeftoverBitCount);
-                writer.Write((byte)checkpoint.LeftoverBits);
-                writer.Write(checkpoint.UncompressedOffset);
-                writer.Write(checkpoint.Window.Length);
-                writer.Write(checkpoint.Window);
-            }
-
-            writer.Write(StyleIdTable.Length);
-            foreach (string styleId in StyleIdTable) writer.Write(styleId);
-
-            writer.Write(BlockStartOffsets.Length);
-            foreach (long offset in BlockStartOffsets) writer.Write(offset);
-            foreach (WordDocumentBlockKind kind in BlockKinds) writer.Write((byte)kind);
-            foreach (int length in BlockTextLengths) writer.Write(length);
-            foreach (short styleId in BlockStyleIds) writer.Write(styleId);
+            writer.Write(checkpoint.CompressedBytePosition);
+            writer.Write((byte)checkpoint.LeftoverBitCount);
+            writer.Write((byte)checkpoint.LeftoverBits);
+            writer.Write(checkpoint.UncompressedOffset);
+            writer.Write(checkpoint.Window.Length);
+            writer.Write(checkpoint.Window);
         }
-        if (File.Exists(indexPath)) File.Delete(indexPath);
-        File.Move(temporaryPath, indexPath);
+
+        writer.Write(StyleIdTable.Length);
+        foreach (string styleId in StyleIdTable) writer.Write(styleId);
+        writer.Write(ListLabels.Length);
+        foreach (string label in ListLabels) writer.Write(label);
+
+        writer.Write(BlockStartOffsets.Length);
+        foreach (long offset in BlockStartOffsets) writer.Write(offset);
+        foreach (WordDocumentBlockKind kind in BlockKinds) writer.Write((byte)kind);
+        foreach (int length in BlockTextLengths) writer.Write(length);
+        foreach (short styleId in BlockStyleIds) writer.Write(styleId);
+        foreach (int labelId in BlockListLabelIds) writer.Write(labelId);
+        writer.Flush();
     }
 
-    public static DocxRandomAccessIndex? TryLoad(string indexPath, string documentPath)
+    public static DocxRandomAccessIndex Read(Stream source)
     {
-        if (!File.Exists(indexPath)) return null;
-        try
-        {
-            DocxRandomAccessIndex index = Load(indexPath);
-            return index.MatchesSource(documentPath) ? index : null;
-        }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or EndOfStreamException)
-        {
-            return null;
-        }
-    }
-
-    public static DocxRandomAccessIndex Load(string indexPath)
-    {
-        using var file = File.OpenRead(indexPath);
-        using var reader = new BinaryReader(file, Encoding.UTF8);
-        if (reader.ReadString() != Magic) throw new InvalidDataException("Not a word index file.");
+        var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
+        if (reader.ReadString() != Magic) throw new InvalidDataException("Not a word index.");
         if (reader.ReadInt32() != FormatVersion) throw new InvalidDataException("Word index: unsupported version.");
         long sourceLength = reader.ReadInt64();
         long sourceTicks = reader.ReadInt64();
@@ -147,18 +145,48 @@ public sealed class DocxRandomAccessIndex
 
         var styleIdTable = new string[reader.ReadInt32()];
         for (int i = 0; i < styleIdTable.Length; i++) styleIdTable[i] = reader.ReadString();
+        var listLabels = new string[reader.ReadInt32()];
+        for (int i = 0; i < listLabels.Length; i++) listLabels[i] = reader.ReadString();
 
         int blockCount = reader.ReadInt32();
         var starts = new long[blockCount];
         var kinds = new WordDocumentBlockKind[blockCount];
         var textLengths = new int[blockCount];
         var styleIds = new short[blockCount];
+        var labelIds = new int[blockCount];
         for (int i = 0; i < blockCount; i++) starts[i] = reader.ReadInt64();
         for (int i = 0; i < blockCount; i++) kinds[i] = (WordDocumentBlockKind)reader.ReadByte();
         for (int i = 0; i < blockCount; i++) textLengths[i] = reader.ReadInt32();
         for (int i = 0; i < blockCount; i++) styleIds[i] = reader.ReadInt16();
+        for (int i = 0; i < blockCount; i++) labelIds[i] = reader.ReadInt32();
 
         return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints,
-                                         starts, kinds, textLengths, styleIds, styleIdTable);
+                                         starts, kinds, textLengths, styleIds, styleIdTable, labelIds, listLabels);
+    }
+
+    // ── sidecar file helpers (file-system hosts) ───────────────────────────────────────
+
+    public void Save(string indexPath)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
+        string temporaryPath = indexPath + ".tmp";
+        using (var file = File.Create(temporaryPath)) Write(file);
+        if (File.Exists(indexPath)) File.Delete(indexPath);
+        File.Move(temporaryPath, indexPath);
+    }
+
+    public static DocxRandomAccessIndex? TryLoad(string indexPath, string documentPath)
+    {
+        if (!File.Exists(indexPath)) return null;
+        try
+        {
+            using var file = File.OpenRead(indexPath);
+            DocxRandomAccessIndex index = Read(file);
+            return index.MatchesSource(documentPath) ? index : null;
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or EndOfStreamException)
+        {
+            return null;
+        }
     }
 }

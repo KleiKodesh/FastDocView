@@ -6,27 +6,39 @@ using WordDocumentRandomAccess.Zip;
 namespace WordDocumentRandomAccess.Docx;
 
 /// <summary>
-/// Reads the XML of a run of body-level blocks straight out of the compressed document using the
+/// Reads the XML of a run of body-level blocks out of a seekable view of document.xml using the
 /// index: one seek to the first block, one contiguous read to the last block's end, then each
 /// block's bytes are wrapped in the root element (for its namespace declarations) and parsed.
-/// Keeps the file and the inflater open so consecutive requests continue without re-seeking.
+/// The view is a <see cref="DeflateRandomAccessStream"/> over the compressed entry (sidecar mode),
+/// a <see cref="ZipStoredEntryStream"/> (stored entry) or a <see cref="MemoryStream"/> (in-memory mode).
 /// </summary>
 public sealed class DocxBlockXmlReader : IDisposable
 {
-    private readonly FileStream _file;
     private readonly Stream _documentXml;
+    private readonly IDisposable? _owned;
     private readonly DocxRandomAccessIndex _index;
     private readonly byte[] _rootOpenTagBytes;
     private static readonly byte[] RootCloseTagBytes = Encoding.UTF8.GetBytes("</w:document>");
 
-    public DocxBlockXmlReader(string documentPath, DocxRandomAccessIndex index)
+    /// <summary>Sidecar mode over the package stream (which this reader then owns).</summary>
+    public static DocxBlockXmlReader OverPackage(Stream package, DocxRandomAccessIndex index)
     {
-        _index = index;
-        _file = new FileStream(documentPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
         ZipEntryLocation entry = index.DocumentEntry;
-        _documentXml = entry.IsDeflate
-            ? new DeflateRandomAccessStream(_file, entry.DataOffset, entry.CompressedSize, entry.UncompressedSize, index.Checkpoints)
-            : new ZipStoredEntryStream(_file, entry.DataOffset, entry.CompressedSize);
+        Stream view = entry.IsDeflate
+            ? new DeflateRandomAccessStream(package, entry.DataOffset, entry.CompressedSize, entry.UncompressedSize, index.Checkpoints)
+            : new ZipStoredEntryStream(package, entry.DataOffset, entry.CompressedSize);
+        return new DocxBlockXmlReader(view, index, package);
+    }
+
+    /// <summary>In-memory mode over the already-inflated body.</summary>
+    public static DocxBlockXmlReader OverBody(byte[] body, DocxRandomAccessIndex index)
+        => new(new MemoryStream(body, writable: false), index, null);
+
+    private DocxBlockXmlReader(Stream documentXml, DocxRandomAccessIndex index, IDisposable? owned)
+    {
+        _documentXml = documentXml;
+        _index = index;
+        _owned = owned;
         _rootOpenTagBytes = Encoding.UTF8.GetBytes(index.RootOpenTag);
     }
 
@@ -78,6 +90,6 @@ public sealed class DocxBlockXmlReader : IDisposable
     public void Dispose()
     {
         _documentXml.Dispose();
-        _file.Dispose();
+        _owned?.Dispose();
     }
 }

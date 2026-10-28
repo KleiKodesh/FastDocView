@@ -21,6 +21,21 @@ public static class SyntheticDocxGenerator
         </w:styles>
         """;
 
+    private const string NumberingXml = """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:abstractNum w:abstractNumId="0">
+            <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+            <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%1.%2"/></w:lvl>
+          </w:abstractNum>
+          <w:abstractNum w:abstractNumId="1">
+            <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="hebrew1"/><w:lvlText w:val="%1."/></w:lvl>
+          </w:abstractNum>
+          <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+          <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
+        </w:numbering>
+        """;
+
     private const string ContentTypesXml = """
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -28,6 +43,7 @@ public static class SyntheticDocxGenerator
           <Default Extension="xml" ContentType="application/xml"/>
           <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
           <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+          <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
         </Types>
         """;
 
@@ -42,6 +58,7 @@ public static class SyntheticDocxGenerator
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
           <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+          <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
         </Relationships>
         """;
 
@@ -55,6 +72,7 @@ public static class SyntheticDocxGenerator
         AddText(zip, "_rels/.rels", RootRelsXml);
         AddText(zip, "word/_rels/document.xml.rels", DocumentRelsXml);
         AddText(zip, "word/styles.xml", StylesXml);
+        AddText(zip, "word/numbering.xml", NumberingXml);
 
         ZipArchiveEntry document = zip.CreateEntry("word/document.xml", CompressionLevel.Optimal);
         using var writer = new StreamWriter(document.Open(), new UTF8Encoding(false), 1 << 16);
@@ -65,6 +83,9 @@ public static class SyntheticDocxGenerator
         {
             if (i % 200 == 199) { WriteTable(writer, i); continue; }
             if (i % 50 == 0) writer.Write($"<w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>כותרת {i / 50 + 1} — פסקה {i}</w:t></w:r></w:p>");
+            else if (i % 10 == 3) writer.Write($"<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr><w:r><w:t>פסקה {i} פריט רשימה</w:t></w:r></w:p>");
+            else if (i % 10 == 4) writer.Write($"<w:p><w:pPr><w:numPr><w:ilvl w:val=\"1\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr><w:r><w:t>פסקה {i} תת-פריט</w:t></w:r></w:p>");
+            else if (i % 10 == 7) writer.Write($"<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"2\"/></w:numPr></w:pPr><w:r><w:t>פסקה {i} סעיף עברי</w:t></w:r></w:p>");
             else WriteParagraph(writer, i, random);
         }
         writer.Write("<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/></w:sectPr></w:body></w:document>");

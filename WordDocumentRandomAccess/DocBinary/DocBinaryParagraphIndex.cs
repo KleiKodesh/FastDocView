@@ -32,10 +32,9 @@ public sealed class DocBinaryParagraphIndex
         MainTextCharacterCount = mainTextCharacterCount;
     }
 
-    public static DocBinaryParagraphIndex Build(string documentPath, DocBinaryPieceTable pieces, int mainTextCharacterCount,
+    public static DocBinaryParagraphIndex Build(DocBinaryPieceTable pieces, int mainTextCharacterCount, long sourceLength, long sourceLastWriteTicksUtc,
                                                 IProgress<WordDocumentIndexProgress>? progress = null, CancellationToken cancellation = default)
     {
-        var info = new FileInfo(documentPath);
         var starts = new List<int> { 0 };
         var lengths = new List<int>();
         int currentLength = 0;
@@ -57,13 +56,16 @@ public sealed class DocBinaryParagraphIndex
             progress?.Report(new WordDocumentIndexProgress(chunkCp + count, mainTextCharacterCount, starts.Count));
         });
         while (lengths.Count < starts.Count) lengths.Add(currentLength);
-        return new DocBinaryParagraphIndex(info.Length, info.LastWriteTimeUtc.Ticks, starts.ToArray(), lengths.ToArray(), mainTextCharacterCount);
+        return new DocBinaryParagraphIndex(sourceLength, sourceLastWriteTicksUtc, starts.ToArray(), lengths.ToArray(), mainTextCharacterCount);
     }
+
+    public bool MatchesSource(long fileLength, long lastWriteTicksUtc)
+        => fileLength == SourceFileLength && lastWriteTicksUtc == SourceLastWriteTicksUtc;
 
     public bool MatchesSource(string documentPath)
     {
         var info = new FileInfo(documentPath);
-        return info.Exists && info.Length == SourceFileLength && info.LastWriteTimeUtc.Ticks == SourceLastWriteTicksUtc;
+        return info.Exists && MatchesSource(info.Length, info.LastWriteTimeUtc.Ticks);
     }
 
     public void Save(string indexPath)

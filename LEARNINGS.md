@@ -35,3 +35,22 @@ Append-only. Date, what we learned, what it changed.
 - Measured (synthetic, 50 000 blocks, 22 MB XML): build 0.5 s, index 1.2 MB, reopen 50 ms,
   random 40-block window worst 30 ms, consecutive ~2 ms. Real Hebrew docx (250 KB): cold open
   120 ms, cached 9 ms, 30-block windows 6–34 ms.
+
+## 2026-10-28 — policy, numbering, stream-based core
+
+- **Indexing only pays above ~8 MB of body.** The one-pass open (scan + keep the inflated body)
+  runs at ~40 MB/s; below 8 MB that is ≤ 200 ms and beats building, writing and loading a
+  sidecar. Default threshold set there; a cached sidecar is still used below it.
+- **List numbers must be counted in the same pass that finds the blocks.** Storing the finished
+  label per block (string table) is simpler than storing counters and re-formatting: the label
+  needs the whole counter vector for `%1.%2` patterns anyway.
+- **`IsOn(null)` strikes twice.** Same class of bug would hit `w:lvlOverride`/`w:start` parsing
+  — every "attribute present?" check is explicit now.
+- **A stale test fixture hides a regression.** The 50k synthetic docx was reused from disk and
+  had no numbering; the "lacks list marker" failures were the fixture, not the code. Fixture
+  file names now carry a version suffix.
+- **net48 has no `EnumerationOptions`.** Folder walks that must skip inaccessible directories
+  need a hand-rolled stack walk when the library multi-targets.
+- **WASM readiness is mostly about entry points.** Once the documents take a `Stream` and the
+  index serialises to a `Stream`, nothing else in the core cares about files; the workload
+  install is the remaining blocker.
