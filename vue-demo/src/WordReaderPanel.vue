@@ -26,6 +26,10 @@ const scrollerRef = ref<InstanceType<typeof WindowedScroller> | null>(null)
 const scroller = (): WindowedScrollerApi | null => scrollerRef.value
 let currentPath: string | null = null
 let requestGeneration = 0
+// Where the scroller lands when it (re)mounts — the lines view's initialIndex/initialOffsetPx.
+// Read from the live scroller just before a reload, so the same block sits at the same pixel.
+const restoreIndex = ref(0)
+const restoreOffsetPx = ref(0)
 
 const landmarkTiers = computed(() => {
   if (!summary.value) return []
@@ -37,8 +41,11 @@ const landmarkTiers = computed(() => {
   return tiers
 })
 
-async function open(path: string, options: { forceSidecar?: boolean; rebuildIndex?: boolean } = {}) {
+async function open(path: string, options: { forceSidecar?: boolean; rebuildIndex?: boolean; keepPosition?: boolean } = {}) {
   const generation = ++requestGeneration
+  const visible = options.keepPosition ? scroller()?.readFirstVisible() : null
+  restoreIndex.value = visible?.index ?? 0
+  restoreOffsetPx.value = visible?.offsetWithinRow ?? 0
   isOpening.value = true
   status.value = `Opening ${path}…`
   const previous = summary.value
@@ -65,7 +72,7 @@ async function open(path: string, options: { forceSidecar?: boolean; rebuildInde
 }
 
 function reload() {
-  if (currentPath) void open(currentPath)
+  if (currentPath) void open(currentPath, { keepPosition: true })
 }
 
 async function ensureBlocks(start: number, end: number): Promise<void> {
@@ -125,7 +132,7 @@ defineExpose({ open, reload, scrollToBlock, debugState })
   <section class="reader-panel">
     <header class="toolbar">
       <button :disabled="!summary || isOpening" data-test="reload-button" @click="reload">Reload</button>
-      <button :disabled="!summary || isOpening" @click="currentPath && open(currentPath, { rebuildIndex: true, forceSidecar: true })">Rebuild index</button>
+      <button :disabled="!summary || isOpening" @click="currentPath && open(currentPath, { rebuildIndex: true, forceSidecar: true, keepPosition: true })">Rebuild index</button>
       <button @click="refreshMemory(true)">Collect GC</button>
       <label>Go to block <input type="number" min="0" :max="(summary?.blockCount ?? 1) - 1" data-test="goto-input" @change="scrollToBlock(Number(($event.target as HTMLInputElement).value))" /></label>
       <span v-if="serverMemory" class="memory" data-test="server-memory">
@@ -152,6 +159,8 @@ defineExpose({ open, reload, scrollToBlock, debugState })
         ref="scrollerRef"
         class="scroller word-document"
         :count="summary.blockCount"
+        :initial-index="restoreIndex"
+        :initial-offset-px="restoreOffsetPx"
         :ensure-rows="ensureBlocks"
         :row-source-version="renderVersion"
         :row-weights="weights"
