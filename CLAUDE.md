@@ -17,6 +17,14 @@ one concept one name, no `utils`, a name must match its contents).
 
 ## The paradigm — never break it
 
+**VITAL (user, 2026-10-28): data is loaded WINDOWED, always. Never, ever cross that line — it is the
+whole point of FastDocView and what makes it fast.** Only the blocks near the viewport are read,
+parsed, rendered and sent; the document is never loaded, streamed or sent whole — not on a first
+open, not "for a moment", not because a file is small, not to the page. A first open builds its
+index while the reader reads windows from the partial index; the index-building call returns only
+counts, never content. Any design that needs the whole document at once is wrong — find the
+index-time or per-window form instead.
+
 One **streaming index pass** records everything a reader needs to jump anywhere; afterwards only
 the blocks near the viewport are read, parsed and rendered — the same model as the app's lines
 view over SQLite.
