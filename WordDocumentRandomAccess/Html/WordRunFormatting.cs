@@ -19,6 +19,7 @@ public sealed class WordRunFormatting
     public string? EmphasisMarkCss;         // CSS text-emphasis value ("filled dot", "filled sesame", "open circle"); null = none
     public bool IsEmphasisMarkBelow;        // w:em underDot
     public bool IsStrikethrough;
+    public bool IsDoubleStrikethrough;      // w:dstrike / sprmCFDStrike
     public bool IsSuperscript;
     public bool IsSubscript;
     public bool IsHidden;
@@ -38,6 +39,9 @@ public sealed class WordRunFormatting
     public string? HighlightCssColor;
     public string? FontName;
     public string? ComplexScriptFontName;
+    public bool IsWebHidden;                // w:webHidden: hidden in a web view (not a toggle property)
+    /// <summary>.docx only: the toggle properties per style layer; <c>DocxStyleCascade</c> resolves them into the flags above.</summary>
+    public WordToggleLayers Toggles;
 
     public WordRunFormatting Clone() => (WordRunFormatting)MemberwiseClone();
 
@@ -71,12 +75,15 @@ public sealed class WordRunFormatting
     private string EmphasisCss()
         => EmphasisMarkCss is null ? "" : "text-emphasis:" + EmphasisMarkCss + ";" + (IsEmphasisMarkBelow ? "text-emphasis-position:under right;" : "");
 
+    /// <summary>Whether the complex-script set (bold / italic / size / font) applies to this run.</summary>
+    public bool UsesComplexScriptProperties => IsRightToLeft;
+
     public int EffectiveFontSizeHalfPoints
-        => IsRightToLeft && ComplexScriptFontSizeHalfPoints > 0 ? ComplexScriptFontSizeHalfPoints
+        => UsesComplexScriptProperties && ComplexScriptFontSizeHalfPoints > 0 ? ComplexScriptFontSizeHalfPoints
          : FontSizeHalfPoints > 0 ? FontSizeHalfPoints : ComplexScriptFontSizeHalfPoints;
 
     public string? EffectiveFontName
-        => IsRightToLeft && !string.IsNullOrEmpty(ComplexScriptFontName) ? ComplexScriptFontName : FontName ?? ComplexScriptFontName;
+        => UsesComplexScriptProperties && !string.IsNullOrEmpty(ComplexScriptFontName) ? ComplexScriptFontName : FontName ?? ComplexScriptFontName;
 
     /// <summary>CSS for the whole formatting (used for the block's base font).</summary>
     public string ToCss() => ToCss(null);
@@ -87,8 +94,8 @@ public sealed class WordRunFormatting
         var css = new StringBuilder();
         if (baseline is null || IsBold != baseline.IsBold) css.Append(IsBold ? "font-weight:bold;" : baseline is null ? "" : "font-weight:normal;");
         if (baseline is null || IsItalic != baseline.IsItalic) css.Append(IsItalic ? "font-style:italic;" : baseline is null ? "" : "font-style:normal;");
-        string decoration = (IsUnderlined ? "underline " : "") + (IsStrikethrough ? "line-through" : "");
-        string baselineDecoration = baseline is null ? "" : (baseline.IsUnderlined ? "underline " : "") + (baseline.IsStrikethrough ? "line-through" : "");
+        string decoration = (IsUnderlined ? "underline " : "") + (IsStrikethrough || IsDoubleStrikethrough ? "line-through" : "");
+        string baselineDecoration = baseline is null ? "" : (baseline.IsUnderlined ? "underline " : "") + (baseline.IsStrikethrough || baseline.IsDoubleStrikethrough ? "line-through" : "");
         // text-decoration-style / -thickness / -color only apply to a line declared on the same element, so a run whose
         // underline differs from the paragraph's re-declares the line even when the set of lines is unchanged.
         int decorationAt = css.Length;

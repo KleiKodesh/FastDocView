@@ -32,7 +32,8 @@ public sealed class DocxStyleCascade
         if (root is null) return;
 
         XElement? documentDefaults = root.Element(W + "docDefaults");
-        ApplyRunProperties(DocumentDefaults.RunFormatting, documentDefaults?.Element(W + "rPrDefault")?.Element(W + "rPr"), _theme);
+        ApplyRunProperties(DocumentDefaults.RunFormatting, documentDefaults?.Element(W + "rPrDefault")?.Element(W + "rPr"), _theme, WordStyleLayer.DocumentDefaults);
+        ResolveToggles(DocumentDefaults.RunFormatting);
         ApplyParagraphProperties(DocumentDefaults, documentDefaults?.Element(W + "pPrDefault")?.Element(W + "pPr"), _theme);
 
         foreach (XElement style in root.Elements(W + "style"))
@@ -58,8 +59,9 @@ public sealed class DocxStyleCascade
         foreach (XElement style in StyleChain(key))
         {
             ApplyParagraphProperties(formatting, style.Element(W + "pPr"), _theme);
-            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme);
+            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme, WordStyleLayer.ParagraphStyle);
         }
+        ResolveToggles(formatting.RunFormatting);
         _resolvedParagraphStyles[key] = formatting;
         return formatting;
     }
@@ -77,13 +79,14 @@ public sealed class DocxStyleCascade
         foreach (XElement style in StyleChain(tableStyleId))
         {
             ApplyParagraphProperties(formatting, style.Element(W + "pPr"), _theme);
-            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme);
+            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme, WordStyleLayer.TableStyle);
         }
         foreach (XElement style in StyleChain(styleId ?? _defaultParagraphStyleId))
         {
             ApplyParagraphProperties(formatting, style.Element(W + "pPr"), _theme);
-            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme);
+            ApplyRunProperties(formatting.RunFormatting, style.Element(W + "rPr"), _theme, WordStyleLayer.ParagraphStyle);
         }
+        ResolveToggles(formatting.RunFormatting);
         _resolvedParagraphStyles[key] = formatting;
         return formatting;
     }
@@ -100,18 +103,43 @@ public sealed class DocxStyleCascade
     {
         WordParagraphFormatting formatting = ResolveParagraphStyleInTable(tableStyleId, styleId).Clone();
         ApplyParagraphProperties(formatting, directParagraphProperties, _theme);
+        ResolveToggles(formatting.RunFormatting);
         formatting.StyleKey = styleId ?? _defaultParagraphStyleId ?? "";
         return formatting;
     }
 
-    /// <summary>Run formatting: paragraph base → character style chain → direct rPr.</summary>
+    /// <summary>Run formatting: paragraph base → character style chain → direct rPr, toggle properties combined per §17.7.3 (<see cref="WordToggleLayers"/>).</summary>
     public WordRunFormatting ResolveRun(WordRunFormatting paragraphBase, XElement? directRunProperties)
     {
         WordRunFormatting formatting = paragraphBase.Clone();
         string? characterStyleId = (string?)directRunProperties?.Element(W + "rStyle")?.Attribute(W + "val") ?? _defaultCharacterStyleId;
-        foreach (XElement style in StyleChain(characterStyleId)) ApplyRunProperties(formatting, style.Element(W + "rPr"), _theme);
-        ApplyRunProperties(formatting, directRunProperties, _theme);
+        foreach (XElement style in StyleChain(characterStyleId)) ApplyRunProperties(formatting, style.Element(W + "rPr"), _theme, WordStyleLayer.CharacterStyle);
+        ApplyRunProperties(formatting, directRunProperties, _theme, WordStyleLayer.Direct);
+        ResolveToggles(formatting);
         return formatting;
+    }
+
+    /// <summary>
+    /// The toggle layers → the resolved flags. Bold / italic come from b / i or from bCs / iCs depending on
+    /// whether the run is complex script (w:rtl): in Word 16, a run with w:rtl draws all its text with
+    /// bCs / iCs / szCs / the cs font, and a run without it uses b / i / sz / ascii even for Hebrew letters
+    /// (checked by PDF export of a synthetic document, 2026-10-28). LibreOffice keeps the pairs apart too
+    /// (DomainMapper.cxx: b → CharWeight, bCs → CharWeightComplex; i → CharPosture, iCs → CharPostureComplex).
+    /// </summary>
+    public static void ResolveToggles(WordRunFormatting formatting)
+    {
+        bool isComplexScript = formatting.UsesComplexScriptProperties;
+        WordToggleLayers toggles = formatting.Toggles;
+        formatting.IsBold = toggles.IsOn(isComplexScript ? WordToggleProperty.BoldComplexScript : WordToggleProperty.Bold);
+        formatting.IsItalic = toggles.IsOn(isComplexScript ? WordToggleProperty.ItalicComplexScript : WordToggleProperty.Italic);
+        formatting.IsAllCaps = toggles.IsOn(WordToggleProperty.Caps);
+        formatting.IsSmallCaps = toggles.IsOn(WordToggleProperty.SmallCaps);
+        formatting.IsStrikethrough = toggles.IsOn(WordToggleProperty.Strike);
+        formatting.IsEmboss = toggles.IsOn(WordToggleProperty.Emboss);
+        formatting.IsImprint = toggles.IsOn(WordToggleProperty.Imprint);
+        formatting.IsOutline = toggles.IsOn(WordToggleProperty.Outline);
+        formatting.IsShadow = toggles.IsOn(WordToggleProperty.Shadow);
+        formatting.IsHidden = toggles.IsOn(WordToggleProperty.Vanish) || formatting.IsWebHidden;
     }
 
     /// <summary>Heading level 1-9 for a style id, or 0 when the style is not a heading.</summary>
@@ -206,12 +234,12 @@ public sealed class DocxStyleCascade
             formatting.NumberingId = TwipsAttribute(numPr.Element(W + "numId"), "val") ?? -1;
             formatting.NumberingLevel = TwipsAttribute(numPr.Element(W + "ilvl"), "val") ?? 0;
         }
-        ApplyRunProperties(formatting.RunFormatting, pPr.Element(W + "rPr"), theme);
+        ApplyRunProperties(formatting.RunFormatting, pPr.Element(W + "rPr"), theme, WordStyleLayer.Direct);
     }
 
-    public static void ApplyRunProperties(WordRunFormatting formatting, XElement? rPr) => ApplyRunProperties(formatting, rPr, null);
-
-    public static void ApplyRunProperties(WordRunFormatting formatting, XElement? rPr, DocxTheme? theme)
+    /// <param name="layer">Where <paramref name="rPr"/> sits in the style hierarchy: toggle properties combine per layer (<see cref="WordToggleLayers"/>);
+    /// call <see cref="ResolveToggles"/> after the last layer.</param>
+    public static void ApplyRunProperties(WordRunFormatting formatting, XElement? rPr, DocxTheme? theme, WordStyleLayer layer)
     {
         if (rPr is null) return;
         foreach (XElement property in rPr.Elements())
@@ -219,8 +247,10 @@ public sealed class DocxStyleCascade
             string name = property.Name.LocalName;
             switch (name)
             {
-                case "b": case "bCs": formatting.IsBold = IsOn(property.Attribute(W + "val")); break;
-                case "i": case "iCs": formatting.IsItalic = IsOn(property.Attribute(W + "val")); break;
+                case "b": formatting.Toggles.Set(layer, WordToggleProperty.Bold, IsOn(property.Attribute(W + "val"))); break;
+                case "bCs": formatting.Toggles.Set(layer, WordToggleProperty.BoldComplexScript, IsOn(property.Attribute(W + "val"))); break;
+                case "i": formatting.Toggles.Set(layer, WordToggleProperty.Italic, IsOn(property.Attribute(W + "val"))); break;
+                case "iCs": formatting.Toggles.Set(layer, WordToggleProperty.ItalicComplexScript, IsOn(property.Attribute(W + "val"))); break;
                 case "u": ApplyUnderline(formatting, property, theme); break;
                 case "em":
                     // ST_Em (§17.18.24): dot / comma / circle above the glyphs, underDot below; CSS text-emphasis draws the same marks.
@@ -228,14 +258,16 @@ public sealed class DocxStyleCascade
                     formatting.EmphasisMarkCss = emphasis switch { "dot" or "underDot" => "filled dot", "comma" => "filled sesame", "circle" => "open circle", _ => null };
                     formatting.IsEmphasisMarkBelow = emphasis == "underDot";
                     break;
-                case "strike": case "dstrike": formatting.IsStrikethrough = IsOn(property.Attribute(W + "val")); break;
-                case "vanish": case "webHidden": formatting.IsHidden = IsOn(property.Attribute(W + "val")); break;
-                case "smallCaps": formatting.IsSmallCaps = IsOn(property.Attribute(W + "val")); break;
+                case "strike": formatting.Toggles.Set(layer, WordToggleProperty.Strike, IsOn(property.Attribute(W + "val"))); break;
+                case "dstrike": formatting.IsDoubleStrikethrough = IsOn(property.Attribute(W + "val")); break;   // not a toggle property
+                case "vanish": formatting.Toggles.Set(layer, WordToggleProperty.Vanish, IsOn(property.Attribute(W + "val"))); break;
+                case "webHidden": formatting.IsWebHidden = IsOn(property.Attribute(W + "val")); break;
+                case "smallCaps": formatting.Toggles.Set(layer, WordToggleProperty.SmallCaps, IsOn(property.Attribute(W + "val"))); break;
                 case "position": formatting.PositionHalfPoints = TwipsAttribute(property, "val") ?? formatting.PositionHalfPoints; break;
-                case "outline": formatting.IsOutline = IsOn(property.Attribute(W + "val")); break;
-                case "shadow": formatting.IsShadow = property.Name.Namespace == W ? IsOn(property.Attribute(W + "val")) : true; break;
-                case "emboss": formatting.IsEmboss = IsOn(property.Attribute(W + "val")); break;
-                case "imprint": formatting.IsImprint = IsOn(property.Attribute(W + "val")); break;
+                case "outline": formatting.Toggles.Set(layer, WordToggleProperty.Outline, property.Name.Namespace != W || IsOn(property.Attribute(W + "val"))); break;
+                case "shadow": formatting.Toggles.Set(layer, WordToggleProperty.Shadow, property.Name.Namespace != W || IsOn(property.Attribute(W + "val"))); break;   // w14:shadow / w14:textOutline effects: drawn
+                case "emboss": formatting.Toggles.Set(layer, WordToggleProperty.Emboss, IsOn(property.Attribute(W + "val"))); break;
+                case "imprint": formatting.Toggles.Set(layer, WordToggleProperty.Imprint, IsOn(property.Attribute(W + "val"))); break;
                 case "bdr": formatting.BorderCss = DocxTableFormatting.BorderCss(property, theme); break;
                 case "textFill":
                     // Word 2010 text fill (w14): a solid fill is just a color; gradients fall back to their first stop.
@@ -243,7 +275,7 @@ public sealed class DocxStyleCascade
                         .FirstOrDefault(a => a.Name.LocalName == "val")?.Value;
                     if (fillColor is { Length: 6 }) formatting.ColorHex = fillColor;
                     break;
-                case "caps": formatting.IsAllCaps = IsOn(property.Attribute(W + "val")); break;
+                case "caps": formatting.Toggles.Set(layer, WordToggleProperty.Caps, IsOn(property.Attribute(W + "val"))); break;
                 case "spacing": formatting.CharacterSpacingTwips = TwipsAttribute(property, "val") ?? formatting.CharacterSpacingTwips; break;
                 case "rtl": formatting.IsRightToLeft = IsOn(property.Attribute(W + "val")); break;
                 case "vertAlign":

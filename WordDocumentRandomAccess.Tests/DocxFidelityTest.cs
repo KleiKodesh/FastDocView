@@ -1,0 +1,108 @@
+using System.IO.Compression;
+using System.Text;
+
+namespace WordDocumentRandomAccess.Tests;
+
+/// <summary>
+/// Rendering fidelity checks against Word's behaviour, one tiny synthetic .docx per construct (the
+/// expected results were observed in Word 16 — COM read-back or PDF export — or read in the cited spec /
+/// LibreOffice source). Each case builds its package here from body / styles / numbering XML strings.
+/// </summary>
+public static partial class DocxFidelityTest
+{
+    private const string WordNamespaces = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
+
+    public static void Run()
+    {
+        TestReport.Step("Docx fidelity: toggle properties, scripts, underline / strike, shading, tabs, lists, tables, revisions, links");
+        foreach (Action check in Checks()) check();
+    }
+
+    private static IEnumerable<Action> Checks()
+    {
+        yield return ToggleProperties;
+    }
+
+    /// <summary>Writes a minimal package and returns every block's HTML.</summary>
+    internal static List<string> RenderAll(string name, string body, string styles = "", string? numbering = null,
+                                           string extraDocumentRelationships = "", string? settings = null)
+    {
+        string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-" + name + ".docx");
+        if (File.Exists(path)) File.Delete(path);
+        using (var zip = ZipFile.Open(path, ZipArchiveMode.Create))
+        {
+            void Add(string entry, string text)
+            {
+                using var writer = new StreamWriter(zip.CreateEntry(entry).Open(), new UTF8Encoding(false));
+                writer.Write(text);
+            }
+            Add("[Content_Types].xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+                + "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+                + "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>");
+            Add("_rels/.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>");
+            Add("word/_rels/document.xml.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                + "<Relationship Id=\"rIdS\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>"
+                + (numbering is null ? "" : "<Relationship Id=\"rIdN\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" Target=\"numbering.xml\"/>")
+                + (settings is null ? "" : "<Relationship Id=\"rIdT\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" Target=\"settings.xml\"/>")
+                + extraDocumentRelationships + "</Relationships>");
+            Add("word/styles.xml", $"<?xml version=\"1.0\"?><w:styles {WordNamespaces}><w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>{styles}</w:styles>");
+            if (numbering is not null) Add("word/numbering.xml", $"<?xml version=\"1.0\"?><w:numbering {WordNamespaces}>{numbering}</w:numbering>");
+            if (settings is not null) Add("word/settings.xml", $"<?xml version=\"1.0\"?><w:settings {WordNamespaces}>{settings}</w:settings>");
+            Add("word/document.xml", $"<?xml version=\"1.0\"?><w:document {WordNamespaces}><w:body>{body}</w:body></w:document>");
+        }
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+        return document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
+    }
+
+    internal static string Paragraph(string? paragraphStyle, string runProperties, string text, string paragraphProperties = "")
+        => "<w:p>" + (paragraphStyle is null && paragraphProperties.Length == 0 ? "" : "<w:pPr>" + (paragraphStyle is null ? "" : $"<w:pStyle w:val=\"{paragraphStyle}\"/>") + paragraphProperties + "</w:pPr>")
+         + $"<w:r><w:rPr>{runProperties}</w:rPr><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>";
+
+    private static bool IsBold(string html) => html.Contains("font-weight:bold");
+
+    /// <summary>
+    /// §17.7.3 toggle properties as Word 16 resolves them (COM read-back of a synthetic document, 2026-10-28):
+    /// last value wins inside a basedOn chain, table / paragraph / character styles XOR, docDefaults on stays on,
+    /// direct formatting absolute; b and bCs (i and iCs) are separate properties chosen by w:rtl.
+    /// </summary>
+    private static void ToggleProperties()
+    {
+        const string styles = """
+            <w:style w:type="paragraph" w:styleId="P1"><w:name w:val="P1"/><w:rPr><w:b/><w:i/></w:rPr></w:style>
+            <w:style w:type="paragraph" w:styleId="P2"><w:name w:val="P2"/><w:basedOn w:val="P1"/><w:rPr><w:b/></w:rPr></w:style>
+            <w:style w:type="character" w:styleId="C1"><w:name w:val="C1"/><w:rPr><w:b/><w:iCs/></w:rPr></w:style>
+            <w:style w:type="character" w:styleId="C2"><w:name w:val="C2"/><w:basedOn w:val="C1"/><w:rPr><w:b/></w:rPr></w:style>
+            <w:style w:type="character" w:styleId="C3"><w:name w:val="C3"/><w:rPr><w:b w:val="0"/></w:rPr></w:style>
+            <w:style w:type="table" w:styleId="T1"><w:name w:val="T1"/><w:rPr><w:b/></w:rPr></w:style>
+            """;
+        string body = Paragraph("P1", "", "p1")                                   // 0 bold
+                    + Paragraph("P1", "<w:rStyle w:val=\"C1\"/>", "p1c1")          // 1 not bold (XOR)
+                    + Paragraph("P2", "", "p2")                                   // 2 bold (chain: last wins)
+                    + Paragraph(null, "<w:rStyle w:val=\"C2\"/>", "c2")            // 3 bold (chain: last wins)
+                    + Paragraph("P1", "<w:rStyle w:val=\"C3\"/>", "p1c3")          // 4 bold (false contributes nothing)
+                    + Paragraph("P1", "<w:rStyle w:val=\"C1\"/><w:b/>", "direct")  // 5 bold (direct absolute)
+                    + Paragraph("P1", "<w:rStyle w:val=\"C1\"/><w:rtl/>", "rtl")   // 6 rtl: bCs off → not bold; iCs from C1 → italic
+                    + Paragraph(null, "<w:bCs/>", "bcs")                           // 7 no rtl: bCs ignored → not bold
+                    + "<w:tbl><w:tblPr><w:tblStyle w:val=\"T1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc>"
+                    + Paragraph("P1", "", "t-p1") + Paragraph(null, "", "t-normal") + Paragraph(null, "<w:rStyle w:val=\"C1\"/>", "t-c1")
+                    + "</w:tc></w:tr></w:tbl>";
+        List<string> html = RenderAll("toggles", body, styles);
+        TestReport.Check(IsBold(html[0]) && !html[1].Contains("<span style=\"font-weight:bold") && html[1].Contains("font-weight:normal"), "toggle: bold paragraph style XOR bold character style = not bold");
+        TestReport.Check(IsBold(html[2]) && IsBold(html[3]), "toggle: inside a basedOn chain the last value wins (paragraph and character styles)");
+        TestReport.Check(!html[4].Contains("font-weight:normal"), "toggle: b=0 in a character style leaves the paragraph style's bold on");
+        TestReport.Check(!html[5].Contains("font-weight:normal"), "toggle: direct <w:b/> is absolute");
+        TestReport.Check(html[6].Contains("font-weight:normal") && !html[6].Contains("font-style:normal"),
+                         "w:rtl run: bold from bCs (off), italic from iCs (C1 on, P1's i ignored)");
+        TestReport.Check(!IsBold(html[7]), "bCs without w:rtl does not bold the run");
+        string table = html[8];
+        int p1 = table.IndexOf("t-p1", StringComparison.Ordinal), normal = table.IndexOf("t-normal", StringComparison.Ordinal), c1 = table.IndexOf("t-c1", StringComparison.Ordinal);
+        string Before(int end) => table.Substring(0, end).Substring(table.Substring(0, end).LastIndexOf("<p", StringComparison.Ordinal));
+        TestReport.Check(!Before(p1).Contains("font-weight:bold") && Before(normal).Contains("font-weight:bold") && Before(c1).Contains("font-weight:normal"),
+                         "toggle: table style bold XOR paragraph / character style bold");
+        List<string> defaults = RenderAll("toggles-defaults", Paragraph("P1", "<w:rStyle w:val=\"C1\"/>", "x"),
+                                          "<w:docDefaults><w:rPrDefault><w:rPr><w:b/></w:rPr></w:rPrDefault></w:docDefaults>" + styles);
+        TestReport.Check(!defaults[0].Contains("font-weight:normal") && IsBold(defaults[0]), "toggle: bold in docDefaults stays on (paragraph XOR character style does not turn it off)");
+    }
+}
