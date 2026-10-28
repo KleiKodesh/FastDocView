@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { listFolder, type WordFolderEntry } from './wordDemoApi'
+import { DEFAULT_FOLDER_PATH } from './wordDemoDefaults'
 
 defineProps<{ chosenPath: string | null }>()
 const emit = defineEmits<{ fileChosen: [path: string] }>()
@@ -30,7 +31,7 @@ function formatBytes(bytes: number): string {
 }
 
 onMounted(() => {
-  try { folderPath.value = localStorage.getItem(FOLDER_STORAGE_KEY) ?? '' } catch { /* private window */ }
+  try { folderPath.value = localStorage.getItem(FOLDER_STORAGE_KEY) ?? DEFAULT_FOLDER_PATH } catch { folderPath.value = DEFAULT_FOLDER_PATH }
   if (folderPath.value) scan()
 })
 </script>

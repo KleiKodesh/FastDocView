@@ -21,7 +21,7 @@ page.on('console', message => { if (message.type() === 'error') consoleErrors.pu
 page.on('pageerror', error => consoleErrors.push(`pageerror: ${error.message}`))
 
 step(`open ${DEMO_URL}`)
-await page.goto(DEMO_URL, { waitUntil: 'networkidle' })
+await page.goto(`${DEMO_URL}?file=`, { waitUntil: 'networkidle' })   // empty ?file= — the check opens its own file
 await page.evaluate(() => fetch('/api/documents', { method: 'DELETE' }))   // leftovers from an earlier run
 
 step(`open document ${filePath}`)
