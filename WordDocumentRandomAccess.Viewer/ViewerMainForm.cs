@@ -13,6 +13,9 @@ public sealed class ViewerMainForm : Form
 {
     private readonly WebView2 _webView = new() { Dock = DockStyle.Fill };
     private readonly ToolStripStatusLabel _status = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
+    private readonly ToolStripStatusLabel _memory = new() { TextAlign = ContentAlignment.MiddleRight };
+    private readonly ToolStripLabel _openTime = new("No document");
+    private readonly System.Windows.Forms.Timer _memoryTimer = new() { Interval = 1000 };
     private readonly string? _screenshotPath;
     private ViewerWebMessageBridge? _bridge;
     private IWordWindowedDocument? _document;
@@ -39,10 +42,22 @@ public sealed class ViewerMainForm : Form
 
         var statusStrip = new StatusStrip();
         statusStrip.Items.Add(_status);
+        statusStrip.Items.Add(_memory);
+
+        var toolbar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
+        toolbar.Items.Add(new ToolStripButton("Open…", null, (_, _) => OnOpenClicked()));
+        toolbar.Items.Add(new ToolStripButton("Reload", null, (_, _) => OnReloadClicked()) { ToolTipText = "Close and reopen the same file (cached index) — shows the real reopen time" });
+        toolbar.Items.Add(new ToolStripButton("Rebuild index", null, (_, _) => OnRebuildIndexClicked()));
+        toolbar.Items.Add(new ToolStripButton("Collect GC", null, (_, _) => { GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect(); UpdateMemory(); }));
+        toolbar.Items.Add(new ToolStripSeparator());
+        toolbar.Items.Add(_openTime);
 
         Controls.Add(_webView);
         Controls.Add(statusStrip);
+        Controls.Add(toolbar);
         Controls.Add(menu);
+        _memoryTimer.Tick += (_, _) => UpdateMemory();
+        _memoryTimer.Start();
         Load += async (_, _) => await InitializeWebViewAsync();
     }
 
@@ -72,6 +87,18 @@ public sealed class ViewerMainForm : Form
         var folderForm = new ViewerFolderIndexForm(dialog.SelectedPath, WordIndexPolicy.Default);
         folderForm.FileChosen += path => _ = OpenDocumentAsync(path, rebuildIndex: false);
         folderForm.Show(this);
+    }
+
+    private void OnReloadClicked()
+    {
+        if (_document?.FilePath is { } path) _ = OpenDocumentAsync(path, rebuildIndex: false);
+    }
+
+    private void UpdateMemory()
+    {
+        long heap = GC.GetTotalMemory(forceFullCollection: false) >> 20;
+        long workingSet = Environment.WorkingSet >> 20;
+        _memory.Text = $"managed heap {heap} MB · process {workingSet} MB";
     }
 
     private void OnRebuildIndexClicked()
@@ -107,6 +134,8 @@ public sealed class ViewerMainForm : Form
                 _ => "",
             };
             SetStatus($"Opened in {watch.ElapsedMilliseconds} ms — {document.BlockCount:N0} blocks, {(document.IsRightToLeft ? "RTL" : "LTR")}, {mode}");
+            _openTime.Text = $"{Path.GetFileName(filePath)}: opened in {watch.ElapsedMilliseconds} ms, {document.BlockCount:N0} blocks";
+            UpdateMemory();
             _bridge?.SetDocument(document);
         }
         catch (Exception exception)
