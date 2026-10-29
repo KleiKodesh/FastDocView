@@ -208,12 +208,10 @@ positions (CP) to file offsets, each piece either 8-bit cp1252 or UTF-16. So:
 ## Queued after the current work (user, 2026-10-29)
 
 1. **Right-to-left errors:** some items render LTR in the .doc sample in the demo. The user thinks it
-   is broader: run visual comparisons of our rendering against Word's own (Word -> PDF -> page
-   images, Word 16 via COM) over many files, find every class of difference, fix the causes.
-   Screenshots/images are allowed for this comparison (user's request) - debugging itself stays live/DOM.
-2. **Images and accuracy:** images are placeholders today. Use Word -> PDF as the reference for
-   accuracy, and render the documents' images ("get the images like that") - windowed like
-   everything else (image bytes read per window, never all at once).
+   is broader: run visual comparisons over many files and fix every class of difference at its cause.
+   **Reference = Word's own PDF** (user, 2026-10-29): Word 16 converts each document to PDF via COM and
+   the PDF's pages are the reference images - not screenshots of Word. Our side: the rendered page in
+   the demo. Images are allowed for this comparison; debugging a specific bug stays live/DOM.
 
 ## App integration plan — the FastDocView page (approved 2026-10-28)
 
