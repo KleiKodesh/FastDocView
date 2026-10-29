@@ -433,9 +433,9 @@ internal sealed class DocxBodyBlockScanner
     {
         if (_listLabelResolver is null || BlockListLabelIds.Count == 0) return;
         DocxListLabel? label = _listLabelResolver(_currentStyleId, _currentNumId, _currentLevel);
-        if (label is null) return;
+        if (label is not { } found) return;
         BlockListLabelIds[BlockListLabelIds.Count - 1] = ListLabels.Count;
-        ListLabels.Add(label);
+        ListLabels.Add(found);
     }
 
     private static string? AttributeValue(string attributes, string attributeWithEquals)
