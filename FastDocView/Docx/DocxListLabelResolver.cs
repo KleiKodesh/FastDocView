@@ -15,8 +15,18 @@ public enum DocxListLabelSuffix : byte { Tab, Space, Nothing }
 /// level's own run properties (lvl/rPr — font, bold, color…; empty when none). The renderer draws the label with
 /// the paragraph mark's formatting plus this CSS, as Word formats numbering (§17.9.6 lvl rPr).
 /// </summary>
-public readonly record struct DocxListLabel(string Text, DocxListLabelSuffix Suffix, string LevelCss)
+/// <param name="LevelParagraphXml">The level's w:pPr as XML ("" when none): its indents and tab stops reach the paragraph.</param>
+/// <param name="Alignment">w:lvlJc: left / start, center, right / end.</param>
+public readonly record struct DocxListLabel(string Text, DocxListLabelSuffix Suffix, string LevelCss, string LevelParagraphXml = "",
+                                            Html.WordListLabelAlignment Alignment = Html.WordListLabelAlignment.Start)
 {
+    public static Html.WordListLabelAlignment AlignmentOf(string? value) => value switch
+    {
+        "center" => Html.WordListLabelAlignment.Center,
+        "right" or "end" => Html.WordListLabelAlignment.End,
+        _ => Html.WordListLabelAlignment.Start,
+    };
+
     public static DocxListLabelSuffix SuffixOf(string? value) => value switch
     {
         "space" => DocxListLabelSuffix.Space,

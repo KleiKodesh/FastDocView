@@ -717,3 +717,8 @@ median start-side shift is removed because the column estimate of a PDF is only 
   ww8par3.cxx applies it at sprmPIlfo; Word writes sprms in ascending order, so Ilfo precedes the indent sprms); grpprlChpx
   formats the label; ixchFollow 0 tab / 1 space / 2 nothing (LibreOffice ww8par3.cxx); sprmPChgTabs(Papx) fill TabStops
   (one operand layout for both, as LibreOffice Read_Tab).
+- .docx: the numbering level's w:pPr (indents, tabs) and w:lvlJc are stored with each interned list label (index format 9)
+  and applied by the renderer between the style and the direct pPr. Numbering via the paragraph style keeps the style's
+  own w:ind (LibreOffice DomainMapper_Impl finishParagraph: "the para-style indents have priority"); direct numPr lets the
+  level override the style; direct w:ind wins over both. settings.xml w:defaultTabStop drives the default stop.
+  Precedence taken from LibreOffice's source (it states it emulates Word) - not re-checked in Word.

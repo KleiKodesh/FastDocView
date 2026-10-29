@@ -14,7 +14,7 @@ namespace FastDocView.Docx;
 public sealed class DocxRandomAccessIndex : IDocxBlockTable
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 8;     // 6: list labels carry their suffix and level CSS; 7: fields open at each block start; 8: section text widths
+    private const int FormatVersion = 9;     // 6: list labels carry their suffix and level CSS; 7: fields open at each block start; 8: section text widths; 9: list labels carry the level pPr and lvlJc
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -157,7 +157,8 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         foreach (DocxListLabel label in ListLabels)
         {
             if (!cssIds.TryGetValue(label.LevelCss, out int cssId)) { cssId = cssTable.Count; cssTable.Add(label.LevelCss); cssIds[label.LevelCss] = cssId; }
-            writer.Write(label.Text); writer.Write((byte)label.Suffix); writer.Write(cssId);
+            if (!cssIds.TryGetValue(label.LevelParagraphXml, out int paragraphId)) { paragraphId = cssTable.Count; cssTable.Add(label.LevelParagraphXml); cssIds[label.LevelParagraphXml] = paragraphId; }
+            writer.Write(label.Text); writer.Write((byte)label.Suffix); writer.Write(cssId); writer.Write(paragraphId); writer.Write((byte)label.Alignment);
         }
         writer.Write(cssTable.Count);
         foreach (string css in cssTable) writer.Write(css);
@@ -202,16 +203,17 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
 
         var styleIdTable = new string[reader.ReadInt32()];
         for (int i = 0; i < styleIdTable.Length; i++) styleIdTable[i] = reader.ReadString();
-        var labelParts = new (string text, DocxListLabelSuffix suffix, int cssId)[reader.ReadInt32()];
-        for (int i = 0; i < labelParts.Length; i++) labelParts[i] = (reader.ReadString(), (DocxListLabelSuffix)reader.ReadByte(), reader.ReadInt32());
+        var labelParts = new (string text, DocxListLabelSuffix suffix, int cssId, int paragraphId, byte alignment)[reader.ReadInt32()];
+        for (int i = 0; i < labelParts.Length; i++) labelParts[i] = (reader.ReadString(), (DocxListLabelSuffix)reader.ReadByte(), reader.ReadInt32(), reader.ReadInt32(), reader.ReadByte());
         var cssTable = new string[reader.ReadInt32()];
         for (int i = 0; i < cssTable.Length; i++) cssTable[i] = reader.ReadString();
         var listLabels = new DocxListLabel[labelParts.Length];
         for (int i = 0; i < listLabels.Length; i++)
         {
-            (string text, DocxListLabelSuffix suffix, int cssId) = labelParts[i];
-            if ((uint)cssId >= (uint)cssTable.Length) throw new InvalidDataException("Word index: list label style out of range.");
-            listLabels[i] = new DocxListLabel(text, suffix, cssTable[cssId]);
+            (string text, DocxListLabelSuffix suffix, int cssId, int paragraphId, byte alignment) = labelParts[i];
+            if ((uint)cssId >= (uint)cssTable.Length || (uint)paragraphId >= (uint)cssTable.Length || alignment > 2)
+                throw new InvalidDataException("Word index: list label style out of range.");
+            listLabels[i] = new DocxListLabel(text, suffix, cssTable[cssId], cssTable[paragraphId], (Html.WordListLabelAlignment)alignment);
         }
 
         long[] starts = IndexBinaryArrays.Read<long>(reader);

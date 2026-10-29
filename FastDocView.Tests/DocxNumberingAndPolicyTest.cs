@@ -45,14 +45,14 @@ public static class DocxNumberingAndPolicyTest
 
             // paragraphs 3, 13, 23 … are decimal list items 1., 2., 3. …; 4, 14 … are a., b. (level 1 restarts after each level-0 item → always "1.a" style)
             string block3 = document.RenderBlocks(3, 1)[0].Html, block13 = document.RenderBlocks(13, 1)[0].Html, block123 = document.RenderBlocks(123, 1)[0].Html;
-            TestReport.Check(block3.Contains("<span class=\"list-marker\">1.</span>"), "block 3 is list item 1.");
-            TestReport.Check(block13.Contains("<span class=\"list-marker\">2.</span>"), "block 13 is list item 2.");
-            TestReport.Check(block123.Contains("<span class=\"list-marker\">13.</span>"), $"block 123 is list item 13. (running count, not per window)");
+            TestReport.Check(block3.Contains(">1.</span>"), "block 3 is list item 1.");
+            TestReport.Check(block13.Contains(">2.</span>"), "block 13 is list item 2.");
+            TestReport.Check(block123.Contains(">13.</span>"), $"block 123 is list item 13. (running count, not per window)");
             string block14 = document.RenderBlocks(14, 1)[0].Html;
-            TestReport.Check(block14.Contains("<span class=\"list-marker\">2.a</span>"), "block 14 is sub-item 2.a");
+            TestReport.Check(block14.Contains(">2.a</span>"), "block 14 is sub-item 2.a");
             string block7 = document.RenderBlocks(7, 1)[0].Html, block97 = document.RenderBlocks(97, 1)[0].Html;
-            TestReport.Check(block7.Contains("<span class=\"list-marker\">א.</span>"), "block 7 is Hebrew item א.");
-            TestReport.Check(block97.Contains("<span class=\"list-marker\">י.</span>"), "block 97 is Hebrew item י.");
+            TestReport.Check(block7.Contains(">א.</span>"), "block 7 is Hebrew item א.");
+            TestReport.Check(block97.Contains(">י.</span>"), "block 97 is Hebrew item י.");
             TestReport.Check(!document.RenderBlocks(5, 1)[0].Html.Contains("list-marker"), "plain paragraph has no marker");
 
             // notes: paragraph 21 references footnote 2, paragraph 102 endnote ii (Word's endnote default is lowerRoman)
@@ -73,7 +73,7 @@ public static class DocxNumberingAndPolicyTest
             TestReport.Check(document.Decision.Mode == WordIndexMode.Sidecar, "forced sidecar mode");
             TestReport.Check(File.Exists(indexPath), "sidecar written");
             TestReport.Check(document.Index.Checkpoints.Count >= 1, $"{document.Index.Checkpoints.Count} checkpoint(s)");
-            TestReport.Check(document.RenderBlocks(123, 1)[0].Html.Contains("list-marker\">13.<"), "labels persist in the sidecar");
+            TestReport.Check(document.RenderBlocks(123, 1)[0].Html.Contains(">13.<"), "labels persist in the sidecar");
         }
         WordIndexDecision cachedDecision = WordWindowedDocumentOpener.Decide(path, policy);
         TestReport.Check(cachedDecision is { Mode: WordIndexMode.Sidecar, HasCachedIndex: true }, "a cached sidecar is used even below the threshold");
