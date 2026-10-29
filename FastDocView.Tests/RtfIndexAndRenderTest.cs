@@ -84,8 +84,11 @@ public static class RtfIndexAndRenderTest
         TestReport.Check(withNotes.Html.Contains("data-note-kind=\"footnote\" data-note-number=\"1\"") && !withNotes.Html.Contains("body 1"),
                          $"{what}: note reference inline, body not inline");
         TestReport.Check(document.EstimatedTextLength(1) < 20, $"{what}: note bodies excluded from text length ({document.EstimatedTextLength(1)})");
-        TestReport.Check(Html(2).Contains("list-marker\">1.<") && Html(3).Contains("list-marker\">1.1<") && Html(4).Contains("list-marker\">2.<")
-                         && Html(5).Contains("list-marker\">•<"), $"{what}: list markers (counted, \\listtext, bullet)");
+        // the marker's text; its attributes carry the label geometry (WordListLabelHtml: tab gap, alignment)
+        static bool Marker(string html, string label)
+            => System.Text.RegularExpressions.Regex.IsMatch(html, "class=\"list-marker\"[^>]*>" + System.Text.RegularExpressions.Regex.Escape(label) + "<");
+        TestReport.Check(Marker(Html(2), "1.") && Marker(Html(3), "1.1") && Marker(Html(4), "2.") && Marker(Html(5), "•"),
+                         $"{what}: list markers (counted, \\listtext, bullet)");
         TestReport.Check(Html(6).Contains("<table") && Regex.Matches(Html(6), "<td").Count == 2 && Html(6).Contains("width:144pt") && Html(6).Contains("background:#EEEEEE")
                          && prefix[6].Notes.Count == 1 && prefix[6].Notes[0].Html.Contains("footnote in cell"),
                          $"{what}: table row: two cells, \\cellx widths, \\clcbpat shading, footnote in a cell");
