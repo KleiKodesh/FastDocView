@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, triggerRef } from 'vue'
 import { useIntervalFn, useThrottleFn } from '@vueuse/core'
 import WindowedScroller from '@/components/WindowedScroller.vue'
 import type { WindowedScrollerApi } from '@/components/windowedScrollerTypes'
 import WordNotesPane from './WordNotesPane.vue'
 import {
   closeDocument, fetchBlocks, fetchHeadings, fetchServerMemory, fetchWeights, openDocument, scanAhead, WordSourceChangedError,
-  type WordDocumentSummary, type WordHeading, type WordIndexState, type WordNote, type WordServerMemory, type WordVisibleNote,
+  type WordDocumentSummary, type WordHeading, type WordIndexState, type WordNote, type WordScanState, type WordServerMemory, type WordVisibleNote,
 } from './wordDemoApi'
 
 // The reader: the app's WindowedScroller over blocks fetched on demand from the C# host, the way
@@ -76,6 +76,15 @@ async function open(path: string, options: { forceSidecar?: boolean; rebuildInde
   try {
     const opened = await openDocument(path, options)
     if (generation !== requestGeneration) { void closeDocument(opened.id); return }
+    // A reload while the first open was still building its index reopens a new partial index: build
+    // it up to the saved position before mounting, so the reader lands where it was (scans only -
+    // nothing but counts comes back).
+    while (!opened.isIndexComplete && restoreIndex.value >= opened.knownBlockCount) {
+      const state = await scanAhead(opened.id, restoreIndex.value - opened.knownBlockCount + 100)
+      if (generation !== requestGeneration) { void closeDocument(opened.id); return }
+      Object.assign(opened, { knownBlockCount: state.knownBlockCount, blockCount: state.knownBlockCount, isIndexComplete: state.isIndexComplete,
+                              footnoteCount: state.footnoteCount, endnoteCount: state.endnoteCount })
+    }
     currentPath = path
     blockCount.value = opened.blockCount
     knownBlockCount.value = opened.knownBlockCount
@@ -159,9 +168,15 @@ function applyIndexState(document: WordDocumentSummary, state: WordIndexState) {
  */
 async function buildIndexInBackground(document: WordDocumentSummary) {
   while (summary.value === document && !isIndexComplete.value) {
-    let state: WordIndexState
+    let state: WordScanState
     try { state = await scanAhead(document.id, INDEX_BLOCKS_PER_CALL) } catch { return }   // a changed file reopens through the next blocks fetch
     if (summary.value !== document) return
+    // the notes counted so far grow with the index (the notes pane and its count follow)
+    if (state.footnoteCount !== document.footnoteCount || state.endnoteCount !== document.endnoteCount)
+    {
+      Object.assign(document, { footnoteCount: state.footnoteCount, endnoteCount: state.endnoteCount })
+      triggerRef(summary)                         // same object, new counts: the shallow ref must be told
+    }
     applyIndexState(document, state)
   }
 }

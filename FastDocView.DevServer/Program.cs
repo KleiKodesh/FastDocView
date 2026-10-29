@@ -123,7 +123,8 @@ app.MapPost("/api/documents/{id:int}/scan", (int id, int blocks) =>
     if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
     try { document.ScanAhead(Math.Clamp(blocks, 1, 100_000)); }
     catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }
-    return Results.Ok(new ScanBody(document.KnownBlockCount, document.IsIndexComplete));
+    (int footnotes, int endnotes) = document.NoteCounts;
+    return Results.Ok(new ScanBody(document.KnownBlockCount, document.IsIndexComplete, footnotes, endnotes));
 });
 
 app.MapDelete("/api/documents/{id:int}", (int id) =>
@@ -161,7 +162,7 @@ record DocumentSummary(int Id, string FileName, string Path, int BlockCount, boo
                        int HeadingCount, int FootnoteCount, int EndnoteCount, int KnownBlockCount, bool IsIndexComplete);
 record NoteBody(string Kind, int Number, string Label, string Html);
 record NoteReferenceBody(string Kind, int Number, int BlockIndex);
-record ScanBody(int KnownBlockCount, bool IsIndexComplete);
+record ScanBody(int KnownBlockCount, bool IsIndexComplete, int FootnoteCount, int EndnoteCount);
 record BlockBody(int Index, int Kind, string Html, List<NoteBody> Notes);
 record ProgressBody(long BytesDone, long BytesTotal, int BlocksFound);
 record MemoryBody(long ManagedHeapMegabytes, long WorkingSetMegabytes, int OpenDocuments);

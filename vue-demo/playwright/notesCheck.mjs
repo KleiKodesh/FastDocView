@@ -23,6 +23,8 @@ for (const file of files) {
   console.log(`[${new Date().toLocaleTimeString()}] ${file}`)
   await page.evaluate(path => window.__wordDemo.open(path), file)
   await page.waitForFunction(() => window.__wordDemo.state()?.hasWeights, null, { timeout: 180_000 })
+  // a first open builds its index while the reader reads; the note counts are complete once it is
+  await page.waitForFunction(() => window.__wordDemo.state()?.document?.isIndexComplete, null, { timeout: 180_000 })
   const state = await page.evaluate(() => window.__wordDemo.state())
   console.log(`  ${state.document.blockCount.toLocaleString()} blocks, ${state.document.footnoteCount} footnotes, ${state.document.endnoteCount} endnotes, ${state.headingCount} headings`)
   check(state.document.footnoteCount + state.document.endnoteCount > 0, 'document has notes')

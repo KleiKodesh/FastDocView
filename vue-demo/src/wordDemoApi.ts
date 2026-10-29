@@ -36,6 +36,8 @@ export interface WordDocumentSummary {
 
 /** Index state carried by every blocks response (headers): the on-demand scan moves with each request. */
 export interface WordIndexState { knownBlockCount: number; isIndexComplete: boolean }
+/** A scan reply: the index state plus the notes counted so far (they grow with the index). */
+export interface WordScanState extends WordIndexState { footnoteCount: number; endnoteCount: number }
 
 export type WordNoteKind = 'footnote' | 'endnote'
 
@@ -107,10 +109,10 @@ export async function fetchBlocks(id: number, first: number, count: number): Pro
 }
 
 /** Builds `blocks` more blocks of a first open's index on the server (renders and sends nothing) and reports the new state. */
-export async function scanAhead(id: number, blocks: number): Promise<WordIndexState> {
+export async function scanAhead(id: number, blocks: number): Promise<WordScanState> {
   const response = await fetch(`/api/documents/${id}/scan?blocks=${blocks}`, { method: 'POST' })
   if (response.status === 409) throw new WordSourceChangedError('The document changed on disk')
-  return readJson<WordIndexState>(response)
+  return readJson<WordScanState>(response)
 }
 
 export function fetchServerMemory(collect = false): Promise<WordServerMemory> {
