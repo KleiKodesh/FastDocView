@@ -284,6 +284,50 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         return result;
     }
 
+    /// <summary>
+    /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan): one contiguous read of their bytes, each block's paragraph
+    /// text fed to the matcher straight from the bytes (no XElement, no rendering). Notes are inline in ODF
+    /// (text:note-body), so <see cref="WordDocumentSearchOptions.IncludeNotes"/> just keeps or skips them. An on-demand
+    /// index is extended as far as asked, as <see cref="RenderBlocks"/> does.
+    /// </summary>
+    public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
+    {
+        var matcher = new WordDocumentSearchMatcher(query, options);
+        if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
+        fromBlock = Math.Max(0, fromBlock);
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
+                throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                int wantedEnd = (int)Math.Min(int.MaxValue, (long)fromBlock + Math.Max(1, maxBlocksToScan));
+                if (_builder is { } builder)
+                {
+                    builder.AdvanceUntilKnown(wantedEnd);
+                    if (builder.IsEveryBlockKnown) CompleteIndexLocked();
+                    else CountNewNoteReferences();
+                }
+                int end = Math.Min(_blocks.BlockCount, wantedEnd);
+                var hits = new List<int>();
+                if (fromBlock < end)
+                {
+                    _searchText ??= new WordXmlSearchText(_blocks.RootOpenTag);
+                    (byte[] bytes, List<(int blockIndex, int start, int length)> blocks) = _reader.ReadBlockBytes(fromBlock, end - fromBlock);
+                    foreach ((int blockIndex, int start, int length) in blocks)
+                    {
+                        matcher.Reset();
+                        _searchText.FeedOdf(bytes, start, length, matcher, options.IncludeNotes);
+                        if (matcher.Found) hits.Add(blockIndex);
+                    }
+                }
+                return WordDocumentSearchBatch.Finish(hits, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+    private WordXmlSearchText? _searchText;
+
     /// <summary>Headings of the known blocks while an on-demand index is scanning; all of them once complete.</summary>
     public IReadOnlyList<WordDocumentHeading> Headings
     {

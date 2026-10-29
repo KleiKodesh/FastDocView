@@ -63,6 +63,26 @@ public sealed class OdtBlockXmlReader : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// The raw bytes of blocks [first, first + count) (clamped to the known blocks) in one contiguous read, and each
+    /// block's (start, length) inside them - for the search, which reads text straight from the bytes.
+    /// </summary>
+    public (byte[] bytes, List<(int blockIndex, int start, int length)> blocks) ReadBlockBytes(int firstBlockIndex, int count)
+    {
+        var blocks = new List<(int, int, int)>();
+        IOdtBlockTable table = Table;
+        int last = Math.Min(table.BlockCount, firstBlockIndex + count) - 1;
+        if (firstBlockIndex < 0 || firstBlockIndex > last) return ([], blocks);
+        long rangeStart = table.BlockStartOffset(firstBlockIndex);
+        byte[] bytes = OdtXmlFragment.ReadRange(_view, rangeStart, table.BlockEndOffset(last));
+        for (int blockIndex = firstBlockIndex; blockIndex <= last; blockIndex++)
+        {
+            int start = (int)(table.BlockStartOffset(blockIndex) - rangeStart);
+            blocks.Add((blockIndex, start, (int)(table.BlockEndOffset(blockIndex) - rangeStart) - start));
+        }
+        return (bytes, blocks);
+    }
+
     public void Dispose()
     {
         _view.Dispose();

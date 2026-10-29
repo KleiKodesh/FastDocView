@@ -402,6 +402,60 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     }
     private WordDocumentNoteReference[]? _noteReferences;
 
+    /// <summary>
+    /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan) for the query: one contiguous read of their bytes from the
+    /// index (one inflate pass), each block's w:t text fed to the matcher straight from the bytes - no XElement, no
+    /// rendering - and, with <see cref="WordDocumentSearchOptions.IncludeNotes"/>, the notes it references read on
+    /// demand. While an on-demand index is building, the scan extends it as far as asked, exactly as
+    /// <see cref="RenderBlocks"/> does; <see cref="WordDocumentSearchBatch.ReachedEnd"/> only once it is complete.
+    /// </summary>
+    public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
+    {
+        var matcher = new WordDocumentSearchMatcher(query, options);
+        if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
+        fromBlock = Math.Max(0, fromBlock);
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
+                throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                int wantedEnd = (int)Math.Min(int.MaxValue, (long)fromBlock + Math.Max(1, maxBlocksToScan));
+                if (_builder is { } builder)
+                {
+                    builder.AdvanceUntilKnown(wantedEnd);
+                    if (builder.IsBodyScanned) CompleteIndexLocked();
+                    else RecordNewNoteReferences();
+                }
+                int known = _blocks.BlockCount;
+                int end = Math.Min(known, wantedEnd);
+                var hits = new List<int>();
+                if (fromBlock < end)
+                {
+                    _searchText ??= new WordXmlSearchText(_blocks.RootOpenTag);
+                    (byte[] bytes, List<(int blockIndex, int start, int length)> blocks) = _blockReader.ReadBlockBytes(fromBlock, end - fromBlock);
+                    foreach ((int blockIndex, int start, int length) in blocks)
+                    {
+                        matcher.Reset();
+                        _searchText.FeedOoxml(bytes, start, length, matcher);
+                        if (!matcher.Found && options.IncludeNotes)
+                            foreach (DocxNoteReference reference in _blocks.NoteReferencesInBlocks(blockIndex, blockIndex))
+                            {
+                                if (_noteReader.Read(reference.Kind, reference.NoteId) is not { } note) continue;
+                                matcher.Separator();
+                                WordXmlSearchText.FeedOoxml(note, matcher);
+                                if (matcher.Found) break;
+                            }
+                        if (matcher.Found) hits.Add(blockIndex);
+                    }
+                }
+                return WordDocumentSearchBatch.Finish(hits, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+    private WordXmlSearchText? _searchText;
+
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
 
     public void Dispose()

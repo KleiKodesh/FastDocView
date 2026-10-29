@@ -106,6 +106,16 @@ public interface IWordWindowedDocument : IDisposable
 
     /// <summary>Every note reference in body order with the block it sits in — for "next footnote" navigation. No file access.</summary>
     IReadOnlyList<WordDocumentNoteReference> NoteReferences { get; }
+
+    /// <summary>
+    /// One bounded step of an in-document search: scans the plain text of blocks [fromBlock, fromBlock +
+    /// maxBlocksToScan) - read through the same windowed path as <see cref="RenderBlocks"/>, never rendered, nothing kept
+    /// but the hit indexes - with the app's book-view search normalisation (<see cref="WordDocumentSearchMatcher"/>).
+    /// While an on-demand index is building the scan extends it as far as asked (as <see cref="RenderBlocks"/> does), so
+    /// the caller just continues from <see cref="WordDocumentSearchBatch.NextBlock"/> until
+    /// <see cref="WordDocumentSearchBatch.ReachedEnd"/>. A match never spans two paragraphs, cells or blocks.
+    /// </summary>
+    WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan);
 }
 
 public sealed record WordDocumentNoteReference(WordDocumentNoteKind Kind, int Number, int BlockIndex);

@@ -98,6 +98,42 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
 
     public int EstimatedTextLength(int blockIndex) => _index.BlockTextLengths[blockIndex];
 
+    /// <summary>
+    /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan) with one read of their bytes (an MHTML decode from the first
+    /// block's resume point). A .txt line is matched as its characters; an MHTML block is HTML, walked exactly as the
+    /// app's search walks a line's HTML (tags skipped, an entity one character). No rendering; nothing kept.
+    /// </summary>
+    public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
+    {
+        var matcher = new WordDocumentSearchMatcher(query, options);
+        if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
+        fromBlock = Math.Max(0, fromBlock);
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
+                var hits = new List<int>();
+                if (fromBlock < end)
+                {
+                    byte[] text = ReadText(fromBlock, end, out long textStart);
+                    for (int block = fromBlock; block < end; block++)
+                    {
+                        int from = (int)(_index.BlockStarts[block] - textStart);
+                        int length = (int)(_index.BlockEnd(block) - _index.BlockStarts[block]);
+                        string content = _encoding.GetString(text, from, Math.Min(length, text.Length - from));
+                        matcher.Reset();
+                        if (_index.Kind == MarkupSourceKind.PlainText) matcher.Feed(content.AsSpan()); else matcher.FeedHtml(content);
+                        if (matcher.Found) hits.Add(block);
+                    }
+                }
+                return WordDocumentSearchBatch.Finish(hits, Math.Max(end, fromBlock), isIndexComplete: true, _index.BlockCount);
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
     public IReadOnlyList<WordDocumentBlockHtml> RenderBlocks(int firstBlockIndex, int count)
     {
         lock (_readLock)

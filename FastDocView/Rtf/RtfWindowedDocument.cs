@@ -93,6 +93,37 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
 
     public int EstimatedTextLength(int blockIndex) => _index.BlockTextLengths[blockIndex];
 
+    /// <summary>
+    /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan): each block's byte range re-parsed from its index snapshot
+    /// into a text-only sink (<see cref="RtfSearchTextSink"/>) - no HTML. Footnotes are groups inside the block, fed when
+    /// <see cref="WordDocumentSearchOptions.IncludeNotes"/>.
+    /// </summary>
+    public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
+    {
+        var matcher = new WordDocumentSearchMatcher(query, options);
+        if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
+        fromBlock = Math.Max(0, fromBlock);
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
+                var hits = new List<int>();
+                _searchSink ??= new RtfSearchTextSink(_index.Tables);
+                for (int blockIndex = fromBlock; blockIndex < end; blockIndex++)
+                {
+                    matcher.Reset();
+                    _searchSink.Feed(_file, _index, blockIndex, matcher, options.IncludeNotes);
+                    if (matcher.Found) hits.Add(blockIndex);
+                }
+                return WordDocumentSearchBatch.Finish(hits, Math.Max(end, fromBlock), isIndexComplete: true, _index.BlockCount);
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+    private RtfSearchTextSink? _searchSink;
+
     public IReadOnlyList<WordDocumentBlockHtml> RenderBlocks(int firstBlockIndex, int count)
     {
         lock (_readLock)
