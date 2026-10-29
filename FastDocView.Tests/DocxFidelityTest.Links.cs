@@ -1,0 +1,28 @@
+namespace FastDocView.Tests;
+
+public static partial class DocxFidelityTest
+{
+    /// <summary>w:hyperlink (r:id / w:anchor), HYPERLINK complex and simple fields (LibreOffice's switch reading); only http(s), mailto and in-document anchors become links.</summary>
+    private static void Hyperlinks()
+    {
+        const string relationships = """
+            <Relationship Id="rIdL1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.org/a?b=1&amp;c=2" TargetMode="External"/>
+            <Relationship Id="rIdL2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="javascript:alert(1)" TargetMode="External"/>
+            """;
+        static string Text(string text, string properties = "") => $"<w:r><w:rPr>{properties}</w:rPr><w:t xml:space=\"preserve\">{text}</w:t></w:r>";
+        string body = "<w:p><w:hyperlink r:id=\"rIdL1\" w:tooltip=\"Tip\">" + Text("site", "<w:b/>") + "</w:hyperlink></w:p>"
+                    + "<w:p><w:hyperlink r:id=\"rIdL2\">" + Text("bad") + "</w:hyperlink></w:p>"
+                    + "<w:p><w:bookmarkStart w:id=\"0\" w:name=\"Part 2\"/>" + Text("target") + "<w:bookmarkEnd w:id=\"0\"/><w:hyperlink w:anchor=\"Part 2\">" + Text("jump") + "</w:hyperlink></w:p>"
+                    + "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> HYPERLINK \"mailto:a@b.org\" \\o \"mail\" </w:instrText></w:r>"
+                    + "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + Text("write") + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>" + Text(" after") + "</w:p>"
+                    + "<w:p><w:fldSimple w:instr=\" HYPERLINK \\l &quot;Part 2&quot; \">" + Text("simple") + "</w:fldSimple></w:p>"
+                    + "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText> HYPERLINK \"file:///c:/x.txt\" </w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + Text("file") + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>";
+        List<string> html = RenderAll("links", body, extraDocumentRelationships: relationships);
+        TestReport.Check(html[0].Contains("<a class=\"link\" href=\"https://example.org/a?b=1&amp;c=2\" title=\"Tip\" rel=\"noopener noreferrer\" target=\"_blank\">site</a>"), "w:hyperlink r:id → an external link inside the run's span, with its tooltip");
+        TestReport.Check(!html[1].Contains("<a ") && html[1].Contains("bad"), "a javascript: target renders as plain text");
+        TestReport.Check(html[2].Contains("id=\"bookmark-Part%202\"") && html[2].Contains("href=\"#bookmark-Part%202\""), "w:anchor links to the bookmark's element");
+        TestReport.Check(html[3].Contains("href=\"mailto:a@b.org\" title=\"mail\"") && html[3].Contains(">write</a>") && !html[3].Contains("after</a>"), "HYPERLINK field: only its result is the link");
+        TestReport.Check(html[4].Contains("href=\"#bookmark-Part%202\""), "fldSimple HYPERLINK l-switch → an in-document link");
+        TestReport.Check(!html[5].Contains("<a "), "a file: link is not followed");
+    }
+}

@@ -14,6 +14,22 @@ public sealed class DocxDocumentParts
 {
     public DocxStyleCascade Styles { get; }
     public DocxNoteNumberFormats NoteNumberFormats { get; }
+    /// <summary>The main part's hyperlink relationships: r:id → target (external URLs as written). Small; read at open.</summary>
+    public IReadOnlyDictionary<string, string> HyperlinkTargets { get; }
+
+    private static Dictionary<string, string> LoadHyperlinkTargets(ZipArchive zip, string relationshipsPartName)
+    {
+        var targets = new Dictionary<string, string>(StringComparer.Ordinal);
+        XElement? root = LoadPart(zip, relationshipsPartName)?.Root;
+        if (root is null) return targets;
+        foreach (XElement relationship in root.Elements())
+        {
+            string? type = (string?)relationship.Attribute("Type"), id = (string?)relationship.Attribute("Id"), target = (string?)relationship.Attribute("Target");
+            if (id is not null && target is not null && type is not null && type.EndsWith("/hyperlink", StringComparison.OrdinalIgnoreCase)) targets[id] = target;
+        }
+        return targets;
+    }
+
     /// <summary>settings.xml w:compat options the renderer follows.</summary>
     public DocxCompatibilitySettings Compatibility { get; }
     /// <summary>theme1.xml fonts and colors with settings.xml's clrSchemeMapping / themeFontLang; always present (empty without a theme part).</summary>
@@ -40,6 +56,7 @@ public sealed class DocxDocumentParts
         Compatibility = new DocxCompatibilitySettings(settings);
         Styles = new DocxStyleCascade(LoadStyles(zip, PartNames.Styles), Theme) { Compatibility = Compatibility };
         NoteNumberFormats = new DocxNoteNumberFormats(settings);
+        HyperlinkTargets = LoadHyperlinkTargets(zip, DocxPackagePartNames.RelationshipsPartName(PartNames.Document));
     }
 
     private DocxNumberingDefinitions LoadNumbering()

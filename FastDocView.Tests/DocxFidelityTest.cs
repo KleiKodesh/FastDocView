@@ -30,6 +30,7 @@ public static partial class DocxFidelityTest
         yield return CompatibilitySettings;
         yield return TableConditionalFormatting;
         yield return TabLeaders;
+        yield return Hyperlinks;
     }
 
     /// <summary>Writes a minimal package and returns every block's HTML.</summary>

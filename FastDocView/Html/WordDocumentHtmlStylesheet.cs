@@ -30,6 +30,7 @@ public static class WordDocumentHtmlStylesheet
             .word-document table.table-row { width: 100%; margin: 0; }
             .word-document table.table-row + table.table-row td { border-top: 0; }
             .word-document .unsupported { color: #999; font-style: italic; }
+            .word-document a.link { color: inherit; text-decoration: none; cursor: pointer; }
             """;
     }
 }

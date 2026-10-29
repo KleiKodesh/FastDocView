@@ -33,10 +33,23 @@ public sealed class DocxBlockHtmlRenderer
     /// <summary>settings.xml compatibility option w:ulTrailSpace: underline the spaces that end a paragraph too.</summary>
     private bool UnderlinesTrailingSpaces => _styles.Compatibility.UnderlinesTrailingSpaces;            // inside a text box paragraphs become block spans (a <p> may not hold a <p>)
 
-    public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null)
+    private readonly IReadOnlyDictionary<string, string>? _hyperlinkTargets;   // the main part's r:id → URL (notes have their own rels)
+    private IReadOnlyDictionary<string, string>? _currentHyperlinkTargets;      // the relationships of the part being rendered
+    private string? _activeLinkOpenTag;                                         // inside a w:hyperlink or a HYPERLINK field result: its <a> tag
+    private readonly List<DocxField> _openFields = new();                       // complex fields begun in this block (w:fldChar begin … end)
+
+    private sealed class DocxField
+    {
+        public readonly StringBuilder Instruction = new();
+        public bool IsSeparated;
+        public string? LinkOpenTag;
+    }
+
+    public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null, IReadOnlyDictionary<string, string>? hyperlinkTargets = null)
     {
         _styles = styles;
         _noteLabels = noteLabels;
+        _hyperlinkTargets = hyperlinkTargets;
     }
 
     /// <param name="listLabel">The label counted at index time ("3.", "ב."), or null when the block is not a list item.</param>
@@ -46,7 +59,10 @@ public sealed class DocxBlockHtmlRenderer
         var html = new StringBuilder(1024);
         _listLabel = listLabel;
         _previousStyleKey = previousStyleKey;
+        _currentHyperlinkTargets = _hyperlinkTargets;
+        _openFields.Clear();
         Run(RenderBlock(block, html));
+        _activeLinkOpenTag = null;
         _listLabel = null;
         _paragraphEndOf = null;                                    // keep no element of the rendered block alive
         _paragraphEndTexts.Clear();
@@ -60,7 +76,10 @@ public sealed class DocxBlockHtmlRenderer
         _currentNoteLabel = label;
         _currentNoteKind = kind;
         _previousStyleKey = null;
+        _currentHyperlinkTargets = null;          // a note's r:ids point into footnotes.xml.rels / endnotes.xml.rels, not loaded: external links show as text
+        _openFields.Clear();
         Run(RenderBlocks(note.Elements(), html));
+        _activeLinkOpenTag = null;
         _currentNoteLabel = null;
         return html.ToString();
     }
@@ -183,6 +202,17 @@ public sealed class DocxBlockHtmlRenderer
             switch (name)
             {
                 case "r": yield return new(RenderRun(child, html, paragraphBase)); break;
+                case "hyperlink" or "fldSimple" when LinkOpenTagOf(child) is { } linkTag:
+                {
+                    string? outerLink = _activeLinkOpenTag;
+                    _activeLinkOpenTag = linkTag;
+                    yield return new(RenderInlineChildren(child, html, paragraphBase));
+                    _activeLinkOpenTag = outerLink;
+                    break;
+                }
+                case "bookmarkStart" when (string?)child.Attribute(W + "name") is { Length: > 0 } bookmark && !bookmark.StartsWith("_GoBack", StringComparison.Ordinal):
+                    html.Append("<span class=\"bookmark\" id=\"").Append(WordHtmlText.Encode(BookmarkElementId(bookmark))).Append("\"></span>");
+                    break;
                 case "hyperlink": case "ins": case "moveTo": case "smartTag": case "sdt": case "customXml": case "fldSimple": case "dir": case "bdo":
                     XElement inner = name == "sdt" ? child.Element(W + "sdtContent") ?? child : child;
                     yield return new(RenderInlineChildren(inner, html, paragraphBase));
@@ -205,14 +235,109 @@ public sealed class DocxBlockHtmlRenderer
         string css = formatting.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly);
         bool hasSpan = css.Length > 0;
         string openTag = "<span style=\"" + css + "\">";
-        if (hasSpan) { html.Append(openTag); _openInline.Add(openTag); }
+        if (hasSpan) { html.Append(openTag); _openInline.Add((openTag, "</span>")); }
+        // A link is opened inside each run of the link (not around them), so it never crosses a run's span.
+        string? linkTag = _activeLinkOpenTag ?? ActiveFieldLink();
+        if (linkTag is not null) { html.Append(linkTag); _openInline.Add((linkTag, "</a>")); }
         yield return new(RenderRunChildren(run, html, formatting));
+        if (linkTag is not null) { html.Append("</a>"); _openInline.RemoveAt(_openInline.Count - 1); }
         if (hasSpan) { html.Append("</span>"); _openInline.RemoveAt(_openInline.Count - 1); }
     }
 
     private XElement? _leaderTab;                           // the paragraph's last tab when it goes to an end-aligned stop
     private string? _leaderCss;                             // the filler's CSS (the stop's leader)
-    private readonly List<string> _openInline = new();      // inline open tags around the current position (closed and reopened at the leader tab)
+    private readonly List<(string open, string close)> _openInline = new();   // inline tags around the current position (closed and reopened at the leader tab)
+
+    /// <summary>The innermost HYPERLINK field whose result is being rendered, as an &lt;a&gt; tag.</summary>
+    private string? ActiveFieldLink()
+    {
+        for (int i = _openFields.Count - 1; i >= 0; i--)
+            if (_openFields[i].IsSeparated && _openFields[i].LinkOpenTag is { } tag) return tag;
+        return null;
+    }
+
+    /// <summary>w:hyperlink (r:id → the relationship's target, w:anchor → a bookmark, w:tooltip) or a w:fldSimple HYPERLINK, as an &lt;a&gt; tag; null when it has no safe target.</summary>
+    private string? LinkOpenTagOf(XElement element)
+    {
+        if (element.Name.LocalName == "fldSimple") return HyperlinkFieldTag((string?)element.Attribute(W + "instr") ?? "");
+        string? target = null;
+        XNamespace relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        if ((string?)element.Attribute(relationships + "id") is { } id && _currentHyperlinkTargets is not null) _currentHyperlinkTargets.TryGetValue(id, out target);
+        if ((string?)element.Attribute(W + "anchor") is { Length: > 0 } anchor) target = (target ?? "") + "#" + anchor;
+        return LinkTag(target, (string?)element.Attribute(W + "tooltip"));
+    }
+
+    /// <summary>
+    /// A HYPERLINK field instruction, parsed as LibreOffice does (DomainMapper_Impl FIELD_HYPERLINK): the first plain part
+    /// is the URL (a doubled backslash is one backslash), \l "name" appends "#name", \o "text" is the tooltip, \t / \m /
+    /// \n / \h are ignored here.
+    /// </summary>
+    private static string? HyperlinkFieldTag(string instruction)
+    {
+        List<string> parts = FieldInstructionParts(instruction);
+        if (parts.Count == 0 || !parts[0].Equals("HYPERLINK", StringComparison.OrdinalIgnoreCase)) return null;
+        string url = "", anchors = "", tooltip = "";
+        for (int i = 1; i < parts.Count; i++)
+        {
+            switch (parts[i])
+            {
+                case "\\l": if (++i < parts.Count) anchors += "#" + parts[i]; break;
+                case "\\o": if (++i < parts.Count) tooltip = parts[i]; break;
+                case "\\t": i++; break;
+                case "\\m": case "\\n": case "\\h": break;
+                default: url = parts[i].Replace("\\\\", "\\"); break;
+            }
+        }
+        return LinkTag(url + anchors, tooltip);
+    }
+
+    /// <summary>A field instruction split into words; a quoted part is one word (quotes removed).</summary>
+    private static List<string> FieldInstructionParts(string instruction)
+    {
+        var parts = new List<string>();
+        int i = 0;
+        while (i < instruction.Length)
+        {
+            while (i < instruction.Length && char.IsWhiteSpace(instruction[i])) i++;
+            if (i >= instruction.Length) break;
+            if (instruction[i] == '"')
+            {
+                int close = instruction.IndexOf('"', i + 1);
+                if (close < 0) close = instruction.Length;
+                parts.Add(instruction.Substring(i + 1, close - i - 1));
+                i = close + 1;
+            }
+            else
+            {
+                int start = i;
+                while (i < instruction.Length && !char.IsWhiteSpace(instruction[i])) i++;
+                parts.Add(instruction.Substring(start, i - start));
+            }
+        }
+        return parts;
+    }
+
+    /// <summary>
+    /// An &lt;a&gt; tag for a link target, or null when the target is not safe to follow. Only http, https and mailto URLs and
+    /// in-document anchors (#bookmark → the bookmark's element id) become links; anything else (javascript:, file:, data:,
+    /// relative paths) renders as plain text.
+    /// </summary>
+    internal static string? LinkTag(string? target, string? tooltip)
+    {
+        if (string.IsNullOrWhiteSpace(target)) return null;
+        target = target!.Trim();
+        string href;
+        if (target.StartsWith("#", StringComparison.Ordinal)) href = "#" + BookmarkElementId(target.Substring(1));
+        else if (Uri.TryCreate(target, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https" or "mailto") href = uri.AbsoluteUri;
+        else return null;
+        var tag = new StringBuilder("<a class=\"link\" href=\"").Append(WordHtmlText.Encode(href)).Append('"');
+        if (!string.IsNullOrEmpty(tooltip)) tag.Append(" title=\"").Append(WordHtmlText.Encode(tooltip!)).Append('"');
+        if (!href.StartsWith("#", StringComparison.Ordinal)) tag.Append(" rel=\"noopener noreferrer\" target=\"_blank\"");
+        return tag.Append('>').ToString();
+    }
+
+    /// <summary>The HTML id a bookmark gets; links to it use "#" + this id.</summary>
+    internal static string BookmarkElementId(string bookmarkName) => "bookmark-" + Uri.EscapeDataString(bookmarkName);
 
     /// <summary>
     /// The paragraph's last tab (w:tab, or w:ptab with alignment right) when it goes to an end-aligned stop, and the CSS of
@@ -257,9 +382,9 @@ public sealed class DocxBlockHtmlRenderer
     /// <summary>At the leader tab: close the inline tags, end the part before the tab, draw the filler, start the part after it and reopen the tags.</summary>
     private void AppendLeaderTab(StringBuilder html)
     {
-        for (int i = _openInline.Count - 1; i >= 0; i--) html.Append("</span>");
+        for (int i = _openInline.Count - 1; i >= 0; i--) html.Append(_openInline[i].close);
         html.Append("</span><span class=\"tab-leader\" style=\"").Append(_leaderCss).Append("\"></span><span class=\"tab-after\" style=\"flex:none\">");
-        foreach (string openTag in _openInline) html.Append(openTag);
+        foreach ((string openTag, _) in _openInline) html.Append(openTag);
         _leaderTab = LeaderTabReached;                        // reached: no other tab matches; the paragraph's closing </span> ends tab-after
     }
 
@@ -404,7 +529,22 @@ public sealed class DocxBlockHtmlRenderer
                     break;
                 case "pgNum": case "commentReference": case "annotationRef": break;   // no pages; comments are not shown in a reading view
                 // separator lines of the notes part, field codes, layout hints: nothing to show
-                case "separator": case "continuationSeparator": case "fldChar": case "instrText": case "rPr": case "lastRenderedPageBreak": break;
+                case "fldChar":
+                    switch ((string?)child.Attribute(W + "fldCharType"))
+                    {
+                        case "begin": _openFields.Add(new DocxField()); break;
+                        case "separate" when _openFields.Count > 0:
+                            DocxField field = _openFields[_openFields.Count - 1];
+                            field.IsSeparated = true;
+                            field.LinkOpenTag = HyperlinkFieldTag(field.Instruction.ToString());
+                            break;
+                        case "end" when _openFields.Count > 0: _openFields.RemoveAt(_openFields.Count - 1); break;
+                    }
+                    break;
+                case "instrText":
+                    if (_openFields.Count > 0 && !_openFields[_openFields.Count - 1].IsSeparated) _openFields[_openFields.Count - 1].Instruction.Append(child.Value);
+                    break;
+                case "separator": case "continuationSeparator": case "rPr": case "lastRenderedPageBreak": break;
             }
         }
     }

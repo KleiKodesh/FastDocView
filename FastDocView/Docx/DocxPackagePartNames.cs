@@ -46,7 +46,7 @@ public sealed record DocxPackagePartNames(string Document, string? Footnotes, st
     }
 
     /// <summary>"word/document.xml" → "word/_rels/document.xml.rels".</summary>
-    private static string RelationshipsPartName(string partName)
+    internal static string RelationshipsPartName(string partName)
     {
         int slash = partName.LastIndexOf('/');
         return partName.Substring(0, slash + 1) + "_rels/" + partName.Substring(slash + 1) + ".rels";
