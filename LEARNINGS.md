@@ -362,3 +362,16 @@ Append-only. Date, what we learned, what it changed.
 - **`dir` on an inline element is an isolate** (HTML's UA style sheet): fine for a single run, wrong for a sequence of
   RTL runs inside an LTR paragraph - each becomes its own neutral island in LTR order. `unicode-bidi:embed` with
   `direction:rtl` behaves like RLE..PDF and matches Word's run-level rtl.
+
+## 2026-10-29 - list indents against LibreOffice's PDF
+
+- **A PDF has no column**: the edge-histogram estimate was off by ~3 pt per page, enough to call every list label wrong.
+  Compare per page after removing the median start-side shift; then the real classes stand out.
+- **A zero-width inline-flex label wraps per character** unless it is nowrap - two-line labels doubled the line height.
+  Its flex items are blockified, so a measuring script that looks for block leaves must skip the label.
+- **Right-aligned labels are common in Hebrew lists** (.doc LVL jc 2, RTF \leveljc2): the label ends at the first-line
+  position and reaches towards the start side. LibreOffice reads \leveljc and ignores \leveljcn.
+- **sprmPChgTabs is not sprmPChgTabsPapx**: rgdxaClose follows rgdxaDel (ww8scan.cxx GetSprmTailLen), even though
+  LibreOffice's Read_Tab reads both alike.
+- **Word's auto line spacing counts single lines, not ems**: 12 pt text at line=240 is 13.8 pt apart.
+- The file-writing path through a bash heredoc eats one level of backslashes: write edit scripts with the Write tool.
