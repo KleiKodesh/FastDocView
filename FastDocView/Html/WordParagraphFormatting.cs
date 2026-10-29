@@ -27,6 +27,8 @@ public sealed class WordParagraphFormatting
     public string? ShadingHex;              // paragraph background "RRGGBB"
     public bool IsContextualSpacing;        // no space between paragraphs of the same style
     public int FirstTabStopTwips;           // 0 = default stops; drives CSS tab-size
+    /// <summary>The custom tab stops after every style layer (w:tabs; "clear" removes a stop inherited at the same position), by position.</summary>
+    public WordTabStop[] TabStops = [];
     public string? StyleKey;                // what "same style" means for contextual spacing
     public string? BorderTopCss;            // CSS border values ("1pt solid #000"), null = none
     public string? BorderBottomCss;
@@ -86,3 +88,6 @@ public sealed class WordParagraphFormatting
 
     public static string TwipsToPt(int twips) => (twips / 20.0).ToString("0.#", CultureInfo.InvariantCulture);
 }
+
+/// <summary>A custom tab stop (ECMA-376 §17.3.1.37): position in twips, alignment (ST_TabJc: left, center, right, decimal, bar, num, start, end) and leader (ST_TabTlc).</summary>
+public readonly record struct WordTabStop(int PositionTwips, string Alignment, string Leader);

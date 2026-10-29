@@ -312,6 +312,17 @@ public sealed class DocxStyleCascade
                 .Where(tab => (string?)tab.Attribute(W + "val") is not ("clear" or "bar"))
                 .Select(tab => TwipsAttribute(tab, "pos")).Where(position => position > 0).Min();
             if (firstStop is { } stop) formatting.FirstTabStopTwips = Math.Max(120, stop - formatting.LeftIndentTwips);
+            // Stops merge across layers: a later layer adds or replaces the stop at a position, "clear" removes it (§17.3.1.37).
+            var stops = new List<WordTabStop>(formatting.TabStops);
+            foreach (XElement tab in tabs.Elements(W + "tab"))
+            {
+                if (TwipsAttribute(tab, "pos") is not { } position) continue;
+                string alignment = (string?)tab.Attribute(W + "val") ?? "left";
+                stops.RemoveAll(existing => existing.PositionTwips == position);
+                if (alignment != "clear") stops.Add(new WordTabStop(position, alignment, (string?)tab.Attribute(W + "leader") ?? "none"));
+            }
+            stops.Sort((a, b) => a.PositionTwips.CompareTo(b.PositionTwips));
+            formatting.TabStops = stops.ToArray();
         }
         if (pPr.Element(W + "numPr") is { } numPr)
         {

@@ -131,7 +131,16 @@ public sealed class DocxBlockHtmlRenderer
         if (markSize > 0 && markSize != formatting.RunFormatting.EffectiveFontSizeHalfPoints)
             css += "font-size:" + (markSize / 2.0).ToString("0.#", CultureInfo.InvariantCulture) + "pt;";
 
+        // A last tab that goes to an end-aligned stop (a table of contents line: "text ...... 12") is laid out with flex:
+        // what precedes the tab, a filler drawn with the stop's leader, then the rest pushed to the line's end.
+        XElement? outerLeaderTab = _leaderTab;
+        string? outerLeaderCss = _leaderCss;
+        int outerInlineDepth = _openInline.Count;
+        (_leaderTab, _leaderCss) = _textBoxDepth == 0 ? FindEndAlignedLastTab(paragraph, formatting.TabStops) : (null, null);
+        if (_leaderTab is not null) css += "display:flex;align-items:baseline;";
+
         WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
+        if (_leaderTab is not null) html.Append("<span class=\"tab-before\">");
         if (_listLabel is { Text.Length: > 0 } label)
         {
             // Word draws the number with the mark's formatting plus the level's rPr (§17.9.6), then the level's suffix (§17.9.28).
@@ -143,6 +152,10 @@ public sealed class DocxBlockHtmlRenderer
         }
         if (_listLabel is not null) _listLabel = null;              // only the block's first paragraph carries it
         yield return new(RenderInlineChildren(paragraph, html, formatting.RunFormatting));
+        if (_leaderTab is not null) html.Append("</span>");          // tab-after (or tab-before when the tab was not reached)
+        _leaderTab = outerLeaderTab;
+        _leaderCss = outerLeaderCss;
+        _openInline.RemoveRange(outerInlineDepth, _openInline.Count - outerInlineDepth);
         html.Append("</").Append(tag).Append('>');
         _previousStyleKey = formatting.StyleKey;
 
@@ -191,10 +204,66 @@ public sealed class DocxBlockHtmlRenderer
         // trailing spaces); the strikethrough stays on the run's span, so the two never have to share one style.
         string css = formatting.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly);
         bool hasSpan = css.Length > 0;
-        if (hasSpan) html.Append("<span style=\"").Append(css).Append("\">");
+        string openTag = "<span style=\"" + css + "\">";
+        if (hasSpan) { html.Append(openTag); _openInline.Add(openTag); }
         yield return new(RenderRunChildren(run, html, formatting));
-        if (hasSpan) html.Append("</span>");
+        if (hasSpan) { html.Append("</span>"); _openInline.RemoveAt(_openInline.Count - 1); }
     }
+
+    private XElement? _leaderTab;                           // the paragraph's last tab when it goes to an end-aligned stop
+    private string? _leaderCss;                             // the filler's CSS (the stop's leader)
+    private readonly List<string> _openInline = new();      // inline open tags around the current position (closed and reopened at the leader tab)
+
+    /// <summary>
+    /// The paragraph's last tab (w:tab, or w:ptab with alignment right) when it goes to an end-aligned stop, and the CSS of
+    /// the leader that fills up to it. With no font metrics, the last tab is taken to reach the paragraph's last custom
+    /// stop; that stop must be right / end aligned (ST_TabJc). Leaders (ST_TabTlc): dot and middleDot → dotted, hyphen →
+    /// dashed, underscore → solid, heavy → a thick solid line ("a heavy solid line, or an underscore"), none → blank.
+    /// </summary>
+    private static (XElement? tab, string? css) FindEndAlignedLastTab(XElement paragraph, WordTabStop[] stops)
+    {
+        XElement? last = null;
+        foreach (XElement element in paragraph.Descendants())
+        {
+            if (element.Name != W + "tab" && element.Name != W + "ptab") continue;
+            if (element.Parent?.Name != W + "r") continue;                      // w:tabs/w:tab are stop definitions, not tab characters
+            XElement? owner = element.Parent.Parent;
+            while (owner is not null && owner.Name != W + "p" && owner.Name != W + "del" && owner.Name != W + "moveFrom") owner = owner.Parent;
+            if (owner == paragraph) last = element;
+        }
+        if (last is null) return (null, null);
+        string leader;
+        if (last.Name == W + "ptab")
+        {
+            if ((string?)last.Attribute(W + "alignment") != "right") return (null, null);
+            leader = (string?)last.Attribute(W + "leader") ?? "none";
+        }
+        else
+        {
+            if (stops.Length == 0 || stops[stops.Length - 1].Alignment is not ("right" or "end")) return (null, null);
+            leader = stops[stops.Length - 1].Leader;
+        }
+        string line = leader switch
+        {
+            "dot" or "middleDot" => "border-bottom:0.15em dotted currentColor;",
+            "hyphen" => "border-bottom:1px dashed currentColor;",
+            "underscore" => "border-bottom:1px solid currentColor;",
+            "heavy" => "border-bottom:2px solid currentColor;",
+            _ => "",
+        };
+        return (last, "flex:1 1 0;min-width:0.5em;margin:0 0.2em;" + line);
+    }
+
+    /// <summary>At the leader tab: close the inline tags, end the part before the tab, draw the filler, start the part after it and reopen the tags.</summary>
+    private void AppendLeaderTab(StringBuilder html)
+    {
+        for (int i = _openInline.Count - 1; i >= 0; i--) html.Append("</span>");
+        html.Append("</span><span class=\"tab-leader\" style=\"").Append(_leaderCss).Append("\"></span><span class=\"tab-after\" style=\"flex:none\">");
+        foreach (string openTag in _openInline) html.Append(openTag);
+        _leaderTab = LeaderTabReached;                        // reached: no other tab matches; the paragraph's closing </span> ends tab-after
+    }
+
+    private static readonly XElement LeaderTabReached = new(W + "tab");
 
     /// <summary>
     /// Run text with the run's underline drawn the way Word draws it (Word 16 PDF export, 2026-10-28): under spaces
@@ -307,7 +376,10 @@ public sealed class DocxBlockHtmlRenderer
             switch (child.Name.LocalName)
             {
                 case "t": case "delText": AppendRunText(html, child, formatting); break;
-                case "tab": case "ptab": AppendUnderlinedMarkup(html, "\t", formatting, isSpace: true); break;
+                case "tab": case "ptab":
+                    if (child == _leaderTab) AppendLeaderTab(html);
+                    else AppendUnderlinedMarkup(html, "\t", formatting, isSpace: true);
+                    break;
                 case "br":
                     html.Append(((string?)child.Attribute(W + "type")) == "page" ? "<span class=\"page-break\"></span>" : "<br>");
                     break;
