@@ -35,6 +35,8 @@ internal sealed class RtfParser
 
     // contexts that end with their group
     private int _footnoteDepth = -1, _listTextDepth = -1, _unicodePairDepth = -1, _nestedTablePropertiesDepth = -1;
+    private int _captureDepth = -1;                 // a {\*\fldinst} / {\*\bkmkstart} group whose text is captured
+    private readonly StringBuilder _captured = new();
     private bool _isEndnote;
 
     // table row definition (\trowd ... \cellxN), document-level as in LibreOffice
@@ -155,6 +157,8 @@ internal sealed class RtfParser
         _isIgnorableNext = false;
         _skipCount = 0;
         _textByteCount = 0;
+        _captureDepth = -1;
+        _captured.Clear();
         _pendingCellShading = 0;
         _isEndnote = false;
     }
@@ -304,6 +308,14 @@ internal sealed class RtfParser
         if (_depth == _listTextDepth) { _listTextDepth = -1; _sink.ListTextEnd(); }
         if (_depth == _unicodePairDepth) _unicodePairDepth = -1;
         if (_depth == _nestedTablePropertiesDepth) _nestedTablePropertiesDepth = -1;
+        if (_depth == _captureDepth)
+        {
+            _captureDepth = -1;
+            string captured = _captured.ToString();
+            _captured.Clear();
+            if (_stack[_depth].Destination == RtfDestination.BookmarkStart) { if (captured.Trim().Length > 0) _sink.BookmarkStart(captured.Trim()); }
+            else _sink.FieldInstruction(captured);
+        }
         if (_readsHeaderTables) CloseHeaderGroup();
         _depth--;
         _sink.GroupClosed(_depth);
@@ -435,6 +447,13 @@ internal sealed class RtfParser
             _textByteCount += bytes.Length;
             return;
         }
+        if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart)
+        {
+            if (_chars.Length < bytes.Length) _chars = new char[Math.Max(bytes.Length, _chars.Length * 2)];
+            int decoded = RtfCodePages.Decode(bytes, state.CodePage, _chars);
+            _captured.Append(_chars, 0, decoded);
+            return;
+        }
         if (_readsHeaderTables) HeaderText(bytes, state.CodePage);
     }
 
@@ -448,6 +467,7 @@ internal sealed class RtfParser
             if (_sink.WantsText) { Span<char> one = stackalloc char[1]; one[0] = character; _sink.Text(one, state); }
             else _sink.TextLength(1, state);
         }
+        else if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart) _captured.Append(character);
         else if (_readsHeaderTables && _headerDepth >= 0) HeaderCharacter(character);
     }
 
@@ -609,7 +629,17 @@ internal sealed class RtfParser
                 _sink.FootnoteStart();
                 return;
             case RtfWord.FootnoteIsEndnote: if (_footnoteDepth >= 0) _isEndnote = true; return;
-            case RtfWord.Field: case RtfWord.FieldResult: return;          // transparent: \fldinst is skipped, the result shows
+            // Fields (RTF 1.5 spec "Fields": {\field {\*\fldinst ...} {\fldrslt ...}}): the result shows; the instruction is
+            // captured for links (HYPERLINK, REF \h). Bookmarks (spec "Bookmarks": {\*\bkmkstart name}; \bkmkcolf / \bkmkcoll
+            // are ignored) are captured as jump targets.
+            case RtfWord.Field: if (IsTextDestination(state)) _sink.FieldStart(_depth); return;
+            case RtfWord.FieldResult: if (IsTextDestination(state)) _sink.FieldResultStart(); return;
+            case RtfWord.FieldInstruction: case RtfWord.BookmarkStart:
+                if (_captureDepth >= 0 || state.Destination is not (RtfDestination.Body or RtfDestination.Footnote)) { SkipGroup(name); return; }
+                state.Destination = word == RtfWord.BookmarkStart ? RtfDestination.BookmarkStart : RtfDestination.FieldInstruction;
+                _captureDepth = _depth;
+                _captured.Clear();
+                return;
             case RtfWord.ListText: case RtfWord.ParagraphNumberText:
                 if (_listTextDepth >= 0 || !IsTextDestination(state)) { SkipGroup(name); return; }
                 state.Destination = RtfDestination.ListText;

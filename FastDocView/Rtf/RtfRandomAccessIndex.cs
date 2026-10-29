@@ -14,7 +14,7 @@ public readonly record struct RtfNoteReference(int BlockIndex, WordDocumentNoteK
 public sealed class RtfRandomAccessIndex
 {
     private const string Magic = "KHRTFIDX";
-    private const int FormatVersion = 2;     // 2: section text widths
+    private const int FormatVersion = 3;     // 2: section text widths; 3: bookmarks (name -> block)
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -34,6 +34,8 @@ public sealed class RtfRandomAccessIndex
     /// <summary>Per section: its last block (inclusive) and its page text width in twips.</summary>
     public int[] SectionLastBlocks { get; init; } = [];
     public int[] SectionTextWidths { get; init; } = [];
+    /// <summary>Bookmarks ({\*\bkmkstart name}) and the block each marks.</summary>
+    public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
 
     public int BlockCount => BlockStartOffsets.Length;
 
@@ -122,6 +124,7 @@ public sealed class RtfRandomAccessIndex
         foreach (RtfNoteReference note in NoteReferences) { writer.Write(note.BlockIndex); writer.Write((byte)note.Kind); writer.Write(note.Number); writer.Write(note.Label); }
         IndexBinaryArrays.Write(writer, SectionLastBlocks);
         IndexBinaryArrays.Write(writer, SectionTextWidths);
+        Bookmarks.Write(writer);
         writer.Flush();
     }
 
@@ -154,11 +157,13 @@ public sealed class RtfRandomAccessIndex
         int[] sectionTextWidths = IndexBinaryArrays.Read<int>(reader);
         if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)starts.Length))
             throw new InvalidDataException("RTF index: section table does not match the blocks.");
+        WordDocumentBookmarkTable bookmarks = WordDocumentBookmarkTable.Read(reader, starts.Length);
         return new RtfRandomAccessIndex(sourceLength, sourceTicks, tables, isRightToLeft, starts, ends, kinds, textLengths, stateIds, states,
                                         listLevels, labelIds, labels, headings, notes)
         {
             SectionLastBlocks = sectionLastBlocks,
             SectionTextWidths = sectionTextWidths,
+            Bookmarks = bookmarks,
         };
     }
 

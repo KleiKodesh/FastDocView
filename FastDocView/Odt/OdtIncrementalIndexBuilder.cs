@@ -50,6 +50,7 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
     {
         _styles = styles;
         _scanner = new OdtBodyBlockScanner(styles);
+        _bookmarks = new WordDocumentBookmarkScanLookup(_scanner.BookmarkNames, _scanner.BookmarkBlocks);
         _sourceLength = sourceLength;
         _sourceLastWriteTicksUtc = sourceLastWriteTicksUtc;
         _progress = progress;
@@ -65,6 +66,19 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
             _contentCursor = new DocxEntryInflationCursor(file, ContentEntry, OdtRandomAccessIndexBuilder.DefaultCheckpointSpanBytes);
             _totalBytes = ContentEntry.UncompressedSize;
         }
+    }
+
+    private readonly WordDocumentBookmarkScanLookup _bookmarks;
+
+    /// <summary>A bookmark found so far in a known block, or null.</summary>
+    public int? FindKnownBookmark(string name) => _bookmarks.Find(name, KnownBlockCount);
+
+    /// <summary>Scans one more chunk (false once the input is scanned) - lets a lookup advance only as far as it needs.</summary>
+    public bool AdvanceOne()
+    {
+        if (IsBodyScanned) return false;
+        AdvanceOneChunk();
+        return true;
     }
 
     private long BytesScanned => _contentCursor?.BytesInflated ?? _flatPosition;
@@ -93,7 +107,7 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
     }
 
     /// <summary>The style sections captured so far (font faces, automatic styles: they precede office:body).</summary>
-    public string[] StyleSectionsForRendering() => _styles.SectionsForRendering();
+    public System.Xml.Linq.XElement[] StyleSectionElementsForRendering() => _styles.SectionElementsForRendering();
 
     /// <summary>Scans on until at least <paramref name="blockCount"/> blocks are known or the body ends.</summary>
     public void AdvanceUntilKnown(int blockCount)

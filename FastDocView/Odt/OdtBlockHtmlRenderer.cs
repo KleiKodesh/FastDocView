@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Xml.Linq;
 using FastDocView.Html;
+using FastDocView.DocxHtml;
 
 namespace FastDocView.Odt;
 
@@ -17,6 +18,8 @@ public sealed class OdtBlockHtmlRenderer
     private static readonly XNamespace TextNs = OdtStyleCascade.Text;
     private static readonly XNamespace TableNs = OdtStyleCascade.Table;
     private static readonly XNamespace DrawNs = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+    private static readonly XNamespace XLinkNs = "http://www.w3.org/1999/xlink";
+    private static readonly XNamespace OfficeNs = OdtStyleCascade.Office;
 
     /// <summary>Inline elements the renderer handles; anything else renders its text content (fields) — the audit counts the rest.</summary>
     public static readonly HashSet<string> HandledInlineElements =
@@ -46,6 +49,7 @@ public sealed class OdtBlockHtmlRenderer
     private int _nextNote;
     private int _noteBodyDepth;
     private List<WordDocumentNoteHtml>? _renderedNotes;
+    private bool _isInsideLink;      // HTML forbids a link inside a link: an inner one renders its text only
 
     public OdtBlockHtmlRenderer(OdtStyleCascade styles) => _styles = styles;
 
@@ -61,6 +65,7 @@ public sealed class OdtBlockHtmlRenderer
         _previousStyleKey = previousStyleKey;
         _blockNotes = notes.ToArray().ToList();
         _nextNote = 0;
+        _isInsideLink = false;
         _renderedNotes = notes.Length == 0 ? null : new List<WordDocumentNoteHtml>(notes.Length);
         RenderBlock(block, html, isTopLevel: true);
         return (html.ToString(), (IReadOnlyList<WordDocumentNoteHtml>?)_renderedNotes ?? []);
@@ -169,7 +174,34 @@ public sealed class OdtBlockHtmlRenderer
                     case "line-break": html.Append("<br>"); continue;
                     case "note": AppendNote(element, html); continue;
                     case "number": if (!hasLabel) html.Append(WordHtmlText.Encode(element.Value)).Append(' '); continue;
-                    case "soft-page-break": case "bookmark": case "bookmark-start": case "bookmark-end": case "reference-mark": case "reference-mark-start":
+                    case "bookmark": case "bookmark-start": case "reference-mark": case "reference-mark-start":
+                        // the jump target of in-document links (ODF 1.3 part 3 6.2.1 / 6.2.2, text:name)
+                        if ((string?)element.Attribute(TextNs + "name") is { Length: > 0 } bookmark)
+                            html.Append("<span class=\"bookmark\" id=\"").Append(WordHtmlText.Encode(DocxBlockHtmlRenderer.BookmarkElementId(bookmark))).Append("\"></span>");
+                        continue;
+                    case "a":
+                    {
+                        // text:a xlink:href (ODF 1.3 part 3 6.1.8): "#name" is a bookmark in this document; only safe targets become links
+                        string? link = DocxBlockHtmlRenderer.LinkTag((string?)element.Attribute(XLinkNs + "href"), (string?)element.Attribute(OfficeNs + "title"));
+                        if (link is not null && !_isInsideLink) html.Append(link);
+                        bool wasInsideLink = _isInsideLink;
+                        _isInsideLink |= link is not null;
+                        RenderInline(element, html, paragraphStyle, paragraphBase, current, hasLabel);
+                        _isInsideLink = wasInsideLink;
+                        if (link is not null && !wasInsideLink) html.Append("</a>");
+                        continue;
+                    }
+                    case "bookmark-ref": case "reference-ref":
+                    {
+                        // cross-references (ODF 1.3 part 3 7.7.5 / 7.7.6, text:ref-name): their current text, linked to the target
+                        string? link = _isInsideLink ? null : DocxBlockHtmlRenderer.LinkTag("#" + (string?)element.Attribute(TextNs + "ref-name"), null);
+                        if ((string?)element.Attribute(TextNs + "ref-name") is not { Length: > 0 }) link = null;
+                        if (link is not null) { html.Append(link); _isInsideLink = true; }
+                        RenderInline(element, html, paragraphStyle, paragraphBase, current, hasLabel);
+                        if (link is not null) { html.Append("</a>"); _isInsideLink = false; }
+                        continue;
+                    }
+                    case "soft-page-break": case "bookmark-end":
                     case "reference-mark-end": case "change": case "change-start": case "change-end": case "toc-mark": case "toc-mark-start": case "toc-mark-end":
                     case "alphabetical-index-mark": case "alphabetical-index-mark-start": case "alphabetical-index-mark-end": case "user-index-mark":
                     case "user-index-mark-start": case "user-index-mark-end": case "bibliography-mark": case "ruby-text": case "hidden-text": case "hidden-paragraph":

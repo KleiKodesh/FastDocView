@@ -20,6 +20,9 @@ internal enum RtfDestination : byte
     ListOverrideLevel,
     Footnote,
     ListText,
+    /// <summary>{\*\fldinst ...} and {\*\bkmkstart name}: their text is captured and reported when the group closes.</summary>
+    FieldInstruction,
+    BookmarkStart,
 }
 
 /// <summary>

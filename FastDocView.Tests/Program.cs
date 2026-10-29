@@ -31,6 +31,7 @@ int incrementalBlocks = 1_000_000;
 var realPaths = new List<string>();
 var auditPaths = new List<string>();
 var profilePaths = new List<string>();
+var odtFirstOpenPaths = new List<string>();
 var indexProfilePaths = new List<string>();
 string? corpusList = null;
 string? listLabelsFallback = null;
@@ -60,6 +61,7 @@ for (int i = 0; i < args.Length; i++)
             break;
         case "--real": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) realPaths.Add(args[++i]); break;
         case "--audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) auditPaths.Add(args[++i]); break;
+        case "--odt-first-open": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) odtFirstOpenPaths.Add(args[++i]); break;
         case "--profile-open": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) profilePaths.Add(args[++i]); break;
         case "--profile-index": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) indexProfilePaths.Add(args[++i]); break;
         case "--corpus": corpusList = args[++i]; break;            // a text file with one Word file path per line
@@ -98,7 +100,7 @@ for (int i = 0; i < args.Length; i++)
 }
 
 if (searchOnly) { DocumentSearchTest.Run(searchPaths); skipSynthetic = true; }
-if (fidelityOnly) { DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); LineSpacingTest.Run(); skipSynthetic = true; }
+if (fidelityOnly) { DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); OdtFirstOpenTiming.RunSynthetic(); skipSynthetic = true; }
 if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
 if (!skipSynthetic)
 {
@@ -124,6 +126,7 @@ if (realPaths.Count > 0) WordCoexistenceTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Any(path => path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)))
     DocBinaryListLabelsTest.Run(realPaths.Where(path => File.Exists(path) && path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)), listLabelsFallback ?? corpusList);
 if (auditPaths.Count > 0) WordFormattingAudit.Run(auditPaths.Where(File.Exists));
+if (odtFirstOpenPaths.Count > 0) OdtFirstOpenTiming.Run(odtFirstOpenPaths.Where(File.Exists));
 if (profilePaths.Count > 0) OpenTimingProfile.Run(profilePaths.Where(File.Exists));
 if (indexProfilePaths.Count > 0) IndexPassProfile.Run(indexProfilePaths.Where(File.Exists));
 if (corpusList is not null && rtfBlocks == 0) WordFormattingAudit.RunCorpus(corpusList, corpusMax, corpusSample);

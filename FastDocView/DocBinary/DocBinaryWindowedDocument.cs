@@ -22,8 +22,16 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     public string FilePath { get; }
     public int BlockCount => _index.BlockCount;
 
+    /// <summary>
+    /// The block holding a bookmark's start: the bookmark tables (SttbfBkmk + PlcfBkf, small, read at open) give its CP and the
+    /// block index maps it - nothing stored in the index, no text read. Bookmarks outside the main text (notes, headers) are null.
+    /// </summary>
+    public int? FindBookmark(string name)
+        => Bookmarks.StartOf(name) is { } cp && cp < FileInformationBlock.MainTextCharacterCount && _index.BlockCount > 0 ? _index.BlockAt(cp) : null;
+
+    public DocBinaryBookmarks Bookmarks { get; }
+
     /// <summary>Page text width per section, from PlcfSed (read at open: one small record per section).</summary>
-    public int? FindBookmark(string name) => null;     // bookmarks not indexed for this format yet
     public IReadOnlyList<WordDocumentSection> Sections { get; }
     public bool IsIndexComplete => true;
     public int KnownBlockCount => _index.BlockCount;
@@ -103,6 +111,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         ListDefinitions = DocBinaryListDefinitions.Read(_tableStream, FileInformationBlock.ListFormats, FileInformationBlock.ListFormatOverrides);
         _renderer.Lists = ListDefinitions;
         _renderer.DefaultTabStopTwips = ReadDefaultTabStop(_tableStream, FileInformationBlock.DocumentProperties);
+        Bookmarks = DocBinaryBookmarks.Read(_tableStream, FileInformationBlock);
+        _renderer.Bookmarks = Bookmarks;
 
         bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc);
         Decision = policy.Decide(displayPath, (long)FileInformationBlock.MainTextCharacterCount * 2, isCacheValid);

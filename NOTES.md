@@ -767,3 +767,42 @@ The caller loops from `NextBlock` until `ReachedEnd` (`NextBlock` = -1).
   full scan 1.7-2.3 s (absent word), 2.3-4.2 s (word in 31,718 blocks), first hit 22-32 ms, avg batch 7-17 ms.
   .doc 40 MB, 106,442 blocks: full scan 0.4-0.7 s, first hit 6-12 ms, avg batch 1-3 ms. Cold on-demand .docx:
   open 0.2-0.75 s, full scan incl. building the index 6.5-8.4 s.
+## Bookmarks and in-document links in every format (branch work/bookmarks-all, 2026-10-29)
+
+`IWordWindowedDocument.FindBookmark(name)` returns the block a bookmark marks; links render as
+`href="#bookmark-<Uri.EscapeDataString(name)>"` (one helper: `DocxBlockHtmlRenderer.LinkTag` /
+`BookmarkElementId`; field instructions parsed by `DocxBlockHtmlRenderer.HyperlinkFieldTag` for
+.docx, .rtf and .doc alike). Same safety rule everywhere: only http(s), mailto, in-document anchors
+and the app schemes (otzaria, zayit, kitveihakodeshapp, seforimapp) become links.
+
+| Format | Bookmarks (source) | Index | Links |
+|---|---|---|---|
+| .docx | w:bookmarkStart (done earlier) | v10 | w:hyperlink, HYPERLINK, REF/PAGEREF/NOTEREF \h |
+| .odt / .fodt | text:bookmark, text:bookmark-start, text:reference-mark(-start), text:name (ODF 1.3 part 3 6.2.1 / 6.2.2), captured by the body scanner | v4 | text:a xlink:href (6.1.8); text:bookmark-ref / text:reference-ref text:ref-name (7.7.5 / 7.7.6) |
+| .rtf | {\*\bkmkstart name} (RTF 1.5 spec "Bookmarks"), captured by the parser | v3 | {\field{\*\fldinst HYPERLINK / REF \h}{\fldrslt}} (spec "Fields"; the HYPERLINK instruction itself is Word field syntax, not in the 1.5 spec) |
+| .doc | SttbfBkmk + PlcfBkf (FibRgFcLcb97 pairs 21 / 22, LibreOffice ww8scan.cxx WW8Fib read order and WW8PLCFx_Book) - small tables read at open, CP -> block by the block index; nothing stored, no index change | v4 (unchanged) | 0x13 / 0x14 / 0x15 field marks in the text; the code collected, control characters (Word's 0x01 hyperlink-data mark) dropped |
+
+- On-demand indexes (.docx, .odt) scan on only until the bookmark turns up (`WordDocumentBookmarkScanLookup`).
+- `_GoBack` is skipped (.docx, .doc). Reference marks share the bookmark lookup (first name wins).
+- Known limits: an RTF / .doc link field whose result spans paragraphs links in each paragraph it
+  reaches only if the field started in that block (no per-block open-field state for these formats
+  yet - .docx has it); .doc bookmarks in notes / headers are not targets; RTF bookmarks inside a
+  footnote mark the block holding the note.
+- Harness: `LinksAllFormatsTest` (odt, rtf), `DocBinaryLinksTest` (.doc written by LibreOffice from a
+  small .odt; skipped without LibreOffice), in `--fidelity`.
+
+## OpenDocument: huge styles.xml on the first open (2026-10-29)
+
+A LibreOffice conversion of a Word file carries thousands of list styles (sample
+dor-hamelaktim-shabbat.docx -> .odt: styles.xml 15.4 MB, 3,058 text:list-style x 10 levels, 5,716
+style:style, 993 master pages). The first open built all of office:styles as one XML tree, built
+every list style from it and inflated styles.xml again for the page setup: ~0.7-1.5 s before text.
+Now `OdtPackage.ReadStyles` is one streaming pass: `OdtStylesListStyleFilterStream` cuts every
+text:list-style (16.32) out of the bytes and parses it from its bytes (`OdtListStyle.Parse`; equal
+level definitions parsed once), XmlReader sees the remaining 2.1 MB, the page setup is collected in
+the same pass, and the on-demand open builds its rendering cascade from the filtered trees (no
+serialise + parse). Allocation 134 MB -> 18 MB per open. Sample, warm, best of 10: ~700 ms -> 189 ms
+to the first 40 blocks; `--fidelity` checks a synthetic 3,000-list-style file under 300 ms (104 ms)
+and `--odt-first-open <path>` measures any file. All 30,580 list levels of the sample read the same
+as the tree-based reading. Not done: a .fodt keeps its styles inside the body file and still captures
+office:styles as a tree.

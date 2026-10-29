@@ -42,6 +42,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
 
     /// <summary>The default tab stop interval (Dop dxaTab), twips.</summary>
     public int DefaultTabStopTwips { get; set; } = WordListLabelHtml.DefaultTabStopTwips;
+    /// <summary>Bookmarks: each one's start renders as an empty &lt;span class="bookmark" id&gt; (the target of in-document links).</summary>
+    public DocBinaryBookmarks Bookmarks { get; set; } = DocBinaryBookmarks.Empty;
 
     private bool _isParagraphRightToLeft;   // the paragraph being rendered: a right-to-left run in a left-to-right one is embedded
 
@@ -172,6 +174,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
         var fieldState = new FieldState();
         foreach ((WordRunFormatting runFormatting, string text, bool isSpecial, int runCp) in CharacterRuns(cpStart, cpEnd, formatting.RunFormatting, styleBase))
             AppendRunHtml(html, runFormatting, formatting.RunFormatting, text, isSpecial, runCp, fieldState, noteLabel);
+        if (fieldState.CloseOpenLink()) html.Append("</a>");          // a link field that goes on past the paragraph
         html.Append("</").Append(tag).Append('>');
         return formatting.StyleKey;
     }
@@ -284,7 +287,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
         var fieldState = new FieldState();
         foreach (char c in _pieces.ReadText(cpStart, cpEnd))
         {
-            if (fieldState.Consume(c)) continue;
+            if (fieldState.Consume(c, out _)) continue;
             if (c >= ' ' || c == '\t') text.Append(c == '\t' ? ' ' : c);
         }
         return text.ToString().Trim();
@@ -335,10 +338,28 @@ public sealed class DocBinaryParagraphHtmlRenderer
                                string text, bool isSpecial, int runCp, FieldState fieldState, string? noteLabel)
     {
         var visible = new StringBuilder(text.Length);
+        string css = formatting.ToCss(paragraphBase) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft);
+        void Flush()
+        {
+            if (visible.Length == 0) return;
+            if (css.Length > 0) html.Append("<span style=\"").Append(css).Append("\">").Append(visible).Append("</span>");
+            else html.Append(visible);
+            visible.Clear();
+        }
+        int nextBookmark = Bookmarks.FirstAtOrAfter(runCp);
         for (int i = 0; i < text.Length; i++)
         {
             char c = text[i];
-            if (fieldState.Consume(c)) continue;
+            while (nextBookmark < Bookmarks.StartCps.Length && Bookmarks.StartCps[nextBookmark] == runCp + i)
+            {
+                Flush();
+                html.Append("<span class=\"bookmark\" id=\"").Append(WordHtmlText.Encode(DocxHtml.DocxBlockHtmlRenderer.BookmarkElementId(Bookmarks.Names[nextBookmark++]))).Append("\"></span>");
+            }
+            if (fieldState.Consume(c, out string? linkTag))
+            {
+                if (linkTag is not null) { Flush(); html.Append(linkTag); }
+                continue;
+            }
             switch (c)
             {
                 case '\r': case CellOrRowMark: case '\u000C': case '\u000E': continue;   // paragraph / cell / section / column marks
@@ -355,10 +376,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
             if (c < ' ') continue;
             visible.Append(WordHtmlText.Encode(c.ToString()));
         }
-        if (visible.Length == 0) return;
-        string css = formatting.ToCss(paragraphBase) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft);
-        if (css.Length > 0) html.Append("<span style=\"").Append(css).Append("\">").Append(visible).Append("</span>");
-        else html.Append(visible);
+        Flush();
     }
 
     /// <summary>In the main text: a numbered note reference. Inside a note body: the note's own number.</summary>
@@ -378,24 +396,64 @@ public sealed class DocBinaryParagraphHtmlRenderer
             : DocxHtml.DocxNumberingDefinitions.FormatNumber(reference.Number, "lowerRoman");
 
     /// <summary>
-    /// Field codes are hidden, field results shown: 0x13 begins a field, 0x14 separates code from
-    /// result, 0x15 ends it. Tracked per nesting level so a nested field inside a result works.
+    /// Field codes are hidden, field results shown: 0x13 begins a field, 0x14 separates code from result, 0x15 ends it
+    /// (LibreOffice ww8scan.cxx: the PlcfFldMom marks, data byte &amp; 0x1f, are these characters). Tracked per nesting level
+    /// so a nested field inside a result works. A field's code is collected; at its separator a HYPERLINK (\l = in-document)
+    /// or REF / PAGEREF / NOTEREF ... \h field opens a link, read with the .docx field rules
+    /// (DocxBlockHtmlRenderer.HyperlinkFieldTag: the same instruction text; LibreOffice ww8par5.cxx Read_F_Hyperlink reads
+    /// \l as "#name", Read_F_Ref takes the first plain token as the bookmark); its end closes it. Only safe targets become
+    /// links; a link inside a link renders its text only.
     /// </summary>
     private sealed class FieldState
     {
-        private readonly Stack<bool> _isInCode = new();
+        private readonly List<(bool isCode, StringBuilder? code, bool isLink)> _fields = new();
+        private bool _isLinkOpen;
 
-        /// <summary>True when the character is consumed (a field mark, or inside a field code).</summary>
-        public bool Consume(char c)
+        /// <summary>
+        /// True when the character is consumed (a field mark, or inside a field code); <paramref name="linkTag"/> is the
+        /// &lt;a&gt; or &lt;/a&gt; to write at this point, if any.
+        /// </summary>
+        public bool Consume(char c, out string? linkTag)
         {
+            linkTag = null;
             switch (c)
             {
-                case '\u0013': _isInCode.Push(true); return true;
-                case '\u0014': if (_isInCode.Count > 0) { _isInCode.Pop(); _isInCode.Push(false); } return true;
-                case '\u0015': if (_isInCode.Count > 0) _isInCode.Pop(); return true;
+                case '\u0013': _fields.Add((true, new StringBuilder(), false)); return true;
+                case '\u0014':
+                    if (_fields.Count > 0 && _fields[_fields.Count - 1].isCode)
+                    {
+                        string code = _fields[_fields.Count - 1].code!.ToString();
+                        string? tag = _isLinkOpen ? null : DocxHtml.DocxBlockHtmlRenderer.HyperlinkFieldTag(code);
+                        _fields[_fields.Count - 1] = (false, null, tag is not null);
+                        if (tag is not null) { _isLinkOpen = true; linkTag = tag; }
+                    }
+                    return true;
+                case '\u0015':
+                    if (_fields.Count > 0)
+                    {
+                        bool wasLink = _fields[_fields.Count - 1].isLink;
+                        _fields.RemoveAt(_fields.Count - 1);
+                        if (wasLink && _isLinkOpen) { _isLinkOpen = false; linkTag = "</a>"; }
+                    }
+                    return true;
             }
-            foreach (bool isCode in _isInCode) if (isCode) return true;
+            if (_fields.Count > 0 && _fields[_fields.Count - 1].isCode)
+            {
+                // control characters are not instruction text: HYPERLINK codes carry a 0x01 object mark (Word's hyperlink data)
+                _fields[_fields.Count - 1].code!.Append(c < ' ' ? ' ' : c);
+                return true;
+            }
+            foreach ((bool isCode, _, _) in _fields) if (isCode) return true;
             return false;
+        }
+
+        /// <summary>True when a link is still open (it is closed with the paragraph); afterwards none is.</summary>
+        public bool CloseOpenLink()
+        {
+            if (!_isLinkOpen) return false;
+            _isLinkOpen = false;
+            for (int i = 0; i < _fields.Count; i++) _fields[i] = (_fields[i].isCode, _fields[i].code, false);
+            return true;
         }
     }
 }

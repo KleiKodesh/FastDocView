@@ -173,34 +173,72 @@ public static class OdtPackage
     }
 
     /// <summary>
-    /// styles.xml's office:font-face-decls and office:styles (named styles, default styles, list
-    /// styles, notes configuration), streamed with XmlReader — page layouts, master pages and
-    /// header/footer content are skipped without being built.
+    /// One streaming pass over styles.xml (XmlReader, no DOM of the whole part) that keeps only what indexing and rendering
+    /// read: office:font-face-decls and office:styles become sections of <paramref name="styles"/> (ODF 1.3 part 3 3.14,
+    /// 3.15.2) - except their text:list-style elements (16.32), which are cut from the bytes and parsed into
+    /// <see cref="OdtListStyle"/> without XmlReader (a LibreOffice conversion of a Word file carries thousands: 15 MB,
+    /// 3,058 for the sample; as XML trees they cost most of a second) - and the page layouts / master pages (office:automatic-styles, office:master-styles,
+    /// 3.15.3 / 3.15.4) give the page setup. Header / footer content is stepped over, never built.
     /// </summary>
-    public static List<XElement> ReadStylesSections(Stream zip)
+    public static void ReadStyles(Stream zip, OdtStyleCascade styles)
     {
-        var sections = new List<XElement>();
         ZipEntryLocation? entry = ZipEntryLocator.Locate(zip, StylesEntryName);
-        if (entry is null) return sections;
-        using Stream view = OpenEntry(zip, entry);
-        using XmlReader reader = WordDocumentXml.CreateReader(view, tolerateUndeclaredPrefixes: true);
+        if (entry is null) { styles.PageSetup = OdtPageSetup.Empty; return; }
+        var pageSetup = new OdtPageSetup.Collector();
+        // list styles are cut out of the bytes before the XmlReader sees them (OdtStylesListStyleFilterStream)
+        using (Stream view = new OdtStylesListStyleFilterStream(OpenEntry(zip, entry), styles.AddListStyle))
+        using (XmlReader reader = WordDocumentXml.CreateReader(view, tolerateUndeclaredPrefixes: true))
+        {
+            try
+            {
+                reader.MoveToContent();
+                if (reader.Read())
+                    while (!reader.EOF)
+                    {
+                        if (reader.NodeType != XmlNodeType.Element) { reader.Read(); continue; }
+                        if (reader.Depth == 1 && reader.NamespaceURI == OfficeNamespace && reader.LocalName == "font-face-decls")
+                        {
+                            styles.AddSection((XElement)XNode.ReadFrom(reader));
+                            continue;
+                        }
+                        if (reader.Depth == 1 && reader.NamespaceURI == OfficeNamespace && reader.LocalName == "styles")
+                        {
+                            ReadNamedStyles(reader, styles);
+                            continue;
+                        }
+                        pageSetup.Visit(reader);
+                        reader.Read();
+                    }
+            }
+            // Malformed styles.xml: keep what was read before the first error, as for .docx parts.
+            catch (XmlException) { }
+        }
+        styles.PageSetup = pageSetup.Finish();
+    }
+
+    /// <summary>office:styles: its list styles without a DOM, every other child as a small tree in one section.</summary>
+    private static void ReadNamedStyles(XmlReader reader, OdtStyleCascade styles)
+    {
+        var section = new XElement(XName.Get(reader.LocalName, reader.NamespaceURI));
         try
         {
-            reader.MoveToContent();
-            if (!reader.Read()) return sections;
-            while (!reader.EOF)
+            if (reader.IsEmptyElement) { reader.Read(); return; }
+            int depth = reader.Depth;
+            reader.Read();
+            while (!reader.EOF && reader.Depth > depth)
             {
-                if (reader.NodeType == XmlNodeType.Element && reader.Depth == 1)
+                if (reader.NodeType != XmlNodeType.Element) { reader.Read(); continue; }
+                if (reader.LocalName == "list-style" && reader.NamespaceURI == OdtStyleCascade.Text.NamespaceName)
                 {
-                    if (reader.LocalName is "font-face-decls" or "styles") { sections.Add((XElement)XNode.ReadFrom(reader)); continue; }
-                    reader.Skip();
+                    string? name = reader.GetAttribute("name", OdtStyleCascade.Style.NamespaceName);
+                    OdtListStyle listStyle = OdtListStyle.Read(reader);
+                    if (name is not null) styles.AddListStyle(name, listStyle);
                     continue;
                 }
-                reader.Read();
+                section.Add(XNode.ReadFrom(reader));
             }
+            if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth) reader.Read();
         }
-        // Malformed styles.xml: keep the sections read before the first error, as for .docx parts.
-        catch (XmlException) { }
-        return sections;
+        finally { styles.AddSection(section); }      // what was read, also when the part breaks off
     }
 }

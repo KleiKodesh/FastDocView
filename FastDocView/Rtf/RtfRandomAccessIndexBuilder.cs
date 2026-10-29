@@ -33,6 +33,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     private readonly Dictionary<string, int> _labelIdByText = new();
     private readonly List<WordDocumentHeading> _headings = new();
     private readonly List<RtfNoteReference> _notes = new();
+    private readonly List<string> _bookmarkNames = new();
+    private readonly List<int> _bookmarkBlocks = new();
 
     // the block being read
     private bool _hasStart, _hasContent, _isRow;
@@ -84,6 +86,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         {
             SectionLastBlocks = _sectionLastBlocks.ToArray(),
             SectionTextWidths = _sectionTextWidths.ToArray(),
+            // a bookmark after the last block's end (nothing followed it) marks the last block
+            Bookmarks = new WordDocumentBookmarkTable(_bookmarkNames.ToArray(), _bookmarkBlocks.Select(block => Math.Min(block, Math.Max(0, _starts.Count - 1))).ToArray()),
         };
     }
 
@@ -291,6 +295,14 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     public override void FootnoteMark(in RtfGroupState state)
     {
         if (!_parser.IsInFootnote) _hasAutoMark = true;
+    }
+
+    /// <summary>{\*\bkmkstart name}: the block being read is the bookmark's target (in a note: the block that holds the note).</summary>
+    public override void BookmarkStart(string name)
+    {
+        _bookmarkNames.Add(name);
+        _bookmarkBlocks.Add(_starts.Count);
+        _hasContent = true;          // the bookmark's group belongs to this block (a root-level group would otherwise move the block start past it)
     }
 
     public override void FootnoteStart() => _hasContent = true;

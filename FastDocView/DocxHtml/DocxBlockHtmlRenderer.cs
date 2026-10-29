@@ -440,7 +440,7 @@ public sealed class DocxBlockHtmlRenderer
     /// is the URL (a doubled backslash is one backslash), \l "name" appends "#name", \o "text" is the tooltip, \t / \m /
     /// \n / \h are ignored here.
     /// </summary>
-    private static string? HyperlinkFieldTag(string instruction)
+    internal static string? HyperlinkFieldTag(string instruction)
     {
         List<string> parts = FieldInstructionParts(instruction);
         if (parts.Count == 0) return null;

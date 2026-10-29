@@ -14,7 +14,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex : IOdtBlockTable
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 3;     // 2: section text widths; 3: list label level geometry
+    private const int FormatVersion = 4;     // 2: section text widths; 3: list label level geometry; 4: bookmarks (name -> block)
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -37,6 +37,8 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
     /// <summary>Per section: its first block and its page text width in twips (see OdtPageSetup).</summary>
     public int[] SectionFirstBlocks { get; init; } = [];
     public int[] SectionTextWidths { get; init; } = [];
+    /// <summary>Bookmarks and reference marks (name -> block), see OdtBodyBlockScanner.BookmarkNames.</summary>
+    public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
 
     public int BlockCount => BlockStartOffsets.Length;
 
@@ -144,6 +146,7 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         }
         IndexBinaryArrays.Write(writer, SectionFirstBlocks);
         IndexBinaryArrays.Write(writer, SectionTextWidths);
+        Bookmarks.Write(writer);
         writer.Flush();
     }
 
@@ -177,12 +180,14 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         int[] sectionTextWidths = IndexBinaryArrays.Read<int>(reader);
         if (sectionFirstBlocks.Length != sectionTextWidths.Length || sectionFirstBlocks.Any(block => (uint)block >= (uint)Math.Max(1, starts.Length)))
             throw new InvalidDataException("OpenDocument index: section table does not match the blocks.");
+        WordDocumentBookmarkTable bookmarks = WordDocumentBookmarkTable.Read(reader, starts.Length);
         return new OdtRandomAccessIndex(sourceLength, sourceTicks, isFlat, entry, checkpoints, rootOpenTag, styleSections,
                                         starts, ends, kinds, textLengths, listLevels, labelIds, listLabels, headings, notes)
         {
             ListLabelLayouts = listLabelLayouts,
             SectionFirstBlocks = sectionFirstBlocks,
             SectionTextWidths = sectionTextWidths,
+            Bookmarks = bookmarks,
         };
     }
 

@@ -145,8 +145,8 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     private static OdtStyleCascade IndexingStyles(Stream file, bool isFlat)
     {
         var styles = new OdtStyleCascade();
-        if (!isFlat) foreach (XElement section in OdtPackage.ReadStylesSections(file)) styles.AddSection(section);
-        styles.PageSetup = OdtPackage.ReadPageSetup(file, isFlat);
+        if (isFlat) styles.PageSetup = OdtPackage.ReadPageSetup(file, isFlat: true);
+        else OdtPackage.ReadStyles(file, styles);          // one pass: named styles, list styles, page setup
         return styles;
     }
 
@@ -174,9 +174,17 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
             return whole;
         }
         var document = new OdtWindowedDocument(displayPath, null, builder, OdtBlockXmlReader.OverIncrementalBuild(file, builder),
-                                               RenderingStyles(builder.RootOpenTag, builder.StyleSectionsForRendering()), decision, sidecarPathToSave);
+                                               RenderingStyles(builder.StyleSectionElementsForRendering()), decision, sidecarPathToSave);
         if (builder.IsEveryBlockKnown) document.CompleteIndexLocked();   // a short body: done already
         return document;
+    }
+
+    /// <summary>A first open's rendering cascade: the same filtered sections the index stores, as trees (no string round trip).</summary>
+    private static OdtStyleCascade RenderingStyles(XElement[] styleSections)
+    {
+        var styles = new OdtStyleCascade();
+        foreach (XElement section in styleSections) styles.AddSection(section);
+        return styles;
     }
 
     /// <summary>The cascade from captured style sections (no list styles) — a reopen never touches styles.xml.</summary>
@@ -335,7 +343,26 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     }
 
     /// <summary>Page text width per section (master pages, see <see cref="OdtPageSetup"/>); the known ones while scanning.</summary>
-    public int? FindBookmark(string name) => null;     // bookmarks not indexed for this format yet
+    public int? FindBookmark(string name)
+    {
+        lock (_readLock)
+        {
+            if (_index is { } index) return index.Bookmarks.BlockOf(name);
+            OdtIncrementalIndexBuilder builder = _builder!;
+            try
+            {
+                // scan on only until the bookmark turns up (a target near the start costs nothing more)
+                while (true)
+                {
+                    if (builder.FindKnownBookmark(name) is { } block) return block;
+                    if (!builder.AdvanceOne()) break;
+                }
+                return CompleteIndexLocked().Bookmarks.BlockOf(name);
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
     public IReadOnlyList<WordDocumentSection> Sections
     {
         get

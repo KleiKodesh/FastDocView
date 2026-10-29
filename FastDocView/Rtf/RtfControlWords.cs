@@ -17,7 +17,7 @@ internal enum RtfWord : byte
     //  page setup (document defaults, then per section) 
     PaperWidth, LeftMargin, RightMargin, Gutter, SectionDefault, SectionPageWidth, SectionLeftMargin, SectionRightMargin, SectionGutter,
     // ── destinations rendered ──
-    Footnote, FootnoteIsEndnote, Field, FieldResult, ListText, ParagraphNumberText, UnicodePair, UnicodeDestination,
+    Footnote, FootnoteIsEndnote, Field, FieldResult, FieldInstruction, BookmarkStart, ListText, ParagraphNumberText, UnicodePair, UnicodeDestination,
     Picture, ShapePicture, NonShapePicture, Shape, ObjectGroup, MathGroup, NestedTableProperties,
     // ── unicode / special characters ──
     UnicodeSkipCount, UnicodeCharacter, Binary, IgnorableDestination, HexCharacter,
@@ -101,6 +101,7 @@ internal static class RtfControlWords
         ("sectd", RtfWord.SectionDefault), ("pgwsxn", RtfWord.SectionPageWidth), ("marglsxn", RtfWord.SectionLeftMargin),
         ("margrsxn", RtfWord.SectionRightMargin), ("guttersxn", RtfWord.SectionGutter),
         ("footnote", RtfWord.Footnote), ("ftnalt", RtfWord.FootnoteIsEndnote), ("field", RtfWord.Field), ("fldrslt", RtfWord.FieldResult),
+        ("fldinst", RtfWord.FieldInstruction), ("bkmkstart", RtfWord.BookmarkStart),
         ("listtext", RtfWord.ListText), ("pntext", RtfWord.ParagraphNumberText), ("upr", RtfWord.UnicodePair), ("ud", RtfWord.UnicodeDestination),
         ("pict", RtfWord.Picture), ("shppict", RtfWord.ShapePicture), ("nonshppict", RtfWord.NonShapePicture), ("shp", RtfWord.Shape),
         ("object", RtfWord.ObjectGroup), ("nesttableprops", RtfWord.NestedTableProperties), ("mmath", RtfWord.MathGroup), ("moMath", RtfWord.MathGroup), ("moMathPara", RtfWord.MathGroup),
