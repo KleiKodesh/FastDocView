@@ -5,7 +5,7 @@
 // clicking it highlights the note, hovering shows a tooltip, and the console stays clean.
 import { chromium } from 'playwright'
 
-const DEMO_URL = 'http://localhost:5189/?file='
+const DEMO_URL = (process.env.FASTDOCVIEW_DEMO_URL ?? 'http://localhost:5189/') + '?file='
 const files = process.argv.slice(2).length ? process.argv.slice(2) : ['samples/dor-hamelaktim-shabbat.doc', 'samples/dor-hamelaktim-shabbat.docx']
 
 let failures = 0
