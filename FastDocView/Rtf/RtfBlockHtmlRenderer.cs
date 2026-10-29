@@ -196,10 +196,10 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         WordListLabelAlignment labelAlignment = listLevel?.Justification switch { 1 => WordListLabelAlignment.Center, 2 => WordListLabelAlignment.End, _ => WordListLabelAlignment.Start };
         if (_flow.ListText is { } listText)
         {
-            html.Append(_flow.Inline, 0, listText.position);
+            html.Append(_flow.Inline.ToString(0, listText.position));            // net48 has no Append(StringBuilder, int, int)
             WordListLabelHtml.Append(html, listText.html, null, listText.hasTab ? WordListLabelSuffix.Tab : WordListLabelSuffix.Nothing, formatting,
                                      WordListLabelHtml.DefaultTabStopTwips, labelAlignment, isLabelHtml: true);
-            html.Append(_flow.Inline, listText.position, _flow.Inline.Length - listText.position);
+            html.Append(_flow.Inline.ToString(listText.position, _flow.Inline.Length - listText.position));
             _flow.ListText = null;
         }
         else
