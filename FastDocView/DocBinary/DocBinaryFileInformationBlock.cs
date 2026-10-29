@@ -37,6 +37,8 @@ public sealed class DocBinaryFileInformationBlock
     public (uint offset, uint length) ListFormats { get; }         // PlfLst (FibRgFcLcb97 index 73; the LVL array follows, not counted by lcb)
     public (uint offset, uint length) ListFormatOverrides { get; } // PlfLfo (index 74)
     public (uint offset, uint length) DocumentProperties { get; }  // Dop (index 31)
+    public (uint offset, uint length) BookmarkNames { get; }       // SttbfBkmk (index 21; LibreOffice ww8scan.cxx WW8Fib read order)
+    public (uint offset, uint length) BookmarkStarts { get; }      // PlcfBkf (index 22)
 
     /// <summary>Where each story starts in the CP space: main text, footnotes, headers, comments, endnotes ([MS-DOC] §2.3).</summary>
     public int FootnoteStoryStart => MainTextCharacterCount;
@@ -91,6 +93,8 @@ public sealed class DocBinaryFileInformationBlock
         ListFormats = FcLcb(fib, 73);
         ListFormatOverrides = FcLcb(fib, 74);
         DocumentProperties = FcLcb(fib, 31);
+        BookmarkNames = FcLcb(fib, 21);
+        BookmarkStarts = FcLcb(fib, 22);
     }
 
     private readonly int _fcLcbCount;

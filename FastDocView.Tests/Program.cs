@@ -96,7 +96,7 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
-if (fidelityOnly) { DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); OdtFirstOpenTiming.RunSynthetic(); skipSynthetic = true; }
+if (fidelityOnly) { DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); OdtFirstOpenTiming.RunSynthetic(); skipSynthetic = true; }
 if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
 if (!skipSynthetic)
 {

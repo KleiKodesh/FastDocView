@@ -5,7 +5,7 @@ namespace FastDocView.Tests;
 
 /// <summary>
 /// Bookmarks and in-document links in OpenDocument and RTF (the .docx checks are in DocxFidelityTest.Links, .doc in
-/// DocBinaryLinksTest): bookmark lookup on a complete and on an on-demand index (and after a reopen from the
+/// <see cref="DocBinaryLinksTest"/>): bookmark lookup on a complete and on an on-demand index (and after a reopen from the
 /// saved index), an internal link, a cross-reference, an app link kept for the host, javascript: never a link.
 /// ODF: ODF 1.3 part 3 6.1.8 (text:a), 6.2.1 / 6.2.2 (bookmarks, reference marks), 7.7.5 / 7.7.6 (reference-ref, bookmark-ref).
 /// RTF: RTF 1.5 spec "Bookmarks" and "Fields"; the HYPERLINK / REF \h instruction syntax is Word's field syntax.
