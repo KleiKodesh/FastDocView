@@ -35,6 +35,8 @@ internal abstract class RtfSink
     /// <summary>A group closed; <paramref name="depth"/> is the depth after the close (0 = the document group).</summary>
     public virtual void GroupClosed(int depth) { }
     public virtual void UnhandledWord(ReadOnlySpan<byte> name) { }
+    /// <summary>A page-setup word (\paperw \margl \margr \gutter, \sectd, \pgwsxn \marglsxn \margrsxn \guttersxn) in the main text.</summary>
+    public virtual void PageSetup(RtfWord word, int value) { }
     /// <summary>A destination group was skipped whole (header, info, bookmarks, ...).</summary>
     public virtual void DestinationSkipped(ReadOnlySpan<byte> name) { }
 }

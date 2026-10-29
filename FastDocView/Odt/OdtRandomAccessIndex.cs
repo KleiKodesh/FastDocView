@@ -14,7 +14,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex : IOdtBlockTable
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;     // 2: section text widths
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -32,6 +32,9 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
     public string[] ListLabels { get; }
     public WordDocumentHeading[] Headings { get; }
     public OdtNoteReference[] NoteReferences { get; }        // body order
+    /// <summary>Per section: its first block and its page text width in twips (see OdtPageSetup).</summary>
+    public int[] SectionFirstBlocks { get; init; } = [];
+    public int[] SectionTextWidths { get; init; } = [];
 
     public int BlockCount => BlockStartOffsets.Length;
 
@@ -130,6 +133,8 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
             writer.Write(note.BlockIndex); writer.Write((byte)note.Kind); writer.Write(note.Number); writer.Write(note.Label);
             writer.Write(note.BodyStart); writer.Write(note.BodyEnd);
         }
+        IndexBinaryArrays.Write(writer, SectionFirstBlocks);
+        IndexBinaryArrays.Write(writer, SectionTextWidths);
         writer.Flush();
     }
 
@@ -157,8 +162,16 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         var notes = new OdtNoteReference[reader.ReadInt32()];
         for (int i = 0; i < notes.Length; i++)
             notes[i] = new OdtNoteReference(reader.ReadInt32(), (WordDocumentNoteKind)reader.ReadByte(), reader.ReadInt32(), reader.ReadString(), reader.ReadInt64(), reader.ReadInt64());
+        int[] sectionFirstBlocks = IndexBinaryArrays.Read<int>(reader);
+        int[] sectionTextWidths = IndexBinaryArrays.Read<int>(reader);
+        if (sectionFirstBlocks.Length != sectionTextWidths.Length || sectionFirstBlocks.Any(block => (uint)block >= (uint)Math.Max(1, starts.Length)))
+            throw new InvalidDataException("OpenDocument index: section table does not match the blocks.");
         return new OdtRandomAccessIndex(sourceLength, sourceTicks, isFlat, entry, checkpoints, rootOpenTag, styleSections,
-                                        starts, ends, kinds, textLengths, listLevels, labelIds, listLabels, headings, notes);
+                                        starts, ends, kinds, textLengths, listLevels, labelIds, listLabels, headings, notes)
+        {
+            SectionFirstBlocks = sectionFirstBlocks,
+            SectionTextWidths = sectionTextWidths,
+        };
     }
 
     private static void WriteStrings(BinaryWriter writer, string[] values)

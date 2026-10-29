@@ -21,6 +21,9 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
 
     public string FilePath { get; }
     public int BlockCount => _index.BlockCount;
+
+    /// <summary>Page text width per section, from PlcfSed (read at open: one small record per section).</summary>
+    public IReadOnlyList<WordDocumentSection> Sections { get; }
     public bool IsIndexComplete => true;
     public int KnownBlockCount => _index.BlockCount;
     public int ScanAhead(int blocks) => BlockCount;          // always complete
@@ -104,6 +107,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
                : DocBinaryBlockIndex.Build(PieceTable, _renderer, _styles, ListDefinitions, FileInformationBlock.MainTextCharacterCount,
                                            sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
 
+        Sections = DocBinarySectionTable.Read(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, _index.BlockAt);
         IsRightToLeft = DetectRightToLeft();
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(0).RunFormatting, IsRightToLeft);
     }

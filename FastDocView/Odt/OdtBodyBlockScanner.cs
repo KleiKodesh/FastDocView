@@ -77,6 +77,8 @@ internal sealed class OdtBodyBlockScanner
     public List<string> ListLabels { get; } = new();
     public List<WordDocumentHeading> Headings { get; } = new();
     public List<OdtNoteReference> NoteReferences { get; } = new();
+    /// <summary>Sections in block order: the first block of each and its page text width (the first starts at block 0).</summary>
+    public List<WordDocumentSection> SectionStarts { get; } = new();
     public bool IsBodyComplete { get; private set; }
 
     /// <summary>
@@ -351,6 +353,7 @@ internal sealed class OdtBodyBlockScanner
             {
                 string? label = isListItemParagraph ? _numbering.ParagraphStarted() : null;
                 StartBlock(WordDocumentBlockKind.Paragraph, isListItemParagraph || _numbering.IsInsideList ? (byte)_numbering.CurrentLevel : (byte)255, label);
+                NoteSectionStart("paragraph", Attribute(tag, nameEnd, "text:style-name"));
                 if (name == Name.Heading)
                 {
                     _headingLevel = 1;                                           // txtparai.cxx: text:h defaults to outline level 1
@@ -360,6 +363,7 @@ internal sealed class OdtBodyBlockScanner
             }
             case Name.Table:
                 StartBlock(WordDocumentBlockKind.Table, 255, null);
+                NoteSectionStart("table", Attribute(tag, nameEnd, "table:style-name"));
                 return Frame.Block;
             case Name.List:
                 _numbering.OpenList(Attribute(tag, nameEnd, "xml:id"), Attribute(tag, nameEnd, "text:style-name"),
@@ -435,6 +439,17 @@ internal sealed class OdtBodyBlockScanner
     }
 
     // ── blocks and notes ──────────────────────────────────────────────────────────────
+
+    /// <summary>The first block opens the default master page's section; a block whose style names a master page opens a new one.</summary>
+    private void NoteSectionStart(string family, string? styleName)
+    {
+        int block = BlockStartOffsets.Count - 1;
+        if (SectionStarts.Count == 0) SectionStarts.Add(new WordDocumentSection(0, _styles.PageSetup.DefaultTextWidthTwips));
+        if (_styles.MasterPageNameOf(family, styleName) is not { } master) return;
+        int width = _styles.PageSetup.TextWidthOfMasterPage(master) ?? _styles.PageSetup.DefaultTextWidthTwips;
+        if (block == 0) SectionStarts[0] = new WordDocumentSection(0, width);
+        else SectionStarts.Add(new WordDocumentSection(block, width));
+    }
 
     private void StartBlock(WordDocumentBlockKind kind, byte listLevel, string? label)
     {

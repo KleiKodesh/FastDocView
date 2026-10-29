@@ -648,6 +648,12 @@ internal sealed class RtfParser
             case RtfWord.Binary: if (parameter > 0) SkipBytes(parameter); return;
 
             // ── structure ──
+            // page setup: only in the main text (not a footnote, a style definition or another destination)
+            case RtfWord.PaperWidth: case RtfWord.LeftMargin: case RtfWord.RightMargin: case RtfWord.Gutter:
+            case RtfWord.SectionDefault: case RtfWord.SectionPageWidth: case RtfWord.SectionLeftMargin:
+            case RtfWord.SectionRightMargin: case RtfWord.SectionGutter:
+                if (state.Destination == RtfDestination.Body && !IsInFootnote && (hasParameter || word == RtfWord.SectionDefault)) _sink.PageSetup(word, parameter);
+                return;
             case RtfWord.Paragraph: _sink.ParagraphEnd(state, isSectionEnd: false); return;
             case RtfWord.Section: _sink.ParagraphEnd(state, isSectionEnd: true); return;
             case RtfWord.Cell: _sink.CellEnd(state, isNested: false); return;

@@ -5,6 +5,7 @@
 //   dotnet run -c Release -- --deflate-mb 64       bigger deflate round trip
 //   dotnet run -c Release -- --real <path>...      real .docx/.doc files to smoke-test (repeatable)
 //   dotnet run -c Release -- --skip-synthetic      only real files
+//   dotnet run -c Release -- --page-width [--real <path>...]   page text width per section (synthetic + the given files)
 //   dotnet run -c Release -- --huge 1000000        instant reload + flat heap on a ~350 MB body
 //   dotnet run -c Release -- --incremental-open [N]  first open with the index built on demand (synthetic N blocks, default 1M, + --real .docx files)
 //   dotnet run -c Release -- --notes-streaming 20000   notes read on demand from a 100 MB+ footnotes part
@@ -23,7 +24,7 @@
 using FastDocView.Tests;
 
 int blocks = 50_000, deflateMegabytes = 8, hugeBlocks = 0, notesStreamingBlocks = 0;
-bool skipSynthetic = false, incrementalOpen = false, fidelityOnly = false;
+bool skipSynthetic = false, incrementalOpen = false, fidelityOnly = false, pageWidthOnly = false;
 int incrementalBlocks = 1_000_000;
 var realPaths = new List<string>();
 var auditPaths = new List<string>();
@@ -49,6 +50,7 @@ for (int i = 0; i < args.Length; i++)
         case "--deflate-mb": deflateMegabytes = int.Parse(args[++i]); break;
         case "--skip-synthetic": skipSynthetic = true; break;
         case "--fidelity": fidelityOnly = true; break;                                  // only the small Word-fidelity checks (seconds)
+        case "--page-width": pageWidthOnly = true; break;                               // only the page-text-width checks (+ --real files)                                  // only the small Word-fidelity checks (seconds)
         case "--incremental-open":                                                     // optional block count, default 1000000
             incrementalOpen = true;
             if (i + 1 < args.Length && int.TryParse(args[i + 1], out int parsed)) { incrementalBlocks = parsed; i++; }
@@ -92,11 +94,13 @@ for (int i = 0; i < args.Length; i++)
 }
 
 if (fidelityOnly) { DocxFidelityTest.Run(); skipSynthetic = true; }
+if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
 if (!skipSynthetic)
 {
     DocxNumberingAndPolicyTest.Run();
     DocxThemeAndUnderlineTest.Run();
     DocxFidelityTest.Run();
+    PageWidthTest.Run([]);
     MalformedXmlRecoveryTest.Run();
     DocxIndexAndRenderTest.Run(blocks);
 }

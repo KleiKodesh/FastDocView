@@ -14,7 +14,7 @@ namespace FastDocView.Docx;
 public sealed class DocxRandomAccessIndex : IDocxBlockTable
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 7;     // 6: list labels carry their suffix and level CSS; 7: fields open at each block start
+    private const int FormatVersion = 8;     // 6: list labels carry their suffix and level CSS; 7: fields open at each block start; 8: section text widths
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -40,6 +40,17 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
     /// <summary>The fields open where a block starts (see DocxBodyBlockScanner.OpenFieldStacks), or null.</summary>
     public string? OpenFieldsAt(int blockIndex)
         => blockIndex < BlockOpenFieldIds.Length && BlockOpenFieldIds[blockIndex] is var id and >= 0 ? OpenFieldStacks[id] : null;
+
+    /// <summary>Per section: its last block (inclusive) and its page text width in twips (see DocxBodyBlockScanner).</summary>
+    public int[] SectionLastBlocks { get; private set; } = [];
+    public int[] SectionTextWidths { get; private set; } = [];
+
+    internal DocxRandomAccessIndex WithSections(int[] sectionLastBlocks, int[] sectionTextWidths)
+    {
+        SectionLastBlocks = sectionLastBlocks;
+        SectionTextWidths = sectionTextWidths;
+        return this;
+    }
 
     internal DocxRandomAccessIndex WithOpenFields(int[] blockOpenFieldIds, string[] openFieldStacks)
     {
@@ -172,6 +183,8 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         writer.Write(OpenFieldStacks.Length);
         foreach (string stack in OpenFieldStacks) writer.Write(stack);
         IndexBinaryArrays.Write(writer, BlockOpenFieldIds);
+        IndexBinaryArrays.Write(writer, SectionLastBlocks);
+        IndexBinaryArrays.Write(writer, SectionTextWidths);
         writer.Flush();
     }
 
@@ -219,10 +232,15 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         int[] blockOpenFieldIds = IndexBinaryArrays.Read<int>(reader);
         if (blockOpenFieldIds.Length != starts.Length || blockOpenFieldIds.Any(id => id >= openFieldStacks.Length))
             throw new InvalidDataException("Word index: open-field table does not match the blocks.");
+        int[] sectionLastBlocks = IndexBinaryArrays.Read<int>(reader);
+        int[] sectionTextWidths = IndexBinaryArrays.Read<int>(reader);
+        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)starts.Length))
+            throw new InvalidDataException("Word index: section table does not match the blocks.");
 
         return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints,
                                          starts, kinds, textLengths, styleIds, styleIdTable, labelIds, listLabels, headings, noteReferences,
-                                         footnotesPart, endnotesPart).WithOpenFields(blockOpenFieldIds, openFieldStacks);
+                                         footnotesPart, endnotesPart).WithOpenFields(blockOpenFieldIds, openFieldStacks)
+                                                                      .WithSections(sectionLastBlocks, sectionTextWidths);
     }
 
     // ── shared record layouts (also used by DocxNotesPartIndex) ───────────────────────

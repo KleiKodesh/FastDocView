@@ -45,6 +45,13 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     private int _rowCells;
     private int _rightToLeftParagraphs, _paragraphs;
 
+    // page setup (RTF 1.5 spec defaults: \paperw 12240, \margl / \margr 1800, \gutter 0); a \sectd
+    // resets the section's values to the document's
+    private int _paperWidth = 12240, _leftMargin = 1800, _rightMargin = 1800, _gutter;
+    private int? _sectionPageWidth, _sectionLeftMargin, _sectionRightMargin, _sectionGutter;
+    private readonly List<int> _sectionLastBlocks = new(), _sectionTextWidths = new();
+    private bool _isSectionEndPending;                          // a \sect inside a table row: the section ends with the row
+
     // notes
     private bool _hasAutoMark;
     private int _footnoteCount, _endnoteCount;
@@ -63,6 +70,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         var builder = new RtfRandomAccessIndexBuilder(file, progress, cancellation);
         builder._parser.Run(file, 0, file.Length);
         builder.EndBlock(builder._parser.Position, final: true);
+        builder.EndSection();
         progress?.Report(new WordDocumentIndexProgress(file.Length, file.Length, builder._starts.Count));
         return builder.CreateIndex(sourceLength, sourceLastWriteTicksUtc);
     }
@@ -72,7 +80,11 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         bool isRightToLeft = _tables.IsRightToLeftDocument || (_paragraphs > 0 && _rightToLeftParagraphs * 2 >= _paragraphs);
         return new RtfRandomAccessIndex(sourceLength, sourceTicks, _tables, isRightToLeft, _starts.ToArray(), _ends.ToArray(), _kinds.ToArray(),
                                         _textLengths.ToArray(), _stateIds.ToArray(), _states.ToArray(), _listLevels.ToArray(), _labelIds.ToArray(),
-                                        _labels.ToArray(), _headings.ToArray(), _notes.ToArray());
+                                        _labels.ToArray(), _headings.ToArray(), _notes.ToArray())
+        {
+            SectionLastBlocks = _sectionLastBlocks.ToArray(),
+            SectionTextWidths = _sectionTextWidths.ToArray(),
+        };
     }
 
     // ── block boundaries ─────────────────────────────────────────────────────────────
@@ -192,6 +204,34 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void Break(RtfWord word, in RtfGroupState state) { if (!_parser.IsInFootnote) _hasContent = true; }
 
+    public override void PageSetup(RtfWord word, int value)
+    {
+        switch (word)
+        {
+            case RtfWord.PaperWidth: _paperWidth = value; break;
+            case RtfWord.LeftMargin: _leftMargin = value; break;
+            case RtfWord.RightMargin: _rightMargin = value; break;
+            case RtfWord.Gutter: _gutter = value; break;
+            case RtfWord.SectionDefault: _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = null; break;
+            case RtfWord.SectionPageWidth: _sectionPageWidth = value; break;
+            case RtfWord.SectionLeftMargin: _sectionLeftMargin = value; break;
+            case RtfWord.SectionRightMargin: _sectionRightMargin = value; break;
+            case RtfWord.SectionGutter: _sectionGutter = value; break;
+        }
+    }
+
+    /// <summary>A \sect (or the end of the file) closes the section at the last block with the page setup in effect.</summary>
+    private void EndSection()
+    {
+        if (_starts.Count == 0) return;
+        int lastBlock = _starts.Count - 1;
+        int width = WordDocumentPageSetup.TextWidth(_sectionPageWidth ?? _paperWidth, _sectionLeftMargin ?? _leftMargin,
+                                                    _sectionRightMargin ?? _rightMargin, _sectionGutter ?? _gutter);
+        if (_sectionLastBlocks.Count > 0 && _sectionLastBlocks[_sectionLastBlocks.Count - 1] >= lastBlock) return;
+        _sectionLastBlocks.Add(lastBlock);
+        _sectionTextWidths.Add(width);
+    }
+
     public override void ParagraphEnd(in RtfGroupState state, bool isSectionEnd)
     {
         if (_parser.IsInFootnote || _parser.IsInListText) return;
@@ -204,6 +244,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             _isRow = true;
             _paragraphText.Clear();
             _hasListText = false;
+            if (isSectionEnd) _isSectionEndPending = true;          // the section ends with this row
             return;
         }
         _paragraphs++;
@@ -216,6 +257,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         }
         string? storedLabel = _hasListText ? null : label;
         EndBlock(_parser.Position, listLabel: storedLabel, listLevel: hasListParagraph ? state.ListLevel : -1);
+        if (isSectionEnd) EndSection();
     }
 
     /// <summary>Runs the list counter for a list paragraph; returns its label when the index should store one.</summary>
@@ -243,6 +285,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _hasContent = true;
         _isRow = true;
         EndBlock(_parser.Position);
+        if (_isSectionEndPending) { _isSectionEndPending = false; EndSection(); }
     }
 
     public override void FootnoteMark(in RtfGroupState state)

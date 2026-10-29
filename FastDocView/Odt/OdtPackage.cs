@@ -141,6 +141,37 @@ public static class OdtPackage
             ? new System.IO.Compression.DeflateStream(new ZipStoredEntryStream(zip, entry.DataOffset, entry.CompressedSize), System.IO.Compression.CompressionMode.Decompress)
             : new ZipStoredEntryStream(zip, entry.DataOffset, entry.CompressedSize);
 
+    /// <summary>Page layouts and master pages: styles.xml of a package, or the head of a flat .fodt (read up to office:body).</summary>
+    public static OdtPageSetup ReadPageSetup(Stream file, bool isFlat)
+    {
+        if (isFlat)
+        {
+            long position = file.Position;
+            file.Position = 0;
+            try { return OdtPageSetup.Read(new NonClosingStream(file)); }
+            finally { file.Position = position; }
+        }
+        ZipEntryLocation? entry = ZipEntryLocator.Locate(file, StylesEntryName);
+        if (entry is null) return OdtPageSetup.Empty;
+        using Stream view = OpenEntry(file, entry);
+        return OdtPageSetup.Read(view);
+    }
+
+    /// <summary>Keeps the caller's stream open when a reader disposes its input.</summary>
+    private sealed class NonClosingStream(Stream inner) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     /// <summary>
     /// styles.xml's office:font-face-decls and office:styles (named styles, default styles, list
     /// styles, notes configuration), streamed with XmlReader — page layouts, master pages and

@@ -223,6 +223,17 @@ SEP, .odt page layout, .rtf paperw/margl/margr). No page setup (.txt etc.): Word
 document (verify in a source). Per section, like Word; computed at index time. Zoom scales the width
 so lines break at the same words.
 
+Library side (branch work/page-width): `IWordWindowedDocument.Sections` - `WordDocumentSection(FirstBlockIndex,
+TextWidthTwips)` in block order, the first at block 0 (`WordDocumentPageSetup`). .docx: w:sectPr (pPr = ends the
+section at that paragraph; the body's own = the last section), pgSz w:w - pgMar left/right - gutter; index format 8.
+.doc: PlcfSed + Sepx (sprmSXaPage / SDxaLeft / SDxaRight / SDzaGutter), read at open (one record per section);
+defaults 12240 / 1800 / 1800 (POI SEPAbstractType). .rtf: \paperw \margl \margr \gutter and the \sectd-reset
+per-section forms, RTF 1.5 defaults 12240 / 1800 / 1800; index format 2. .odt / .fodt: master pages from styles.xml
+(or the .fodt head) - page-layout-properties page-width - margins (- loext:margin-gutter); a paragraph / table style
+with style:master-page-name starts a section; text before uses "Standard"; index format 2. .txt / .mht: Letter with
+1 in margins = 9360 (LibreOffice Word-import defaults, PropertyMap.cxx). Not covered: w:gutterAtTop (settings.xml),
+mirrored margins, columns (the width is the whole text area, not one column).
+
 ## App integration plan — the FastDocView page (approved 2026-10-28)
 
 **Book view is NEVER FastDocView.** FastDocView is its own page: feature folder

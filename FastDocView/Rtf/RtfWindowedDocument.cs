@@ -19,6 +19,10 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
 
     public string FilePath { get; }
     public int BlockCount => _index.BlockCount;
+
+    /// <summary>Page text width per section (\paperw / \margl / \margr / \gutter and their per-section forms), from the index.</summary>
+    public IReadOnlyList<WordDocumentSection> Sections => _sections ??= WordDocumentPageSetup.FromSectionEnds(_index.SectionLastBlocks, _index.SectionTextWidths);
+    private IReadOnlyList<WordDocumentSection>? _sections;
     public bool IsIndexComplete => true;
     public int KnownBlockCount => _index.BlockCount;
     public int ScanAhead(int blocks) => BlockCount;          // always complete

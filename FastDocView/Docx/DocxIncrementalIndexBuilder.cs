@@ -115,6 +115,10 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
     /// <summary>Headings of the known blocks (body order).</summary>
     public IReadOnlyList<WordDocumentHeading> KnownHeadings => _scanner.Headings;
 
+    /// <summary>Sections whose w:sectPr has been read so far (last block inclusive, text width).</summary>
+    public IReadOnlyList<int> KnownSectionLastBlocks => _scanner.SectionLastBlocks;
+    public IReadOnlyList<int> KnownSectionTextWidths => _scanner.SectionTextWidths;
+
     /// <summary>Note references of the known blocks (body order).</summary>
     public IReadOnlyList<DocxNoteReference> KnownNoteReferences => _scanner.NoteReferences;
 

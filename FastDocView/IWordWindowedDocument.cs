@@ -88,6 +88,14 @@ public interface IWordWindowedDocument : IDisposable
     /// </summary>
     bool HasSourceChanged { get; }
 
+    /// <summary>
+    /// The page text width per section (<see cref="WordDocumentSection"/>), in block order, at least one
+    /// entry, the first starting at block 0. While the index builds, the blocks past the known sections
+    /// belong to the last listed one. A document without page setup reports Word's default width.
+    /// Index-time data; no file access.
+    /// </summary>
+    IReadOnlyList<WordDocumentSection> Sections { get; }
+
     /// <summary>Every note reference in body order with the block it sits in — for "next footnote" navigation. No file access.</summary>
     IReadOnlyList<WordDocumentNoteReference> NoteReferences { get; }
 }
