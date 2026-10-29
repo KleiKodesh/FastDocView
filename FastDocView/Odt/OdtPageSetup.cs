@@ -31,52 +31,72 @@ public sealed class OdtPageSetup
 
     public static OdtPageSetup Read(Stream xml)
     {
-        var layoutWidths = new Dictionary<string, int>(StringComparer.Ordinal);
-        var masterLayouts = new List<(string master, string layout)>();
+        var collector = new Collector();
         try
         {
             using XmlReader reader = WordDocumentXml.CreateReader(xml, tolerateUndeclaredPrefixes: true);
-            string? currentLayout = null;
-            int currentLayoutDepth = -1;
             while (reader.Read())
             {
                 if (reader.NodeType != XmlNodeType.Element) continue;
                 if (reader.LocalName == "body" && reader.NamespaceURI == OfficeNamespace) break;      // .fodt: the text follows
-                if (reader.NamespaceURI != StyleNamespace) continue;
-                if (currentLayout is not null && reader.Depth <= currentLayoutDepth) currentLayout = null;
-                switch (reader.LocalName)
-                {
-                    case "page-layout":
-                        currentLayout = reader.GetAttribute("name", StyleNamespace);
-                        currentLayoutDepth = reader.Depth;
-                        break;
-                    case "page-layout-properties" when currentLayout is not null && reader.Depth == currentLayoutDepth + 1:
-                    {
-                        int? page = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("page-width", FoNamespace));
-                        int? margin = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin", FoNamespace));
-                        int? left = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-left", FoNamespace)) ?? margin;
-                        int? right = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-right", FoNamespace)) ?? margin;
-                        int? gutter = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-gutter", LibreOfficeNamespace));
-                        // ODF has no default page size; LibreOffice's own default page style is A4 with 2 cm margins,
-                        // but a layout without fo:page-width is rare - fall back to the Word default like other formats.
-                        layoutWidths[currentLayout] = page is { } width
-                            ? WordDocumentPageSetup.TextWidth(width, left ?? 0, right ?? 0, gutter ?? 0)
-                            : WordDocumentPageSetup.DefaultTextWidthTwips;
-                        break;
-                    }
-                    case "master-page":
-                        if (reader.GetAttribute("name", StyleNamespace) is { } master && reader.GetAttribute("page-layout-name", StyleNamespace) is { } layout)
-                            masterLayouts.Add((master, layout));
-                        break;
-                }
+                collector.Visit(reader);
             }
         }
         catch (XmlException) { }          // malformed: keep what was read
-        var setup = new OdtPageSetup();
-        foreach ((string master, string layout) in masterLayouts)
-            if (layoutWidths.TryGetValue(layout, out int width) && !setup._masterPageWidths.ContainsKey(master)) setup._masterPageWidths[master] = width;
-        if (setup.TextWidthOfMasterPage("Standard") is { } standard) setup.DefaultTextWidthTwips = standard;
-        else if (masterLayouts.Count > 0 && setup.TextWidthOfMasterPage(masterLayouts[0].master) is { } first) setup.DefaultTextWidthTwips = first;
-        return setup;
+        return collector.Finish();
+    }
+
+    /// <summary>
+    /// Collects page layouts and master pages from the elements of a styles pass it is shown (each start element, in
+    /// document order) - lets the styles.xml pass that reads the named styles take the page setup in the same pass.
+    /// </summary>
+    internal sealed class Collector
+    {
+        private readonly Dictionary<string, int> _layoutWidths = new(StringComparer.Ordinal);
+        private readonly List<(string master, string layout)> _masterLayouts = new();
+        private string? _currentLayout;
+        private int _currentLayoutDepth = -1;
+
+        /// <summary>The reader is on a start element; its attributes are read, the reader is not moved.</summary>
+        public void Visit(XmlReader reader)
+        {
+            if (reader.NamespaceURI != StyleNamespace) return;
+            if (_currentLayout is not null && reader.Depth <= _currentLayoutDepth) _currentLayout = null;
+            switch (reader.LocalName)
+            {
+                case "page-layout":
+                    _currentLayout = reader.GetAttribute("name", StyleNamespace);
+                    _currentLayoutDepth = reader.Depth;
+                    break;
+                case "page-layout-properties" when _currentLayout is not null && reader.Depth == _currentLayoutDepth + 1:
+                {
+                    int? page = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("page-width", FoNamespace));
+                    int? margin = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin", FoNamespace));
+                    int? left = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-left", FoNamespace)) ?? margin;
+                    int? right = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-right", FoNamespace)) ?? margin;
+                    int? gutter = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-gutter", LibreOfficeNamespace));
+                    // ODF has no default page size; LibreOffice's own default page style is A4 with 2 cm margins,
+                    // but a layout without fo:page-width is rare - fall back to the Word default like other formats.
+                    _layoutWidths[_currentLayout] = page is { } width
+                        ? WordDocumentPageSetup.TextWidth(width, left ?? 0, right ?? 0, gutter ?? 0)
+                        : WordDocumentPageSetup.DefaultTextWidthTwips;
+                    break;
+                }
+                case "master-page":
+                    if (reader.GetAttribute("name", StyleNamespace) is { } master && reader.GetAttribute("page-layout-name", StyleNamespace) is { } layout)
+                        _masterLayouts.Add((master, layout));
+                    break;
+            }
+        }
+
+        public OdtPageSetup Finish()
+        {
+            var setup = new OdtPageSetup();
+            foreach ((string master, string layout) in _masterLayouts)
+                if (_layoutWidths.TryGetValue(layout, out int width) && !setup._masterPageWidths.ContainsKey(master)) setup._masterPageWidths[master] = width;
+            if (setup.TextWidthOfMasterPage("Standard") is { } standard) setup.DefaultTextWidthTwips = standard;
+            else if (_masterLayouts.Count > 0 && setup.TextWidthOfMasterPage(_masterLayouts[0].master) is { } first) setup.DefaultTextWidthTwips = first;
+            return setup;
+        }
     }
 }

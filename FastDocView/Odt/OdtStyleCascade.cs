@@ -125,6 +125,13 @@ public sealed class OdtStyleCascade
     /// styles and MBs of unmapped attributes that would otherwise be parsed on every reopen.
     /// </summary>
     public string[] SectionsForRendering()
+        => SectionElementsForRendering().Select(section => section.ToString(SaveOptions.DisableFormatting | SaveOptions.OmitDuplicateNamespaces)).ToArray();
+
+    /// <summary>
+    /// <see cref="SectionsForRendering"/> as trees: a first open builds its rendering cascade from these directly
+    /// (the strings are only for the saved index - the same content, without a serialise-and-parse round trip).
+    /// </summary>
+    public XElement[] SectionElementsForRendering()
         => _sections.Select(section =>
         {
             var copy = new XElement(section.Name);
@@ -152,7 +159,7 @@ public sealed class OdtStyleCascade
                     copy.Add(style);
                 }
             }
-            return copy.ToString(SaveOptions.DisableFormatting | SaveOptions.OmitDuplicateNamespaces);
+            return copy;
         }).ToArray();
 
     private static string QualifiedName(XName name)
@@ -161,6 +168,9 @@ public sealed class OdtStyleCascade
                       : name.Namespace == Table ? "table" : name.Namespace == Svg ? "svg" : "?";
         return prefix + ":" + name.LocalName;
     }
+
+    /// <summary>A list style read without a DOM (styles.xml pass, see OdtPackage.ReadStyles); later ones win on name clashes.</summary>
+    internal void AddListStyle(string name, OdtListStyle style) => _listStyles[name] = style;
 
     public OdtListStyle? ListStyle(string? name) => name is not null && _listStyles.TryGetValue(name, out OdtListStyle? style) ? style : null;
 
