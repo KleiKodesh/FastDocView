@@ -88,6 +88,14 @@ app.MapGet("/api/documents/{id:int}/sections", (int id) =>
     return Results.Ok(document.Sections.Select(s => new SectionBody(s.FirstBlockIndex, s.TextWidthTwips)).ToList());
 });
 
+// The block a bookmark marks (in-document links, TOC entries, REF fields): an index lookup.
+app.MapGet("/api/documents/{id:int}/bookmark", (int id, string name) =>
+{
+    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
+    try { return Results.Ok(new BookmarkBody(document.FindBookmark(name))); }
+    catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }
+});
+
 app.MapGet("/api/documents/{id:int}/headings", (int id) =>
 {
     if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
@@ -165,6 +173,7 @@ record ErrorBody(string Error);
 record FolderEntry(string Path, string FileName, long FileBytes, string Mode, bool HasCachedIndex, long BodyBytes, long EstimatedIndexBytes, string Reason);
 record HeadingBody(int BlockIndex, int Level, string Text);
 record SectionBody(int FirstBlockIndex, int TextWidthTwips);
+record BookmarkBody(int? BlockIndex);
 record DocumentSummary(int Id, string FileName, string Path, int BlockCount, bool IsRightToLeft, string Stylesheet,
                        double OpenMilliseconds, string Mode, bool HasCachedIndex, string Reason, string ReaderType,
                        int HeadingCount, int FootnoteCount, int EndnoteCount, int KnownBlockCount, bool IsIndexComplete);

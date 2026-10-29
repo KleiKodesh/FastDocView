@@ -9,13 +9,20 @@ import '@/assets/styles/readingColumn.css'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useThemeStore } from '@/theme/themeStore'
 import { useTabStore } from '@/stores/tabStore'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { installBrowserPersistenceFlush } from '@/webview-host/persistenceFlush'
 import AppPageHost from './AppPageHost.vue'
+
+// as the app's main.ts: before any store or view exists, hide / reload / close flush every pending
+// persistence write (the page's saved position among them)
+installBrowserPersistenceFlush()
 
 document.documentElement.lang = uiLanguage
 document.documentElement.dir = uiLanguage === 'en' ? 'ltr' : 'rtl'
 
 const app = createApp(AppPageHost).use(createPinia()).use(i18n)
 // as the app's main.ts: synchronous reads from localStorage
+useWorkspaceStore().init()
 useSettingsStore().init()
 useThemeStore().init()
 useTabStore().init()

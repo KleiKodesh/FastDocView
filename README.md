@@ -18,8 +18,8 @@ dotnet run -c Release -- --real "C:\path\book.docx" "C:\path\old.doc"      # har
 
 cd ../vue-demo
 npm install
-npm run dev                                   # http://localhost:5189 — starts the C# host too
-node playwright/liveCheck.mjs "C:\path\book.docx" [--headed]   # live DOM/console check, no screenshots
+npm run dev                                   # http://localhost:5189 — the app's own FastDocView page; starts the C# host too
+node playwright/appCheck.mjs "C:\path\book.docx" [--headed]   # live DOM/console check, no screenshots
 ```
 
 Design, measurements, limitations and the specifications used: [NOTES.md](NOTES.md).

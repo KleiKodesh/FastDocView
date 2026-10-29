@@ -66,6 +66,9 @@ export default defineConfig({
     alias: [
       // the one swap: the app's service transport -> this repo's dev server
       { find: /^@\/webview-host\/fastDocViewApi$/, replacement: fileURLToPath(new URL('./src/appPage/fastDocViewDemoApi.ts', import.meta.url)) },
+      // no KitveiHakodesh service in the demo: the app's service client fails fast instead of discovering an endpoint
+      { find: /^@\/webview-host\/serviceClient$/, replacement: fileURLToPath(new URL('./src/appPage/serviceClientDemoStub.ts', import.meta.url)) },
+      { find: /^\.\/serviceClient$/, replacement: fileURLToPath(new URL('./src/appPage/serviceClientDemoStub.ts', import.meta.url)) },
       { find: /^@app-webview-host\/(.*)$/, replacement: `${APP_SOURCE_POSIX}/webview-host/$1` },
       { find: /^@\//, replacement: `${APP_SOURCE_POSIX}/` },
       ...['vue', 'pinia', 'vue-i18n', '@vueuse/core', '@iconify-prerendered/vue-fluent', '@iconify-prerendered/vue-fluent-color']
@@ -73,14 +76,6 @@ export default defineConfig({
     ],
   },
   optimizeDeps: { include: ['@iconify-prerendered/vue-fluent', '@iconify-prerendered/vue-fluent-color'] },
-  build: {
-    rollupOptions: {
-      input: {
-        main: fileURLToPath(new URL('./index.html', import.meta.url)),
-        app: fileURLToPath(new URL('./app.html', import.meta.url)),
-      },
-    },
-  },
   server: {
     port: Number(process.env.FASTDOCVIEW_DEMO_PORT ?? 5189),
     strictPort: true,

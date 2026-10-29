@@ -72,15 +72,15 @@ view over SQLite.
 | `samples/` | the two real test files (דור המלקטים .doc 40 MB, .docx 87 MB body) — the demo's default |
 | `FastDocView.Tests` | console harness; must print ALL PASSED. `--real`, `--audit`, `--odt [N]`, `--text [N]`, `--mhtml [N]`, `--text-corpus <list>`, `--mime-scan <list>`, `--rtf [N]` (with `--corpus <list>`: the RTF corpus pass), `--rtf-audit`, `--rtf-profile`, `--corpus <list>`, `--huge N`, `--notes-streaming N` |
 | `FastDocView.DevServer` | C# localhost JSON host on 5188 (dev only; the real host will be the KitveiHakodesh service) |
-| `vue-demo` | **the live rig** - Vite on 5189 running the APP's own code: `@/` resolves to `KitveiHakodesh/vue-frontend/src` and Vue / Pinia / vue-i18n / VueUse / icons come from the app's node_modules (no copies - they drifted). `app.html` mounts the app's real `FastDocViewPage` (only the service transport is swapped: `src/appPage/fastDocViewDemoApi.ts` -> this repo's dev server); `index.html` is the older diagnostic page (`window.__wordDemo` hooks, `playwright/` checks). Library bugs are debugged here, alongside the app's own dev server. |
+| `vue-demo` | **the live rig** - Vite on 5189 running the APP's own code: `@/` resolves to `KitveiHakodesh/vue-frontend/src` and Vue / Pinia / vue-i18n / VueUse / icons come from the app's node_modules (no copies - they drifted). the page IS the app's real `FastDocViewPage` (only the service transport is swapped: `src/appPage/fastDocViewDemoApi.ts` -> this repo's dev server; the app's service client is a fail-fast stub - the demo has no KitveiHakodesh service). Library bugs are debugged here, alongside the app's own dev server. |
 | `FastDocView.Viewer` | old WinForms viewer — superseded, do not extend |
 
 ## Verifying
 
 - **Live only, never screenshots**: `npm run dev` in `vue-demo` (spawns the dev server), then
-  Playwright against `localhost:5189` — `liveCheck.mjs` (jumps, bounded window, reload keeps the
-  same block at the same pixel), `notesCheck.mjs` (numbering, notes pane, click, hover). Read DOM,
-  console and `__wordDemo.state()`.
+  Playwright against `localhost:5189`: `playwright/appCheck.mjs <file>` (cold first open with the index
+  building, count only grows, exact jumps, footnote links both ways, reload keeps the same block at the same
+  pixel, no console errors). Read DOM, console and the page's DEV hook `window.__fastDocViewTest.state()`.
 - **Third-party stress documents** live in `test-data/` (LibreOffice + Apache POI + Apache Tika, every format we read, licenses inside):
   `--corpus ../test-data` runs all ~5,000 — part of QA for any reader/renderer change. 0 crashes;
   broken/encrypted files must fail with a clear error.

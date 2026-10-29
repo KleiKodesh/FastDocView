@@ -30,13 +30,18 @@ interface DevServerSummary {
 }
 
 /** What the demo host shows beside the app page: the last open's server-side facts (not part of the app's API). */
+/** Demo-only open options for the next open (the Playwright checks force a cold first open): consumed by open(). */
+export const demoOpenOptions: { rebuildIndex?: boolean; forceSidecar?: boolean } = {}
+
 export const demoDiagnostics = reactive({ lastOpen: null as null | { fileName: string; openMilliseconds: number; mode: string; hasCachedIndex: boolean; readerType: string; reason: string } })
 
 export const fastDocViewApi: FastDocViewApi = {
   async open(path) {
     const summary = await readJson<DevServerSummary>(await fetch('/api/documents', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, rebuildIndex: demoOpenOptions.rebuildIndex, forceSidecar: demoOpenOptions.forceSidecar }),
     }))
+    demoOpenOptions.rebuildIndex = demoOpenOptions.forceSidecar = undefined   // once
     demoDiagnostics.lastOpen = { fileName: path.split(/[\/]/).pop() ?? path, openMilliseconds: summary.openMilliseconds, mode: summary.mode,
                                  hasCachedIndex: summary.hasCachedIndex, readerType: summary.readerType, reason: summary.reason }
     const result: FastDocViewSummary = {
@@ -53,6 +58,10 @@ export const fastDocViewApi: FastDocViewApi = {
   },
   async sections(documentId) {
     return readJson<{ firstBlockIndex: number; textWidthTwips: number }[]>(await fetch(`/api/documents/${documentId}/sections`))
+  },
+  async bookmark(documentId, name) {
+    const reply = await readJson<{ blockIndex: number | null }>(await fetch(`/api/documents/${documentId}/bookmark?name=${encodeURIComponent(name)}`))
+    return reply.blockIndex
   },
   async headings(documentId) {
     return readJson<FastDocViewHeading[]>(await fetch(`/api/documents/${documentId}/headings`))

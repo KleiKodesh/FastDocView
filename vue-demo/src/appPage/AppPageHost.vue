@@ -1,13 +1,25 @@
 <script setup lang="ts">
-// Hosts the app's FastDocViewPage the way the app's AppShell does: one pane with one tab whose
-// localFilePath is the open document (PANE_NAVIGATION_KEY), the page keyed by tab + file so another
-// file remounts it - as AppPageView keys it.
-import { computed, provide, reactive, ref } from 'vue'
+// Hosts the app's FastDocViewPage the way the app's AppShell does: the tab store's active tab carries the
+// document (route /fast-doc-view, localFilePath) - a REAL tab, so the page's saved position and zoom persist and
+// come back after a reload, exactly as in the app (the store saves view state only for open tabs). The page is
+// keyed by tab + file (+ an open counter, so re-opening the same file remounts it, as a cold open).
+import { computed, provide, ref } from 'vue'
 import FastDocViewPage from '@/features/fast-doc-view/FastDocViewPage.vue'
 import { PANE_NAVIGATION_KEY, type PaneNavigation } from '@/composables/usePaneNavigation'
-import type { Tab } from '@/stores/tabStore'
+import { useTabStore, type Tab } from '@/stores/tabStore'
 import { SAMPLE_FILES } from '../wordDemoDefaults'
-import { demoDiagnostics } from './fastDocViewDemoApi'
+import { demoDiagnostics, demoOpenOptions } from './fastDocViewDemoApi'
+
+const tabStore = useTabStore()
+const tab = computed<Tab>(() => tabStore.activeTab)
+const queryFile = new URLSearchParams(location.search).get('file')
+// first load: the restored tab's document, else ?file=, else the first sample
+if (queryFile || tab.value.route !== '/fast-doc-view' || !tab.value.localFilePath)
+  tabStore.updateActiveTab({ route: '/fast-doc-view', localFilePath: queryFile || SAMPLE_FILES[0]!.path, title: '' })
+
+const pathInput = ref(tab.value.localFilePath ?? '')
+const openCount = ref(0)
+const pageKey = computed(() => `${tab.value.id}:${tab.value.localFilePath}:${openCount.value}`)
 
 // Server memory on demand (no timers in the page): heap / process / open documents, after an optional GC.
 const memory = ref('')
@@ -18,40 +30,31 @@ async function readMemory(collect: boolean) {
   } catch { memory.value = 'server unreachable' }
 }
 
-const LAST_FILE_KEY = 'fastdocview-app-page:last-file'
-let lastFile: string | null = null
-try { lastFile = localStorage.getItem(LAST_FILE_KEY) } catch { /* private window */ }
-const queryFile = new URLSearchParams(location.search).get('file')
-
-const tab = reactive({ id: 'fastdocview-demo-tab', route: '/fast-doc-view', title: '', localFilePath: queryFile || lastFile || SAMPLE_FILES[0]!.path } as Tab)
-const pathInput = ref(tab.localFilePath ?? '')
-const pageKey = computed(() => `${tab.id}:${tab.localFilePath}`)
-
-function open(path: string) {
+function open(path: string, options: { rebuildIndex?: boolean; forceSidecar?: boolean } = {}) {
   const trimmed = path.trim()
   if (!trimmed) return
+  Object.assign(demoOpenOptions, options)
   pathInput.value = trimmed
-  tab.localFilePath = trimmed
-  tab.title = trimmed.split(/[\\/]/).pop() ?? trimmed
-  try { localStorage.setItem(LAST_FILE_KEY, trimmed) } catch { /* private window */ }
+  openCount.value++
+  tabStore.updateActiveTab({ route: '/fast-doc-view', localFilePath: trimmed, title: trimmed.split(/[\/]/).pop() ?? trimmed })
 }
 
-// The page only reads its tab and asks for in-place updates; opening other routes is out of scope here.
+// The app's pane navigation over the tab store (one pane); opening other routes is out of scope here.
 const navigation: PaneNavigation = {
-  updateActiveTab: patch => { Object.assign(tab, patch) },
-  openTab: partial => ({ ...partial, id: 'fastdocview-demo-other' }) as Tab,
-  openOrUpdateActiveTab: patch => { Object.assign(tab, patch) },
+  updateActiveTab: patch => tabStore.updateActiveTab(patch),
+  openTab: partial => tabStore.openTab(partial),
+  openOrUpdateActiveTab: patch => tabStore.updateActiveTab(patch),
   openBookTarget: () => {},
   navigateToDestination: () => {},
-  switchTab: () => {},
-  get activeTabId() { return tab.id },
-  get activeTab() { return tab },
-  get tabs() { return [tab] },
+  switchTab: id => tabStore.switchTab(id),
+  get activeTabId() { return tab.value.id },
+  get activeTab() { return tab.value },
+  get tabs() { return [tab.value] },
 }
 provide(PANE_NAVIGATION_KEY, navigation)
 
 // Playwright drives the page through the same open path the buttons use.
-;(window as unknown as { __fastDocViewDemo: { open: (path: string) => void } }).__fastDocViewDemo = { open }
+;(window as unknown as { __fastDocViewDemo: { open: typeof open } }).__fastDocViewDemo = { open }
 </script>
 
 <template>
