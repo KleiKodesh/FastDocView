@@ -67,6 +67,15 @@ public sealed class DocxBlockHtmlRenderer
         _previousStyleKey = previousStyleKey;
         _currentHyperlinkTargets = _hyperlinkTargets;
         _openFields.Clear();
+        // Fields begun in an earlier block (recorded at index time): a HYPERLINK result that runs on into this block stays a link.
+        if (neighbours.OpenFields is { } openFields)
+            foreach (string open in openFields.Split('\u0001'))
+            {
+                var field = new DocxField { IsSeparated = open.Length > 0 && open[0] == 'S' };
+                field.Instruction.Append(open, Math.Min(1, open.Length), Math.Max(0, open.Length - 1));
+                if (field.IsSeparated) field.LinkOpenTag = HyperlinkFieldTag(field.Instruction.ToString());
+                _openFields.Add(field);
+            }
         Run(RenderBlock(block, html));
         _blockNeighbours = default;
         _activeLinkOpenTag = null;
@@ -952,4 +961,4 @@ public sealed class DocxBlockHtmlRenderer
 /// block each side, plus the chain of joined paragraphs); blocks inside a cell or a text box from their siblings.
 /// </summary>
 public readonly record struct DocxBlockNeighbours(XElement? Previous, XElement? Next, XElement[]? MergedBefore,
-                                                  bool IsFirstInContainer = false, bool IsLastInContainer = false);
+                                                  bool IsFirstInContainer = false, bool IsLastInContainer = false, string? OpenFields = null);

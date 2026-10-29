@@ -14,7 +14,7 @@ namespace FastDocView.Docx;
 public sealed class DocxRandomAccessIndex : IDocxBlockTable
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 6;     // 6: list labels carry their suffix and level CSS
+    private const int FormatVersion = 7;     // 6: list labels carry their suffix and level CSS; 7: fields open at each block start
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -33,9 +33,24 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
     public DocxNoteReference[] NoteReferences { get; }      // in body order
     public DocxNotesPartIndex? FootnotesPart { get; }
     public DocxNotesPartIndex? EndnotesPart { get; }
+    /// <summary>Per block: index into <see cref="OpenFieldStacks"/>, -1 = no field open where the block starts.</summary>
+    public int[] BlockOpenFieldIds { get; private set; } = [];
+    public string[] OpenFieldStacks { get; private set; } = [];
+
+    /// <summary>The fields open where a block starts (see DocxBodyBlockScanner.OpenFieldStacks), or null.</summary>
+    public string? OpenFieldsAt(int blockIndex)
+        => blockIndex < BlockOpenFieldIds.Length && BlockOpenFieldIds[blockIndex] is var id and >= 0 ? OpenFieldStacks[id] : null;
+
+    internal DocxRandomAccessIndex WithOpenFields(int[] blockOpenFieldIds, string[] openFieldStacks)
+    {
+        BlockOpenFieldIds = blockOpenFieldIds;
+        OpenFieldStacks = openFieldStacks;
+        return this;
+    }
 
     public int BlockCount => BlockStartOffsets.Length;
 
+    string? IDocxBlockTable.OpenFieldsAt(int blockIndex) => OpenFieldsAt(blockIndex);
     long IDocxBlockTable.BlockStartOffset(int blockIndex) => BlockStartOffsets[blockIndex];
     WordDocumentBlockKind IDocxBlockTable.BlockKindOf(int blockIndex) => BlockKinds[blockIndex];
     int IDocxBlockTable.BlockTextLengthOf(int blockIndex) => BlockTextLengths[blockIndex];
@@ -154,6 +169,9 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
             writer.Write(part is not null);
             part?.Write(writer);
         }
+        writer.Write(OpenFieldStacks.Length);
+        foreach (string stack in OpenFieldStacks) writer.Write(stack);
+        IndexBinaryArrays.Write(writer, BlockOpenFieldIds);
         writer.Flush();
     }
 
@@ -196,10 +214,15 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
             noteReferences[i] = new DocxNoteReference(reader.ReadInt32(), (WordDocumentNoteKind)reader.ReadByte(), reader.ReadInt32(), reader.ReadInt32());
         DocxNotesPartIndex? footnotesPart = reader.ReadBoolean() ? DocxNotesPartIndex.Read(reader) : null;
         DocxNotesPartIndex? endnotesPart = reader.ReadBoolean() ? DocxNotesPartIndex.Read(reader) : null;
+        var openFieldStacks = new string[reader.ReadInt32()];
+        for (int i = 0; i < openFieldStacks.Length; i++) openFieldStacks[i] = reader.ReadString();
+        int[] blockOpenFieldIds = IndexBinaryArrays.Read<int>(reader);
+        if (blockOpenFieldIds.Length != starts.Length || blockOpenFieldIds.Any(id => id >= openFieldStacks.Length))
+            throw new InvalidDataException("Word index: open-field table does not match the blocks.");
 
         return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints,
                                          starts, kinds, textLengths, styleIds, styleIdTable, labelIds, listLabels, headings, noteReferences,
-                                         footnotesPart, endnotesPart);
+                                         footnotesPart, endnotesPart).WithOpenFields(blockOpenFieldIds, openFieldStacks);
     }
 
     // ── shared record layouts (also used by DocxNotesPartIndex) ───────────────────────

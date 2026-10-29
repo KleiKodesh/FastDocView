@@ -24,5 +24,14 @@ public static partial class DocxFidelityTest
         TestReport.Check(html[3].Contains("href=\"mailto:a@b.org\" title=\"mail\"") && html[3].Contains(">write</a>") && !html[3].Contains("after</a>"), "HYPERLINK field: only its result is the link");
         TestReport.Check(html[4].Contains("href=\"#bookmark-Part%202\""), "fldSimple HYPERLINK l-switch → an in-document link");
         TestReport.Check(!html[5].Contains("<a "), "a file: link is not followed");
+    
+        // a HYPERLINK field whose result runs across two paragraphs (the open field is recorded at index time per block)
+        string spanning = "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> HYPERLINK \"https://example.org/x\" </w:instrText></w:r>"
+                        + "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + Text("part one") + "</w:p>"
+                        + "<w:p>" + Text("part two") + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>" + Text(" plain") + "</w:p>";
+        List<string> across = RenderAll("links-spanning", spanning);
+        TestReport.Check(across[1].Contains("href=\"https://example.org/x\"") && across[1].Contains(">part two</a>") && !across[1].Contains("plain</a>"),
+                         "a HYPERLINK field result that runs into the next paragraph stays a link there (index-time open-field state)");
     }
+
 }

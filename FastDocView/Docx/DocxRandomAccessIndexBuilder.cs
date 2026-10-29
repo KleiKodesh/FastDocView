@@ -118,6 +118,6 @@ public static class DocxRandomAccessIndexBuilder
             scanner.BlockStyleIds.ToArray(), scanner.StyleIdTable.ToArray(),
             scanner.BlockListLabelIds.ToArray(), scanner.ListLabels.ToArray(),
             scanner.Headings.ToArray(), scanner.NoteReferences.ToArray(),
-            footnotesPart, endnotesPart);
+            footnotesPart, endnotesPart).WithOpenFields(scanner.BlockOpenFieldIds.ToArray(), scanner.OpenFieldStacks.ToArray());
     }
 }

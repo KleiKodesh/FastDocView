@@ -17,5 +17,7 @@ internal interface IDocxBlockTable
     int BlockTextLengthOf(int blockIndex);
     string? StyleIdOf(int blockIndex);
     DocxListLabel? ListLabelOf(int blockIndex);
+    /// <summary>The complex fields open where the block starts (a link that runs across paragraphs), or null.</summary>
+    string? OpenFieldsAt(int blockIndex);
     ReadOnlySpan<DocxNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex);
 }
