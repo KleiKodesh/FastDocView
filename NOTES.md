@@ -214,6 +214,15 @@ positions (CP) to file offsets, each piece either 8-bit cp1252 or UTF-16. So:
    screenshots. Our side: the rendered page in
    the demo. Images are allowed for this comparison; debugging a specific bug stays live/DOM.
 
+## Page text width (user, 2026-10-29 - confirmed design, queued)
+
+The FastDocView page's text column uses the book view's max-width mechanism (centred column; on a
+narrow window it fills the width and the margins disappear) but the width comes from the document:
+page width minus left/right margins as Word / LibreOffice define them (.docx sectPr pgSz/pgMar, .doc
+SEP, .odt page layout, .rtf paperw/margl/margr). No page setup (.txt etc.): Word's default for a new
+document (verify in a source). Per section, like Word; computed at index time. Zoom scales the width
+so lines break at the same words.
+
 ## App integration plan — the FastDocView page (approved 2026-10-28)
 
 **Book view is NEVER FastDocView.** FastDocView is its own page: feature folder
