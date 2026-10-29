@@ -17,7 +17,8 @@ using FastDocView;
 using FastDocView.DocBinary;
 using FastDocView.Docx;
 
-const string Url = "http://127.0.0.1:5188";
+// FASTDOCVIEW_DEV_URL lets a second rig run beside the one in use (e.g. a worktree's checks on another port).
+string Url = Environment.GetEnvironmentVariable("FASTDOCVIEW_DEV_URL") ?? "http://127.0.0.1:5188";
 
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.WebHost.UseUrls(Url);

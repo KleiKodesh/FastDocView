@@ -87,6 +87,7 @@ public sealed class DocxNumberingDefinitions
     public int? AbstractIdOf(int numId)
     {
         if (!_abstractIdByNumId.TryGetValue(numId, out int abstractId)) return null;
+        if (!_numStyleLinkByAbstractId.ContainsKey(abstractId)) return abstractId;      // the common case: no link, nothing to allocate
         var seen = new HashSet<int> { abstractId };
         while (_numStyleLinkByAbstractId.TryGetValue(abstractId, out string? style))
         {

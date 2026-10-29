@@ -28,7 +28,9 @@ public static class RealDocumentSmokeTest
 
                 IReadOnlyList<WordDocumentBlockHtml> first = TestReport.Timed("render first 30 blocks", () => document.RenderBlocks(0, 30));
                 int middle = document.BlockCount / 2;
+                int collectionsBefore = GC.CollectionCount(0);
                 IReadOnlyList<WordDocumentBlockHtml> mid = TestReport.Timed($"render 30 blocks at {middle}", () => document.RenderBlocks(middle, 30));
+                Console.WriteLine($"   garbage collections during that window: {GC.CollectionCount(0) - collectionsBefore}; heap after open: {GC.GetTotalMemory(false) >> 20} MB");
                 IReadOnlyList<WordDocumentBlockHtml> last = TestReport.Timed("render last 30 blocks", () => document.RenderBlocks(Math.Max(0, document.BlockCount - 30), 30));
                 Console.WriteLine("   window kinds: " + string.Join(",", mid.GroupBy(b => b.Kind).Select(g => g.Key + "=" + g.Count())) + "; list markers: " + mid.Count(b => b.Html.Contains("list-marker")) + "; underline: " + mid.Count(b => b.Html.Contains("underline")));
                 foreach (int other in new[] { middle + 2000, middle + 9000, middle / 2 })

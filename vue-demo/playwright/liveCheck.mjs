@@ -5,7 +5,7 @@
 // every console error. Exit code 1 on any failure. No screenshots — DOM and console only.
 import { chromium } from 'playwright'
 
-const DEMO_URL = 'http://localhost:5189/'
+const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? 'http://localhost:5189/'
 const filePath = process.argv[2]
 const headed = process.argv.includes('--headed')
 if (!filePath) { console.error('usage: node playwright/liveCheck.mjs <file> [--headed]'); process.exit(2) }

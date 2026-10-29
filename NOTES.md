@@ -612,3 +612,44 @@ What we do:
 - Corpus: math-malformed_xml.docx, tdf165348_broken_package.docx, ExternalEntityInText.docx and
   clusterfuzz POIXWPFFuzzer-6733884933668864.docx (theme1.xml) now open. Speed on well-formed input:
   index build / scanner on the 87 MB sample within run-to-run noise (scanner 187–233 MB/s both).
+
+## Word fidelity pass (.docx, branch work/oxpt-ideas, 2026-10-28/29)
+
+Ideas taken from Open-Xml-PowerTools (MIT, read only) and re-checked in ECMA-376, [MS-OI29500], LibreOffice
+writerfilter/dmapper and Word 16 (COM / PDF export of synthetic files). Regression checks: `FastDocView.Tests
+--fidelity` (DocxFidelityTest*.cs, seconds).
+
+- **Toggle properties** (b, bCs, i, iCs, caps, smallCaps, strike, emboss, imprint, outline, shadow, vanish) are kept per
+  style layer (`WordToggleLayers`): last value wins inside a basedOn chain, table / paragraph / character styles XOR,
+  docDefaults on stays on, direct formatting absolute (Word 16). dstrike and webHidden are not toggles.
+- **Script choice**: a run with w:rtl or w:cs uses cs font / szCs / bCs / iCs for all its text; without them ascii /
+  sz / b / i, even for Hebrew letters and in a bidi paragraph (Word 16 PDF). CJK characters use rFonts eastAsia.
+- **Underline / strike**: lines are drawn on the runs, never on the paragraph (a child cannot remove a parent's line);
+  .docx draws the underline on text pieces: not under the spaces ending the paragraph (unless compat ulTrailSpace),
+  "words" skips spaces, a bare `<w:u/>` draws nothing; dstrike = double line-through on its own element.
+- **Lists**: lvlOverride/lvl, numStyleLink, lvlRestart, isLgl, suffix (tab / space / nothing), label = mark rPr + lvl
+  rPr; hebrew1 = Word's letters without geresh, cycling after 392. pPr/rPr formats the mark only (label, empty
+  paragraph height).
+- **Shading** w:shd patterns mixed as LibreOffice CellColorHandler; highlight wins over run shading.
+- **w:sym** keeps its font (U+F0xx). **Links**: w:hyperlink (r:id / anchor), HYPERLINK fields (also across
+  paragraphs: the index stores the fields open at each block start, format 7) and fldSimple; only http(s), mailto
+  and #bookmark become `<a>`; bookmarks render as element ids.
+- **Tables**: tblStylePr conditional formatting chosen and layered as LibreOffice DomainMapperTableHandler (tblLook,
+  bands, corners); Word's default-paragraph-style 11/12 pt and left-alignment rule unless
+  overrideTableStyleFontSizeAndJustification; deleted rows / cells hidden.
+- **Neighbours**: a body block is rendered with the paragraph before and after it (read in the same pass as the
+  window) - border groups (pBdr incl. between) and deleted paragraph marks (text joins the next paragraph, which keeps
+  its pPr) work across blocks; inside cells / text boxes the siblings are used.
+- **Tabs**: stops merge across layers ("clear" removes); a last tab to an end-aligned stop (or ptab right) becomes a
+  flex filler drawn with the leader. Plain stops keep tab-size.
+- **Compatibility** (settings.xml w:compat, `DocxCompatibilitySettings`, read like LibreOffice SettingsTable):
+  compatibilityMode (highest valid, absent = 12), doNotExpandShiftReturn (default: lines ending in a manual break
+  of a justified paragraph are stretched), autospacing (280 / 100 twips + LibreOffice's first / last / same-list
+  adjustments), mode > 14 no space before a paragraph starting with a page / column break, stated mode 11-14 trims
+  trailing spaces in table cells, ulTrailSpace. Not handled (no source behaviour found in LibreOffice):
+  useNormalStyleForList, doNotUseIndentAsNumberingTabStop, allowSpaceOfSameStyleInTable, doNotSuppressIndentation,
+  underlineTabInNumList, forgetLastTabAlignment, useWord2002TableStyleRules - the formatting audit lists them.
+- Known gaps: links inside notes do not resolve r:ids (notes have their own rels); trailing-space handling is per
+  paragraph end, not per wrapped line; CSS has one dash pattern and no double wave.
+- Demo rig ports: FASTDOCVIEW_DEV_URL / FASTDOCVIEW_DEMO_PORT / FASTDOCVIEW_DEMO_URL (defaults 5188 / 5189). On the
+  real .docx the liveCheck reload-anchor checks and notesCheck "document has notes" fail on master as well (pre-existing).

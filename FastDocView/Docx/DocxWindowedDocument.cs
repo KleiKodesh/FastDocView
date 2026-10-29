@@ -182,7 +182,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _styles = parts.Styles;
         _noteFormats = parts.NoteNumberFormats;
         RecordNewNoteReferences();
-        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel);
+        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets);
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
@@ -268,10 +268,29 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private List<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count)
     {
         var result = new List<WordDocumentBlockHtml>(count);
-        foreach ((int blockIndex, XElement element) in _blockReader.ReadBlocks(firstBlockIndex, count))
+        // The window plus its adjacent paragraphs: border groups and deleted paragraph marks reach one block across the edge
+        // (and a chain of joined paragraphs back as far as it goes) — still only blocks next to the window are read.
+        var elements = new Dictionary<int, XElement>();
+        bool IsParagraphBlock(int blockIndex) => blockIndex >= 0 && blockIndex < _blocks.BlockCount && _blocks.BlockKindOf(blockIndex) == WordDocumentBlockKind.Paragraph;
+        int readFirst = IsParagraphBlock(firstBlockIndex - 1) ? firstBlockIndex - 1 : firstBlockIndex;      // one read, one inflate pass
+        int readEnd = IsParagraphBlock(firstBlockIndex + count) ? firstBlockIndex + count + 1 : firstBlockIndex + count;
+        foreach ((int blockIndex, XElement element) in _blockReader.ReadBlocks(readFirst, readEnd - readFirst)) elements[blockIndex] = element;
+        XElement? ParagraphAt(int blockIndex)
         {
+            if (blockIndex < 0 || blockIndex >= _blocks.BlockCount || _blocks.BlockKindOf(blockIndex) != WordDocumentBlockKind.Paragraph) return null;
+            if (!elements.TryGetValue(blockIndex, out XElement? element))
+                foreach ((int index, XElement read) in _blockReader.ReadBlocks(blockIndex, 1)) elements[index] = element = read;
+            return element is not null && element.Name == DocxStyleCascade.W + "p" ? element : null;
+        }
+        for (int blockIndex = firstBlockIndex; blockIndex < firstBlockIndex + count && elements.TryGetValue(blockIndex, out XElement? element); blockIndex++)
+        {
+            int groupStart = blockIndex;
+            while (ParagraphAt(groupStart - 1) is { } joined && DocxBlockHtmlRenderer.HasDeletedParagraphMark(joined)) groupStart--;
+            XElement[]? mergedBefore = groupStart < blockIndex && element.Name == DocxStyleCascade.W + "p"
+                ? Enumerable.Range(groupStart, blockIndex - groupStart).Select(index => elements[index]).ToArray() : null;
+            var neighbours = new DocxBlockNeighbours(ParagraphAt(groupStart - 1), ParagraphAt(blockIndex + 1), mergedBefore, IsFirstInContainer: groupStart == 0);
             string? previousStyleKey = blockIndex > 0 ? _blocks.StyleIdOf(blockIndex - 1) ?? "" : null;
-            string html = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), previousStyleKey);
+            string html = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), previousStyleKey, neighbours with { OpenFields = _blocks.OpenFieldsAt(groupStart) });
             result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, RenderNotesOf(blockIndex)));
         }
         return result;

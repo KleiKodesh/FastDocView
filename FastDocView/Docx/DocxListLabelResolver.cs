@@ -15,7 +15,7 @@ public enum DocxListLabelSuffix : byte { Tab, Space, Nothing }
 /// level's own run properties (lvl/rPr — font, bold, color…; empty when none). The renderer draws the label with
 /// the paragraph mark's formatting plus this CSS, as Word formats numbering (§17.9.6 lvl rPr).
 /// </summary>
-public sealed record DocxListLabel(string Text, DocxListLabelSuffix Suffix, string LevelCss)
+public readonly record struct DocxListLabel(string Text, DocxListLabelSuffix Suffix, string LevelCss)
 {
     public static DocxListLabelSuffix SuffixOf(string? value) => value switch
     {

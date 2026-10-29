@@ -324,3 +324,21 @@ Append-only. Date, what we learned, what it changed.
 - **`<!DOCTYPE … [ … ]>` in a .docx part** (apache-poi ExternalEntityInText.docx) broke the byte
   scanner: "<!" was taken for a comment waiting for "-->". Its internal subset can hold '>' and ']'
   inside literals and comments.
+
+## 2026-10-28/29 - Word fidelity (checked in Word 16)
+
+- **Toggle properties are not what ECMA-376 says**: inside one basedOn chain Word takes the last value (MS-OI29500
+  says so for paragraph styles; character styles behave the same), and only the table / paragraph / character style
+  results XOR. Bold docDefaults stays on whatever the styles do.
+- **Word picks the cs property set by the run's w:rtl / w:cs, not by the characters**: Hebrew letters in a run
+  without w:rtl draw with the ascii font, sz and b - even in a bidi paragraph. CJK characters do switch to eastAsia.
+- A bare `<w:u/>` (no w:val) draws no underline. Word leaves the spaces that end a paragraph un-underlined, but
+  underlines spaces between words and tabs.
+- hebrew1 numbering has no geresh / gershayim and wraps after 392 (500 -> kuf-chet).
+- Easy Word checks: build the .docx with a small zip script, read properties through COM
+  (Range.Bold / BoldBi / ListFormat.ListString) or export to PDF and read fonts / underline rectangles with PyMuPDF.
+  A Word COM call can hang on a dialog: run it with a timeout and kill by PID.
+- **Speed trap**: one object per list paragraph in the index made the first garbage collection after an open land in
+  the first window (27-45 ms instead of ~5). Index tables must be arrays of structs / strings, not object graphs.
+- NetFree blocks API traffic that carries some Hebrew text: keep tool output ASCII (filter test output, use \uXXXX in
+  code and tests).

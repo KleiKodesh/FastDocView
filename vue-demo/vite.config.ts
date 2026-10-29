@@ -7,7 +7,8 @@ import http from 'node:http'
 
 // Like the app's dev server, this spawns its own C# host (the dev server project) and proxies
 // /api to it, so `npm run dev` is the whole rig. The host is killed with vite.
-const DEV_SERVER_URL = 'http://127.0.0.1:5188'
+// FASTDOCVIEW_DEV_URL / FASTDOCVIEW_DEMO_PORT let a second rig run beside the one in use (the C# host reads the same variable).
+const DEV_SERVER_URL = process.env.FASTDOCVIEW_DEV_URL ?? 'http://127.0.0.1:5188'
 const DEV_SERVER_PROJECT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../FastDocView.DevServer',
@@ -49,7 +50,7 @@ export default defineConfig({
   ],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: {
-    port: 5189,
+    port: Number(process.env.FASTDOCVIEW_DEMO_PORT ?? 5189),
     strictPort: true,
     proxy: { '/api': { target: DEV_SERVER_URL, changeOrigin: true } },
   },

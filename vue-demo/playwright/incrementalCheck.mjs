@@ -6,7 +6,7 @@
 // count is exact. No timers in the page: every update rides on a blocks response. DOM + console only.
 import { chromium } from 'playwright'
 
-const DEMO_URL = 'http://localhost:5189/'
+const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? 'http://localhost:5189/'
 const filePath = process.argv[2]
 const headed = process.argv.includes('--headed')
 if (!filePath) { console.error('usage: node playwright/incrementalCheck.mjs <file.docx> [--headed]'); process.exit(2) }

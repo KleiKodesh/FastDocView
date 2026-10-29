@@ -16,7 +16,7 @@ internal sealed class DocxBodyBlockScanner
 {
     private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData, DocumentType }
 
-    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference }
+    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, DeletedContent }
 
     private const int MaxRootTagBytes = 1 << 16;
     private const int MaxHeadingTextBytes = 600;
@@ -28,6 +28,8 @@ internal sealed class DocxBodyBlockScanner
         ("w:tbl"u8.ToArray(), KnownTag.Table), ("w:sdt"u8.ToArray(), KnownTag.ContentControl), ("w:body"u8.ToArray(), KnownTag.Body),
         ("w:pStyle"u8.ToArray(), KnownTag.ParagraphStyle), ("w:numId"u8.ToArray(), KnownTag.NumberingId), ("w:ilvl"u8.ToArray(), KnownTag.NumberingLevel),
         ("w:footnoteReference"u8.ToArray(), KnownTag.FootnoteReference), ("w:endnoteReference"u8.ToArray(), KnownTag.EndnoteReference),
+        ("w:del"u8.ToArray(), KnownTag.DeletedContent), ("w:moveFrom"u8.ToArray(), KnownTag.DeletedContent),
+        ("w:fldChar"u8.ToArray(), KnownTag.FieldCharacter), ("w:instrText"u8.ToArray(), KnownTag.FieldInstruction),
     ];
 
     private readonly DocxListLabelResolver? _listLabelResolver;
@@ -61,6 +63,17 @@ internal sealed class DocxBodyBlockScanner
     private readonly MemoryStream _rootOpenTag = new();
     private bool _isRootTagDone;
     private bool _isInsideTextRun;              // inside <w:t>…</w:t>
+    private bool _isInsideFieldInstruction;     // inside <w:instrText>…</w:instrText>
+    private int _deletedContentDepth;           // open w:del / w:moveFrom elements: fields inside them are not shown, so not followed
+
+    // complex fields (w:fldChar begin / separate / end) open at the current position: instruction bytes + whether separated
+    private readonly List<(MemoryStream instruction, bool isSeparated)> _openFields = new();
+    private readonly Dictionary<string, int> _openFieldStackLookup = new(StringComparer.Ordinal);
+
+    /// <summary>Per block: index into <see cref="OpenFieldStacks"/> of the fields open where the block starts, -1 = none.</summary>
+    public List<int> BlockOpenFieldIds { get; } = new();
+    /// <summary>Distinct stacks of open fields, outermost first: each "S" or "I" (separated or still in its instruction) + the instruction, joined by U+0001.</summary>
+    public List<string> OpenFieldStacks { get; } = new();
 
     // the current body-level paragraph's pPr, resolved into a label when </w:pPr> closes
     private string? _currentStyleId;
@@ -296,6 +309,8 @@ internal sealed class DocxBodyBlockScanner
 
     private void OnText(ReadOnlySpan<byte> text)
     {
+        if (_isInsideFieldInstruction && _openFields.Count > 0 && !_openFields[^1].isSeparated)
+            foreach (byte b in text) _openFields[^1].instruction.WriteByte(b);      // net48 MemoryStream has no span overload
         if (!_isInsideTextRun || BlockTextLengths.Count == 0) return;
         BlockTextLengths[BlockTextLengths.Count - 1] += text.Length;
         if (_currentHeadingLevel > 0 && _headingText.Length < MaxHeadingTextBytes)
@@ -317,7 +332,7 @@ internal sealed class DocxBodyBlockScanner
         {
             KnownTag.ParagraphStyle => _depth == _bodyDepth + 2,
             KnownTag.NumberingId or KnownTag.NumberingLevel => _depth == _bodyDepth + 3,
-            KnownTag.FootnoteReference or KnownTag.EndnoteReference => _depth > _bodyDepth,
+            KnownTag.FootnoteReference or KnownTag.EndnoteReference or KnownTag.FieldCharacter => _depth > _bodyDepth,
             _ => false,
         };
     }
@@ -337,6 +352,8 @@ internal sealed class DocxBodyBlockScanner
         if (_isClosingTag)
         {
             if (_tag == KnownTag.Text) _isInsideTextRun = false;
+            if (_tag == KnownTag.FieldInstruction) _isInsideFieldInstruction = false;
+            if (_tag == KnownTag.DeletedContent && _deletedContentDepth > 0) _deletedContentDepth--;
             _depth--;
             if (_tag == KnownTag.Body && _bodyDepth >= 0) { CloseHeading(); BodyEndOffset = _tagStartOffset; _bodyDepth = -1; }
             else if (_tag == KnownTag.ParagraphProperties && _bodyDepth >= 0 && _depth == _bodyDepth + 1) OnParagraphPropertiesClosed();
@@ -353,6 +370,8 @@ internal sealed class DocxBodyBlockScanner
         // blocks, and the body ends at the last </w:body>.
         if (_tag == KnownTag.Body && _bodyDepth < 0) { _bodyDepth = _depth + 1; BodyEndOffset = -1; }
         if (_tag == KnownTag.Text && !isSelfClosing) _isInsideTextRun = true;
+        if (_tag == KnownTag.FieldInstruction && !isSelfClosing && _bodyDepth >= 0) _isInsideFieldInstruction = true;
+        if (_tag == KnownTag.DeletedContent && !isSelfClosing && _bodyDepth >= 0) _deletedContentDepth++;
         if (!isSelfClosing) _depth++;
         _isCapturingAttributes = false;
     }
@@ -371,6 +390,7 @@ internal sealed class DocxBodyBlockScanner
         BlockTextLengths.Add(0);
         BlockStyleIds.Add(-1);
         BlockListLabelIds.Add(-1);
+        BlockOpenFieldIds.Add(OpenFieldStackId());
         _currentHeadingLevel = 0;
         _currentStyleId = null;
         _currentNumId = -1;
@@ -380,6 +400,17 @@ internal sealed class DocxBodyBlockScanner
     private void OnCapturedAttribute(string attributes)
     {
         if (BlockStyleIds.Count == 0) return;
+        if (_tag == KnownTag.FieldCharacter)
+        {
+            if (_deletedContentDepth > 0) return;                // the renderer skips deleted runs: their field characters do not count
+            switch (AttributeValue(attributes, "w:fldCharType="))
+            {
+                case "begin": _openFields.Add((new MemoryStream(), false)); break;
+                case "separate" when _openFields.Count > 0: _openFields[^1] = (_openFields[^1].instruction, true); break;
+                case "end" when _openFields.Count > 0: _openFields.RemoveAt(_openFields.Count - 1); break;
+            }
+            return;
+        }
         if (_tag is KnownTag.FootnoteReference or KnownTag.EndnoteReference)
         {
             OnNoteReference(_tag == KnownTag.FootnoteReference ? WordDocumentNoteKind.Footnote : WordDocumentNoteKind.Endnote, attributes);
@@ -418,6 +449,30 @@ internal sealed class DocxBodyBlockScanner
         NoteReferences.Add(new DocxNoteReference(BlockStartOffsets.Count - 1, kind, id, number));
     }
 
+    /// <summary>
+    /// The fields open where a block starts (a HYPERLINK field result can run across paragraphs; a renderer that starts at
+    /// this block needs it), interned: a table of contents field open over thousands of blocks is one string.
+    /// </summary>
+    private int OpenFieldStackId()
+    {
+        if (_openFields.Count == 0) return -1;
+        var stack = new StringBuilder();
+        foreach ((MemoryStream instruction, bool isSeparated) in _openFields)
+        {
+            if (stack.Length > 0) stack.Append('\u0001');
+            stack.Append(isSeparated ? 'S' : 'I')
+                 .Append(System.Net.WebUtility.HtmlDecode(Encoding.UTF8.GetString(instruction.GetBuffer(), 0, (int)instruction.Length)));
+        }
+        string key = stack.ToString();
+        if (!_openFieldStackLookup.TryGetValue(key, out int id))
+        {
+            id = OpenFieldStacks.Count;
+            OpenFieldStacks.Add(key);
+            _openFieldStackLookup[key] = id;
+        }
+        return id;
+    }
+
     private void CloseHeading()
     {
         if (_currentHeadingLevel > 0 && BlockStartOffsets.Count > 0)
@@ -433,9 +488,9 @@ internal sealed class DocxBodyBlockScanner
     {
         if (_listLabelResolver is null || BlockListLabelIds.Count == 0) return;
         DocxListLabel? label = _listLabelResolver(_currentStyleId, _currentNumId, _currentLevel);
-        if (label is null) return;
+        if (label is not { } found) return;
         BlockListLabelIds[BlockListLabelIds.Count - 1] = ListLabels.Count;
-        ListLabels.Add(label);
+        ListLabels.Add(found);
     }
 
     private static string? AttributeValue(string attributes, string attributeWithEquals)

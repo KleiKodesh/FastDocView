@@ -287,8 +287,13 @@ public sealed class DocxStyleCascade
         }
         if (pPr.Element(W + "spacing") is { } spacing)
         {
-            if (TwipsAttribute(spacing, "before") is { } before) formatting.SpaceBeforeTwips = before;
-            if (TwipsAttribute(spacing, "after") is { } after) formatting.SpaceAfterTwips = after;
+            // beforeAutospacing / afterAutospacing win over before / after in the same element; an explicit before / after in a
+            // later layer overrides an inherited auto value (LibreOffice DomainMapper / DomainMapper_Impl: "apply INHERITED
+            // autospacing only if top margin is not set").
+            if (TwipsAttribute(spacing, "before") is { } before) { formatting.SpaceBeforeTwips = before; formatting.IsSpaceBeforeAuto = false; }
+            if (TwipsAttribute(spacing, "after") is { } after) { formatting.SpaceAfterTwips = after; formatting.IsSpaceAfterAuto = false; }
+            if (spacing.Attribute(W + "beforeAutospacing") is { } beforeAuto) formatting.IsSpaceBeforeAuto = IsOn(beforeAuto);
+            if (spacing.Attribute(W + "afterAutospacing") is { } afterAuto) formatting.IsSpaceAfterAuto = IsOn(afterAuto);
             if (TwipsAttribute(spacing, "line") is { } line)
             {
                 formatting.LineSpacingTwipsOrAuto = line;
@@ -302,6 +307,7 @@ public sealed class DocxStyleCascade
             formatting.BorderBottomCss = DocxTableFormatting.BorderCss(borders.Element(W + "bottom"), theme) ?? formatting.BorderBottomCss;
             formatting.BorderStartCss = DocxTableFormatting.BorderCss(borders.Element(W + "start") ?? borders.Element(W + "left"), theme) ?? formatting.BorderStartCss;
             formatting.BorderEndCss = DocxTableFormatting.BorderCss(borders.Element(W + "end") ?? borders.Element(W + "right"), theme) ?? formatting.BorderEndCss;
+            formatting.BorderBetweenCss = DocxTableFormatting.BorderCss(borders.Element(W + "between"), theme) ?? formatting.BorderBetweenCss;
         }
         if (pPr.Element(W + "contextualSpacing") is { } contextual) formatting.IsContextualSpacing = IsOn(contextual.Attribute(W + "val"));
         if (pPr.Element(W + "shd") is { } shading) formatting.ShadingHex = FillHex(shading, theme);
@@ -312,6 +318,17 @@ public sealed class DocxStyleCascade
                 .Where(tab => (string?)tab.Attribute(W + "val") is not ("clear" or "bar"))
                 .Select(tab => TwipsAttribute(tab, "pos")).Where(position => position > 0).Min();
             if (firstStop is { } stop) formatting.FirstTabStopTwips = Math.Max(120, stop - formatting.LeftIndentTwips);
+            // Stops merge across layers: a later layer adds or replaces the stop at a position, "clear" removes it (§17.3.1.37).
+            var stops = new List<WordTabStop>(formatting.TabStops);
+            foreach (XElement tab in tabs.Elements(W + "tab"))
+            {
+                if (TwipsAttribute(tab, "pos") is not { } position) continue;
+                string alignment = (string?)tab.Attribute(W + "val") ?? "left";
+                stops.RemoveAll(existing => existing.PositionTwips == position);
+                if (alignment != "clear") stops.Add(new WordTabStop(position, alignment, (string?)tab.Attribute(W + "leader") ?? "none"));
+            }
+            stops.Sort((a, b) => a.PositionTwips.CompareTo(b.PositionTwips));
+            formatting.TabStops = stops.ToArray();
         }
         if (pPr.Element(W + "numPr") is { } numPr)
         {

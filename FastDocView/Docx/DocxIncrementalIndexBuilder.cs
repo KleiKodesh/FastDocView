@@ -139,6 +139,12 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
         return tableIndex >= 0 ? _scanner.StyleIdTable[tableIndex] : null;
     }
 
+    public string? OpenFieldsAt(int blockIndex)
+    {
+        int id = _scanner.BlockOpenFieldIds[blockIndex];
+        return id >= 0 ? _scanner.OpenFieldStacks[id] : null;
+    }
+
     public DocxListLabel? ListLabelOf(int blockIndex)
     {
         int labelIndex = _scanner.BlockListLabelIds[blockIndex];
