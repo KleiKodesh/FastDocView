@@ -732,3 +732,38 @@ median start-side shift is removed because the column estimate of a PDF is only 
   = 1.15 em, Times New Roman / Arial), not of the em - LibreOffice draws 12 pt lines 13.8 pt apart at line=240; exact
   (docx lineRule exact, .doc / RTF negative dyaLine / \sl, ODF fo:line-height length) is the stated height; at least
   is `max(1.15em, value)`. Fonts with other ascent + descent (Hebrew faces) still differ - per-font metrics not modelled.
+
+## In-document search (branch work/doc-search, 2026-10-29)
+
+`IWordWindowedDocument.Search(query, WordDocumentSearchOptions, fromBlock, maxBlocksToScan)` returns
+`WordDocumentSearchBatch(HitBlocks, NextBlock, ReachedEnd)`: one bounded step, block indexes only, nothing kept.
+The caller loops from `NextBlock` until `ReachedEnd` (`NextBlock` = -1).
+
+- **Windowed like rendering**: each batch reads its blocks through the reader's own windowed path (docx/odt: one
+  contiguous read of the batch's byte range, one inflate pass; .doc: piece-table text; RTF: the block's byte range
+  re-parsed from its index snapshot into a text-only sink; txt/MHTML: the block bytes). Text is fed straight into a
+  KMP matcher - no XElement for body blocks, no HTML, no per-block strings kept.
+- **On-demand index**: a batch past the known blocks extends the index exactly as `RenderBlocks` does (chosen over
+  "search only the known blocks" so the caller needs no second loop). `ReachedEnd` only once the index is complete.
+  The batch that completes the index also pays for the notes scan + sidecar save (778 ms worst batch on the
+  87 MB sample); every other batch is ~10-40 ms at 500 blocks.
+- **Normalisation = the app's book-view search** (KitveiHakodesh Core `SeforimDb/SeforimDbLineTextScan.cs`
+  NormalizeQuery/IsIgnoredMark/FoldChar, and `vue-frontend/src/utils/hebrewTextProcessing.ts`
+  SEARCH_IGNORED_MARKS / SEARCH_DOUBLE_QUOTES / SEARCH_SINGLE_QUOTES, both read 2026-10-29): U+0591-U+05C7 except
+  the maqaf dropped; maqaf U+05BE = space; `" U+05F4 U+201C U+201D U+201E` = `"`; `' U+05F3 U+2018 U+2019 U+201A` and
+  backtick = `'`; query trimmed; letters exact (the app is case-sensitive; `MatchCase=false` adds ToLowerInvariant).
+  No final-letter folding (the app has none). MHTML blocks are HTML and walked exactly as the app walks a line's HTML.
+- **What counts as text**: docx w:t only (w:delText, w:instrText not); w:tab/w:br/w:cr a space; paragraph, cell,
+  w:br/w:cr, ODF line breaks, RTF \line and .doc vertical tab are separators too; w:pPr/w:rPr and mc:Fallback skipped (no match across them). ODF: text:p/text:h content, text:s = its count of
+  spaces, note-citation / annotation / tracked-changes skipped. .doc: field codes hidden, results kept.
+  RTF: \listtext labels skipped.
+- **Notes** (`IncludeNotes`, default true): a note body holding the query makes the referencing block a hit
+  (docx/doc read the note on demand; ODF/RTF notes are inline in the block).
+- **Hit positions are not returned**: offsets in the plain text would not line up with the rendered HTML (list
+  labels, field results, note marks), so the page highlights client-side with the app's highlighter, as the book
+  view does. The `--search` check confirms on the samples' first 3000 blocks that hit blocks = blocks whose rendered
+  HTML (+ notes) holds the query walked the app's way (0 differences, .doc and .docx).
+- Timings (`--search <files>`, Release, 500 blocks per batch, cached index): .docx 87 MB body, 123,007 blocks:
+  full scan 1.7-2.3 s (absent word), 2.3-4.2 s (word in 31,718 blocks), first hit 22-32 ms, avg batch 7-17 ms.
+  .doc 40 MB, 106,442 blocks: full scan 0.4-0.7 s, first hit 6-12 ms, avg batch 1-3 ms. Cold on-demand .docx:
+  open 0.2-0.75 s, full scan incl. building the index 6.5-8.4 s.

@@ -261,6 +261,23 @@ public sealed class DocBinaryParagraphHtmlRenderer
         return html.ToString();
     }
 
+    /// <summary>
+    /// The search's view of [cpStart, cpEnd): the text Word shows (field codes hidden, results kept), a tab a space,
+    /// paragraph / cell / row / line / page marks separators, other control characters (note references, pictures) dropped.
+    /// </summary>
+    public void FeedSearchText(int cpStart, int cpEnd, WordDocumentSearchMatcher matcher)
+    {
+        var fieldState = new FieldState();
+        foreach (char c in _pieces.ReadText(cpStart, cpEnd))
+        {
+            if (matcher.Found) return;
+            if (fieldState.Consume(c)) continue;
+            if (c >= ' ') matcher.Feed(c);
+            else if (c == '\t') matcher.Feed(' ');
+            else if (c is '\r' or '\u0007' or '\u000B' or '\u000C') matcher.Separator();
+        }
+    }
+
     public string PlainText(int cpStart, int cpEnd)
     {
         var text = new StringBuilder();

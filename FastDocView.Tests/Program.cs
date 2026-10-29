@@ -24,6 +24,8 @@
 using FastDocView.Tests;
 
 int blocks = 50_000, deflateMegabytes = 8, hugeBlocks = 0, notesStreamingBlocks = 0;
+bool searchOnly = false;
+var searchPaths = new List<string>();
 bool skipSynthetic = false, incrementalOpen = false, fidelityOnly = false, pageWidthOnly = false;
 int incrementalBlocks = 1_000_000;
 var realPaths = new List<string>();
@@ -49,6 +51,7 @@ for (int i = 0; i < args.Length; i++)
         case "--notes-streaming": notesStreamingBlocks = int.Parse(args[++i]); break;  // e.g. 20000 → 1000 footnotes, ~113 MB footnotes.xml
         case "--deflate-mb": deflateMegabytes = int.Parse(args[++i]); break;
         case "--skip-synthetic": skipSynthetic = true; break;
+        case "--search": searchOnly = true; while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) searchPaths.Add(args[++i]); break;   // in-document search checks (+ timings on the given files)
         case "--fidelity": fidelityOnly = true; break;                                  // only the small Word-fidelity checks (seconds)
         case "--page-width": pageWidthOnly = true; break;                               // only the page-text-width checks (+ --real files)                                  // only the small Word-fidelity checks (seconds)
         case "--incremental-open":                                                     // optional block count, default 1000000
@@ -94,6 +97,7 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
+if (searchOnly) { DocumentSearchTest.Run(searchPaths); skipSynthetic = true; }
 if (fidelityOnly) { DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); LineSpacingTest.Run(); skipSynthetic = true; }
 if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
 if (!skipSynthetic)
@@ -101,6 +105,7 @@ if (!skipSynthetic)
     DocxNumberingAndPolicyTest.Run();
     DocxThemeAndUnderlineTest.Run();
     DocxFidelityTest.Run();
+    DocumentSearchTest.Run([]);
     PageWidthTest.Run([]);
     DocBinaryBidiTest.Run();
     DocBinaryListLayoutTest.Run();
