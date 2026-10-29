@@ -94,7 +94,7 @@ public sealed class OdtBlockHtmlRenderer
 
         // label-alignment mode: the level's fo:margin-left / fo:text-indent indent the paragraph (ODF 1.2 19.881), its tab
         // stop is where the text after a listtab starts. Older label-width-and-position lists keep the per-level step below.
-        int[]? layout = isTopLevel && _listLevel >= 0 && _listLayout.Length > 0 ? Array.ConvertAll(_listLayout.Split(','), int.Parse) : null;
+        int[]? layout = isTopLevel && _listLevel >= 0 ? ParseLayout(_listLayout) : null;
         if (layout is not null)
         {
             formatting = formatting.Clone();
@@ -122,6 +122,17 @@ public sealed class OdtBlockHtmlRenderer
         }
         RenderInline(paragraph, html, styleName, formatting.RunFormatting, formatting.RunFormatting, hasLabel);
         html.Append("</").Append(tag).Append('>');
+    }
+
+    /// <summary>"margin,indent,tab,follow" (OdtListStyle.Level.Layout), null when empty or damaged.</summary>
+    private static int[]? ParseLayout(string layout)
+    {
+        string[] parts = layout.Split(',');
+        if (parts.Length != 4) return null;
+        var values = new int[4];
+        for (int i = 0; i < 4; i++)
+            if (!int.TryParse(parts[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out values[i])) return null;
+        return values;
     }
 
     private void RenderInline(XElement container, StringBuilder html, string? paragraphStyle, WordRunFormatting paragraphBase,

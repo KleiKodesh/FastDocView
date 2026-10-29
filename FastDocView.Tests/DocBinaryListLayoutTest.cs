@@ -38,6 +38,11 @@ public static class DocBinaryListLayoutTest
         byte[] grpprl = [0x0D, 0xC6, 5, 0, 1, 0xE8, 0x03, 0x01];
         DocBinaryPropertyModifiers.ApplyParagraphSprms(formatting, grpprl, 0, grpprl.Length);
         TestReport.Check(formatting.TabStops is [{ PositionTwips: 1000, Alignment: "center" }], "sprmPChgTabsPapx fills the tab stops");
+        // sprmPChgTabs: delete 1005 within close tolerance 10 (rgdxaClose follows rgdxaDel), then add 500
+        formatting.TabStops = [new WordTabStop(1005, "left", "none")];
+        byte[] withClose = [0x15, 0xC6, 9, 1, 0xEC, 0x03, 0x0A, 0x00, 1, 0xF4, 0x01, 0x00];
+        DocBinaryPropertyModifiers.ApplyParagraphSprms(formatting, withClose, 0, withClose.Length);
+        TestReport.Check(formatting.TabStops is [{ PositionTwips: 500 }], "sprmPChgTabs skips rgdxaClose and deletes within the tolerance");
 
         // Apache POI Lists.doc: level 0 LVL grpprlPapx = left 720, first line -360, ixchFollow tab, no direct indents
         string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "apache-poi", "Lists.doc");

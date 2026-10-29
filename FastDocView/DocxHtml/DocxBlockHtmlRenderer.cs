@@ -244,7 +244,7 @@ public sealed class DocxBlockHtmlRenderer
         XElement? pPr = paragraph.Element(W + "pPr");
         string? styleId = (string?)pPr?.Element(W + "pStyle")?.Attribute(W + "val");
         WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId, _tableConditions,
-                                                                     _listLabel is { Text.Length: > 0 } listed ? LevelParagraphProperties(listed.LevelParagraphXml) : null);
+                                                                     _listLabel is { } listed ? LevelParagraphProperties(listed.LevelParagraphXml) : null);
         DocxBlockNeighbours neighbours = _blockNeighbours;
         _blockNeighbours = default;                                  // nested blocks (text boxes) start fresh
         ResolveAutoSpacing(formatting, neighbours);
@@ -323,7 +323,11 @@ public sealed class DocxBlockHtmlRenderer
     {
         if (xml.Length == 0) return null;
         if (!_levelParagraphProperties.TryGetValue(xml, out XElement? element))
-            _levelParagraphProperties[xml] = element = XElement.Parse(xml);
+        {
+            try { element = XElement.Parse(xml); }
+            catch (System.Xml.XmlException) { element = null; }       // a damaged index entry costs the level indents, not the block
+            _levelParagraphProperties[xml] = element;
+        }
         return element;
     }
 
