@@ -282,6 +282,7 @@ public sealed class DocxBlockHtmlRenderer
                           && !_styles.Compatibility.DoesNotExpandShiftReturn ? LastManualBreak(paragraph) : null;
 
         WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
+        _isParagraphRightToLeft = formatting.IsRightToLeft;
         if (_leaderTab is not null) html.Append("<span class=\"tab-before\">");
         if (_justifiedBreak is not null) html.Append("<span class=\"justified-lines\" style=\"display:block;text-align-last:justify\">");
         if (_listLabel is { Text.Length: > 0 } label)
@@ -355,13 +356,15 @@ public sealed class DocxBlockHtmlRenderer
         }
     }
 
+    private bool _isParagraphRightToLeft;   // the paragraph being rendered: a right-to-left run in a left-to-right one is embedded
+
     private IEnumerable<RenderStep> RenderRun(XElement run, StringBuilder html, WordRunFormatting paragraphBase)
     {
         XElement? rPr = run.Element(W + "rPr");
         WordRunFormatting formatting = _styles.ResolveRun(paragraphBase, rPr);
         // The underline is drawn on the text pieces inside the run (not under word-only spaces, not under the paragraph's
         // trailing spaces); the strikethrough stays on the run's span, so the two never have to share one style.
-        string css = formatting.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly);
+        string css = formatting.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft);
         bool hasSpan = css.Length > 0;
         string openTag = "<span style=\"" + css + "\">";
         if (hasSpan) { html.Append(openTag); _openInline.Add((openTag, "</span>")); }

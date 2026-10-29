@@ -37,6 +37,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
         _notes = notes;
     }
 
+    private bool _isParagraphRightToLeft;   // the paragraph being rendered: a right-to-left run in a left-to-right one is embedded
+
     public (WordParagraphFormatting formatting, int styleIndex) ResolveParagraph(int cpStart, int cpEnd)
     {
         DocBinaryFormattedDiskPages.PropertyRun? run = ParagraphRunOf(cpStart, cpEnd);
@@ -145,6 +147,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
         string tag = headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
 
         WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(previousStyleKey), null, formatting.IsRightToLeft);
+        _isParagraphRightToLeft = formatting.IsRightToLeft;
         if (listLabel is { Length: > 0 }) html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(listLabel)).Append("</span> ");
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
         var fieldState = new FieldState();
@@ -298,7 +301,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
             visible.Append(WordHtmlText.Encode(c.ToString()));
         }
         if (visible.Length == 0) return;
-        string css = formatting.ToCss(paragraphBase);
+        string css = formatting.ToCss(paragraphBase) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft);
         if (css.Length > 0) html.Append("<span style=\"").Append(css).Append("\">").Append(visible).Append("</span>");
         else html.Append(visible);
     }

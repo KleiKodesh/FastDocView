@@ -104,7 +104,10 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         string text = _runText.ToString();
         _runText.Clear();
         StringBuilder target = _listTextTarget ?? _flow.Inline;
-        string css = RunFormatting(_runState, IsComplexScript(text)).ToCss(_documentRun);
+        // \rtlch marks a right-to-left run (RTF 1.5 spec); inside an \ltrpar paragraph it is an RTL embedding, as w:rtl is
+        bool isRunRightToLeft = _runState.RunType is RtfRunType.RightToLeftFirst or RtfRunType.LeftToRightThenRightToLeft;
+        string css = RunFormatting(_runState, IsComplexScript(text)).ToCss(_documentRun)
+                     + WordHtmlText.RunDirectionCss(isRunRightToLeft, _runState.Has(RtfStateFlags.RightToLeftParagraph));
         string encoded = WordHtmlText.Encode(text);
         if (css.Length == 0) { target.Append(encoded); return; }
         target.Append("<span style=\"").Append(css).Append("\">").Append(encoded).Append("</span>");
