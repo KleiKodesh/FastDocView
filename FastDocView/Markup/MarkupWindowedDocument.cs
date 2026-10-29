@@ -206,6 +206,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
     public (int footnotes, int endnotes) NoteCounts => (0, 0);
     public IReadOnlyList<WordDocumentNoteReference> NoteReferences => [];
+    public IReadOnlyList<WordDocumentNoteHtml> RenderNotes(int firstNoteIndex, int count) => [];
 
     public void Dispose() => _file.Dispose();
 }

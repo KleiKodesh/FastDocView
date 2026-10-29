@@ -145,6 +145,10 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         }
     }
 
+    /// <summary>Notes are inline in RTF (footnote groups): only the blocks holding the window's notes are rendered.</summary>
+    public IReadOnlyList<WordDocumentNoteHtml> RenderNotes(int firstNoteIndex, int count)
+        => WordDocumentNoteWindow.RenderFromBlocks(NoteReferences, firstNoteIndex, count, RenderBlocks);
+
     public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
 
     public (int footnotes, int endnotes) NoteCounts => (_footnoteCount, _endnoteCount);

@@ -108,6 +108,13 @@ public interface IWordWindowedDocument : IDisposable
     IReadOnlyList<WordDocumentNoteReference> NoteReferences { get; }
 
     /// <summary>
+    /// Renders notes [firstNoteIndex, firstNoteIndex + count) of <see cref="NoteReferences"/> (body order) - clamped to the
+    /// notes known so far - for a notes pane that scrolls on its own over every note. Only those notes are read (their own
+    /// bodies, or the blocks that hold them where notes are inline), never the whole notes part. Nothing extends the index.
+    /// </summary>
+    IReadOnlyList<WordDocumentNoteHtml> RenderNotes(int firstNoteIndex, int count);
+
+    /// <summary>
     /// One bounded step of an in-document search: scans the plain text of blocks [fromBlock, fromBlock +
     /// maxBlocksToScan) - read through the same windowed path as <see cref="RenderBlocks"/>, never rendered, nothing kept
     /// but the hit indexes - with the app's book-view search normalisation (<see cref="WordDocumentSearchMatcher"/>).

@@ -296,6 +296,30 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         return result;
     }
 
+    /// <summary>Notes [firstNoteIndex, +count) of the known references, each read on demand from its part (the same bounded cache as the blocks' notes).</summary>
+    public IReadOnlyList<WordDocumentNoteHtml> RenderNotes(int firstNoteIndex, int count)
+    {
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
+                throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                IReadOnlyList<DocxNoteReference> references = (IReadOnlyList<DocxNoteReference>?)_index?.NoteReferences ?? _builder!.KnownNoteReferences;
+                (int first, int end) = WordDocumentNoteWindow.Clamp(firstNoteIndex, count, references.Count);
+                var notes = new List<WordDocumentNoteHtml>(end - first);
+                for (int i = first; i < end; i++)
+                {
+                    DocxNoteReference reference = references[i];
+                    string label = reference.Number > 0 ? _noteFormats.Format(reference.Kind, reference.Number) : "*";
+                    notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, RenderNoteBody(reference, label)));
+                }
+                return notes;
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
     /// <summary>The notes a block references, rendered — what a Word-style notes pane shows for the visible text.</summary>
     private IReadOnlyList<WordDocumentNoteHtml> RenderNotesOf(int blockIndex)
     {

@@ -7,6 +7,7 @@
 //        headers X-Known-Block-Count / X-Index-Complete: a .docx first open builds its index
 //        on demand (each request scans as far as it needs), so the reader corrects its count from every response.
 //        Headings / weights / note-references return what is known so far.
+//   GET  /api/documents/{id}/notes?first&count     notes [first, first+count) in body order [{ kind, number, label, html }]
 //   DELETE /api/documents/{id}                closes
 //   GET  /api/progress                        the last index progress (polled while opening)
 //   GET  /api/memory                          managed heap / working set of this process
@@ -126,6 +127,11 @@ app.MapGet("/api/documents/{id}/blocks", (string id, int first, int count, HttpR
     return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, b.Html,
         b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())).ToList());
 }));
+
+// The notes pane's own windows: notes [first, first + count) of note-references (body order), each read on its own.
+app.MapGet("/api/documents/{id}/notes", (string id, int first, int count) => UseDocument(id, document =>
+    Results.Ok(document.RenderNotes(first, Math.Min(count, 500))
+        .Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())));
 
 // A first open keeps building its index: the demo calls this until it is complete. Each call indexes up to `blocks` more
 // blocks within the app service's time budget (renders and sends nothing), so a block fetch never waits long for the lock.

@@ -397,6 +397,13 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     }
     private WordDocumentNoteReference[]? _noteReferences;
 
+    /// <summary>
+    /// Notes are inline in ODF (text:note-body): only the blocks holding the window's notes are rendered. The window lies in
+    /// the known references, so the on-demand scan is not extended.
+    /// </summary>
+    public IReadOnlyList<WordDocumentNoteHtml> RenderNotes(int firstNoteIndex, int count)
+        => WordDocumentNoteWindow.RenderFromBlocks(NoteReferences, firstNoteIndex, count, RenderBlocks);
+
     private static FileStream OpenRead(string path) => WordDocumentFileStream.OpenShared(path);     // Word / LibreOffice may hold the file open
 
     public void Dispose() => _reader.Dispose();

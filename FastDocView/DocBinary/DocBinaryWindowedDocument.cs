@@ -255,6 +255,30 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         return notes;
     }
 
+    /// <summary>Notes [firstNoteIndex, +count) in body order, each rendered from its own text range only.</summary>
+    public IReadOnlyList<WordDocumentNoteHtml> RenderNotes(int firstNoteIndex, int count)
+    {
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
+                throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                DocBinaryNoteReferences.NoteReference[] references = _notes.References;
+                (int first, int end) = WordDocumentNoteWindow.Clamp(firstNoteIndex, count, references.Length);
+                var notes = new List<WordDocumentNoteHtml>(end - first);
+                for (int i = first; i < end; i++)
+                {
+                    DocBinaryNoteReferences.NoteReference reference = references[i];
+                    string label = DocBinaryParagraphHtmlRenderer.NoteLabel(reference);
+                    notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, _renderer.RenderNote(reference.TextStartCp, reference.TextEndCp, label)));
+                }
+                return notes;
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
     /// <summary>From the index — captured during the block scan, so a reopen reads no text for the TOC.</summary>
     public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
 
