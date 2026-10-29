@@ -15,6 +15,13 @@ public sealed class WordParagraphFormatting
     public bool IsRightToLeft;
     public int LeftIndentTwips;
     public int RightIndentTwips;
+    /// <summary>
+    /// .doc only: the alignment came from sprmPJc80, whose values are physical ([MS-DOC] 2.6.2: 0 = physically left,
+    /// 2 = physically right) — Start/End then mean left/right whatever the direction. sprmPJc is logical.
+    /// </summary>
+    public bool IsAlignmentPhysical;
+    /// <summary>.doc only: the indent came from sprmPDxaLeft80 / sprmPDxaRight80 — physical left / right ([MS-DOC] 2.6.2), not start / end.</summary>
+    public bool IsLeftIndentPhysical, IsRightIndentPhysical;
     public int FirstLineIndentTwips;        // negative = hanging
     public int SpaceBeforeTwips;
     public int SpaceAfterTwips;
@@ -59,12 +66,13 @@ public sealed class WordParagraphFormatting
             {
                 WordParagraphAlignment.Center => "center",
                 WordParagraphAlignment.Justify => "justify",
-                WordParagraphAlignment.End => IsRightToLeft ? "left" : "right",
-                _ => IsRightToLeft ? "right" : "left",
+                WordParagraphAlignment.End => IsRightToLeft && !IsAlignmentPhysical ? "left" : "right",
+                _ => IsRightToLeft && !IsAlignmentPhysical ? "right" : "left",
             }).Append(';');
         // Word's "left"/"right" indent are start/end in a bidi paragraph; CSS logical properties match.
-        if (LeftIndentTwips != 0) css.Append("margin-inline-start:").Append(TwipsToPt(LeftIndentTwips)).Append("pt;");
-        if (RightIndentTwips != 0) css.Append("margin-inline-end:").Append(TwipsToPt(RightIndentTwips)).Append("pt;");
+        // A physical left indent is the end side of a bidi paragraph (LibreOffice ww8par6.cxx Read_LR swaps them the same way).
+        if (LeftIndentTwips != 0) css.Append(IsLeftIndentPhysical && IsRightToLeft ? "margin-inline-end:" : "margin-inline-start:").Append(TwipsToPt(LeftIndentTwips)).Append("pt;");
+        if (RightIndentTwips != 0) css.Append(IsRightIndentPhysical && IsRightToLeft ? "margin-inline-start:" : "margin-inline-end:").Append(TwipsToPt(RightIndentTwips)).Append("pt;");
         if (FirstLineIndentTwips != 0) css.Append("text-indent:").Append(TwipsToPt(FirstLineIndentTwips)).Append("pt;");
         // Contextual spacing: the previous same-style paragraph's space-after is cancelled by an
         // equal negative top margin (sums to zero whether or not the margins collapse).

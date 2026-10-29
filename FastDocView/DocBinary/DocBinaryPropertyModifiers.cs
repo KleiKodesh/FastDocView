@@ -33,10 +33,12 @@ public static class DocBinaryPropertyModifiers
                         3 or 4 or 5 => WordParagraphAlignment.Justify,
                         _ => WordParagraphAlignment.Start,
                     };
+                    formatting.IsAlignmentPhysical = opcode == 0x2403;   // sprmPJc80 is physical, sprmPJc logical ([MS-DOC] 2.6.2)
                     break;
                 case 0x2441: formatting.IsRightToLeft = grpprl[operandAt] != 0; formatting.RunFormatting.IsRightToLeft = formatting.IsRightToLeft; break;
-                case 0x840F: case 0x845E: formatting.LeftIndentTwips = BitConverter.ToInt16(grpprl, operandAt); break;
-                case 0x840E: case 0x845D: formatting.RightIndentTwips = BitConverter.ToInt16(grpprl, operandAt); break;
+                // sprmPDxaLeft80 / sprmPDxaRight80 are physical left / right, sprmPDxaLeft / sprmPDxaRight logical ([MS-DOC] 2.6.2)
+                case 0x840F: case 0x845E: formatting.LeftIndentTwips = BitConverter.ToInt16(grpprl, operandAt); formatting.IsLeftIndentPhysical = opcode == 0x840F; break;
+                case 0x840E: case 0x845D: formatting.RightIndentTwips = BitConverter.ToInt16(grpprl, operandAt); formatting.IsRightIndentPhysical = opcode == 0x840E; break;
                 case 0x8411: case 0x8460: formatting.FirstLineIndentTwips = BitConverter.ToInt16(grpprl, operandAt); break;
                 case 0xA413: formatting.SpaceBeforeTwips = BitConverter.ToUInt16(grpprl, operandAt); break;
                 case 0xA414: formatting.SpaceAfterTwips = BitConverter.ToUInt16(grpprl, operandAt); break;

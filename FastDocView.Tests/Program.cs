@@ -92,14 +92,13 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
-if (fidelityOnly) { DocxFidelityTest.Run(); skipSynthetic = true; }
+if (fidelityOnly) { DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); skipSynthetic = true; }
 if (!skipSynthetic)
 {
     DocxNumberingAndPolicyTest.Run();
     DocxThemeAndUnderlineTest.Run();
     DocxFidelityTest.Run();
-   
-   
+    DocBinaryBidiTest.Run();
     MalformedXmlRecoveryTest.Run();
     DocxIndexAndRenderTest.Run(blocks);
 }
