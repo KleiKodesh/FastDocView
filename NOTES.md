@@ -209,8 +209,9 @@ positions (CP) to file offsets, each piece either 8-bit cp1252 or UTF-16. So:
 
 1. **Right-to-left errors:** some items render LTR in the .doc sample in the demo. The user thinks it
    is broader: run visual comparisons over many files and fix every class of difference at its cause.
-   **Reference = Word's own PDF** (user, 2026-10-29): Word 16 converts each document to PDF via COM and
-   the PDF's pages are the reference images - not screenshots of Word. Our side: the rendered page in
+   **Reference = LibreOffice headless PDF** (user, 2026-10-29; first Word's PDF, then changed to
+   LibreOffice: `soffice --headless --convert-to pdf`) - the PDF's pages are the reference images, not
+   screenshots. Our side: the rendered page in
    the demo. Images are allowed for this comparison; debugging a specific bug stays live/DOM.
 
 ## App integration plan — the FastDocView page (approved 2026-10-28)
