@@ -302,6 +302,7 @@ public sealed class DocxStyleCascade
             formatting.BorderBottomCss = DocxTableFormatting.BorderCss(borders.Element(W + "bottom"), theme) ?? formatting.BorderBottomCss;
             formatting.BorderStartCss = DocxTableFormatting.BorderCss(borders.Element(W + "start") ?? borders.Element(W + "left"), theme) ?? formatting.BorderStartCss;
             formatting.BorderEndCss = DocxTableFormatting.BorderCss(borders.Element(W + "end") ?? borders.Element(W + "right"), theme) ?? formatting.BorderEndCss;
+            formatting.BorderBetweenCss = DocxTableFormatting.BorderCss(borders.Element(W + "between"), theme) ?? formatting.BorderBetweenCss;
         }
         if (pPr.Element(W + "contextualSpacing") is { } contextual) formatting.IsContextualSpacing = IsOn(contextual.Attribute(W + "val"));
         if (pPr.Element(W + "shd") is { } shading) formatting.ShadingHex = FillHex(shading, theme);

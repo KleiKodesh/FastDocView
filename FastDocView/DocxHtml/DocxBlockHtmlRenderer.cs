@@ -54,14 +54,21 @@ public sealed class DocxBlockHtmlRenderer
 
     /// <param name="listLabel">The label counted at index time ("3.", "ב."), or null when the block is not a list item.</param>
     /// <param name="previousStyleKey">The paragraph style of the block before (for contextual spacing), from the index.</param>
-    public string Render(XElement block, DocxListLabel? listLabel = null, string? previousStyleKey = null)
+    public string Render(XElement block, DocxListLabel? listLabel = null, string? previousStyleKey = null) => Render(block, listLabel, previousStyleKey, default);
+
+    /// <param name="neighbours">The paragraphs around a body block (read with the window): border groups and deleted paragraph marks reach across blocks.</param>
+    public string Render(XElement block, DocxListLabel? listLabel, string? previousStyleKey, DocxBlockNeighbours neighbours)
     {
         var html = new StringBuilder(1024);
+        if (block.Name == W + "p" && neighbours.Next is not null && HasDeletedParagraphMark(block))
+            return "";                                           // its text is drawn at the start of the next block (MergedBefore there)
+        _blockNeighbours = neighbours;
         _listLabel = listLabel;
         _previousStyleKey = previousStyleKey;
         _currentHyperlinkTargets = _hyperlinkTargets;
         _openFields.Clear();
         Run(RenderBlock(block, html));
+        _blockNeighbours = default;
         _activeLinkOpenTag = null;
         _listLabel = null;
         _paragraphEndOf = null;                                    // keep no element of the rendered block alive
@@ -116,9 +123,46 @@ public sealed class DocxBlockHtmlRenderer
         }
     }
 
+    /// <summary>
+    /// Sibling blocks (a cell, a text box, a note, a content control): consecutive paragraphs share border groups, and a
+    /// paragraph whose mark is deleted joins the paragraph after it.
+    /// </summary>
     private IEnumerable<RenderStep> RenderBlocks(IEnumerable<XElement> blocks, StringBuilder html)
     {
-        foreach (XElement block in blocks) yield return new(RenderBlock(block, html));
+        List<XElement> siblings = blocks.ToList();
+        var merged = new List<XElement>();
+        for (int i = 0; i < siblings.Count; i++)
+        {
+            XElement block = siblings[i];
+            XElement? next = i + 1 < siblings.Count && siblings[i + 1].Name == W + "p" ? siblings[i + 1] : null;
+            if (block.Name == W + "p" && next is not null && HasDeletedParagraphMark(block)) { merged.Add(block); continue; }
+            DocxBlockNeighbours outer = _blockNeighbours;
+            int firstOfGroup = i - merged.Count;                       // the group starts at the first joined paragraph
+            XElement? before = firstOfGroup > 0 && siblings[firstOfGroup - 1].Name == W + "p" ? siblings[firstOfGroup - 1] : null;
+            _blockNeighbours = new DocxBlockNeighbours(before, next, merged.Count > 0 ? merged.ToArray() : null);
+            merged.Clear();
+            yield return new(RenderBlock(block, html));
+            _blockNeighbours = outer;
+        }
+    }
+
+    private DocxBlockNeighbours _blockNeighbours;      // the paragraphs around the paragraph being rendered
+
+    /// <summary>
+    /// A paragraph whose mark is a tracked deletion or move-away (pPr/rPr/w:del or w:moveFrom): in Word's final view its
+    /// text joins the paragraph after it, which keeps its own paragraph properties (Open-Xml-PowerTools
+    /// AcceptDeletedAndMoveFromParagraphMarks: the merged paragraph takes the last paragraph's pPr).
+    /// </summary>
+    public static bool HasDeletedParagraphMark(XElement paragraph)
+        => paragraph.Element(W + "pPr")?.Element(W + "rPr") is { } markProperties
+           && (markProperties.Element(W + "del") is not null || markProperties.Element(W + "moveFrom") is not null);
+
+    /// <summary>The border group key of a neighbouring paragraph (resolved in the same table context), or null.</summary>
+    private string? BorderGroupKeyOf(XElement? paragraph)
+    {
+        if (paragraph is null) return null;
+        XElement? pPr = paragraph.Element(W + "pPr");
+        return _styles.ResolveParagraph((string?)pPr?.Element(W + "pStyle")?.Attribute(W + "val"), pPr, _tableStyleId, _tableConditions).BorderGroupKey;
     }
 
     private IEnumerable<RenderStep> RenderBlock(XElement block, StringBuilder html)
@@ -138,6 +182,13 @@ public sealed class DocxBlockHtmlRenderer
         XElement? pPr = paragraph.Element(W + "pPr");
         string? styleId = (string?)pPr?.Element(W + "pStyle")?.Attribute(W + "val");
         WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId, _tableConditions);
+        DocxBlockNeighbours neighbours = _blockNeighbours;
+        _blockNeighbours = default;                                  // nested blocks (text boxes) start fresh
+        if (formatting.BorderGroupKey is { } borderGroup)
+        {
+            formatting.IsBorderJoinedAbove = BorderGroupKeyOf(neighbours.Previous) == borderGroup;
+            formatting.IsBorderJoinedBelow = BorderGroupKeyOf(neighbours.Next) == borderGroup;
+        }
         int headingLevel = formatting.OutlineLevel is >= 0 and <= 8 ? formatting.OutlineLevel + 1 : _styles.HeadingLevelOf(styleId);
         string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
         string css = formatting.ToCss(_previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : "");
@@ -170,6 +221,8 @@ public sealed class DocxBlockHtmlRenderer
             html.Append(label.Suffix switch { DocxListLabelSuffix.Tab => "\t", DocxListLabelSuffix.Space => " ", _ => "" });
         }
         if (_listLabel is not null) _listLabel = null;              // only the block's first paragraph carries it
+        foreach (XElement joined in neighbours.MergedBefore ?? [])          // paragraphs whose deleted marks joined them to this one
+            yield return new(RenderInlineChildren(joined, html, formatting.RunFormatting));
         yield return new(RenderInlineChildren(paragraph, html, formatting.RunFormatting));
         if (_leaderTab is not null) html.Append("</span>");          // tab-after (or tab-before when the tab was not reached)
         _leaderTab = outerLeaderTab;
@@ -664,6 +717,8 @@ public sealed class DocxBlockHtmlRenderer
         for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
         {
             XElement? trPr = rows[rowIndex].Element(W + "trPr");
+            // A deleted row (trPr/w:del) is gone in Word's final view (Open-Xml-PowerTools RevisionProcessor accepts it by removing the row).
+            if (trPr?.Element(W + "del") is not null) continue;
             // Row height: a minimum unless hRule="exact" (LibreOffice MeasureHandler: only "exact" is fixed;
             // absent or "auto"/"atLeast" is a minimum). A table row's CSS height is already a minimum.
             int? rowHeight = DocxStyleCascade.TwipsAttribute(trPr?.Element(W + "trHeight"), "val");
@@ -684,6 +739,7 @@ public sealed class DocxBlockHtmlRenderer
                 int span = DocxStyleCascade.TwipsAttribute(tcPr?.Element(W + "gridSpan"), "val") ?? 1;
                 string? verticalMerge = tcPr?.Element(W + "vMerge") is { } merge ? ((string?)merge.Attribute(W + "val") ?? "continue") : null;
                 DocxTableConditions conditions = CellConditions(rowConditions, cellIndex++, cellCount, look, columnBandSize);
+                if (tcPr?.Element(W + "cellDel") is not null) continue;      // a deleted cell (AcceptDeletedCellsTransform removes it)
                 if (verticalMerge == "continue") { column += span; continue; }
                 _tableConditions = conditions;
 
@@ -791,3 +847,10 @@ public sealed class DocxBlockHtmlRenderer
         return span;
     }
 }
+
+/// <summary>
+/// The paragraphs next to a block that change how it is drawn: the paragraph before and after (border groups) and the
+/// paragraphs before it whose deleted marks join them to it. A body block gets them from the window reader (one adjacent
+/// block each side, plus the chain of joined paragraphs); blocks inside a cell or a text box from their siblings.
+/// </summary>
+public readonly record struct DocxBlockNeighbours(XElement? Previous, XElement? Next, XElement[]? MergedBefore);

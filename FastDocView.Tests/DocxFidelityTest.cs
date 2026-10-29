@@ -31,6 +31,8 @@ public static partial class DocxFidelityTest
         yield return TableConditionalFormatting;
         yield return TabLeaders;
         yield return Hyperlinks;
+        yield return BorderGroups;
+        yield return DeletedMarksRowsAndCells;
     }
 
     /// <summary>Writes a minimal package and returns every block's HTML.</summary>

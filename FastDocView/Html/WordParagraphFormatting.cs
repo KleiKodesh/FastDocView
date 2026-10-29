@@ -32,6 +32,9 @@ public sealed class WordParagraphFormatting
     public string? StyleKey;                // what "same style" means for contextual spacing
     public string? BorderTopCss;            // CSS border values ("1pt solid #000"), null = none
     public string? BorderBottomCss;
+    public string? BorderBetweenCss;        // w:pBdr/w:between: drawn between paragraphs of one border group
+    public bool IsBorderJoinedAbove;        // same border group as the paragraph before: no top border (the between one instead), its spacing inside the box
+    public bool IsBorderJoinedBelow;        // same border group as the paragraph after: no bottom border, its spacing inside the box
     public string? BorderStartCss;
     public string? BorderEndCss;
     public WordRunFormatting RunFormatting = new();
@@ -63,20 +66,28 @@ public sealed class WordParagraphFormatting
         if (FirstLineIndentTwips != 0) css.Append("text-indent:").Append(TwipsToPt(FirstLineIndentTwips)).Append("pt;");
         // Contextual spacing: the previous same-style paragraph's space-after is cancelled by an
         // equal negative top margin (sums to zero whether or not the margins collapse).
+        // Inside a border group the spacing between the paragraphs is inside the box (padding), so the side borders run on.
         if (isSpacingSuppressed) { if (SpaceAfterTwips != 0) css.Append("margin-top:-").Append(TwipsToPt(SpaceAfterTwips)).Append("pt;"); }
-        else if (SpaceBeforeTwips != 0) css.Append("margin-top:").Append(TwipsToPt(SpaceBeforeTwips)).Append("pt;");
-        if (SpaceAfterTwips != 0) css.Append("margin-bottom:").Append(TwipsToPt(SpaceAfterTwips)).Append("pt;");
+        else if (SpaceBeforeTwips != 0 && !IsBorderJoinedAbove) css.Append("margin-top:").Append(TwipsToPt(SpaceBeforeTwips)).Append("pt;");
+        if (SpaceAfterTwips != 0 && !IsBorderJoinedBelow) css.Append("margin-bottom:").Append(TwipsToPt(SpaceAfterTwips)).Append("pt;");
         if (ShadingHex is not null) css.Append("background-color:#").Append(ShadingHex).Append(';');
         if (FirstTabStopTwips > 0) css.Append("tab-size:").Append(TwipsToPt(FirstTabStopTwips)).Append("pt;");
         bool hasBorder = false;
-        foreach ((string property, string? value) in new[] { ("border-top", BorderTopCss), ("border-bottom", BorderBottomCss),
+        string? top = IsBorderJoinedAbove ? BorderBetweenCss : BorderTopCss;
+        string? bottom = IsBorderJoinedBelow ? null : BorderBottomCss;
+        foreach ((string property, string? value) in new[] { ("border-top", top), ("border-bottom", bottom),
                                                               ("border-inline-start", BorderStartCss), ("border-inline-end", BorderEndCss) })
         {
             if (value is null or "none") continue;
             css.Append(property).Append(':').Append(value).Append(';');
             hasBorder = true;
         }
-        if (hasBorder) css.Append("padding:1pt 4pt;");
+        if (hasBorder || IsBorderJoinedAbove || IsBorderJoinedBelow)
+        {
+            string paddingTop = IsBorderJoinedAbove ? TwipsToPt(SpaceBeforeTwips) + "pt" : "1pt";
+            string paddingBottom = IsBorderJoinedBelow ? TwipsToPt(SpaceAfterTwips) + "pt" : "1pt";
+            css.Append("padding:").Append(paddingTop).Append(" 4pt ").Append(paddingBottom).Append(';');
+        }
         if (LineSpacingTwipsOrAuto > 0)
         {
             if (IsLineSpacingAuto) css.Append("line-height:").Append((LineSpacingTwipsOrAuto / 240.0).ToString("0.##", CultureInfo.InvariantCulture)).Append(';');
@@ -85,6 +96,17 @@ public sealed class WordParagraphFormatting
         css.Append(RunFormatting.ToCss(null, WordDecorationOutput.None));   // lines go on the runs: a child cannot remove a parent's line
         return css.ToString();
     }
+
+    /// <summary>
+    /// What makes consecutive paragraphs one border group (ECMA-376 §17.3.1.24 pBdr: "the same set of paragraph border
+    /// settings"; Open-Xml-PowerTools' CreateBorderDivs also requires the same indents): every border and the indents.
+    /// Null when the paragraph has no border at all.
+    /// </summary>
+    public string? BorderGroupKey
+        => BorderTopCss is null or "none" && BorderBottomCss is null or "none" && BorderStartCss is null or "none" && BorderEndCss is null or "none"
+           && BorderBetweenCss is null or "none"
+            ? null
+            : string.Join("|", BorderTopCss, BorderBottomCss, BorderStartCss, BorderEndCss, BorderBetweenCss, LeftIndentTwips, RightIndentTwips);
 
     public static string TwipsToPt(int twips) => (twips / 20.0).ToString("0.#", CultureInfo.InvariantCulture);
 }
