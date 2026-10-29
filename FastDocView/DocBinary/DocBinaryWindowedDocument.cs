@@ -23,6 +23,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     public int BlockCount => _index.BlockCount;
 
     /// <summary>Page text width per section, from PlcfSed (read at open: one small record per section).</summary>
+    public int? FindBookmark(string name) => null;     // bookmarks not indexed for this format yet
     public IReadOnlyList<WordDocumentSection> Sections { get; }
     public bool IsIndexComplete => true;
     public int KnownBlockCount => _index.BlockCount;

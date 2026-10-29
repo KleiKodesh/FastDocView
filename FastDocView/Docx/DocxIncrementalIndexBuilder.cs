@@ -59,6 +59,28 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
     public bool IsComplete => CompletedIndex is not null;
 
     /// <summary>Blocks whose range and metadata are final: all but the one still being scanned.</summary>
+    private readonly Dictionary<string, int> _knownBookmarks = new(StringComparer.Ordinal);
+    private int _bookmarksSeen;
+
+    /// <summary>A bookmark found so far (its block), or null: the scanner's list is folded into a lookup as it grows.</summary>
+    public int? FindKnownBookmark(string name)
+    {
+        for (; _bookmarksSeen < _scanner.BookmarkNames.Count; _bookmarksSeen++)
+        {
+            string seen = _scanner.BookmarkNames[_bookmarksSeen];
+            if (!_knownBookmarks.ContainsKey(seen)) _knownBookmarks[seen] = _scanner.BookmarkBlocks[_bookmarksSeen];
+        }
+        return _knownBookmarks.TryGetValue(name, out int block) && block < KnownBlockCount ? block : null;
+    }
+
+    /// <summary>Scans one more chunk of the body (false once the body is scanned) - lets a lookup advance only as far as it needs.</summary>
+    public bool AdvanceOneChunk()
+    {
+        if (_isBodyScanned) return false;
+        AdvanceBodyOneChunk();
+        return true;
+    }
+
     public int KnownBlockCount => _scanner.BodyEndOffset >= 0 ? _scanner.BlockStartOffsets.Count : Math.Max(0, _scanner.BlockStartOffsets.Count - 1);
 
 

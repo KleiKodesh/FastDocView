@@ -96,6 +96,14 @@ public interface IWordWindowedDocument : IDisposable
     /// </summary>
     IReadOnlyList<WordDocumentSection> Sections { get; }
 
+    /// <summary>
+    /// The block a bookmark marks (in-document links, table-of-contents entries and REF fields point at bookmarks), or null
+    /// when the document has no such bookmark. Index-time data: a lookup in the index; while an on-demand index is still
+    /// building, the scan goes on only until the bookmark is found (or the index completes). Readers without bookmark
+    /// support yet return null.
+    /// </summary>
+    int? FindBookmark(string name);
+
     /// <summary>Every note reference in body order with the block it sits in — for "next footnote" navigation. No file access.</summary>
     IReadOnlyList<WordDocumentNoteReference> NoteReferences { get; }
 }

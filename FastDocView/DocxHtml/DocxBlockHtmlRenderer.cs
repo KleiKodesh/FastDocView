@@ -430,7 +430,15 @@ public sealed class DocxBlockHtmlRenderer
     private static string? HyperlinkFieldTag(string instruction)
     {
         List<string> parts = FieldInstructionParts(instruction);
-        if (parts.Count == 0 || !parts[0].Equals("HYPERLINK", StringComparison.OrdinalIgnoreCase)) return null;
+        if (parts.Count == 0) return null;
+        // Cross-references: REF / PAGEREF / NOTEREF <bookmark> with \h link to the bookmark (ECMA-376 REF field, docx4java
+        // mirror: "\h Creates a hyperlink to the bookmarked paragraph"; Microsoft's PAGEREF help says the same of its \h);
+        // without \h Word shows the result but it is not a link.
+        if (parts[0].ToUpperInvariant() is "REF" or "PAGEREF" or "NOTEREF")
+            return parts.Count > 1 && !parts[1].StartsWith("\\", StringComparison.Ordinal) && parts.Skip(2).Any(part => part.Equals("\\h", StringComparison.OrdinalIgnoreCase))
+                ? LinkTag("#" + parts[1], null)
+                : null;
+        if (!parts[0].Equals("HYPERLINK", StringComparison.OrdinalIgnoreCase)) return null;
         string url = "", anchors = "", tooltip = "";
         for (int i = 1; i < parts.Count; i++)
         {
@@ -482,12 +490,19 @@ public sealed class DocxBlockHtmlRenderer
         if (string.IsNullOrWhiteSpace(target)) return null;
         target = target!.Trim();
         string href;
+        bool isAppLink = false;
         if (target.StartsWith("#", StringComparison.Ordinal)) href = "#" + BookmarkElementId(target.Substring(1));
         else if (Uri.TryCreate(target, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https" or "mailto") href = uri.AbsoluteUri;
+        // links into a library app (Otzaria, Zayit, KitveiHakodesh's own): the host routes them itself, in place
+        else if (Uri.TryCreate(target, UriKind.Absolute, out Uri? appUri) && appUri.Scheme is "otzaria" or "zayit" or "kitveihakodeshapp" or "seforimapp")
+        {
+            href = target;
+            isAppLink = true;
+        }
         else return null;
-        var tag = new StringBuilder("<a class=\"link\" href=\"").Append(WordHtmlText.Encode(href)).Append('"');
+        var tag = new StringBuilder(isAppLink ? "<a class=\"link app-link\" data-app-link=\"1\" href=\"" : "<a class=\"link\" href=\"").Append(WordHtmlText.Encode(href)).Append('"');
         if (!string.IsNullOrEmpty(tooltip)) tag.Append(" title=\"").Append(WordHtmlText.Encode(tooltip!)).Append('"');
-        if (!href.StartsWith("#", StringComparison.Ordinal)) tag.Append(" rel=\"noopener noreferrer\" target=\"_blank\"");
+        if (!href.StartsWith("#", StringComparison.Ordinal) && !isAppLink) tag.Append(" rel=\"noopener noreferrer\" target=\"_blank\"");
         return tag.Append('>').ToString();
     }
 
