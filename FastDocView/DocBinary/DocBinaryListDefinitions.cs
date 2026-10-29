@@ -33,6 +33,11 @@ public sealed class DocBinaryListDefinitions
         public string NumberText = "";             // xst.rgtchar; a placeholder's char value is the zero-based level it stands for
         public int ParagraphGrpprlLength;
         public int CharacterGrpprlLength;
+        /// <summary>grpprlPapx: the level's paragraph sprms (indents, tab stop), applied to its paragraphs after the style and
+        /// before their own sprms (LibreOffice ww8par3.cxx RegisterNumFormatOnTextNode applies them at the sprmPIlfo).</summary>
+        public byte[] ParagraphGrpprl = [];
+        /// <summary>grpprlChpx: the label's character sprms.</summary>
+        public byte[] CharacterGrpprl = [];
 
         public bool IsBullet => NumberFormatCode == BulletFormatCode;
         public bool HasNumberSequence => NumberFormatCode is not (BulletFormatCode or NoNumberFormatCode);
@@ -109,6 +114,16 @@ public sealed class DocBinaryListDefinitions
         foreach (LevelOverride levelOverride in listOverride.LevelOverrides)
             if (levelOverride.Level == level && levelOverride.Formatting is { } replaced) return replaced;
         return level >= 0 && level < MaxLevels ? list.Levels[level] : null;
+    }
+
+    /// <summary>The LVL of a paragraph's sprmPIlfo (as stored) and sprmPIlvl, or null when it is not a list item.</summary>
+    public LevelDefinition? LevelOfParagraph(int rawListFormatOverride, int level)
+    {
+        int overrideIndex = rawListFormatOverride;
+        if (IsEmpty || overrideIndex <= 0 || overrideIndex == 0xF801 || level < 0 || level >= MaxLevels) return null;
+        if (overrideIndex >= 0xF802) overrideIndex = 0x10000 - overrideIndex;
+        if (OverrideAt(overrideIndex) is not { } listOverride || ListOf(listOverride.ListId) is not { } list) return null;
+        return LevelFor(listOverride, list, level);
     }
 
     public static LevelOverride? StartOverrideFor(ListOverride listOverride, int level)
@@ -215,7 +230,8 @@ public sealed class DocBinaryListDefinitions
         definition.ParagraphGrpprlLength = reader.ReadByte();
         definition.RestartLimitLevel = reader.ReadByte();
         reader.ReadByte();                                                             // grfhic
-        reader.BaseStream.Position += definition.ParagraphGrpprlLength + definition.CharacterGrpprlLength;   // indent / number-run formatting: not rendered
+        definition.ParagraphGrpprl = reader.ReadBytes(definition.ParagraphGrpprlLength);      // LVL order: grpprlPapx, then grpprlChpx
+        definition.CharacterGrpprl = reader.ReadBytes(definition.CharacterGrpprlLength);
         int characterCount = reader.ReadUInt16();
         byte[] characters = reader.ReadBytes(characterCount * 2);
         definition.NumberText = Encoding.Unicode.GetString(characters, 0, characters.Length);

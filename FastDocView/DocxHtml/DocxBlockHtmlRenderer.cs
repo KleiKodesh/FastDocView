@@ -243,7 +243,8 @@ public sealed class DocxBlockHtmlRenderer
     {
         XElement? pPr = paragraph.Element(W + "pPr");
         string? styleId = (string?)pPr?.Element(W + "pStyle")?.Attribute(W + "val");
-        WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId, _tableConditions);
+        WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId, _tableConditions,
+                                                                     _listLabel is { } listed ? LevelParagraphProperties(listed.LevelParagraphXml) : null);
         DocxBlockNeighbours neighbours = _blockNeighbours;
         _blockNeighbours = default;                                  // nested blocks (text boxes) start fresh
         ResolveAutoSpacing(formatting, neighbours);
@@ -295,10 +296,8 @@ public sealed class DocxBlockHtmlRenderer
         {
             // Word draws the number with the mark's formatting plus the level's rPr (§17.9.6), then the level's suffix (§17.9.28).
             string labelCss = mark!.ToCss(formatting.RunFormatting) + label.LevelCss;
-            html.Append("<span class=\"list-marker\"");
-            if (labelCss.Length > 0) html.Append(" style=\"").Append(labelCss).Append('"');
-            html.Append('>').Append(WordHtmlText.Encode(label.Text)).Append("</span>");
-            html.Append(label.Suffix switch { DocxListLabelSuffix.Tab => "\t", DocxListLabelSuffix.Space => " ", _ => "" });
+            WordListLabelSuffix suffix = label.Suffix switch { DocxListLabelSuffix.Space => WordListLabelSuffix.Space, DocxListLabelSuffix.Nothing => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab };
+            WordListLabelHtml.Append(html, label.Text, labelCss.Length > 0 ? labelCss : null, suffix, formatting, _styles.Compatibility.DefaultTabStopTwips, label.Alignment);
         }
         if (_listLabel is not null) _listLabel = null;              // only the block's first paragraph carries it
         foreach (XElement joined in neighbours.MergedBefore ?? [])          // paragraphs whose deleted marks joined them to this one
@@ -316,6 +315,20 @@ public sealed class DocxBlockHtmlRenderer
 
         // A w:sectPr inside pPr ends a section: in a flow view that is a rule, not a new page.
         if (pPr?.Element(W + "sectPr") is not null && _textBoxDepth == 0) html.Append("<hr class=\"section-break\">");
+    }
+
+    private readonly Dictionary<string, XElement?> _levelParagraphProperties = new(StringComparer.Ordinal);   // one per numbering level
+
+    private XElement? LevelParagraphProperties(string xml)
+    {
+        if (xml.Length == 0) return null;
+        if (!_levelParagraphProperties.TryGetValue(xml, out XElement? element))
+        {
+            try { element = XElement.Parse(xml); }
+            catch (System.Xml.XmlException) { element = null; }       // a damaged index entry costs the level indents, not the block
+            _levelParagraphProperties[xml] = element;
+        }
+        return element;
     }
 
     /// <summary>Whether a paragraph draws anything besides its mark (text, tabs, breaks, symbols, drawings, note references).</summary>

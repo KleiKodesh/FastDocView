@@ -20,7 +20,7 @@ public static class WordDocumentHtmlStylesheet
             .word-document h1, .word-document h2, .word-document h3, .word-document h4, .word-document h5, .word-document h6 { margin: 0; font-size: inherit; font-weight: inherit; white-space: pre-wrap; }
             .word-document table { border-collapse: collapse; margin: 2pt 0; }
             .word-document td { border: 1px solid #999; padding: 1pt 4pt; vertical-align: top; }
-            .word-document .list-marker { display: inline-block; min-width: 1.2em; }
+            .word-document .list-marker { display: inline-block; text-indent: 0; }
             .word-document p, .word-document h1, .word-document h2, .word-document h3, .word-document h4, .word-document h5, .word-document h6 { tab-size: 36pt; }
             .word-document .note-reference { font-size: 0.7em; line-height: 0; color: #06c; cursor: pointer; padding: 0 1px; }
             .word-document .note-mark { vertical-align: super; font-size: 0.7em; line-height: 0; color: #06c; margin-inline-end: 0.25em; }

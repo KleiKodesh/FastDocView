@@ -37,6 +37,12 @@ public sealed class DocBinaryParagraphHtmlRenderer
         _notes = notes;
     }
 
+    /// <summary>The document's list tables: list paragraphs take their level's indents and label formatting.</summary>
+    public DocBinaryListDefinitions Lists { get; set; } = DocBinaryListDefinitions.Empty;
+
+    /// <summary>The default tab stop interval (Dop dxaTab), twips.</summary>
+    public int DefaultTabStopTwips { get; set; } = WordListLabelHtml.DefaultTabStopTwips;
+
     private bool _isParagraphRightToLeft;   // the paragraph being rendered: a right-to-left run in a left-to-right one is embedded
 
     public (WordParagraphFormatting formatting, int styleIndex) ResolveParagraph(int cpStart, int cpEnd)
@@ -44,14 +50,27 @@ public sealed class DocBinaryParagraphHtmlRenderer
         DocBinaryFormattedDiskPages.PropertyRun? run = ParagraphRunOf(cpStart, cpEnd);
         int styleIndex = 0;
         if (run is { GrpprlLength: >= 2 } papx) styleIndex = BitConverter.ToUInt16(papx.Page, papx.GrpprlStart);
-        WordParagraphFormatting formatting = _styles.ResolveParagraphStyle(styleIndex).Clone();
-        if (run is { GrpprlLength: > 2 } direct)
+        WordParagraphFormatting style = _styles.ResolveParagraphStyle(styleIndex);
+        WordParagraphFormatting formatting = style.Clone();
+        (byte[] grpprl, int start, int length)? direct = run is { GrpprlLength: > 2 } directRun
+            ? _pages.ExpandHugePapx(directRun.Page, directRun.GrpprlStart + 2, directRun.GrpprlLength - 2) : null;
+        byte[]? prm = PrmGrpprlOfParagraph(cpStart, cpEnd);
+        void ApplyDirect(WordParagraphFormatting target)
         {
-            (byte[] grpprl, int start, int length) = _pages.ExpandHugePapx(direct.Page, direct.GrpprlStart + 2, direct.GrpprlLength - 2);
-            DocBinaryPropertyModifiers.ApplyParagraphSprms(formatting, grpprl, start, length);
+            if (direct is { } d) DocBinaryPropertyModifiers.ApplyParagraphSprms(target, d.grpprl, d.start, d.length);
+            // Fast-saved files: the piece's Prm applies after the PAPX ([MS-DOC] 2.4.6.1 step 4).
+            if (prm is not null) DocBinaryPropertyModifiers.ApplyParagraphSprms(target, prm, 0, prm.Length);
         }
-        // Fast-saved files: the piece's Prm applies after the PAPX ([MS-DOC] §2.4.6.1 step 4).
-        if (PrmGrpprlOfParagraph(cpStart, cpEnd) is { } prm) DocBinaryPropertyModifiers.ApplyParagraphSprms(formatting, prm, 0, prm.Length);
+        ApplyDirect(formatting);
+        // A list paragraph: its level's grpprlPapx (indents, the list tab stop) goes between the style and the paragraph's
+        // own sprms - LibreOffice ww8par3.cxx applies it at the sprmPIlfo, and Word writes sprms in ascending order, so
+        // sprmPIlfo (0x460B) precedes the indent sprms (0x840F, 0x845E, ...) that then override the level.
+        if (Lists.LevelOfParagraph(formatting.NumberingId, formatting.NumberingLevel) is { ParagraphGrpprl.Length: > 0 } level)
+        {
+            formatting = style.Clone();
+            DocBinaryPropertyModifiers.ApplyParagraphSprms(formatting, level.ParagraphGrpprl, 0, level.ParagraphGrpprl.Length);
+            ApplyDirect(formatting);
+        }
         return (formatting, styleIndex);
     }
 
@@ -148,13 +167,32 @@ public sealed class DocBinaryParagraphHtmlRenderer
 
         WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(previousStyleKey), null, formatting.IsRightToLeft);
         _isParagraphRightToLeft = formatting.IsRightToLeft;
-        if (listLabel is { Length: > 0 }) html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(listLabel)).Append("</span> ");
+        if (listLabel is { Length: > 0 }) AppendListLabel(html, listLabel, formatting);
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
         var fieldState = new FieldState();
         foreach ((WordRunFormatting runFormatting, string text, bool isSpecial, int runCp) in CharacterRuns(cpStart, cpEnd, formatting.RunFormatting, styleBase))
             AppendRunHtml(html, runFormatting, formatting.RunFormatting, text, isSpecial, runCp, fieldState, noteLabel);
         html.Append("</").Append(tag).Append('>');
         return formatting.StyleKey;
+    }
+
+    /// <summary>
+    /// The label drawn as Word does: the paragraph's character formatting plus the level's grpprlChpx, followed by its
+    /// ixchFollow (LVLF, [MS-DOC] 2.9.150; LibreOffice ww8par3.cxx: 0 tab, 1 space, 2 nothing).
+    /// </summary>
+    private void AppendListLabel(StringBuilder html, string label, WordParagraphFormatting formatting)
+    {
+        DocBinaryListDefinitions.LevelDefinition? level = Lists.LevelOfParagraph(formatting.NumberingId, formatting.NumberingLevel);
+        string? css = null;
+        if (level is { CharacterGrpprl.Length: > 0 })
+        {
+            WordRunFormatting labelFormatting = formatting.RunFormatting.Clone();
+            DocBinaryPropertyModifiers.ApplyCharacterSprms(labelFormatting, level.CharacterGrpprl, 0, level.CharacterGrpprl.Length, fonts: _styles.Fonts);
+            css = labelFormatting.ToCss(formatting.RunFormatting);
+        }
+        WordListLabelSuffix suffix = level?.FollowCharacter switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab };
+        WordListLabelAlignment alignment = level?.Justification switch { 1 => WordListLabelAlignment.Center, 2 => WordListLabelAlignment.End, _ => WordListLabelAlignment.Start };
+        WordListLabelHtml.Append(html, label, css, suffix, formatting, DefaultTabStopTwips, alignment);
     }
 
     /// <summary>One table row: cells end at cell marks, the row at its row-end mark (the last paragraph).</summary>

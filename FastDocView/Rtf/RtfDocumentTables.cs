@@ -21,6 +21,8 @@ public sealed class RtfDocumentTables
         public byte[] NumberPositions = [];   // \levelnumbers: 1-based positions into the \leveltext (length character = position 0)
         public bool NoRestart;
         public bool Legal;
+        public int Justification;       // \leveljc: 0 left, 1 center, 2 right (LibreOffice rtfdispatchvalue.cxx reads \leveljc, not \leveljcn)
+        public int Follow;              // \levelfollow: 0 tab, 1 space, 2 nothing
     }
 
     public sealed class ListDefinition { public int ListId; public ListLevelDefinition[] Levels = []; }

@@ -701,3 +701,34 @@ sample from about page 1900; `compare.py` reports differences after such a cliff
 complex-script font / size / weight by the characters' script; Word (checked for .docx, LEARNINGS 2026-10-28/29)
 by the run's rtl flag - font-family / size differences on Hebrew runs without sprmCFBiDi / w:rtl are that
 disagreement until checked in Word.
+
+## List label layout (branch work/indent-parity, 2026-10-29)
+
+Measured per paragraph against LibreOffice's PDF (scratchpad tools lref.py / lmeasure.mjs / lcompare.py: label position,
+label-to-text gap, first-line and later-line start, end indent, line height, paragraph pitch, line count; per page the
+median start-side shift is removed because the column estimate of a PDF is only good to a few points).
+
+- Shared `WordListLabelHtml`: the label starts at start indent + first-line indent; after a tab suffix the text starts at
+  the next stop after the label's position - a custom stop, the start indent when the paragraph hangs, else the next
+  default stop (Dop dxaTab / defaultTabStop, 720). The label is an inline-block with that gap as min-width. lvlJc / LVL jc
+  end or centre: a zero-width nowrap flex box (flex-end / center) so the label ends at / centres on its position. A label
+  wider than the gap pushes the text on (Word would use the following stop; the label's width is not known server-side).
+- .doc: the LVL's grpprlPapx (indents, list tab) applies between the style and the paragraph's own sprms (LibreOffice
+  ww8par3.cxx applies it at sprmPIlfo; Word writes sprms in ascending order, so Ilfo precedes the indent sprms); grpprlChpx
+  formats the label; ixchFollow 0 tab / 1 space / 2 nothing (LibreOffice ww8par3.cxx); sprmPChgTabs(Papx) fill TabStops
+  (one operand layout for both, as LibreOffice Read_Tab).
+- .docx: the numbering level's w:pPr (indents, tabs) and w:lvlJc are stored with each interned list label (index format 9)
+  and applied by the renderer between the style and the direct pPr. Numbering via the paragraph style keeps the style's
+  own w:ind (LibreOffice DomainMapper_Impl finishParagraph: "the para-style indents have priority"); direct numPr lets the
+  level override the style; direct w:ind wins over both. settings.xml w:defaultTabStop drives the default stop.
+  Precedence taken from LibreOffice's source (it states it emulates Word) - not re-checked in Word.
+- RTF: the \listtext label (Word's flat copy) is drawn by WordListLabelHtml at the paragraph's first-line position, its
+  \tab = tab suffix; \leveljc places it (LibreOffice rtfdispatchvalue.cxx maps \leveljc 0/1/2 to lvlJc left/center/right
+  and ignores \leveljcn); \levelfollow 0/1/2 = tab/space/nothing for labels counted at index time.
+- ODT: label-alignment levels (ODF 1.2 19.880/19.881: fo:margin-left, fo:text-indent, text:list-tab-stop-position,
+  text:label-followed-by) are stored per list label in the index (format 3) and indent the paragraph; the older
+  label-width-and-position mode keeps the fixed per-level step.
+- Line spacing: auto spacing is a multiple of the font's single line height (`WordParagraphFormatting.SingleLineHeightEm`
+  = 1.15 em, Times New Roman / Arial), not of the em - LibreOffice draws 12 pt lines 13.8 pt apart at line=240; exact
+  (docx lineRule exact, .doc / RTF negative dyaLine / \sl, ODF fo:line-height length) is the stated height; at least
+  is `max(1.15em, value)`. Fonts with other ascent + descent (Hebrew faces) still differ - per-font metrics not modelled.

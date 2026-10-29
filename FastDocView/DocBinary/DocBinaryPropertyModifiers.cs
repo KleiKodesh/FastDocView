@@ -46,6 +46,7 @@ public static class DocBinaryPropertyModifiers
                     short line = BitConverter.ToInt16(grpprl, operandAt);
                     formatting.IsLineSpacingAuto = BitConverter.ToInt16(grpprl, operandAt + 2) != 0;
                     formatting.LineSpacingTwipsOrAuto = Math.Abs((int)line);
+                    formatting.IsLineSpacingExact = !formatting.IsLineSpacingAuto && line < 0;   // LSPD: negative dyaLine = exactly, positive = at least (LibreOffice ww8par6.cxx Read_LineSpace)
                     break;
                 case 0x2416: formatting.IsInTable = grpprl[operandAt] != 0; break;
                 case 0x260A: formatting.NumberingLevel = grpprl[operandAt]; break;
@@ -54,7 +55,10 @@ public static class DocBinaryPropertyModifiers
                 case 0x246D: formatting.IsContextualSpacing = grpprl[operandAt] != 0; break;                     // sprmPFContextualSpacing (sprmids.hxx)
                 case 0xC64D: formatting.ShadingHex = ShadingBackground(grpprl, operandAt + 4, operandLength); break;      // SHDOperand: cvFore then cvBack
                 case 0x442D: formatting.ShadingHex = Shading80Background(BitConverter.ToUInt16(grpprl, operandAt)); break;
-                case 0xC60D: case 0xC615: formatting.FirstTabStopTwips = FirstAddedTabStop(grpprl, operandAt, operandLength, formatting.LeftIndentTwips) ?? formatting.FirstTabStopTwips; break;
+                case 0xC60D: case 0xC615:
+                    formatting.FirstTabStopTwips = FirstAddedTabStop(grpprl, operandAt, operandLength, formatting.LeftIndentTwips, opcode == 0xC615) ?? formatting.FirstTabStopTwips;
+                    formatting.TabStops = ChangedTabStops(formatting.TabStops, grpprl, operandAt, operandAt + operandLength, opcode == 0xC615);
+                    break;
                 // paragraph borders: Brc80 (Word 97, 4 bytes) and Brc (Word 2000+, 8 bytes); top, left (= start), bottom, right (= end)
                 case 0x6424: formatting.BorderTopCss = Brc80Css(grpprl, operandAt); break;
                 case 0x6425: formatting.BorderStartCss = Brc80Css(grpprl, operandAt); break;
@@ -162,13 +166,51 @@ public static class DocBinaryPropertyModifiers
         return icoBack > 0 && icoBack < IcoPalette.Length && IcoPalette[icoBack] != "FFFFFF" ? IcoPalette[icoBack] : null;
     }
 
-    /// <summary>sprmPChgTabsPapx/sprmPChgTabs: cb, cTabsDel + positions, cTabsAdd + positions → the first added stop, relative to the indent.</summary>
-    private static int? FirstAddedTabStop(byte[] grpprl, int operandAt, int operandLength, int leftIndentTwips)
+    /// <summary>
+    /// sprmPChgTabsPapx / sprmPChgTabs: delete the stops at the listed positions, then add stops with their TBD (jc in
+    /// bits 0-2: 0 left, 1 center, 2 right, 3 decimal, 4 bar; leader in bits 3-5; LibreOffice ww8par.cxx Read_Tab). Layout
+    /// cDel, rgdxaDel, cAdd, rgdxaAdd, rgtbd; sprmPChgTabs also has rgdxaClose after rgdxaDel (4 bytes per deleted stop:
+    /// LibreOffice ww8scan.cxx GetSprmTailLen sizes it 2 + 4 * nDel + 3 * nIns), a stop within its close tolerance is
+    /// deleted. Positions: twips from the start margin.
+    /// </summary>
+    private static WordTabStop[] ChangedTabStops(WordTabStop[] current, byte[] grpprl, int position, int end, bool hasCloseTolerances)
+    {
+        end = Math.Min(end, grpprl.Length);
+        if (position >= end) return current;
+        var stops = new List<WordTabStop>(current);
+        int deleted = grpprl[position++];
+        int closeAt = position + deleted * 2;
+        for (int i = 0; i < deleted && position + i * 2 + 2 <= end; i++)
+        {
+            int at = BitConverter.ToInt16(grpprl, position + i * 2);
+            int tolerance = hasCloseTolerances && closeAt + i * 2 + 2 <= end ? Math.Abs((int)BitConverter.ToInt16(grpprl, closeAt + i * 2)) : 0;
+            stops.RemoveAll(stop => Math.Abs(stop.PositionTwips - at) <= tolerance);
+        }
+        position += deleted * (hasCloseTolerances ? 4 : 2);
+        if (position < end)
+        {
+            int added = grpprl[position++];
+            int descriptors = position + added * 2;
+            for (int i = 0; i < added && descriptors + i < end; i++)
+            {
+                int at = BitConverter.ToInt16(grpprl, position + i * 2);
+                byte descriptor = grpprl[descriptors + i];
+                string alignment = (descriptor & 0x07) switch { 1 => "center", 2 => "right", 3 => "decimal", 4 => "bar", _ => "left" };
+                string leader = ((descriptor >> 3) & 0x07) switch { 1 => "dot", 2 => "hyphen", 3 or 4 => "underscore", _ => "none" };
+                stops.RemoveAll(stop => stop.PositionTwips == at);
+                stops.Add(new WordTabStop(at, alignment, leader));
+            }
+        }
+        stops.Sort((a, b) => a.PositionTwips.CompareTo(b.PositionTwips));
+        return stops.ToArray();
+    }
+
+    private static int? FirstAddedTabStop(byte[] grpprl, int operandAt, int operandLength, int leftIndentTwips, bool hasCloseTolerances)
     {
         int position = operandAt;
         if (position >= grpprl.Length) return null;
         int deleted = grpprl[position++];
-        position += deleted * 2;
+        position += deleted * (hasCloseTolerances ? 4 : 2);
         if (position >= grpprl.Length) return null;
         int added = grpprl[position++];
         int first = int.MaxValue;

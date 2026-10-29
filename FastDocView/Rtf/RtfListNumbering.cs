@@ -27,6 +27,14 @@ internal sealed class RtfListNumbering
         _ => "decimal",
     };
 
+    /// <summary>The level definition a paragraph's \ls / \ilvl name, or null.</summary>
+    public static RtfDocumentTables.ListLevelDefinition? LevelOf(RtfDocumentTables tables, int overrideIndex, int level)
+    {
+        if (overrideIndex <= 0 || !tables.ListOverrides.TryGetValue(overrideIndex, out RtfDocumentTables.ListOverride? listOverride)) return null;
+        if (!tables.Lists.TryGetValue(listOverride.ListId, out RtfDocumentTables.ListDefinition? list) || list.Levels.Length == 0) return null;
+        return list.Levels[Math.Max(0, Math.Min(level, list.Levels.Length - 1))];
+    }
+
     /// <summary>Advances the counters for a list paragraph and returns its label; null when the list is unknown.</summary>
     public string? Next(int overrideIndex, int level)
     {

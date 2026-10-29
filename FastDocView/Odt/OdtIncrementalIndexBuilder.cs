@@ -184,6 +184,12 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
         return labelIndex >= 0 ? _scanner.ListLabels[labelIndex] : null;
     }
 
+    public string ListLabelLayoutOf(int blockIndex)
+    {
+        int labelIndex = _scanner.BlockListLabelIds[blockIndex];
+        return labelIndex >= 0 ? _scanner.ListLabelLayouts[labelIndex] : "";
+    }
+
     public int ListLevelOf(int blockIndex) => _scanner.BlockListLevels[blockIndex] == 255 ? -1 : _scanner.BlockListLevels[blockIndex];
 
     public ReadOnlySpan<OdtNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex)

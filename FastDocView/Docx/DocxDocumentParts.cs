@@ -85,7 +85,8 @@ public sealed class DocxDocumentParts
             string css = "";
             if (definition is not null && !levelCss.TryGetValue(definition, out css!))
                 levelCss[definition] = css = Styles.LevelRunCss(definition.RunProperties, isBulletMapped: definition.Format == "bullet" && next.label != definition.Text);
-            return new DocxListLabel(next.label, DocxListLabel.SuffixOf(definition?.Suffix), css);
+            return new DocxListLabel(next.label, DocxListLabel.SuffixOf(definition?.Suffix), css,
+                                     definition?.ParagraphProperties?.ToString(SaveOptions.DisableFormatting) ?? "", DocxListLabel.AlignmentOf(definition?.Justification));
         };
     }
 

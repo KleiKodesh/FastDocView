@@ -63,6 +63,7 @@ public static class OdtRandomAccessIndexBuilder
                                         scanner.BlockListLabelIds.ToArray(), scanner.ListLabels.ToArray(), scanner.Headings.ToArray(),
                                         scanner.NoteReferences.ToArray())
         {
+            ListLabelLayouts = scanner.ListLabelLayouts.ToArray(),
             SectionFirstBlocks = scanner.SectionStarts.Select(section => section.FirstBlockIndex).ToArray(),
             SectionTextWidths = scanner.SectionStarts.Select(section => section.TextWidthTwips).ToArray(),
         };

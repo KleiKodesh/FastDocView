@@ -549,6 +549,8 @@ internal sealed class RtfParser
                 return;
             case RtfWord.LevelNoRestart: if (_level is not null && _levelDepth >= 0) _level.NoRestart = isOn; return;
             case RtfWord.LevelLegal: if (_level is not null && _levelDepth >= 0) _level.Legal = isOn; return;
+            case RtfWord.LevelJustification: if (_level is not null && _levelDepth >= 0) _level.Justification = parameter; return;
+            case RtfWord.LevelFollow: if (_level is not null && _levelDepth >= 0) _level.Follow = parameter; return;
             case RtfWord.LevelText:
                 if (_level is not null && _levelDepth >= 0) { state.Destination = RtfDestination.ListLevelText; _levelTextDepth = _depth; _headerText.Clear(); }
                 else SkipGroup(name);

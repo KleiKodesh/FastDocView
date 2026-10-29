@@ -25,6 +25,7 @@ public static partial class DocxFidelityTest
         yield return UnderlineAndStrike;
         yield return ListNumbering;
         yield return ListLabelsAndParagraphMark;
+        yield return ListLevelIndents;
         yield return ShadingPatterns;
         yield return Symbols;
         yield return CompatibilitySettings;

@@ -21,7 +21,8 @@ public sealed class DocxNumberingDefinitions
     /// <param name="Suffix">w:suff (§17.9.28): tab (the default), space or nothing after the label.</param>
     /// <param name="RunProperties">The level's w:rPr: the label's own formatting.</param>
     public sealed record LevelDefinition(string Format, string Text, int Start, int? Restart = null, bool IsLegal = false,
-                                         string Suffix = "tab", XElement? RunProperties = null);
+                                         string Suffix = "tab", XElement? RunProperties = null,
+                                         XElement? ParagraphProperties = null, string Justification = "left");
 
     private readonly Dictionary<int, int> _abstractIdByNumId = new();
     private readonly Dictionary<int, Dictionary<int, int>> _startOverridesByNumId = new();
@@ -78,7 +79,9 @@ public sealed class DocxNumberingDefinitions
         int? restart = DocxStyleCascade.TwipsAttribute(level.Element(W + "lvlRestart"), "val");
         bool isLegal = level.Element(W + "isLgl") is { } legal && DocxStyleCascade.IsOn(legal.Attribute(W + "val"));
         string suffix = (string?)level.Element(W + "suff")?.Attribute(W + "val") ?? "tab";
-        return new LevelDefinition(format, text, start, restart, isLegal, suffix, level.Element(W + "rPr"));
+        // w:lvlJc (17.9.7): where the label sits against its position; w:pPr (17.9.23): the level's indents and tab stops
+        string justification = (string?)level.Element(W + "lvlJc")?.Attribute(W + "val") ?? "left";
+        return new LevelDefinition(format, text, start, restart, isLegal, suffix, level.Element(W + "rPr"), level.Element(W + "pPr"), justification);
     }
 
     public bool IsEmpty => _abstractIdByNumId.Count == 0;

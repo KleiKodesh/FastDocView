@@ -24,6 +24,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         public readonly StringBuilder Output = new();
         public readonly StringBuilder Inline = new();
         public bool HasInline;
+        public (int position, string html, bool hasTab)? ListText;   // a \listtext label waiting for its paragraph
         public readonly List<TableLevel> Tables = new();
     }
 
@@ -188,9 +189,26 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         var html = new StringBuilder(_flow.Inline.Length + 64);
         if (state.Has(RtfStateFlags.PageBreakBefore) && isTopLevel) html.Append("<span class=\"page-break\"></span>");
         WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(), null, formatting.IsRightToLeft);
-        if (isTopLevel && _isFirstParagraph && _indexListLabel is { Length: > 0 } label)
-            html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(label)).Append("</span> ");
-        html.Append(_flow.Inline);
+        // The label sits at the first-line position and a tab after it reaches the next stop (WordListLabelHtml): the flat
+        // \listtext label Word wrote (its \tab = the tab suffix, RTF 1.5 \listtext), or the label counted at index time
+        // (its \levelfollow); \leveljc places the label.
+        RtfDocumentTables.ListLevelDefinition? listLevel = RtfListNumbering.LevelOf(_tables, state.ListOverride, state.ListLevel);
+        WordListLabelAlignment labelAlignment = listLevel?.Justification switch { 1 => WordListLabelAlignment.Center, 2 => WordListLabelAlignment.End, _ => WordListLabelAlignment.Start };
+        if (_flow.ListText is { } listText)
+        {
+            html.Append(_flow.Inline, 0, listText.position);
+            WordListLabelHtml.Append(html, listText.html, null, listText.hasTab ? WordListLabelSuffix.Tab : WordListLabelSuffix.Nothing, formatting,
+                                     WordListLabelHtml.DefaultTabStopTwips, labelAlignment, isLabelHtml: true);
+            html.Append(_flow.Inline, listText.position, _flow.Inline.Length - listText.position);
+            _flow.ListText = null;
+        }
+        else
+        {
+            if (isTopLevel && _isFirstParagraph && _indexListLabel is { Length: > 0 } label)
+                WordListLabelHtml.Append(html, label, null, listLevel?.Follow switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab },
+                                         formatting, WordListLabelHtml.DefaultTabStopTwips, labelAlignment);
+            html.Append(_flow.Inline);
+        }
         html.Append("</").Append(tag).Append('>');
         if (isSectionEnd && isTopLevel) html.Append("<hr class=\"section-break\">");
         _flow.Inline.Clear();
@@ -226,7 +244,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (state.LineSpacing != 0 && state.LineSpacing != 1000)
         {
             if (state.Has(RtfStateFlags.LineSpacingMultiple)) { formatting.LineSpacingTwipsOrAuto = Math.Abs(state.LineSpacing); formatting.IsLineSpacingAuto = true; }
-            else { formatting.LineSpacingTwipsOrAuto = Math.Abs(state.LineSpacing); formatting.IsLineSpacingAuto = false; }
+            else { formatting.LineSpacingTwipsOrAuto = Math.Abs(state.LineSpacing); formatting.IsLineSpacingAuto = false; formatting.IsLineSpacingExact = state.LineSpacing < 0; }   // \sl: negative = exactly, positive = at least (RTF 1.5)
         }
         return formatting;
     }
@@ -266,9 +284,10 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         StringBuilder? label = _listTextTarget;
         _listTextTarget = null;
         if (label is null) return;
-        string html = label.ToString().Replace("\t", "");
+        string text = label.ToString();
+        string html = text.Replace("\t", "");
         if (html.Length == 0) return;
-        _flow.Inline.Append("<span class=\"list-marker\">").Append(html).Append("</span> ");
+        _flow.ListText = (_flow.Inline.Length, html, text.Contains('\t'));     // drawn by EmitParagraph, which knows the indents
         _flow.HasInline = true;
     }
 

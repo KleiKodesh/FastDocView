@@ -156,13 +156,35 @@ public sealed class DocxStyleCascade
 
     /// <summary>Full paragraph formatting: style chain + direct pPr (+ its paragraph-mark rPr as the base run).</summary>
     public WordParagraphFormatting ResolveParagraph(string? styleId, XElement? directParagraphProperties, string? tableStyleId = null,
-                                                    DocxTableConditions tableConditions = DocxTableConditions.None)
+                                                    DocxTableConditions tableConditions = DocxTableConditions.None,
+                                                    XElement? numberingParagraphProperties = null)
     {
         WordParagraphFormatting formatting = ResolveParagraphStyleInTable(tableStyleId, styleId, tableConditions).Clone();
+        if (numberingParagraphProperties is not null) ApplyNumberingLevel(formatting, styleId, numberingParagraphProperties, directParagraphProperties);
         ApplyParagraphProperties(formatting, directParagraphProperties, _theme);
         ResolveToggles(formatting.RunFormatting);
         formatting.StyleKey = styleId ?? _defaultParagraphStyleId ?? "";
         return formatting;
+    }
+
+    /// <summary>
+    /// A list paragraph's numbering level pPr (17.9.23: indents, tab stops) between the style and the direct pPr. Numbering
+    /// that comes from the paragraph style leaves the style's own indents in charge (LibreOffice DomainMapper_Impl
+    /// finishParagraph: "when numbering is defined by the paragraph style, then the para-style indents have priority");
+    /// direct numbering (numPr in the paragraph) overrides them, and direct w:ind overrides both.
+    /// </summary>
+    private void ApplyNumberingLevel(WordParagraphFormatting formatting, string? styleId, XElement levelProperties, XElement? directProperties)
+    {
+        bool isFromStyle = directProperties?.Element(W + "numPr")?.Element(W + "numId") is null;
+        int left = formatting.LeftIndentTwips, firstLine = formatting.FirstLineIndentTwips;
+        ApplyParagraphProperties(formatting, levelProperties, _theme);
+        if (!isFromStyle) return;
+        foreach (XElement style in StyleChain(styleId ?? _defaultParagraphStyleId))
+        {
+            if (style.Element(W + "pPr")?.Element(W + "ind") is not { } ind) continue;
+            if (ind.Attribute(W + "start") is not null || ind.Attribute(W + "left") is not null) formatting.LeftIndentTwips = left;
+            if (ind.Attribute(W + "hanging") is not null || ind.Attribute(W + "firstLine") is not null) formatting.FirstLineIndentTwips = firstLine;
+        }
     }
 
     /// <summary>Run formatting: paragraph base → character style chain → direct rPr, toggle properties combined per §17.7.3 (<see cref="WordToggleLayers"/>).</summary>
@@ -297,7 +319,9 @@ public sealed class DocxStyleCascade
             if (TwipsAttribute(spacing, "line") is { } line)
             {
                 formatting.LineSpacingTwipsOrAuto = line;
-                formatting.IsLineSpacingAuto = ((string?)spacing.Attribute(W + "lineRule") ?? "auto") == "auto";
+                string lineRule = (string?)spacing.Attribute(W + "lineRule") ?? "auto";
+                formatting.IsLineSpacingAuto = lineRule == "auto";
+                formatting.IsLineSpacingExact = lineRule == "exact";   // ST_LineSpacingRule: auto, exact, atLeast (17.18.48)
             }
         }
         if (TwipsAttribute(pPr.Element(W + "outlineLvl"), "val") is { } outline) formatting.OutlineLevel = outline;
