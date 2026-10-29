@@ -309,8 +309,8 @@ internal sealed class DocxBodyBlockScanner
 
     private void OnText(ReadOnlySpan<byte> text)
     {
-        if (_isInsideFieldInstruction && _openFields.Count > 0 && !_openFields[^1].isSeparated)
-            foreach (byte b in text) _openFields[^1].instruction.WriteByte(b);      // net48 MemoryStream has no span overload
+        if (_isInsideFieldInstruction && _openFields.Count > 0 && !_openFields[_openFields.Count - 1].isSeparated)
+            foreach (byte b in text) _openFields[_openFields.Count - 1].instruction.WriteByte(b);      // net48 MemoryStream has no span overload
         if (!_isInsideTextRun || BlockTextLengths.Count == 0) return;
         BlockTextLengths[BlockTextLengths.Count - 1] += text.Length;
         if (_currentHeadingLevel > 0 && _headingText.Length < MaxHeadingTextBytes)
@@ -406,7 +406,7 @@ internal sealed class DocxBodyBlockScanner
             switch (AttributeValue(attributes, "w:fldCharType="))
             {
                 case "begin": _openFields.Add((new MemoryStream(), false)); break;
-                case "separate" when _openFields.Count > 0: _openFields[^1] = (_openFields[^1].instruction, true); break;
+                case "separate" when _openFields.Count > 0: _openFields[_openFields.Count - 1] = (_openFields[_openFields.Count - 1].instruction, true); break;
                 case "end" when _openFields.Count > 0: _openFields.RemoveAt(_openFields.Count - 1); break;
             }
             return;
