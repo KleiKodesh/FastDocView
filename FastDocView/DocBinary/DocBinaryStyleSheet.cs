@@ -30,7 +30,7 @@ public sealed class DocBinaryStyleSheet
 
     public WordParagraphFormatting DocumentDefaults { get; } = new()
     {
-        RunFormatting = new WordRunFormatting { FontSizeHalfPoints = 20, FontName = "Times New Roman" },
+        RunFormatting = new WordRunFormatting { FontSizeHalfPoints = 20, FontName = "Times New Roman", HasComplexScriptBoldItalic = true },
     };
 
     public DocBinaryStyleSheet(Stream tableStream, (uint offset, uint length) location)

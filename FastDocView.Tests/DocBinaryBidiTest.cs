@@ -32,6 +32,22 @@ public static class DocBinaryBidiTest
         css = Css(Sprm(0x2441, 1), Sprm16(0x845E, 720));
         TestReport.Check(css.Contains("margin-inline-start:36pt;"), $"bidi + logical left indent stays start ({css})");
 
+        // Right-to-left runs draw with sprmCFBoldBi / sprmCFItalicBi, not sprmCFBold / sprmCFItalic (sample .doc: list
+        // items whose RTL runs carry sprmCFBold 0x81 show regular in LibreOffice's rendering).
+        css = RunCss(Sprm(0x085A, 1), Sprm(0x0835, 1), Sprm(0x0836, 1));
+        TestReport.Check(!css.Contains("bold") && !css.Contains("italic"), $"rtl run with ascii bold / italic only draws regular ({css})");
+        css = RunCss(Sprm(0x085A, 1), Sprm(0x085C, 1), Sprm(0x085D, 1));
+        TestReport.Check(css.Contains("font-weight:bold;") && css.Contains("font-style:italic;"), $"rtl run with bold / italic bi draws bold italic ({css})");
+        css = RunCss(Sprm(0x0835, 1), Sprm(0x085D, 1));
+        TestReport.Check(css.Contains("font-weight:bold;") && !css.Contains("italic"), $"ltr run uses the ascii set ({css})");
+    }
+
+    private static string RunCss(params byte[][] sprms)
+    {
+        byte[] grpprl = sprms.SelectMany(sprm => sprm).ToArray();
+        var formatting = new WordRunFormatting();
+        DocBinaryPropertyModifiers.ApplyCharacterSprms(formatting, grpprl, 0, grpprl.Length);
+        return formatting.ToCss();
     }
 
     private static string Css(params byte[][] sprms)

@@ -71,12 +71,16 @@ public static class DocBinaryPropertyModifiers
     public static void ApplyCharacterSprms(WordRunFormatting formatting, byte[] grpprl, int start, int length, WordRunFormatting? styleBaseline = null,
                                            DocBinaryFontTable? fonts = null)
     {
+        formatting.HasComplexScriptBoldItalic = true;   // .doc keeps the two sets apart (see WordRunFormatting)
         foreach ((ushort opcode, int operandAt, int operandLength) in Sprms(grpprl, start, length))
         {
             switch (opcode)
             {
-                case 0x0835: case 0x085C: formatting.IsBold = Toggle(grpprl[operandAt], formatting.IsBold, styleBaseline?.IsBold); break;
-                case 0x0836: case 0x085D: formatting.IsItalic = Toggle(grpprl[operandAt], formatting.IsItalic, styleBaseline?.IsItalic); break;
+                case 0x0835: formatting.IsBold = Toggle(grpprl[operandAt], formatting.IsBold, styleBaseline?.IsBold); break;
+                case 0x0836: formatting.IsItalic = Toggle(grpprl[operandAt], formatting.IsItalic, styleBaseline?.IsItalic); break;
+                // sprmCFBoldBi / sprmCFItalicBi: the complex-script set, used by right-to-left runs (sprmids.hxx 0x085C / 0x085D)
+                case 0x085C: formatting.IsBoldComplexScript = Toggle(grpprl[operandAt], formatting.IsBoldComplexScript, styleBaseline?.IsBoldComplexScript); break;
+                case 0x085D: formatting.IsItalicComplexScript = Toggle(grpprl[operandAt], formatting.IsItalicComplexScript, styleBaseline?.IsItalicComplexScript); break;
                 case 0x0837: formatting.IsStrikethrough = Toggle(grpprl[operandAt], formatting.IsStrikethrough, styleBaseline?.IsStrikethrough); break;
                 case 0x083C: formatting.IsHidden = Toggle(grpprl[operandAt], formatting.IsHidden, styleBaseline?.IsHidden); break;
                 case 0x085A: formatting.IsRightToLeft = grpprl[operandAt] != 0; break;
