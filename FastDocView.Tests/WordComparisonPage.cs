@@ -8,7 +8,7 @@ namespace FastDocView.Tests;
 /// <summary>
 /// Our side of the Word fidelity comparison (tools in NOTES.md, "Word comparison"): reads the paragraph texts Word
 /// reported for the sampled pages (word.json from wordref.ps1), finds the blocks that hold them by reading the
-/// document window by window in order, and writes a static page — the document stylesheet plus those blocks — at
+/// document window by window in order, and writes a static page - the document stylesheet plus those blocks - at
 /// the column width of Word's text area, for the browser side to measure. Writes a match map beside it.
 /// </summary>
 public static partial class WordComparisonPage
@@ -95,7 +95,7 @@ public static partial class WordComparisonPage
         Console.WriteLine($"  {matched}/{targets.Count} Word paragraphs matched to blocks, {blockHtml.Count} blocks written");
     }
 
-    /// <summary>Letters and digits only — the text both sides agree on (no list labels, spaces, marks or field codes).</summary>
+    /// <summary>Letters and digits only - the text both sides agree on (no list labels, spaces, marks or field codes).</summary>
     public static string Normalize(string text)
     {
         var builder = new StringBuilder(text.Length);

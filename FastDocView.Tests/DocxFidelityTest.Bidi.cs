@@ -10,7 +10,7 @@ public static partial class DocxFidelityTest
     /// </summary>
     private static void RunDirection()
     {
-        const string hebrew = "אבג דה";
+        const string hebrew = "\u05D0\u05D1\u05D2 \u05D3\u05D4";
         foreach (string punctuation in new[] { "(", ")", ":", "\"", ".", "'" })
         {
             string text = punctuation + hebrew + punctuation;
@@ -22,7 +22,14 @@ public static partial class DocxFidelityTest
             TestReport.Check(blocks[1].Contains("dir=\"rtl\"") && !blocks[1].Contains("unicode-bidi"),
                 $"rtl paragraph: rtl run with '{punctuation}' needs no embedding");
         }
-        List<string> plain = RenderAll("run-direction-ltr", $"<w:p><w:r><w:t xml:space=\"preserve\">(abc) {"אב"}:</w:t></w:r></w:p>");
+        // a text box's own (right-to-left) paragraph must not leave its direction behind for the outer paragraph's runs
+        string box = "<w:r><w:drawing><wp:inline xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\"><w:txbxContent>"
+            + "<w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:rtl/></w:rPr><w:t>\u05D0</w:t></w:r></w:p></w:txbxContent></wp:inline></w:drawing></w:r>";
+        List<string> boxed = RenderAll("run-direction-text-box",
+            $"<w:p><w:r><w:t xml:space=\"preserve\">ltr </w:t></w:r>{box}<w:r><w:rPr><w:rtl/></w:rPr><w:t>\u05D1):</w:t></w:r></w:p>");
+        TestReport.Check(boxed[0].IndexOf("unicode-bidi:embed;direction:rtl;", boxed[0].IndexOf("text-box", StringComparison.Ordinal), StringComparison.Ordinal) > 0,
+            "ltr paragraph: an rtl run after a text box with an rtl paragraph is still an rtl embedding");
+        List<string> plain = RenderAll("run-direction-ltr", $"<w:p><w:r><w:t xml:space=\"preserve\">(abc) {"\u05D0\u05D1"}:</w:t></w:r></w:p>");
         TestReport.Check(!plain[0].Contains("unicode-bidi"), "ltr paragraph: a run without w:rtl is not embedded");
     }
 

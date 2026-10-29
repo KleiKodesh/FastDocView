@@ -653,3 +653,30 @@ writerfilter/dmapper and Word 16 (COM / PDF export of synthetic files). Regressi
   paragraph end, not per wrapped line; CSS has one dash pattern and no double wave.
 - Demo rig ports: FASTDOCVIEW_DEV_URL / FASTDOCVIEW_DEMO_PORT / FASTDOCVIEW_DEMO_URL (defaults 5188 / 5189). On the
   real .docx the liveCheck reload-anchor checks and notesCheck "document has notes" fail on master as well (pre-existing).
+
+## Rendering comparison against LibreOffice's PDF (branch work/word-compare, 2026-10-29)
+
+Reference = LibreOffice headless (`soffice --convert-to pdf`, private `-env:UserInstallation` profile, below-normal
+priority) - user's decision; Word COM was tried first and paginating the 40 MB .doc did not finish in 15 minutes.
+Scripts (scratchpad, not in the repo): `ref.py` (convert + sample pages + PyMuPDF line runs: bbox, font, size, flags;
+pieces of one visual line merged), `--word-compare-page` (harness: blocks holding the sampled lines, written as a
+static page at the reference text width), `measure.mjs` (Playwright: per paragraph computed direction, alignment,
+dominant font / size / weight / style by letters, line boxes), `compare.py` (match lines to paragraphs by letters;
+classes: placement, indent per side relative to the page's least indented paragraph, font family / size / bold /
+italic; side-by-side PNGs), `report.py` (HTML report, before / after).
+
+Fixed causes (each with a harness check):
+- sprmPJc80 and sprmPDxaLeft80 / sprmPDxaRight80 are physical left / right ([MS-DOC] 2.6.2), sprmPJc and
+  sprmPDxaLeft / sprmPDxaRight logical; all were read as start / end, so RTL paragraphs had their indent on the
+  wrong side (`DocBinaryBidiTest`).
+- sprmCFBoldBi / sprmCFItalicBi were merged into bold / italic; a right-to-left run draws with the Bi set only
+  (`WordRunFormatting.EffectiveIsBold`).
+- A right-to-left run in a left-to-right paragraph (w:rtl, sprmCFBiDi, \rtlch) is laid out right to left with its
+  punctuation (ECMA-376 1st ed. rtl; RTF 1.5 \rtlch): rendered as `unicode-bidi:embed;direction:rtl` - an embedding,
+  not a `dir` span (isolate), so consecutive RTL runs keep one right-to-left order.
+
+Known limits of the reference: LibreOffice stops drawing all formatting (underline, bold, list labels) in the .doc
+sample from about page 1900; `compare.py` reports differences after such a cliff apart. LibreOffice picks the
+complex-script font / size / weight by the characters' script; Word (checked for .docx, LEARNINGS 2026-10-28/29)
+by the run's rtl flag - font-family / size differences on Hebrew runs without sprmCFBiDi / w:rtl are that
+disagreement until checked in Word.

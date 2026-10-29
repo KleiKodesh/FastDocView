@@ -724,6 +724,7 @@ public sealed class DocxBlockHtmlRenderer
         List<DocxField> outerFields = new(_openFields);
         _activeLinkOpenTag = null;
         _openFields.Clear();
+        bool outerIsRightToLeft = _isParagraphRightToLeft;   // the text box's own paragraphs set it; the outer runs need theirs back
         _textBoxDepth++;
         foreach (XElement textBox in textBoxes)
         {
@@ -736,6 +737,7 @@ public sealed class DocxBlockHtmlRenderer
         _openFields.Clear();
         _openFields.AddRange(outerFields);
         _textBoxDepth--;
+        _isParagraphRightToLeft = outerIsRightToLeft;
         _previousStyleKey = previous;
     }
 
