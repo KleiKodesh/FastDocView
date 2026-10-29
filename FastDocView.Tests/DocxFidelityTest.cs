@@ -34,6 +34,8 @@ public static partial class DocxFidelityTest
         yield return BorderGroups;
         yield return DeletedMarksRowsAndCells;
         yield return CompatibilityLayout;
+        yield return RunDirection;
+        yield return RtfRunDirection;
     }
 
     /// <summary>Writes a minimal package and returns every block's HTML.</summary>

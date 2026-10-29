@@ -12,6 +12,17 @@ public sealed class WordRunFormatting
 {
     public bool IsBold;
     public bool IsItalic;
+    /// <summary>
+    /// .doc: the complex-script bold / italic (sprmCFBoldBi / sprmCFItalicBi), kept apart from sprmCFBold / sprmCFItalic;
+    /// a right-to-left / complex-script run draws with these ([MS-DOC] 2.6.1; LibreOffice ww8par6.cxx Read_BoldBiDiUsw maps
+    /// them to the CTL weight / posture only). .docx resolves the same choice through its toggle layers instead.
+    /// </summary>
+    public bool HasComplexScriptBoldItalic, IsBoldComplexScript, IsItalicComplexScript;
+
+    /// <summary>The bold this run draws with.</summary>
+    public bool EffectiveIsBold => HasComplexScriptBoldItalic && UsesComplexScriptProperties ? IsBoldComplexScript : IsBold;
+    /// <summary>The italic this run draws with.</summary>
+    public bool EffectiveIsItalic => HasComplexScriptBoldItalic && UsesComplexScriptProperties ? IsItalicComplexScript : IsItalic;
     public bool IsUnderlined;
     public bool IsUnderlineWordsOnly;       // w:u words: no line under spaces (ST_Underline)
     public string? UnderlineStyleCss;       // CSS text-decoration-style for the underline (double, dotted, dashed, wavy); null = solid
@@ -128,8 +139,9 @@ public sealed class WordRunFormatting
     public string ToCss(WordRunFormatting? baseline, WordDecorationOutput decorations = WordDecorationOutput.Combined)
     {
         var css = new StringBuilder();
-        if (baseline is null || IsBold != baseline.IsBold) css.Append(IsBold ? "font-weight:bold;" : baseline is null ? "" : "font-weight:normal;");
-        if (baseline is null || IsItalic != baseline.IsItalic) css.Append(IsItalic ? "font-style:italic;" : baseline is null ? "" : "font-style:normal;");
+        bool bold = EffectiveIsBold, italic = EffectiveIsItalic;
+        if (baseline is null || bold != baseline.EffectiveIsBold) css.Append(bold ? "font-weight:bold;" : baseline is null ? "" : "font-weight:normal;");
+        if (baseline is null || italic != baseline.EffectiveIsItalic) css.Append(italic ? "font-style:italic;" : baseline is null ? "" : "font-style:normal;");
         AppendDecorations(css, decorations);
         string emphasis = EmphasisCss();
         if (emphasis.Length > 0 && (baseline is null || emphasis != baseline.EmphasisCss())) css.Append(emphasis);

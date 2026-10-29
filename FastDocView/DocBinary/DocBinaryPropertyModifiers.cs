@@ -33,10 +33,12 @@ public static class DocBinaryPropertyModifiers
                         3 or 4 or 5 => WordParagraphAlignment.Justify,
                         _ => WordParagraphAlignment.Start,
                     };
+                    formatting.IsAlignmentPhysical = opcode == 0x2403;   // sprmPJc80 is physical, sprmPJc logical ([MS-DOC] 2.6.2)
                     break;
                 case 0x2441: formatting.IsRightToLeft = grpprl[operandAt] != 0; formatting.RunFormatting.IsRightToLeft = formatting.IsRightToLeft; break;
-                case 0x840F: case 0x845E: formatting.LeftIndentTwips = BitConverter.ToInt16(grpprl, operandAt); break;
-                case 0x840E: case 0x845D: formatting.RightIndentTwips = BitConverter.ToInt16(grpprl, operandAt); break;
+                // sprmPDxaLeft80 / sprmPDxaRight80 are physical left / right, sprmPDxaLeft / sprmPDxaRight logical ([MS-DOC] 2.6.2)
+                case 0x840F: case 0x845E: formatting.LeftIndentTwips = BitConverter.ToInt16(grpprl, operandAt); formatting.IsLeftIndentPhysical = opcode == 0x840F; break;
+                case 0x840E: case 0x845D: formatting.RightIndentTwips = BitConverter.ToInt16(grpprl, operandAt); formatting.IsRightIndentPhysical = opcode == 0x840E; break;
                 case 0x8411: case 0x8460: formatting.FirstLineIndentTwips = BitConverter.ToInt16(grpprl, operandAt); break;
                 case 0xA413: formatting.SpaceBeforeTwips = BitConverter.ToUInt16(grpprl, operandAt); break;
                 case 0xA414: formatting.SpaceAfterTwips = BitConverter.ToUInt16(grpprl, operandAt); break;
@@ -69,12 +71,16 @@ public static class DocBinaryPropertyModifiers
     public static void ApplyCharacterSprms(WordRunFormatting formatting, byte[] grpprl, int start, int length, WordRunFormatting? styleBaseline = null,
                                            DocBinaryFontTable? fonts = null)
     {
+        formatting.HasComplexScriptBoldItalic = true;   // .doc keeps the two sets apart (see WordRunFormatting)
         foreach ((ushort opcode, int operandAt, int operandLength) in Sprms(grpprl, start, length))
         {
             switch (opcode)
             {
-                case 0x0835: case 0x085C: formatting.IsBold = Toggle(grpprl[operandAt], formatting.IsBold, styleBaseline?.IsBold); break;
-                case 0x0836: case 0x085D: formatting.IsItalic = Toggle(grpprl[operandAt], formatting.IsItalic, styleBaseline?.IsItalic); break;
+                case 0x0835: formatting.IsBold = Toggle(grpprl[operandAt], formatting.IsBold, styleBaseline?.IsBold); break;
+                case 0x0836: formatting.IsItalic = Toggle(grpprl[operandAt], formatting.IsItalic, styleBaseline?.IsItalic); break;
+                // sprmCFBoldBi / sprmCFItalicBi: the complex-script set, used by right-to-left runs (sprmids.hxx 0x085C / 0x085D)
+                case 0x085C: formatting.IsBoldComplexScript = Toggle(grpprl[operandAt], formatting.IsBoldComplexScript, styleBaseline?.IsBoldComplexScript); break;
+                case 0x085D: formatting.IsItalicComplexScript = Toggle(grpprl[operandAt], formatting.IsItalicComplexScript, styleBaseline?.IsItalicComplexScript); break;
                 case 0x0837: formatting.IsStrikethrough = Toggle(grpprl[operandAt], formatting.IsStrikethrough, styleBaseline?.IsStrikethrough); break;
                 case 0x083C: formatting.IsHidden = Toggle(grpprl[operandAt], formatting.IsHidden, styleBaseline?.IsHidden); break;
                 case 0x085A: formatting.IsRightToLeft = grpprl[operandAt] != 0; break;

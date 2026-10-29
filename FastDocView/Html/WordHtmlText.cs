@@ -18,6 +18,15 @@ public static class WordHtmlText
         html.Append('>');
     }
 
+    /// <summary>
+    /// CSS for a right-to-left run inside a left-to-right paragraph: ECMA-376 1st edition, rtl (Right To Left Text; read in the docx4java WordprocessingML reference) — the run's
+    /// contents, punctuation included, are laid out right to left (".three ,two ,one :This is a list"). An embedding, not
+    /// an isolate (a dir attribute on a span isolates in HTML): consecutive right-to-left runs and the neutrals between
+    /// them still order right to left as one stretch, as the Unicode bidi algorithm does for RLE..PDF.
+    /// </summary>
+    public static string RunDirectionCss(bool isRunRightToLeft, bool isParagraphRightToLeft)
+        => isRunRightToLeft && !isParagraphRightToLeft ? "unicode-bidi:embed;direction:rtl;" : "";
+
     /// <summary>A font face for a quoted CSS font-family inside a style attribute: quotes and markup characters dropped.</summary>
     public static string CssFontName(string face)
     {

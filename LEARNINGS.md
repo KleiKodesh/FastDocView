@@ -342,3 +342,23 @@ Append-only. Date, what we learned, what it changed.
   the first window (27-45 ms instead of ~5). Index tables must be arrays of structs / strings, not object graphs.
 - NetFree blocks API traffic that carries some Hebrew text: keep tool output ASCII (filter test output, use \uXXXX in
   code and tests).
+
+## 2026-10-29 - comparison against LibreOffice's PDF
+
+- **Word COM cannot paginate a 3,900-page .doc in a few minutes** (ComputeStatistics / page-range export ran
+  15 minutes and was killed). LibreOffice headless converts it in ~19 minutes once, then every comparison reuses the PDF.
+- **A first soffice run with a new profile exits early** (profile set-up restarts the process): the first conversion
+  "finished" in 11 s without a PDF. Run it again; and two soffice calls on one profile queue behind each other.
+- **MuPDF splits an RTL visual line into pieces** at direction changes; merge pieces by vertical band before reading
+  line edges, but match text by the pieces (merged text order is not reliable).
+- **Line-edge heuristics need the paragraph's own median edges**: hanging list labels and first-line indents move
+  the extremes; a page-wide column from the most frequent outer edge (3 pt buckets) survives headers and labels.
+- **LibreOffice is not a safe reference for the whole .doc sample**: from ~page 1900 it draws no underline, bold or
+  list label at all. Count drawings per sampled page; a document-wide cliff marks the reference, not us.
+- **"Dominant run" must be counted by letters across text nodes**, not the longest node: a short bold lead-in in one
+  node beat a regular body split over many nodes.
+- **Physical vs logical is per sprm, not per paragraph**: Word writes both sprmPJc80 and sprmPJc (agreeing), but the
+  80 indents alone are common; a "left" indent in an RTL paragraph is the end side.
+- **`dir` on an inline element is an isolate** (HTML's UA style sheet): fine for a single run, wrong for a sequence of
+  RTL runs inside an LTR paragraph - each becomes its own neutral island in LTR order. `unicode-bidi:embed` with
+  `direction:rtl` behaves like RLE..PDF and matches Word's run-level rtl.
