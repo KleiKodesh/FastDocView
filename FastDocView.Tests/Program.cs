@@ -87,6 +87,7 @@ for (int i = 0; i < args.Length; i++)
         case "--rtf-audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfAuditPaths.Add(args[++i]); break;
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
         case "--corpus-sample": corpusSample = int.Parse(args[++i]); break;   // a fixed-seed random sample of N corpus files (quick regression pass)
+        case "--word-compare-page": WordComparisonPage.Run(args[++i], args[++i], args[++i]); return 0;   // <document> <word.json> <out.html>: blocks matching Word's sampled paragraphs
         case "--list-labels-fallback": listLabelsFallback = args[++i]; break;   // a path list to scan for a .doc with lists when the --real ones have none
     }
 }
@@ -97,6 +98,8 @@ if (!skipSynthetic)
     DocxNumberingAndPolicyTest.Run();
     DocxThemeAndUnderlineTest.Run();
     DocxFidelityTest.Run();
+   
+   
     MalformedXmlRecoveryTest.Run();
     DocxIndexAndRenderTest.Run(blocks);
 }
