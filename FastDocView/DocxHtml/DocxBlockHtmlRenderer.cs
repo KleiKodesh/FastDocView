@@ -33,7 +33,9 @@ public sealed class DocxBlockHtmlRenderer
     /// <summary>settings.xml compatibility option w:ulTrailSpace: underline the spaces that end a paragraph too.</summary>
     private bool UnderlinesTrailingSpaces => _styles.Compatibility.UnderlinesTrailingSpaces;            // inside a text box paragraphs become block spans (a <p> may not hold a <p>)
 
-    private readonly IReadOnlyDictionary<string, string>? _hyperlinkTargets;   // the main part's r:id → URL (notes have their own rels)
+    private readonly IReadOnlyDictionary<string, string>? _hyperlinkTargets;   // the main part's r:id -> URL
+    private readonly IReadOnlyDictionary<string, string>? _footnoteHyperlinkTargets;   // footnotes.xml.rels (a note's r:ids point there)
+    private readonly IReadOnlyDictionary<string, string>? _endnoteHyperlinkTargets;    // endnotes.xml.rels
     private IReadOnlyDictionary<string, string>? _currentHyperlinkTargets;      // the relationships of the part being rendered
     private string? _activeLinkOpenTag;                                         // inside a w:hyperlink or a HYPERLINK field result: its <a> tag
     private readonly List<DocxField> _openFields = new();                       // complex fields begun in this block (w:fldChar begin … end)
@@ -45,11 +47,14 @@ public sealed class DocxBlockHtmlRenderer
         public string? LinkOpenTag;
     }
 
-    public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null, IReadOnlyDictionary<string, string>? hyperlinkTargets = null)
+    public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null, IReadOnlyDictionary<string, string>? hyperlinkTargets = null,
+                                 IReadOnlyDictionary<string, string>? footnoteHyperlinkTargets = null, IReadOnlyDictionary<string, string>? endnoteHyperlinkTargets = null)
     {
         _styles = styles;
         _noteLabels = noteLabels;
         _hyperlinkTargets = hyperlinkTargets;
+        _footnoteHyperlinkTargets = footnoteHyperlinkTargets;
+        _endnoteHyperlinkTargets = endnoteHyperlinkTargets;
     }
 
     /// <param name="listLabel">The label counted at index time ("3.", "ב."), or null when the block is not a list item.</param>
@@ -92,7 +97,8 @@ public sealed class DocxBlockHtmlRenderer
         _currentNoteLabel = label;
         _currentNoteKind = kind;
         _previousStyleKey = null;
-        _currentHyperlinkTargets = null;          // a note's r:ids point into footnotes.xml.rels / endnotes.xml.rels, not loaded: external links show as text
+        // a note's r:ids point into its own part's relationships (footnotes.xml.rels / endnotes.xml.rels)
+        _currentHyperlinkTargets = kind == WordDocumentNoteKind.Footnote ? _footnoteHyperlinkTargets : _endnoteHyperlinkTargets;
         _openFields.Clear();
         Run(RenderBlocks(note.Elements(), html));
         _activeLinkOpenTag = null;
@@ -433,7 +439,15 @@ public sealed class DocxBlockHtmlRenderer
     private static string? HyperlinkFieldTag(string instruction)
     {
         List<string> parts = FieldInstructionParts(instruction);
-        if (parts.Count == 0 || !parts[0].Equals("HYPERLINK", StringComparison.OrdinalIgnoreCase)) return null;
+        if (parts.Count == 0) return null;
+        // Cross-references: REF / PAGEREF / NOTEREF <bookmark> with \h link to the bookmark (ECMA-376 REF field, docx4java
+        // mirror: "\h Creates a hyperlink to the bookmarked paragraph"; Microsoft's PAGEREF help says the same of its \h);
+        // without \h Word shows the result but it is not a link.
+        if (parts[0].ToUpperInvariant() is "REF" or "PAGEREF" or "NOTEREF")
+            return parts.Count > 1 && !parts[1].StartsWith("\\", StringComparison.Ordinal) && parts.Skip(2).Any(part => part.Equals("\\h", StringComparison.OrdinalIgnoreCase))
+                ? LinkTag("#" + parts[1], null)
+                : null;
+        if (!parts[0].Equals("HYPERLINK", StringComparison.OrdinalIgnoreCase)) return null;
         string url = "", anchors = "", tooltip = "";
         for (int i = 1; i < parts.Count; i++)
         {
@@ -485,12 +499,19 @@ public sealed class DocxBlockHtmlRenderer
         if (string.IsNullOrWhiteSpace(target)) return null;
         target = target!.Trim();
         string href;
+        bool isAppLink = false;
         if (target.StartsWith("#", StringComparison.Ordinal)) href = "#" + BookmarkElementId(target.Substring(1));
         else if (Uri.TryCreate(target, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https" or "mailto") href = uri.AbsoluteUri;
+        // links into a library app (Otzaria, Zayit, KitveiHakodesh's own): the host routes them itself, in place
+        else if (Uri.TryCreate(target, UriKind.Absolute, out Uri? appUri) && appUri.Scheme is "otzaria" or "zayit" or "kitveihakodeshapp" or "seforimapp")
+        {
+            href = target;
+            isAppLink = true;
+        }
         else return null;
-        var tag = new StringBuilder("<a class=\"link\" href=\"").Append(WordHtmlText.Encode(href)).Append('"');
+        var tag = new StringBuilder(isAppLink ? "<a class=\"link app-link\" data-app-link=\"1\" href=\"" : "<a class=\"link\" href=\"").Append(WordHtmlText.Encode(href)).Append('"');
         if (!string.IsNullOrEmpty(tooltip)) tag.Append(" title=\"").Append(WordHtmlText.Encode(tooltip!)).Append('"');
-        if (!href.StartsWith("#", StringComparison.Ordinal)) tag.Append(" rel=\"noopener noreferrer\" target=\"_blank\"");
+        if (!href.StartsWith("#", StringComparison.Ordinal) && !isAppLink) tag.Append(" rel=\"noopener noreferrer\" target=\"_blank\"");
         return tag.Append('>').ToString();
     }
 

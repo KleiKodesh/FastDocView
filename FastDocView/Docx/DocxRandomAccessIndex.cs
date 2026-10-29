@@ -14,7 +14,7 @@ namespace FastDocView.Docx;
 public sealed class DocxRandomAccessIndex : IDocxBlockTable
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 9;     // 6: list labels carry their suffix and level CSS; 7: fields open at each block start; 8: section text widths; 9: list labels carry the level pPr and lvlJc
+    private const int FormatVersion = 11;     // 6: list labels carry their suffix and level CSS; 7: fields open at each block start; 8: section text widths; 9 (indent-parity): list labels carry the level pPr and lvlJc; 10 (master): bookmarks (name -> block); 11: both
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -44,6 +44,32 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
     /// <summary>Per section: its last block (inclusive) and its page text width in twips (see DocxBodyBlockScanner).</summary>
     public int[] SectionLastBlocks { get; private set; } = [];
     public int[] SectionTextWidths { get; private set; } = [];
+
+    /// <summary>Bookmarks in body order: name and the block it marks (see DocxBodyBlockScanner.BookmarkNames).</summary>
+    public string[] BookmarkNames { get; private set; } = [];
+    public int[] BookmarkBlocks { get; private set; } = [];
+    private Dictionary<string, int>? _bookmarkLookup;
+
+    internal DocxRandomAccessIndex WithBookmarks(string[] names, int[] blocks)
+    {
+        BookmarkNames = names;
+        BookmarkBlocks = blocks;
+        _bookmarkLookup = null;
+        return this;
+    }
+
+    /// <summary>The block a bookmark marks (the first one of that name, as Word resolves duplicates), or null.</summary>
+    public int? BlockOfBookmark(string name)
+    {
+        if (_bookmarkLookup is null)
+        {
+            var lookup = new Dictionary<string, int>(BookmarkNames.Length, StringComparer.Ordinal);
+            for (int i = 0; i < BookmarkNames.Length; i++)
+                if (!lookup.ContainsKey(BookmarkNames[i])) lookup[BookmarkNames[i]] = Math.Min(BookmarkBlocks[i], Math.Max(0, BlockStartOffsets.Length - 1));
+            _bookmarkLookup = lookup;
+        }
+        return _bookmarkLookup.TryGetValue(name, out int block) ? block : null;
+    }
 
     internal DocxRandomAccessIndex WithSections(int[] sectionLastBlocks, int[] sectionTextWidths)
     {
@@ -186,6 +212,9 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         IndexBinaryArrays.Write(writer, BlockOpenFieldIds);
         IndexBinaryArrays.Write(writer, SectionLastBlocks);
         IndexBinaryArrays.Write(writer, SectionTextWidths);
+        writer.Write(BookmarkNames.Length);
+        foreach (string name in BookmarkNames) writer.Write(name);
+        IndexBinaryArrays.Write(writer, BookmarkBlocks);
         writer.Flush();
     }
 
@@ -238,11 +267,17 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         int[] sectionTextWidths = IndexBinaryArrays.Read<int>(reader);
         if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)starts.Length))
             throw new InvalidDataException("Word index: section table does not match the blocks.");
+        var bookmarkNames = new string[reader.ReadInt32()];
+        for (int i = 0; i < bookmarkNames.Length; i++) bookmarkNames[i] = reader.ReadString();
+        int[] bookmarkBlocks = IndexBinaryArrays.Read<int>(reader);
+        if (bookmarkBlocks.Length != bookmarkNames.Length || bookmarkBlocks.Any(block => block < 0 || block > starts.Length))
+            throw new InvalidDataException("Word index: bookmark table does not match the blocks.");
 
         return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints,
                                          starts, kinds, textLengths, styleIds, styleIdTable, labelIds, listLabels, headings, noteReferences,
                                          footnotesPart, endnotesPart).WithOpenFields(blockOpenFieldIds, openFieldStacks)
-                                                                      .WithSections(sectionLastBlocks, sectionTextWidths);
+                                                                      .WithSections(sectionLastBlocks, sectionTextWidths)
+                                                                      .WithBookmarks(bookmarkNames, bookmarkBlocks);
     }
 
     // ── shared record layouts (also used by DocxNotesPartIndex) ───────────────────────

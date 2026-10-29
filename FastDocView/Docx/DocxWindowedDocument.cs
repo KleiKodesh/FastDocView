@@ -182,7 +182,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _styles = parts.Styles;
         _noteFormats = parts.NoteNumberFormats;
         RecordNewNoteReferences();
-        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets);
+        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets);
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
@@ -346,6 +346,27 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private WordDocumentHeading[]? _headingsSnapshot;
 
     /// <summary>Page text width per section from the index; while scanning, the sections ended so far.</summary>
+    public int? FindBookmark(string name)
+    {
+        lock (_readLock)
+        {
+            if (_index is { } index) return index.BlockOfBookmark(name);
+            DocxIncrementalIndexBuilder builder = _builder!;
+            try
+            {
+                // scan on only until the bookmark turns up (a target near the start costs nothing more)
+                while (true)
+                {
+                    if (builder.FindKnownBookmark(name) is { } block) return block;
+                    if (!builder.AdvanceOneChunk()) break;
+                }
+                CompleteIndexLocked();
+                return _index!.BlockOfBookmark(name);
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
     public IReadOnlyList<WordDocumentSection> Sections
     {
         get

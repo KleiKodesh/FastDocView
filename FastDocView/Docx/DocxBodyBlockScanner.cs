@@ -16,7 +16,7 @@ internal sealed class DocxBodyBlockScanner
 {
     private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData, DocumentType }
 
-    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, DeletedContent, SectionProperties, PageSize, PageMargins }
+    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, DeletedContent, SectionProperties, PageSize, PageMargins, BookmarkStart }
 
     private const int MaxRootTagBytes = 1 << 16;
     private const int MaxHeadingTextBytes = 600;
@@ -30,6 +30,7 @@ internal sealed class DocxBodyBlockScanner
         ("w:footnoteReference"u8.ToArray(), KnownTag.FootnoteReference), ("w:endnoteReference"u8.ToArray(), KnownTag.EndnoteReference),
         ("w:del"u8.ToArray(), KnownTag.DeletedContent), ("w:moveFrom"u8.ToArray(), KnownTag.DeletedContent),
         ("w:fldChar"u8.ToArray(), KnownTag.FieldCharacter), ("w:instrText"u8.ToArray(), KnownTag.FieldInstruction),
+        ("w:bookmarkStart"u8.ToArray(), KnownTag.BookmarkStart),
         ("w:sectPr"u8.ToArray(), KnownTag.SectionProperties), ("w:pgSz"u8.ToArray(), KnownTag.PageSize), ("w:pgMar"u8.ToArray(), KnownTag.PageMargins),
     ];
 
@@ -101,6 +102,9 @@ internal sealed class DocxBodyBlockScanner
     public List<DocxListLabel> ListLabels { get; } = new();
     public List<WordDocumentHeading> Headings { get; } = new();
     public List<DocxNoteReference> NoteReferences { get; } = new();
+    /// <summary>Bookmarks (w:bookmarkStart w:name) and the block each one is in - links, TOC entries and REF fields jump by them.</summary>
+    public List<string> BookmarkNames { get; } = new();
+    public List<int> BookmarkBlocks { get; } = new();
     public long BodyEndOffset { get; private set; } = -1;
     public string RootOpenTag => Encoding.UTF8.GetString(_rootOpenTag.ToArray());
 
@@ -345,6 +349,7 @@ internal sealed class DocxBodyBlockScanner
             KnownTag.ParagraphStyle => _depth == _bodyDepth + 2,
             KnownTag.NumberingId or KnownTag.NumberingLevel => _depth == _bodyDepth + 3,
             KnownTag.FootnoteReference or KnownTag.EndnoteReference or KnownTag.FieldCharacter => _depth > _bodyDepth,
+            KnownTag.BookmarkStart => _depth >= _bodyDepth,      // also between paragraphs (a body child of its own)
             KnownTag.PageSize or KnownTag.PageMargins => _sectionDepth >= 0 && _depth == _sectionDepth + 1,
             _ => false,
         };
@@ -378,7 +383,12 @@ internal sealed class DocxBodyBlockScanner
 
         if (_depth == 0) _isRootTagDone = true;
 
-        if (_bodyDepth >= 0 && _depth == _bodyDepth) OnBodyChildStarted();
+        if (_bodyDepth >= 0 && _depth == _bodyDepth)
+        {
+            OnBodyChildStarted();
+            // a bookmark between paragraphs is a body child: its block exists now, its name is read the same way
+            if (_isCapturingAttributes && _tag == KnownTag.BookmarkStart) OnCapturedAttribute(Encoding.ASCII.GetString(_tagAttributes.GetBuffer(), 0, (int)_tagAttributes.Length));
+        }
         else if (_isCapturingAttributes) OnCapturedAttribute(Encoding.ASCII.GetString(_tagAttributes.GetBuffer(), 0, (int)_tagAttributes.Length));
 
         // A document with several w:body elements (Apache POI's MultipleBodyBug.docx; POI's
@@ -430,6 +440,17 @@ internal sealed class DocxBodyBlockScanner
 
     private void OnCapturedAttribute(string attributes)
     {
+        if (_tag == KnownTag.BookmarkStart)
+        {
+            // The block the bookmark is in. One between paragraphs is a body child, scanned as an (empty) block of its own
+            // right before the paragraph it marks, so a jump to it lands there. _GoBack is Word's "last edit position", not a
+            // target. Names are attribute text: entities decoded.
+            string? name = AttributeValue(attributes, "w:name=");
+            if (string.IsNullOrEmpty(name) || name!.StartsWith("_GoBack", StringComparison.Ordinal)) return;
+            BookmarkNames.Add(System.Net.WebUtility.HtmlDecode(name));
+            BookmarkBlocks.Add(Math.Max(0, BlockStartOffsets.Count - 1));
+            return;
+        }
         if (BlockStyleIds.Count == 0) return;
         if (_tag == KnownTag.FieldCharacter)
         {

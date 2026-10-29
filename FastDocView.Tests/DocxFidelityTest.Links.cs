@@ -46,6 +46,51 @@ public static partial class DocxFidelityTest
         TestReport.Check(RenderAll("links-deleted-end", deletedEnd)[1].Contains(">b</a>"), "a deleted field end does not close the link for the next block");
         string boxInLink = "<w:p><w:hyperlink r:id=\"rIdL1\"><w:r><w:t>x</w:t><w:drawing><wp:inline xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\"><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent></wp:inline></w:drawing></w:r></w:hyperlink></w:p>";
         string boxHtml = RenderAll("links-textbox", boxInLink, extraDocumentRelationships: relationships)[0];
+        // cross-references (REF / PAGEREF / NOTEREF \h -> the bookmark), app links (Otzaria etc. routed by the host), bookmark lookup
+        const string appRelationships = """
+            <Relationship Id="rIdA1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="otzaria://open/book/12?index=3" TargetMode="External"/>
+            """;
+        string crossBody = "<w:bookmarkStart w:id=\"1\" w:name=\"Between\"/><w:bookmarkEnd w:id=\"1\"/>"
+                         + "<w:p>" + Text("first") + "</w:p>"
+                         + "<w:p><w:bookmarkStart w:id=\"2\" w:name=\"_Toc1\"/>" + Text("chapter") + "<w:bookmarkEnd w:id=\"2\"/></w:p>"
+                         + "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> REF _Toc1 \\h </w:instrText></w:r>"
+                         + "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + Text("see chapter") + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>"
+                         + "<w:p><w:fldSimple w:instr=\" PAGEREF _Toc1 \">" + Text("7") + "</w:fldSimple></w:p>"
+                         + "<w:p><w:hyperlink r:id=\"rIdA1\">" + Text("in otzaria") + "</w:hyperlink></w:p>"
+                         + "<w:p><w:bookmarkStart w:id=\"3\" w:name=\"_GoBack\"/><w:bookmarkEnd w:id=\"3\"/>" + Text("last") + "</w:p>";
+        List<string> cross = RenderAll("links-cross", crossBody, extraDocumentRelationships: appRelationships);
+        string Holding(string text) => cross.Single(block => block.Contains(text));
+        int BlockHolding(string text) => cross.FindIndex(block => block.Contains(text));
+        TestReport.Check(Holding("see chapter").Contains("href=\"#bookmark-_Toc1\"") && Holding("see chapter").Contains(">see chapter</a>"), "REF \\h becomes a link to its bookmark");
+        TestReport.Check(!Holding(">7<").Contains("<a "), "PAGEREF without \\h is not a link (as in Word)");
+        TestReport.Check(Holding("in otzaria").Contains("class=\"link app-link\"") && Holding("in otzaria").Contains("href=\"otzaria://open/book/12?index=3\"") && !Holding("in otzaria").Contains("target=\"_blank\""),
+                         "an otzaria:// link is kept as an app link for the host to route");
+        foreach (bool onDemand in new[] { false, true })
+        {
+            string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-links-cross.docx");
+            var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-bookmarks-" + onDemand),
+                                               ForcedMode = WordIndexMode.Sidecar, IndexesOnDemand = onDemand };
+            string sidecar = policy.IndexPathFor(path);
+            if (File.Exists(sidecar)) File.Delete(sidecar);
+            using (IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy))
+            {
+                TestReport.Check(document.FindBookmark("_Toc1") == BlockHolding("chapter</p>") && document.FindBookmark("Between") is { } between && between < BlockHolding(">first<") && document.FindBookmark("_GoBack") is null
+                                 && document.FindBookmark("missing") is null, $"bookmark lookup ({(onDemand ? "on-demand" : "complete")} index): block, between-blocks, _GoBack skipped, unknown");
+            }
+            using (IWordWindowedDocument reopened = WordWindowedDocumentOpener.Open(path, policy))
+                TestReport.Check(reopened.FindBookmark("_Toc1") == BlockHolding("chapter</p>"), "bookmark lookup after a reopen from the saved index");
+        }
+
+        // a link inside a footnote: its r:id is in footnotes.xml.rels (the note part's own relationships)
+        const string footnoteRelationships = """
+            <Relationship Id="rIdN1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.org/note" TargetMode="External"/>
+            """;
+        string noteBody = "<w:footnote w:id=\"1\"><w:p><w:r><w:footnoteRef/></w:r><w:hyperlink r:id=\"rIdN1\">" + Text("in note") + "</w:hyperlink></w:p></w:footnote>";
+        var notes = new List<string>();
+        RenderAll("links-footnote", "<w:p>" + Text("text") + "<w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>",
+                  footnotes: noteBody, footnoteRelationships: footnoteRelationships, noteHtml: notes);
+        TestReport.Check(notes.Count == 1 && notes[0].Contains("href=\"https://example.org/note\"") && notes[0].Contains(">in note</a>"),
+                         "a link inside a footnote resolves through footnotes.xml.rels");
         TestReport.Check(boxHtml.Split("<a ").Length - 1 == 1 && !boxHtml.Contains("<a class=\"link\" href=\"https://example.org/a?b=1&amp;c=2\" title") , "a text box inside a link is not wrapped in another link");
     }
 

@@ -291,6 +291,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     }
 
     /// <summary>Page text width per section (master pages, see <see cref="OdtPageSetup"/>); the known ones while scanning.</summary>
+    public int? FindBookmark(string name) => null;     // bookmarks not indexed for this format yet
     public IReadOnlyList<WordDocumentSection> Sections
     {
         get

@@ -72,7 +72,7 @@ view over SQLite.
 | `samples/` | the two real test files (דור המלקטים .doc 40 MB, .docx 87 MB body) — the demo's default |
 | `FastDocView.Tests` | console harness; must print ALL PASSED. `--real`, `--audit`, `--odt [N]`, `--text [N]`, `--mhtml [N]`, `--text-corpus <list>`, `--mime-scan <list>`, `--rtf [N]` (with `--corpus <list>`: the RTF corpus pass), `--rtf-audit`, `--rtf-profile`, `--corpus <list>`, `--huge N`, `--notes-streaming N` |
 | `FastDocView.DevServer` | C# localhost JSON host on 5188 (dev only; the real host will be the KitveiHakodesh service) |
-| `vue-demo` | **the live rig** — Vite on 5189 + the app's `WindowedScroller` (copied from `KitveiHakodesh/vue-frontend/src/components`, keep in sync — the copy carries one fix to port back: `landAt` re-lands on the new last row when fetching rows shrinks the count); `window.__wordDemo` hooks; `playwright/` checks |
+| `vue-demo` | **the live rig** - Vite on 5189 running the APP's own code: `@/` resolves to `KitveiHakodesh/vue-frontend/src` and Vue / Pinia / vue-i18n / VueUse / icons come from the app's node_modules (no copies - they drifted). `app.html` mounts the app's real `FastDocViewPage` (only the service transport is swapped: `src/appPage/fastDocViewDemoApi.ts` -> this repo's dev server); `index.html` is the older diagnostic page (`window.__wordDemo` hooks, `playwright/` checks). Library bugs are debugged here, alongside the app's own dev server. |
 | `FastDocView.Viewer` | old WinForms viewer — superseded, do not extend |
 
 ## Verifying
