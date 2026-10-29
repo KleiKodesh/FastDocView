@@ -277,7 +277,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         var result = new List<WordDocumentBlockHtml>(Math.Max(0, count));
         foreach ((int blockIndex, XElement element) in _reader.ReadBlocks(firstBlockIndex, count))
         {
-            (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), _blocks.ListLevelOf(blockIndex),
+            (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), _blocks.ListLevelOf(blockIndex), _blocks.ListLabelLayoutOf(blockIndex),
                                                                                        _blocks.NoteReferencesInBlocks(blockIndex, blockIndex), null);
             result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes));
         }

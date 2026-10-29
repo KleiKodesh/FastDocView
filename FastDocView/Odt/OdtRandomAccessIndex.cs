@@ -14,7 +14,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex : IOdtBlockTable
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 2;     // 2: section text widths
+    private const int FormatVersion = 3;     // 2: section text widths; 3: list label level geometry
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -30,6 +30,8 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
     public byte[] BlockListLevels { get; }                    // 255 = not a list paragraph
     public int[] BlockListLabelIds { get; }
     public string[] ListLabels { get; }
+    /// <summary>Per list label: its level geometry (<see cref="OdtListStyle.Level.Layout"/>), parallel to <see cref="ListLabels"/>.</summary>
+    public string[] ListLabelLayouts { get; init; } = [];
     public WordDocumentHeading[] Headings { get; }
     public OdtNoteReference[] NoteReferences { get; }        // body order
     /// <summary>Per section: its first block and its page text width in twips (see OdtPageSetup).</summary>
@@ -71,6 +73,12 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
     {
         int labelIndex = BlockListLabelIds[blockIndex];
         return labelIndex >= 0 ? ListLabels[labelIndex] : null;
+    }
+
+    public string ListLabelLayoutOf(int blockIndex)
+    {
+        int labelIndex = BlockListLabelIds[blockIndex];
+        return labelIndex >= 0 && labelIndex < ListLabelLayouts.Length ? ListLabelLayouts[labelIndex] : "";
     }
 
     /// <summary>The list depth (0-based) of a list paragraph, or -1.</summary>
@@ -119,6 +127,7 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         writer.Write(RootOpenTag);
         WriteStrings(writer, StyleSections);
         WriteStrings(writer, ListLabels);
+        WriteStrings(writer, ListLabelLayouts);
         IndexBinaryArrays.Write(writer, BlockStartOffsets);
         IndexBinaryArrays.Write(writer, BlockEndOffsets);
         IndexBinaryArrays.Write(writer, BlockKinds);
@@ -151,6 +160,8 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         string rootOpenTag = reader.ReadString();
         string[] styleSections = ReadStrings(reader);
         string[] listLabels = ReadStrings(reader);
+        string[] listLabelLayouts = ReadStrings(reader);
+        if (listLabelLayouts.Length != listLabels.Length) throw new InvalidDataException("OpenDocument index: list label geometry does not match the labels.");
         long[] starts = IndexBinaryArrays.Read<long>(reader);
         long[] ends = IndexBinaryArrays.Read<long>(reader);
         WordDocumentBlockKind[] kinds = IndexBinaryArrays.Read<WordDocumentBlockKind>(reader);
@@ -169,6 +180,7 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         return new OdtRandomAccessIndex(sourceLength, sourceTicks, isFlat, entry, checkpoints, rootOpenTag, styleSections,
                                         starts, ends, kinds, textLengths, listLevels, labelIds, listLabels, headings, notes)
         {
+            ListLabelLayouts = listLabelLayouts,
             SectionFirstBlocks = sectionFirstBlocks,
             SectionTextWidths = sectionTextWidths,
         };

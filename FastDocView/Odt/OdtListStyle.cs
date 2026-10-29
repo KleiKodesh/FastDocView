@@ -24,6 +24,14 @@ public sealed class OdtListStyle
         public string Suffix = "";
         public int StartValue = 1;
         public int DisplayLevels = 1;
+        /// <summary>
+        /// The level's label-alignment geometry (ODF 1.2 19.880 style:list-level-properties with
+        /// text:list-level-position-and-space-mode="label-alignment", 19.881 style:list-level-label-alignment): fo:margin-left,
+        /// fo:text-indent, text:list-tab-stop-position (twips) and text:label-followed-by, as
+        /// "margin,indent,tab,follow" (follow 0 listtab, 1 space, 2 nothing; tab -1 when absent); "" in the older
+        /// label-width-and-position mode, which is not modelled.
+        /// </summary>
+        public string Layout = "";
     }
 
     private readonly Level[] _levels = new Level[MaxLevels];
@@ -51,8 +59,22 @@ public sealed class OdtListStyle
                 level.BulletCharacter = bullet.Length == 0 || bullet[0] is >= '' and <= '' ? "•" : bullet;
             }
             else { level.IsBullet = true; level.BulletCharacter = "•"; }   // list-level-style-image: a plain bullet
+            level.Layout = LayoutOf(element.Element(style + "list-level-properties"));
             _levels[index] = level;
         }
+    }
+
+    private static string LayoutOf(XElement? properties)
+    {
+        XNamespace text = OdtStyleCascade.Text, style = OdtStyleCascade.Style, fo = OdtStyleCascade.Fo;
+        if (properties is null || (string?)properties.Attribute(text + "list-level-position-and-space-mode") != "label-alignment") return "";
+        XElement? alignment = properties.Element(style + "list-level-label-alignment");
+        if (alignment is null) return "";
+        int margin = OdtStyleCascade.Twips(alignment.Attribute(fo + "margin-left")) ?? 0;
+        int indent = OdtStyleCascade.Twips(alignment.Attribute(fo + "text-indent")) ?? 0;
+        int tab = OdtStyleCascade.Twips(alignment.Attribute(text + "list-tab-stop-position")) ?? -1;
+        int follow = (string?)alignment.Attribute(text + "label-followed-by") switch { "space" => 1, "nothing" => 2, _ => 0 };
+        return string.Join(",", margin, indent, tab, follow);
     }
 
     public Level LevelAt(int level) => _levels[Math.Max(0, Math.Min(MaxLevels - 1, level))];

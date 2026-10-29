@@ -25,7 +25,7 @@ public static class WordListLabelHtml
 
     public static void Append(StringBuilder html, string label, string? labelCss, WordListLabelSuffix suffix,
                               WordParagraphFormatting paragraph, int defaultTabStopTwips,
-                              WordListLabelAlignment alignment = WordListLabelAlignment.Start)
+                              WordListLabelAlignment alignment = WordListLabelAlignment.Start, bool isLabelHtml = false)
     {
         html.Append("<span class=\"list-marker\"");
         string css = labelCss ?? "";
@@ -37,7 +37,7 @@ public static class WordListLabelHtml
         // or both sides (center) - the label ends at / is centred on its position whatever its width.
         if (alignment != WordListLabelAlignment.Start)
             html.Append("<span style=\"display:inline-flex;width:0;white-space:nowrap;justify-content:").Append(alignment == WordListLabelAlignment.End ? "flex-end" : "center").Append("\">");
-        html.Append(WordHtmlText.Encode(label));
+        html.Append(isLabelHtml ? label : WordHtmlText.Encode(label));
         if (alignment != WordListLabelAlignment.Start) html.Append("</span>");
         html.Append("</span>");
         if (suffix == WordListLabelSuffix.Space) html.Append(' ');

@@ -14,6 +14,8 @@ internal interface IOdtBlockTable
     WordDocumentBlockKind BlockKindOf(int blockIndex);
     int BlockTextLengthOf(int blockIndex);
     string? ListLabelOf(int blockIndex);
+    /// <summary>The label's level geometry ("" when none / not label-alignment): <see cref="OdtListStyle.Level.Layout"/>.</summary>
+    string ListLabelLayoutOf(int blockIndex);
     int ListLevelOf(int blockIndex);
     ReadOnlySpan<OdtNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex);
 }

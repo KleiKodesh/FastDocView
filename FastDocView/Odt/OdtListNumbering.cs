@@ -142,8 +142,12 @@ internal sealed class OdtListNumbering
         else counters[level]++;
         block.IsRestartPending = false;
         for (int deeper = level + 1; deeper < counters.Length; deeper++) counters[deeper] = Unset;
+        LastLayout = style?.LevelAt(level).Layout ?? "";
         return style?.FormatLabel(level, counters) ?? "•";
     }
+
+    /// <summary>The label-alignment geometry of the level <see cref="ParagraphStarted"/> last numbered (<see cref="OdtListStyle.Level.Layout"/>).</summary>
+    public string LastLayout { get; private set; } = "";
 
     private static int[] NewCounters()
     {

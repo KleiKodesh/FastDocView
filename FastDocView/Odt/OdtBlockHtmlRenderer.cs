@@ -40,6 +40,7 @@ public sealed class OdtBlockHtmlRenderer
     private readonly OdtStyleCascade _styles;
     private string? _listLabel;
     private int _listLevel;
+    private string _listLayout = "";   // the label's level geometry (OdtListStyle.Level.Layout)
     private string? _previousStyleKey;
     private List<OdtNoteReference> _blockNotes = new();
     private int _nextNote;
@@ -50,10 +51,11 @@ public sealed class OdtBlockHtmlRenderer
 
     /// <param name="listLevel">List depth (0-based) of a list paragraph, -1 otherwise.</param>
     /// <param name="notes">The note references of this block, in order (from the index).</param>
-    public (string html, IReadOnlyList<WordDocumentNoteHtml> notes) Render(XElement block, string? listLabel, int listLevel,
+    public (string html, IReadOnlyList<WordDocumentNoteHtml> notes) Render(XElement block, string? listLabel, int listLevel, string listLayout,
                                                                           ReadOnlySpan<OdtNoteReference> notes, string? previousStyleKey)
     {
         var html = new StringBuilder(1024);
+        _listLayout = listLayout;
         _listLabel = listLabel;
         _listLevel = listLevel;
         _previousStyleKey = previousStyleKey;
@@ -90,8 +92,19 @@ public sealed class OdtBlockHtmlRenderer
         if (isHeading && int.TryParse((string?)paragraph.Attribute(TextNs + "outline-level"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed >= 1) level = parsed;
         string tag = isHeading && level <= 6 ? "h" + level : "p";
 
+        // label-alignment mode: the level's fo:margin-left / fo:text-indent indent the paragraph (ODF 1.2 19.881), its tab
+        // stop is where the text after a listtab starts. Older label-width-and-position lists keep the per-level step below.
+        int[]? layout = isTopLevel && _listLevel >= 0 && _listLayout.Length > 0 ? Array.ConvertAll(_listLayout.Split(','), int.Parse) : null;
+        if (layout is not null)
+        {
+            formatting = formatting.Clone();
+            formatting.LeftIndentTwips = layout[0];
+            formatting.IsLeftIndentPhysical = false;
+            formatting.FirstLineIndentTwips = layout[1];
+            if (layout[2] >= 0) formatting.TabStops = [new WordTabStop(layout[2], "left", "none")];
+        }
         string css = formatting.ToCss(isTopLevel ? _previousStyleKey : null);
-        if (isTopLevel && _listLevel >= 0)
+        if (isTopLevel && _listLevel >= 0 && layout is null)
         {
             // list indentation: list-level positions are not read; one step of 0.25in per level plus the label
             css += "margin-inline-start:" + ((formatting.LeftIndentTwips + 360 * (_listLevel + 1)) / 20.0).ToString("0.#", CultureInfo.InvariantCulture) + "pt;";
@@ -101,7 +114,10 @@ public sealed class OdtBlockHtmlRenderer
         bool hasLabel = false;
         if (isTopLevel && _listLabel is { Length: > 0 } label)
         {
-            html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(label)).Append("</span> ");
+            if (layout is not null)
+                WordListLabelHtml.Append(html, label, null, layout[3] switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab },
+                                         formatting, WordListLabelHtml.DefaultTabStopTwips);
+            else html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(label)).Append("</span> ");
             hasLabel = true;
         }
         RenderInline(paragraph, html, styleName, formatting.RunFormatting, formatting.RunFormatting, hasLabel);

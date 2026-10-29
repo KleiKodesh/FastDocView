@@ -75,6 +75,7 @@ internal sealed class OdtBodyBlockScanner
     public List<byte> BlockListLevels { get; } = new();          // 255 = not a list paragraph
     public List<int> BlockListLabelIds { get; } = new();         // -1 = no label
     public List<string> ListLabels { get; } = new();
+    public List<string> ListLabelLayouts { get; } = new();       // per label: its level geometry (OdtListStyle.Level.Layout)
     public List<WordDocumentHeading> Headings { get; } = new();
     public List<OdtNoteReference> NoteReferences { get; } = new();
     /// <summary>Sections in block order: the first block of each and its page text width (the first starts at block 0).</summary>
@@ -97,6 +98,7 @@ internal sealed class OdtBodyBlockScanner
             // Labels are appended in block order: the dropped blocks' labels are the tail of ListLabels.
             int firstDroppedLabel = BlockListLabelIds.Skip(complete).Where(id => id >= 0).DefaultIfEmpty(ListLabels.Count).Min();
             ListLabels.RemoveRange(firstDroppedLabel, ListLabels.Count - firstDroppedLabel);
+            ListLabelLayouts.RemoveRange(firstDroppedLabel, ListLabelLayouts.Count - firstDroppedLabel);
             BlockStartOffsets.RemoveRange(complete, extra);
             BlockEndOffsets.RemoveRange(complete, extra);
             BlockKinds.RemoveRange(complete, extra);
@@ -458,7 +460,7 @@ internal sealed class OdtBodyBlockScanner
         BlockKinds.Add(kind);
         BlockTextLengths.Add(0);
         BlockListLevels.Add(listLevel);
-        if (label is not null) { BlockListLabelIds.Add(ListLabels.Count); ListLabels.Add(label); }
+        if (label is not null) { BlockListLabelIds.Add(ListLabels.Count); ListLabels.Add(label); ListLabelLayouts.Add(_numbering.LastLayout); }
         else BlockListLabelIds.Add(-1);
         _currentBlock = BlockStartOffsets.Count - 1;
         _headingLevel = 0;

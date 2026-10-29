@@ -722,3 +722,9 @@ median start-side shift is removed because the column estimate of a PDF is only 
   own w:ind (LibreOffice DomainMapper_Impl finishParagraph: "the para-style indents have priority"); direct numPr lets the
   level override the style; direct w:ind wins over both. settings.xml w:defaultTabStop drives the default stop.
   Precedence taken from LibreOffice's source (it states it emulates Word) - not re-checked in Word.
+- RTF: the \listtext label (Word's flat copy) is drawn by WordListLabelHtml at the paragraph's first-line position, its
+  \tab = tab suffix; \leveljc places it (LibreOffice rtfdispatchvalue.cxx maps \leveljc 0/1/2 to lvlJc left/center/right
+  and ignores \leveljcn); \levelfollow 0/1/2 = tab/space/nothing for labels counted at index time.
+- ODT: label-alignment levels (ODF 1.2 19.880/19.881: fo:margin-left, fo:text-indent, text:list-tab-stop-position,
+  text:label-followed-by) are stored per list label in the index (format 3) and indent the paragraph; the older
+  label-width-and-position mode keeps the fixed per-level step.
