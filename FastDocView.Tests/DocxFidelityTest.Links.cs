@@ -46,6 +46,16 @@ public static partial class DocxFidelityTest
         TestReport.Check(RenderAll("links-deleted-end", deletedEnd)[1].Contains(">b</a>"), "a deleted field end does not close the link for the next block");
         string boxInLink = "<w:p><w:hyperlink r:id=\"rIdL1\"><w:r><w:t>x</w:t><w:drawing><wp:inline xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\"><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent></wp:inline></w:drawing></w:r></w:hyperlink></w:p>";
         string boxHtml = RenderAll("links-textbox", boxInLink, extraDocumentRelationships: relationships)[0];
+        // a link inside a footnote: its r:id is in footnotes.xml.rels (the note part's own relationships)
+        const string footnoteRelationships = """
+            <Relationship Id="rIdN1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.org/note" TargetMode="External"/>
+            """;
+        string noteBody = "<w:footnote w:id=\"1\"><w:p><w:r><w:footnoteRef/></w:r><w:hyperlink r:id=\"rIdN1\">" + Text("in note") + "</w:hyperlink></w:p></w:footnote>";
+        var notes = new List<string>();
+        RenderAll("links-footnote", "<w:p>" + Text("text") + "<w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>",
+                  footnotes: noteBody, footnoteRelationships: footnoteRelationships, noteHtml: notes);
+        TestReport.Check(notes.Count == 1 && notes[0].Contains("href=\"https://example.org/note\"") && notes[0].Contains(">in note</a>"),
+                         "a link inside a footnote resolves through footnotes.xml.rels");
         TestReport.Check(boxHtml.Split("<a ").Length - 1 == 1 && !boxHtml.Contains("<a class=\"link\" href=\"https://example.org/a?b=1&amp;c=2\" title") , "a text box inside a link is not wrapped in another link");
     }
 

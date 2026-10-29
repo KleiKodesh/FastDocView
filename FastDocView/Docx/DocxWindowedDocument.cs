@@ -182,7 +182,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _styles = parts.Styles;
         _noteFormats = parts.NoteNumberFormats;
         RecordNewNoteReferences();
-        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets);
+        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets);
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);

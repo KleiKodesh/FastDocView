@@ -16,6 +16,9 @@ public sealed class DocxDocumentParts
     public DocxNoteNumberFormats NoteNumberFormats { get; }
     /// <summary>The main part's hyperlink relationships: r:id → target (external URLs as written). Small; read at open.</summary>
     public IReadOnlyDictionary<string, string> HyperlinkTargets { get; }
+    /// <summary>footnotes.xml's and endnotes.xml's own hyperlink relationships (a note's r:id points there, not into document.xml.rels).</summary>
+    public IReadOnlyDictionary<string, string> FootnoteHyperlinkTargets { get; }
+    public IReadOnlyDictionary<string, string> EndnoteHyperlinkTargets { get; }
 
     private static Dictionary<string, string> LoadHyperlinkTargets(ZipArchive zip, string relationshipsPartName)
     {
@@ -57,6 +60,8 @@ public sealed class DocxDocumentParts
         Styles = new DocxStyleCascade(LoadStyles(zip, PartNames.Styles), Theme) { Compatibility = Compatibility };
         NoteNumberFormats = new DocxNoteNumberFormats(settings);
         HyperlinkTargets = LoadHyperlinkTargets(zip, DocxPackagePartNames.RelationshipsPartName(PartNames.Document));
+        FootnoteHyperlinkTargets = PartNames.Footnotes is { } footnotes ? LoadHyperlinkTargets(zip, DocxPackagePartNames.RelationshipsPartName(footnotes)) : new Dictionary<string, string>();
+        EndnoteHyperlinkTargets = PartNames.Endnotes is { } endnotes ? LoadHyperlinkTargets(zip, DocxPackagePartNames.RelationshipsPartName(endnotes)) : new Dictionary<string, string>();
     }
 
     private DocxNumberingDefinitions LoadNumbering()

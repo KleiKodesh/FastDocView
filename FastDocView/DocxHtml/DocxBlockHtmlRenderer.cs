@@ -33,7 +33,9 @@ public sealed class DocxBlockHtmlRenderer
     /// <summary>settings.xml compatibility option w:ulTrailSpace: underline the spaces that end a paragraph too.</summary>
     private bool UnderlinesTrailingSpaces => _styles.Compatibility.UnderlinesTrailingSpaces;            // inside a text box paragraphs become block spans (a <p> may not hold a <p>)
 
-    private readonly IReadOnlyDictionary<string, string>? _hyperlinkTargets;   // the main part's r:id → URL (notes have their own rels)
+    private readonly IReadOnlyDictionary<string, string>? _hyperlinkTargets;   // the main part's r:id -> URL
+    private readonly IReadOnlyDictionary<string, string>? _footnoteHyperlinkTargets;   // footnotes.xml.rels (a note's r:ids point there)
+    private readonly IReadOnlyDictionary<string, string>? _endnoteHyperlinkTargets;    // endnotes.xml.rels
     private IReadOnlyDictionary<string, string>? _currentHyperlinkTargets;      // the relationships of the part being rendered
     private string? _activeLinkOpenTag;                                         // inside a w:hyperlink or a HYPERLINK field result: its <a> tag
     private readonly List<DocxField> _openFields = new();                       // complex fields begun in this block (w:fldChar begin … end)
@@ -45,11 +47,14 @@ public sealed class DocxBlockHtmlRenderer
         public string? LinkOpenTag;
     }
 
-    public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null, IReadOnlyDictionary<string, string>? hyperlinkTargets = null)
+    public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null, IReadOnlyDictionary<string, string>? hyperlinkTargets = null,
+                                 IReadOnlyDictionary<string, string>? footnoteHyperlinkTargets = null, IReadOnlyDictionary<string, string>? endnoteHyperlinkTargets = null)
     {
         _styles = styles;
         _noteLabels = noteLabels;
         _hyperlinkTargets = hyperlinkTargets;
+        _footnoteHyperlinkTargets = footnoteHyperlinkTargets;
+        _endnoteHyperlinkTargets = endnoteHyperlinkTargets;
     }
 
     /// <param name="listLabel">The label counted at index time ("3.", "ב."), or null when the block is not a list item.</param>
@@ -92,7 +97,8 @@ public sealed class DocxBlockHtmlRenderer
         _currentNoteLabel = label;
         _currentNoteKind = kind;
         _previousStyleKey = null;
-        _currentHyperlinkTargets = null;          // a note's r:ids point into footnotes.xml.rels / endnotes.xml.rels, not loaded: external links show as text
+        // a note's r:ids point into its own part's relationships (footnotes.xml.rels / endnotes.xml.rels)
+        _currentHyperlinkTargets = kind == WordDocumentNoteKind.Footnote ? _footnoteHyperlinkTargets : _endnoteHyperlinkTargets;
         _openFields.Clear();
         Run(RenderBlocks(note.Elements(), html));
         _activeLinkOpenTag = null;

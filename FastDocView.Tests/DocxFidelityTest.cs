@@ -40,7 +40,8 @@ public static partial class DocxFidelityTest
 
     /// <summary>Writes a minimal package and returns every block's HTML.</summary>
     internal static List<string> RenderAll(string name, string body, string styles = "", string? numbering = null,
-                                           string extraDocumentRelationships = "", string? settings = null)
+                                           string extraDocumentRelationships = "", string? settings = null,
+                                           string? footnotes = null, string footnoteRelationships = "", List<string>? noteHtml = null)
     {
         string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-" + name + ".docx");
         if (File.Exists(path)) File.Delete(path);
@@ -60,15 +61,25 @@ public static partial class DocxFidelityTest
                 + "<Relationship Id=\"rIdS\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>"
                 + (numbering is null ? "" : "<Relationship Id=\"rIdN\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" Target=\"numbering.xml\"/>")
                 + (settings is null ? "" : "<Relationship Id=\"rIdT\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" Target=\"settings.xml\"/>")
+                + (footnotes is null ? "" : "<Relationship Id=\"rIdF\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes\" Target=\"footnotes.xml\"/>")
                 + extraDocumentRelationships + "</Relationships>");
             Add("word/styles.xml", $"<?xml version=\"1.0\"?><w:styles {WordNamespaces}><w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>{styles}</w:styles>");
             if (numbering is not null) Add("word/numbering.xml", $"<?xml version=\"1.0\"?><w:numbering {WordNamespaces}>{numbering}</w:numbering>");
             if (settings is not null) Add("word/settings.xml", $"<?xml version=\"1.0\"?><w:settings {WordNamespaces}>{settings}</w:settings>");
+            if (footnotes is not null)
+            {
+                // a notes part with its OWN relationships (a note's r:ids point here, not into document.xml.rels)
+                Add("word/footnotes.xml", $"<?xml version=\"1.0\"?><w:footnotes {WordNamespaces}>{footnotes}</w:footnotes>");
+                Add("word/_rels/footnotes.xml.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                    + footnoteRelationships + "</Relationships>");
+            }
             Add("word/document.xml", $"<?xml version=\"1.0\"?><w:document {WordNamespaces}><w:body>{body}</w:body></w:document>");
         }
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
-        return document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
+        IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(0, document.BlockCount);
+        noteHtml?.AddRange(blocks.SelectMany(block => block.Notes).Select(note => note.Html));
+        return blocks.Select(block => block.Html).ToList();
     }
 
     internal static string Paragraph(string? paragraphStyle, string runProperties, string text, string paragraphProperties = "")
