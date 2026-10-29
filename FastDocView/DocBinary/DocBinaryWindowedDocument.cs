@@ -100,6 +100,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         _notes = new DocBinaryNoteReferences(_tableStream, FileInformationBlock);
         _renderer = new DocBinaryParagraphHtmlRenderer(PieceTable, FormattedDiskPages, _styles, _notes);
         ListDefinitions = DocBinaryListDefinitions.Read(_tableStream, FileInformationBlock.ListFormats, FileInformationBlock.ListFormatOverrides);
+        _renderer.Lists = ListDefinitions;
+        _renderer.DefaultTabStopTwips = ReadDefaultTabStop(_tableStream, FileInformationBlock.DocumentProperties);
 
         bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc);
         Decision = policy.Decide(displayPath, (long)FileInformationBlock.MainTextCharacterCount * 2, isCacheValid);
@@ -123,6 +125,16 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     }
 
     /// <summary>Normal style bidi, else a Hebrew/Arabic share of the first few thousand characters.</summary>
+    /// <summary>Dop dxaTab: the default tab stop interval, a 16-bit value at offset 10 of the Dop (LibreOffice ww8scan.cxx WW8Dop); 720 when absent.</summary>
+    private static int ReadDefaultTabStop(Stream tableStream, (uint offset, uint length) dop)
+    {
+        if (dop.length < 12 || dop.offset + 12 > tableStream.Length) return WordListLabelHtml.DefaultTabStopTwips;
+        tableStream.Position = dop.offset + 10;
+        int low = tableStream.ReadByte(), high = tableStream.ReadByte();
+        int value = (short)(low | high << 8);
+        return value > 0 ? value : WordListLabelHtml.DefaultTabStopTwips;
+    }
+
     private bool DetectRightToLeft()
     {
         if (_styles.ResolveParagraphStyle(0).IsRightToLeft) return true;

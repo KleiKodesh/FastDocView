@@ -48,6 +48,10 @@ public sealed class WordParagraphFormatting
     public string? BorderEndCss;
     public WordRunFormatting RunFormatting = new();
 
+    /// <summary>The indent on the paragraph's start side, twips (a physical left indent is the end side of a bidi paragraph, see <see cref="ToCss"/>).</summary>
+    public int StartIndentTwips
+        => (IsLeftIndentPhysical && IsRightToLeft ? 0 : LeftIndentTwips) + (IsRightIndentPhysical && IsRightToLeft ? RightIndentTwips : 0);
+
     public WordParagraphFormatting Clone()
     {
         var clone = (WordParagraphFormatting)MemberwiseClone();

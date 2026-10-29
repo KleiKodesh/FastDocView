@@ -54,7 +54,10 @@ public static class DocBinaryPropertyModifiers
                 case 0x246D: formatting.IsContextualSpacing = grpprl[operandAt] != 0; break;                     // sprmPFContextualSpacing (sprmids.hxx)
                 case 0xC64D: formatting.ShadingHex = ShadingBackground(grpprl, operandAt + 4, operandLength); break;      // SHDOperand: cvFore then cvBack
                 case 0x442D: formatting.ShadingHex = Shading80Background(BitConverter.ToUInt16(grpprl, operandAt)); break;
-                case 0xC60D: case 0xC615: formatting.FirstTabStopTwips = FirstAddedTabStop(grpprl, operandAt, operandLength, formatting.LeftIndentTwips) ?? formatting.FirstTabStopTwips; break;
+                case 0xC60D: case 0xC615:
+                    formatting.FirstTabStopTwips = FirstAddedTabStop(grpprl, operandAt, operandLength, formatting.LeftIndentTwips) ?? formatting.FirstTabStopTwips;
+                    formatting.TabStops = ChangedTabStops(formatting.TabStops, grpprl, operandAt, operandAt + operandLength);
+                    break;
                 // paragraph borders: Brc80 (Word 97, 4 bytes) and Brc (Word 2000+, 8 bytes); top, left (= start), bottom, right (= end)
                 case 0x6424: formatting.BorderTopCss = Brc80Css(grpprl, operandAt); break;
                 case 0x6425: formatting.BorderStartCss = Brc80Css(grpprl, operandAt); break;
@@ -163,6 +166,40 @@ public static class DocBinaryPropertyModifiers
     }
 
     /// <summary>sprmPChgTabsPapx/sprmPChgTabs: cb, cTabsDel + positions, cTabsAdd + positions → the first added stop, relative to the indent.</summary>
+    /// <summary>
+    /// sprmPChgTabsPapx / sprmPChgTabs: delete the stops at the listed positions, then add stops with their TBD (jc in
+    /// bits 0-2: 0 left, 1 center, 2 right, 3 decimal, 4 bar; leader in bits 3-5). Both operands read with one layout
+    /// (cDel, rgdxaDel, cAdd, rgdxaAdd, rgtbd) as LibreOffice ww8par.cxx Read_Tab does. Positions: twips from the start margin.
+    /// </summary>
+    private static WordTabStop[] ChangedTabStops(WordTabStop[] current, byte[] grpprl, int position, int end)
+    {
+        end = Math.Min(end, grpprl.Length);
+        if (position >= end) return current;
+        var stops = new List<WordTabStop>(current);
+        int deleted = grpprl[position++];
+        for (int i = 0; i < deleted && position + 2 <= end; i++, position += 2)
+        {
+            int at = BitConverter.ToInt16(grpprl, position);
+            stops.RemoveAll(stop => stop.PositionTwips == at);
+        }
+        if (position < end)
+        {
+            int added = grpprl[position++];
+            int descriptors = position + added * 2;
+            for (int i = 0; i < added && descriptors + i < end; i++)
+            {
+                int at = BitConverter.ToInt16(grpprl, position + i * 2);
+                byte descriptor = grpprl[descriptors + i];
+                string alignment = (descriptor & 0x07) switch { 1 => "center", 2 => "right", 3 => "decimal", 4 => "bar", _ => "left" };
+                string leader = ((descriptor >> 3) & 0x07) switch { 1 => "dot", 2 => "hyphen", 3 or 4 => "underscore", _ => "none" };
+                stops.RemoveAll(stop => stop.PositionTwips == at);
+                stops.Add(new WordTabStop(at, alignment, leader));
+            }
+        }
+        stops.Sort((a, b) => a.PositionTwips.CompareTo(b.PositionTwips));
+        return stops.ToArray();
+    }
+
     private static int? FirstAddedTabStop(byte[] grpprl, int operandAt, int operandLength, int leftIndentTwips)
     {
         int position = operandAt;

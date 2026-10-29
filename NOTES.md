@@ -701,3 +701,19 @@ sample from about page 1900; `compare.py` reports differences after such a cliff
 complex-script font / size / weight by the characters' script; Word (checked for .docx, LEARNINGS 2026-10-28/29)
 by the run's rtl flag - font-family / size differences on Hebrew runs without sprmCFBiDi / w:rtl are that
 disagreement until checked in Word.
+
+## List label layout (branch work/indent-parity, 2026-10-29)
+
+Measured per paragraph against LibreOffice's PDF (scratchpad tools lref.py / lmeasure.mjs / lcompare.py: label position,
+label-to-text gap, first-line and later-line start, end indent, line height, paragraph pitch, line count; per page the
+median start-side shift is removed because the column estimate of a PDF is only good to a few points).
+
+- Shared `WordListLabelHtml`: the label starts at start indent + first-line indent; after a tab suffix the text starts at
+  the next stop after the label's position - a custom stop, the start indent when the paragraph hangs, else the next
+  default stop (Dop dxaTab / defaultTabStop, 720). The label is an inline-block with that gap as min-width. lvlJc / LVL jc
+  end or centre: a zero-width nowrap flex box (flex-end / center) so the label ends at / centres on its position. A label
+  wider than the gap pushes the text on (Word would use the following stop; the label's width is not known server-side).
+- .doc: the LVL's grpprlPapx (indents, list tab) applies between the style and the paragraph's own sprms (LibreOffice
+  ww8par3.cxx applies it at sprmPIlfo; Word writes sprms in ascending order, so Ilfo precedes the indent sprms); grpprlChpx
+  formats the label; ixchFollow 0 tab / 1 space / 2 nothing (LibreOffice ww8par3.cxx); sprmPChgTabs(Papx) fill TabStops
+  (one operand layout for both, as LibreOffice Read_Tab).
