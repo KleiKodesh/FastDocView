@@ -29,6 +29,16 @@ public sealed class WordParagraphFormatting
     public bool IsSpaceAfterAuto;           // w:spacing afterAutospacing
     public int LineSpacingTwipsOrAuto;      // >0 with IsLineSpacingAuto → multiple of 240
     public bool IsLineSpacingAuto = true;
+    /// <summary>Not auto: the value is the exact line height (.docx lineRule exact, .doc / RTF negative dyaLine / \sl); otherwise it is a minimum (atLeast).</summary>
+    public bool IsLineSpacingExact;
+
+    /// <summary>
+    /// One "line" of Word's proportional spacing as a multiple of the font size: Word counts auto spacing in 240ths of the
+    /// font's single line height (ascent + descent), not of the em. 1.15 is that height for Times New Roman and Arial (the
+    /// document stylesheet's base line-height uses the same figure); measured against LibreOffice's PDF: a 12 pt line with
+    /// line=240 is 13.8 pt apart, with 276 (1.15) 15.9 pt.
+    /// </summary>
+    public const double SingleLineHeightEm = 1.15;
     public int OutlineLevel = -1;           // 0-8 → heading 1-9
     public int NumberingId = -1;
     public int NumberingLevel;
@@ -104,8 +114,10 @@ public sealed class WordParagraphFormatting
         }
         if (LineSpacingTwipsOrAuto > 0)
         {
-            if (IsLineSpacingAuto) css.Append("line-height:").Append((LineSpacingTwipsOrAuto / 240.0).ToString("0.##", CultureInfo.InvariantCulture)).Append(';');
-            else css.Append("line-height:").Append(TwipsToPt(LineSpacingTwipsOrAuto)).Append("pt;");
+            if (IsLineSpacingAuto) css.Append("line-height:").Append((LineSpacingTwipsOrAuto / 240.0 * SingleLineHeightEm).ToString("0.###", CultureInfo.InvariantCulture)).Append(';');
+            else if (IsLineSpacingExact) css.Append("line-height:").Append(TwipsToPt(LineSpacingTwipsOrAuto)).Append("pt;");
+            // at least: the single line height unless the stated minimum is larger
+            else css.Append("line-height:max(").Append(SingleLineHeightEm.ToString("0.##", CultureInfo.InvariantCulture)).Append("em,").Append(TwipsToPt(LineSpacingTwipsOrAuto)).Append("pt);");
         }
         css.Append(RunFormatting.ToCss(null, WordDecorationOutput.None));   // lines go on the runs: a child cannot remove a parent's line
         return css.ToString();

@@ -46,6 +46,7 @@ public static class DocBinaryPropertyModifiers
                     short line = BitConverter.ToInt16(grpprl, operandAt);
                     formatting.IsLineSpacingAuto = BitConverter.ToInt16(grpprl, operandAt + 2) != 0;
                     formatting.LineSpacingTwipsOrAuto = Math.Abs((int)line);
+                    formatting.IsLineSpacingExact = !formatting.IsLineSpacingAuto && line < 0;   // LSPD: negative dyaLine = exactly, positive = at least (LibreOffice ww8par6.cxx Read_LineSpace)
                     break;
                 case 0x2416: formatting.IsInTable = grpprl[operandAt] != 0; break;
                 case 0x260A: formatting.NumberingLevel = grpprl[operandAt]; break;

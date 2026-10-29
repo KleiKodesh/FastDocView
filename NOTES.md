@@ -728,3 +728,7 @@ median start-side shift is removed because the column estimate of a PDF is only 
 - ODT: label-alignment levels (ODF 1.2 19.880/19.881: fo:margin-left, fo:text-indent, text:list-tab-stop-position,
   text:label-followed-by) are stored per list label in the index (format 3) and indent the paragraph; the older
   label-width-and-position mode keeps the fixed per-level step.
+- Line spacing: auto spacing is a multiple of the font's single line height (`WordParagraphFormatting.SingleLineHeightEm`
+  = 1.15 em, Times New Roman / Arial), not of the em - LibreOffice draws 12 pt lines 13.8 pt apart at line=240; exact
+  (docx lineRule exact, .doc / RTF negative dyaLine / \sl, ODF fo:line-height length) is the stated height; at least
+  is `max(1.15em, value)`. Fonts with other ascent + descent (Hebrew faces) still differ - per-font metrics not modelled.

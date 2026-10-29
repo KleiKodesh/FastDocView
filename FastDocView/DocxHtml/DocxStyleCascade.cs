@@ -319,7 +319,9 @@ public sealed class DocxStyleCascade
             if (TwipsAttribute(spacing, "line") is { } line)
             {
                 formatting.LineSpacingTwipsOrAuto = line;
-                formatting.IsLineSpacingAuto = ((string?)spacing.Attribute(W + "lineRule") ?? "auto") == "auto";
+                string lineRule = (string?)spacing.Attribute(W + "lineRule") ?? "auto";
+                formatting.IsLineSpacingAuto = lineRule == "auto";
+                formatting.IsLineSpacingExact = lineRule == "exact";   // ST_LineSpacingRule: auto, exact, atLeast (17.18.48)
             }
         }
         if (TwipsAttribute(pPr.Element(W + "outlineLvl"), "val") is { } outline) formatting.OutlineLevel = outline;

@@ -254,7 +254,7 @@ public sealed class OdtStyleCascade
         public string? Align;
         public bool IsRightToLeft;
         public int? MarginLeft, MarginRight, MarginTop, MarginBottom, TextIndent;
-        public int LineHeight; public bool IsLineHeightAuto = true;
+        public int LineHeight; public bool IsLineHeightAuto = true; public bool IsLineHeightExact;
         public string? Background;
         public string? BorderTop, BorderBottom, BorderLeft, BorderRight;
         public bool IsPageBreakBefore;
@@ -280,6 +280,7 @@ public sealed class OdtStyleCascade
             formatting.SpaceAfterTwips = MarginBottom ?? 0;
             formatting.LineSpacingTwipsOrAuto = LineHeight;
             formatting.IsLineSpacingAuto = IsLineHeightAuto;
+            formatting.IsLineSpacingExact = IsLineHeightExact;
             formatting.ShadingHex = Background;
             formatting.BorderTopCss = BorderTop;
             formatting.BorderBottomCss = BorderBottom;
@@ -308,9 +309,9 @@ public sealed class OdtStyleCascade
         {
             if (lineHeight == "normal") { raw.LineHeight = 0; raw.IsLineHeightAuto = true; }
             else if (Percent(lineHeight) is { } percent) { raw.LineHeight = (int)Math.Round(240 * percent / 100); raw.IsLineHeightAuto = true; }
-            else if (Twips(lineHeight) is { } fixedHeight) { raw.LineHeight = fixedHeight; raw.IsLineHeightAuto = false; }
+            else if (Twips(lineHeight) is { } fixedHeight) { raw.LineHeight = fixedHeight; raw.IsLineHeightAuto = false; raw.IsLineHeightExact = true; }
         }
-        if (Twips(properties.Attribute(Style + "line-height-at-least")) is { } atLeast && atLeast > 0) { raw.LineHeight = atLeast; raw.IsLineHeightAuto = false; }
+        if (Twips(properties.Attribute(Style + "line-height-at-least")) is { } atLeast && atLeast > 0) { raw.LineHeight = atLeast; raw.IsLineHeightAuto = false; raw.IsLineHeightExact = false; }
         if ((string?)properties.Attribute(Fo + "background-color") is { } background) raw.Background = ColorHex(background);
         if (BorderCss(properties.Attribute(Fo + "border")) is { } border) raw.BorderTop = raw.BorderBottom = raw.BorderLeft = raw.BorderRight = border;
         raw.BorderTop = BorderCss(properties.Attribute(Fo + "border-top")) ?? raw.BorderTop;

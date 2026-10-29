@@ -244,7 +244,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (state.LineSpacing != 0 && state.LineSpacing != 1000)
         {
             if (state.Has(RtfStateFlags.LineSpacingMultiple)) { formatting.LineSpacingTwipsOrAuto = Math.Abs(state.LineSpacing); formatting.IsLineSpacingAuto = true; }
-            else { formatting.LineSpacingTwipsOrAuto = Math.Abs(state.LineSpacing); formatting.IsLineSpacingAuto = false; }
+            else { formatting.LineSpacingTwipsOrAuto = Math.Abs(state.LineSpacing); formatting.IsLineSpacingAuto = false; formatting.IsLineSpacingExact = state.LineSpacing < 0; }   // \sl: negative = exactly, positive = at least (RTF 1.5)
         }
         return formatting;
     }
