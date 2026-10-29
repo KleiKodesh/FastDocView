@@ -39,4 +39,12 @@ internal abstract class RtfSink
     public virtual void PageSetup(RtfWord word, int value) { }
     /// <summary>A destination group was skipped whole (header, info, bookmarks, ...).</summary>
     public virtual void DestinationSkipped(ReadOnlySpan<byte> name) { }
+    /// <summary>A \field group opened at <paramref name="depth"/> (its group closes when GroupClosed reports a smaller depth).</summary>
+    public virtual void FieldStart(int depth) { }
+    /// <summary>The field's {\*\fldinst ...} text, when its group closed.</summary>
+    public virtual void FieldInstruction(string instruction) { }
+    /// <summary>The field's {\fldrslt ...} group opened: what follows is the shown result.</summary>
+    public virtual void FieldResultStart() { }
+    /// <summary>{\*\bkmkstart name} closed: a bookmark starts here.</summary>
+    public virtual void BookmarkStart(string name) { }
 }

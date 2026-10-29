@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using FastDocView.Html;
+using FastDocView.DocxHtml;
 
 namespace FastDocView.Rtf;
 
@@ -26,6 +27,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         public bool HasInline;
         public (int position, string html, bool hasTab)? ListText;   // a \listtext label waiting for its paragraph
         public readonly List<TableLevel> Tables = new();
+        public string? OpenLink;            // the <a> tag of a link field whose result is being read in this flow
     }
 
     private readonly RtfParser _parser;
@@ -45,6 +47,9 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     private List<WordDocumentNoteHtml>? _renderedNotes;
     private string? _indexListLabel;
     private bool _isFirstParagraph;
+
+    // fields open in this block: the \field group depth, its instruction, and the flow its link was opened in (null: no link)
+    private readonly List<(int depth, string instruction, Flow? linkFlow)> _fields = new();
 
     public RtfBlockHtmlRenderer(RtfDocumentTables tables)
     {
@@ -69,6 +74,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _renderedNotes = notes.Length == 0 ? null : new List<WordDocumentNoteHtml>(notes.Length);
         _indexListLabel = index.ListLabelOf(blockIndex);
         _isFirstParagraph = true;
+        _fields.Clear();
 
         _parser.RestoreSnapshot(index.States[index.BlockStateIds[blockIndex]]);
         _parser.Run(file, index.BlockStartOffsets[blockIndex], index.BlockEndOffsets[blockIndex]);
@@ -186,6 +192,9 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         int outline = isTopLevel ? (state.OutlineLevel is >= 0 and <= 8 ? state.OutlineLevel : state.OutlineLevel == 9 ? -1 : _tables.OutlineLevelOfStyle(state.Style)) : -1;
         string tag = outline is >= 0 and <= 5 ? "h" + (outline + 1) : "p";
 
+        // a link field whose result spans paragraphs: closed with each paragraph and reopened in the next
+        string? openLink = _flow.OpenLink;
+        if (openLink is not null) _flow.Inline.Append("</a>");
         var html = new StringBuilder(_flow.Inline.Length + 64);
         if (state.Has(RtfStateFlags.PageBreakBefore) && isTopLevel) html.Append("<span class=\"page-break\"></span>");
         WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(), null, formatting.IsRightToLeft);
@@ -213,6 +222,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (isSectionEnd && isTopLevel) html.Append("<hr class=\"section-break\">");
         _flow.Inline.Clear();
         _flow.HasInline = false;
+        if (openLink is not null) _flow.Inline.Append(openLink);
         if (isTopLevel) _isFirstParagraph = false;
 
         if (isInTable) CellOf(Math.Max(1, (int)state.NestingLevel)).Cell.Append(html);
@@ -271,6 +281,51 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     }
 
     // ── list text (Word's flat label for readers without list support) ───────────────
+
+    // fields and bookmarks
+
+    public override void FieldStart(int depth) => _fields.Add((depth, "", null));
+
+    public override void FieldInstruction(string instruction)
+    {
+        if (_fields.Count > 0) _fields[_fields.Count - 1] = (_fields[_fields.Count - 1].depth, instruction, null);
+    }
+
+    /// <summary>
+    /// The result of a HYPERLINK (\l "bookmark" = in-document) or REF / PAGEREF / NOTEREF ... \h field becomes a link, read
+    /// with the .docx field rules (DocxBlockHtmlRenderer.HyperlinkFieldTag: Word writes the same instruction text in every
+    /// format); only safe targets. A link inside a link renders its text only.
+    /// </summary>
+    public override void FieldResultStart()
+    {
+        if (_fields.Count == 0 || _listTextTarget is not null || _flow.OpenLink is not null) return;
+        (int depth, string instruction, _) = _fields[_fields.Count - 1];
+        if (DocxBlockHtmlRenderer.HyperlinkFieldTag(instruction) is not { } tag) return;
+        FlushRun();
+        _flow.Inline.Append(tag);
+        _flow.OpenLink = tag;
+        _fields[_fields.Count - 1] = (depth, instruction, _flow);
+    }
+
+    public override void GroupClosed(int depth)
+    {
+        while (_fields.Count > 0 && _fields[_fields.Count - 1].depth > depth)
+        {
+            Flow? linkFlow = _fields[_fields.Count - 1].linkFlow;
+            _fields.RemoveAt(_fields.Count - 1);
+            if (linkFlow is null) continue;
+            FlushRun();
+            linkFlow.Inline.Append("</a>");
+            linkFlow.OpenLink = null;
+        }
+    }
+
+    /// <summary>{\*\bkmkstart name}: the jump target of in-document links.</summary>
+    public override void BookmarkStart(string name)
+    {
+        FlushRun();
+        (_listTextTarget ?? _flow.Inline).Append("<span class=\"bookmark\" id=\"").Append(WordHtmlText.Encode(DocxBlockHtmlRenderer.BookmarkElementId(name))).Append("\"></span>");
+    }
 
     public override void ListTextStart()
     {

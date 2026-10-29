@@ -29,7 +29,7 @@ internal sealed class OdtBodyBlockScanner
     {
         Other, Paragraph, Heading, Table, List, ListItem, ListHeader, Section, SectionSource, IndexBody, IndexElement,
         SoftPageBreak, TrackedChanges, NumberedParagraph, Note, NoteCitation, NoteBody, OfficeBody, OfficeText,
-        FontFaceDecls, Styles, AutomaticStyles, BinaryData, Annotation,
+        FontFaceDecls, Styles, AutomaticStyles, BinaryData, Annotation, Bookmark,
     }
 
     private const int MaxTagBytes = 1 << 20;
@@ -78,6 +78,9 @@ internal sealed class OdtBodyBlockScanner
     public List<string> ListLabelLayouts { get; } = new();       // per label: its level geometry (OdtListStyle.Level.Layout)
     public List<WordDocumentHeading> Headings { get; } = new();
     public List<OdtNoteReference> NoteReferences { get; } = new();
+    /// <summary>Bookmarks and reference marks (text:bookmark / -start, text:reference-mark / -start: text:name) and the block each is in.</summary>
+    public List<string> BookmarkNames { get; } = new();
+    public List<int> BookmarkBlocks { get; } = new();
     /// <summary>Sections in block order: the first block of each and its page text width (the first starts at block 0).</summary>
     public List<WordDocumentSection> SectionStarts { get; } = new();
     public bool IsBodyComplete { get; private set; }
@@ -107,6 +110,8 @@ internal sealed class OdtBodyBlockScanner
             BlockListLabelIds.RemoveRange(complete, extra);
             Headings.RemoveAll(heading => heading.BlockIndex >= complete);
             NoteReferences.RemoveAll(reference => reference.BlockIndex >= complete);
+            int keptBookmarks = BookmarkBlocks.FindIndex(block => block >= complete);
+            if (keptBookmarks >= 0) { BookmarkNames.RemoveRange(keptBookmarks, BookmarkNames.Count - keptBookmarks); BookmarkBlocks.RemoveRange(keptBookmarks, BookmarkBlocks.Count - keptBookmarks); }
         }
         return true;
     }
@@ -383,6 +388,15 @@ internal sealed class OdtBodyBlockScanner
 
     private Frame InsideBlock(Frame parent, Name name, ReadOnlySpan<byte> tag, int nameEnd)
     {
+        // ODF 1.3 part 3 6.2.1 / 6.2.2: text:bookmark, text:bookmark-start, text:reference-mark(-start) carry text:name; links
+        // (text:a xlink:href "#name") and text:bookmark-ref / text:reference-ref (text:ref-name) point at them. One inside a
+        // note body or a table cell marks the block that holds it.
+        if (name == Name.Bookmark && _currentBlock >= 0
+            && Attribute(tag, nameEnd, "text:name") is { Length: > 0 } bookmark)
+        {
+            BookmarkNames.Add(bookmark);
+            BookmarkBlocks.Add(_currentBlock);
+        }
         if (parent is Frame.InnerNoText) return Frame.InnerNoText;
         if (name is Name.BinaryData or Name.Annotation) return Frame.InnerNoText;
         if (parent == Frame.Note)
@@ -621,6 +635,8 @@ internal sealed class OdtBodyBlockScanner
             [P("office:font-face-decls")] = Name.FontFaceDecls, [P("office:styles")] = Name.Styles,
             [P("office:automatic-styles")] = Name.AutomaticStyles, [P("office:binary-data")] = Name.BinaryData,
             [P("office:annotation")] = Name.Annotation,
+            [P("text:bookmark")] = Name.Bookmark, [P("text:bookmark-start")] = Name.Bookmark,
+            [P("text:reference-mark")] = Name.Bookmark, [P("text:reference-mark-start")] = Name.Bookmark,
         };
         foreach (string index in new[] { "text:table-of-content", "text:alphabetical-index", "text:illustration-index", "text:table-index",
                                          "text:object-index", "text:user-index", "text:bibliography" })

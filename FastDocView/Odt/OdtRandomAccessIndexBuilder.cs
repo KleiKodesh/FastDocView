@@ -66,6 +66,7 @@ public static class OdtRandomAccessIndexBuilder
             ListLabelLayouts = scanner.ListLabelLayouts.ToArray(),
             SectionFirstBlocks = scanner.SectionStarts.Select(section => section.FirstBlockIndex).ToArray(),
             SectionTextWidths = scanner.SectionStarts.Select(section => section.TextWidthTwips).ToArray(),
+            Bookmarks = new WordDocumentBookmarkTable(scanner.BookmarkNames.ToArray(), scanner.BookmarkBlocks.ToArray()),
         };
     }
 }

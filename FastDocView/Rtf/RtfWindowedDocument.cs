@@ -21,7 +21,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     public int BlockCount => _index.BlockCount;
 
     /// <summary>Page text width per section (\paperw / \margl / \margr / \gutter and their per-section forms), from the index.</summary>
-    public int? FindBookmark(string name) => null;     // bookmarks not indexed for this format yet
+    public int? FindBookmark(string name) => _index.Bookmarks.BlockOf(name);     // the index is always complete
     public IReadOnlyList<WordDocumentSection> Sections => _sections ??= WordDocumentPageSetup.FromSectionEnds(_index.SectionLastBlocks, _index.SectionTextWidths);
     private IReadOnlyList<WordDocumentSection>? _sections;
     public bool IsIndexComplete => true;

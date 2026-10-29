@@ -291,7 +291,26 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     }
 
     /// <summary>Page text width per section (master pages, see <see cref="OdtPageSetup"/>); the known ones while scanning.</summary>
-    public int? FindBookmark(string name) => null;     // bookmarks not indexed for this format yet
+    public int? FindBookmark(string name)
+    {
+        lock (_readLock)
+        {
+            if (_index is { } index) return index.Bookmarks.BlockOf(name);
+            OdtIncrementalIndexBuilder builder = _builder!;
+            try
+            {
+                // scan on only until the bookmark turns up (a target near the start costs nothing more)
+                while (true)
+                {
+                    if (builder.FindKnownBookmark(name) is { } block) return block;
+                    if (!builder.AdvanceOne()) break;
+                }
+                return CompleteIndexLocked().Bookmarks.BlockOf(name);
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
     public IReadOnlyList<WordDocumentSection> Sections
     {
         get
