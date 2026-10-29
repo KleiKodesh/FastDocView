@@ -7,6 +7,16 @@ import FastDocViewPage from '@/features/fast-doc-view/FastDocViewPage.vue'
 import { PANE_NAVIGATION_KEY, type PaneNavigation } from '@/composables/usePaneNavigation'
 import type { Tab } from '@/stores/tabStore'
 import { SAMPLE_FILES } from '../wordDemoDefaults'
+import { demoDiagnostics } from './fastDocViewDemoApi'
+
+// Server memory on demand (no timers in the page): heap / process / open documents, after an optional GC.
+const memory = ref('')
+async function readMemory(collect: boolean) {
+  try {
+    const m = await (await fetch(`/api/memory?collect=${collect}`)).json() as { managedHeapMegabytes: number; workingSetMegabytes: number; openDocuments: number }
+    memory.value = `heap ${m.managedHeapMegabytes} MB, process ${m.workingSetMegabytes} MB, ${m.openDocuments} open`
+  } catch { memory.value = 'server unreachable' }
+}
 
 const LAST_FILE_KEY = 'fastdocview-app-page:last-file'
 let lastFile: string | null = null
@@ -50,8 +60,16 @@ provide(PANE_NAVIGATION_KEY, navigation)
       <input v-model="pathInput" type="search" placeholder="Document path" />
       <button type="submit">Open</button>
       <button v-for="sample in SAMPLE_FILES" :key="sample.path" type="button" @click="open(sample.path)">{{ sample.label }}</button>
-      <a href="/">Old demo</a>
     </form>
+    <div class="app-page-host-diagnostics" dir="ltr" data-test="demo-diagnostics">
+      <span v-if="demoDiagnostics.lastOpen">
+        {{ demoDiagnostics.lastOpen.fileName }}: {{ demoDiagnostics.lastOpen.readerType }}, {{ demoDiagnostics.lastOpen.mode }}{{ demoDiagnostics.lastOpen.hasCachedIndex ? ' (cached index)' : '' }},
+        server open {{ demoDiagnostics.lastOpen.openMilliseconds.toFixed(0) }} ms - {{ demoDiagnostics.lastOpen.reason }}
+      </span>
+      <button type="button" @click="readMemory(false)">Memory</button>
+      <button type="button" @click="readMemory(true)">GC + memory</button>
+      <span>{{ memory }}</span>
+    </div>
     <div class="app-page-host-page">
       <FastDocViewPage :key="pageKey" />
     </div>
@@ -62,5 +80,6 @@ provide(PANE_NAVIGATION_KEY, navigation)
 .app-page-host { display: flex; flex-direction: column; height: 100vh; background: var(--bg-primary); }
 .app-page-host-bar { display: flex; gap: 8px; padding: 6px 10px; border-block-end: 1px solid var(--border-color); }
 .app-page-host-bar input { flex: 1; min-width: 0; }
+.app-page-host-diagnostics { display: flex; gap: 8px; align-items: center; padding: 2px 10px; font: 12px system-ui, sans-serif; color: var(--text-secondary); border-block-end: 1px solid var(--border-color); }
 .app-page-host-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 </style>
