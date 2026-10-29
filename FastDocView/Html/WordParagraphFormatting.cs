@@ -18,6 +18,8 @@ public sealed class WordParagraphFormatting
     public int FirstLineIndentTwips;        // negative = hanging
     public int SpaceBeforeTwips;
     public int SpaceAfterTwips;
+    public bool IsSpaceBeforeAuto;          // w:spacing beforeAutospacing: Word's HTML-style automatic spacing (resolved by the renderer)
+    public bool IsSpaceAfterAuto;           // w:spacing afterAutospacing
     public int LineSpacingTwipsOrAuto;      // >0 with IsLineSpacingAuto → multiple of 240
     public bool IsLineSpacingAuto = true;
     public int OutlineLevel = -1;           // 0-8 → heading 1-9

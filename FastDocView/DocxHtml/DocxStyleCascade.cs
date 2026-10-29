@@ -287,8 +287,13 @@ public sealed class DocxStyleCascade
         }
         if (pPr.Element(W + "spacing") is { } spacing)
         {
-            if (TwipsAttribute(spacing, "before") is { } before) formatting.SpaceBeforeTwips = before;
-            if (TwipsAttribute(spacing, "after") is { } after) formatting.SpaceAfterTwips = after;
+            // beforeAutospacing / afterAutospacing win over before / after in the same element; an explicit before / after in a
+            // later layer overrides an inherited auto value (LibreOffice DomainMapper / DomainMapper_Impl: "apply INHERITED
+            // autospacing only if top margin is not set").
+            if (TwipsAttribute(spacing, "before") is { } before) { formatting.SpaceBeforeTwips = before; formatting.IsSpaceBeforeAuto = false; }
+            if (TwipsAttribute(spacing, "after") is { } after) { formatting.SpaceAfterTwips = after; formatting.IsSpaceAfterAuto = false; }
+            if (spacing.Attribute(W + "beforeAutospacing") is { } beforeAuto) formatting.IsSpaceBeforeAuto = IsOn(beforeAuto);
+            if (spacing.Attribute(W + "afterAutospacing") is { } afterAuto) formatting.IsSpaceAfterAuto = IsOn(afterAuto);
             if (TwipsAttribute(spacing, "line") is { } line)
             {
                 formatting.LineSpacingTwipsOrAuto = line;

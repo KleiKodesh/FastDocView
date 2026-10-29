@@ -127,7 +127,8 @@ public sealed class DocxBlockHtmlRenderer
     /// Sibling blocks (a cell, a text box, a note, a content control): consecutive paragraphs share border groups, and a
     /// paragraph whose mark is deleted joins the paragraph after it.
     /// </summary>
-    private IEnumerable<RenderStep> RenderBlocks(IEnumerable<XElement> blocks, StringBuilder html)
+    /// <param name="isAutoSpacingContainer">A table cell or a text box: Word drops the automatic spacing before its first and after its last paragraph.</param>
+    private IEnumerable<RenderStep> RenderBlocks(IEnumerable<XElement> blocks, StringBuilder html, bool isAutoSpacingContainer = false)
     {
         List<XElement> siblings = blocks.ToList();
         var merged = new List<XElement>();
@@ -139,7 +140,9 @@ public sealed class DocxBlockHtmlRenderer
             DocxBlockNeighbours outer = _blockNeighbours;
             int firstOfGroup = i - merged.Count;                       // the group starts at the first joined paragraph
             XElement? before = firstOfGroup > 0 && siblings[firstOfGroup - 1].Name == W + "p" ? siblings[firstOfGroup - 1] : null;
-            _blockNeighbours = new DocxBlockNeighbours(before, next, merged.Count > 0 ? merged.ToArray() : null);
+            _blockNeighbours = new DocxBlockNeighbours(before, next, merged.Count > 0 ? merged.ToArray() : null,
+                                                       IsFirstInContainer: isAutoSpacingContainer && firstOfGroup == 0,
+                                                       IsLastInContainer: isAutoSpacingContainer && i == siblings.Count - 1);
             merged.Clear();
             yield return new(RenderBlock(block, html));
             _blockNeighbours = outer;
@@ -147,6 +150,50 @@ public sealed class DocxBlockHtmlRenderer
     }
 
     private DocxBlockNeighbours _blockNeighbours;      // the paragraphs around the paragraph being rendered
+    private int _cellDepth;                              // > 0 inside a table cell
+    private bool _isTrimmingTrailingSpaces;              // the current paragraph drops its trailing spaces (table cell, compatibility mode 11-14)
+
+    /// <summary>
+    /// Automatic spacing (w:spacing beforeAutospacing / afterAutospacing), resolved as LibreOffice does: 280 twips, or 100
+    /// with the compatibility option doNotUseHTMLParagraphAutoSpacing (DomainMapper.cxx); unless that option is set, none
+    /// before the first paragraph of the document, a cell or a text box and none after the last one of a cell or text box
+    /// (DomainMapper_Impl finishParagraph / setCellLastParaAfterAutospacing); and none between list paragraphs of the same
+    /// list (tdf#133363 there).
+    /// </summary>
+    private void ResolveAutoSpacing(WordParagraphFormatting formatting, DocxBlockNeighbours neighbours)
+    {
+        if (!formatting.IsSpaceBeforeAuto && !formatting.IsSpaceAfterAuto) return;
+        DocxCompatibilitySettings compatibility = _styles.Compatibility;
+        int automatic = compatibility.DoesNotUseHtmlParagraphAutoSpacing ? 100 : 280;
+        bool adjusts = !compatibility.DoesNotUseHtmlParagraphAutoSpacing;
+        if (formatting.IsSpaceBeforeAuto)
+        {
+            bool isFirst = neighbours.IsFirstInContainer;
+            formatting.SpaceBeforeTwips = adjusts && isFirst || IsSameList(formatting, neighbours.Previous) ? 0 : automatic;
+        }
+        if (formatting.IsSpaceAfterAuto)
+            formatting.SpaceAfterTwips = adjusts && neighbours.IsLastInContainer || IsSameList(formatting, neighbours.Next) ? 0 : automatic;
+    }
+
+    private bool IsSameList(WordParagraphFormatting formatting, XElement? neighbour)
+    {
+        if (formatting.NumberingId <= 0 || neighbour is null) return false;
+        XElement? pPr = neighbour.Element(W + "pPr");
+        return _styles.ResolveParagraph((string?)pPr?.Element(W + "pStyle")?.Attribute(W + "val"), pPr, _tableStyleId, _tableConditions).NumberingId == formatting.NumberingId;
+    }
+
+    /// <summary>Whether the paragraph's first content is a page or column break (w:br type="page" / "column").</summary>
+    private static bool StartsWithPageOrColumnBreak(XElement paragraph)
+    {
+        foreach (XElement element in paragraph.Descendants())
+        {
+            string name = element.Name.LocalName;
+            if (name == "br") return (string?)element.Attribute(W + "type") is "page" or "column";
+            if (name is "t" or "tab" or "ptab" or "cr" or "sym" or "drawing" or "pict" or "object" or "footnoteReference" or "endnoteReference" or "noBreakHyphen")
+                return false;
+        }
+        return false;
+    }
 
     /// <summary>
     /// A paragraph whose mark is a tracked deletion or move-away (pPr/rPr/w:del or w:moveFrom): in Word's final view its
@@ -184,6 +231,15 @@ public sealed class DocxBlockHtmlRenderer
         WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId, _tableConditions);
         DocxBlockNeighbours neighbours = _blockNeighbours;
         _blockNeighbours = default;                                  // nested blocks (text boxes) start fresh
+        ResolveAutoSpacing(formatting, neighbours);
+        // Compatibility mode 15+: a paragraph that starts with a page / column break has no space before (LibreOffice
+        // DomainMapper.cxx: deferred break on the first run → top margin 0 when GetWordCompatibilityMode() > 14).
+        if (_styles.Compatibility.CompatibilityMode > 14 && _styles.Compatibility.HasCompatibilityMode && StartsWithPageOrColumnBreak(paragraph))
+            formatting.SpaceBeforeTwips = 0;
+        // Compatibility mode 11-14 (stated in settings.xml): trailing spaces, tabs and no-break spaces of a table-cell
+        // paragraph are removed (LibreOffice DomainMapper_Impl, tdf#77417: 0 < mode <= 14 inside a table).
+        bool outerTrimming = _isTrimmingTrailingSpaces;
+        _isTrimmingTrailingSpaces = _cellDepth > 0 && _styles.Compatibility.HasCompatibilityMode && _styles.Compatibility.CompatibilityMode <= 14;
         if (formatting.BorderGroupKey is { } borderGroup)
         {
             formatting.IsBorderJoinedAbove = BorderGroupKeyOf(neighbours.Previous) == borderGroup;
@@ -208,9 +264,17 @@ public sealed class DocxBlockHtmlRenderer
         int outerInlineDepth = _openInline.Count;
         (_leaderTab, _leaderCss) = _textBoxDepth == 0 ? FindEndAlignedLastTab(paragraph, formatting.TabStops) : (null, null);
         if (_leaderTab is not null) css += "display:flex;align-items:baseline;";
+        // Word stretches a justified line that ends in a manual line break (LibreOffice: DoNotJustifyLinesWithManualBreak is
+        // off unless settings.xml has doNotExpandShiftReturn). CSS justifies a line before a forced break by text-align-last,
+        // which would also stretch the paragraph's real last line — so the lines up to the last manual break go in a block of
+        // their own with text-align-last:justify, and the rest stays an ordinary last line.
+        XElement? outerJustifiedBreak = _justifiedBreak;
+        _justifiedBreak = _leaderTab is null && _textBoxDepth == 0 && formatting.Alignment == WordParagraphAlignment.Justify
+                          && !_styles.Compatibility.DoesNotExpandShiftReturn ? LastManualBreak(paragraph) : null;
 
         WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
         if (_leaderTab is not null) html.Append("<span class=\"tab-before\">");
+        if (_justifiedBreak is not null) html.Append("<span class=\"justified-lines\" style=\"display:block;text-align-last:justify\">");
         if (_listLabel is { Text.Length: > 0 } label)
         {
             // Word draws the number with the mark's formatting plus the level's rPr (§17.9.6), then the level's suffix (§17.9.28).
@@ -225,6 +289,9 @@ public sealed class DocxBlockHtmlRenderer
             yield return new(RenderInlineChildren(joined, html, formatting.RunFormatting));
         yield return new(RenderInlineChildren(paragraph, html, formatting.RunFormatting));
         if (_leaderTab is not null) html.Append("</span>");          // tab-after (or tab-before when the tab was not reached)
+        if (_justifiedBreak is not null) html.Append("</span>");      // after-justified-lines (or justified-lines when the break was not reached)
+        _justifiedBreak = outerJustifiedBreak;
+        _isTrimmingTrailingSpaces = outerTrimming;
         _leaderTab = outerLeaderTab;
         _leaderCss = outerLeaderCss;
         _openInline.RemoveRange(outerInlineDepth, _openInline.Count - outerInlineDepth);
@@ -295,6 +362,23 @@ public sealed class DocxBlockHtmlRenderer
         yield return new(RenderRunChildren(run, html, formatting));
         if (linkTag is not null) { html.Append("</a>"); _openInline.RemoveAt(_openInline.Count - 1); }
         if (hasSpan) { html.Append("</span>"); _openInline.RemoveAt(_openInline.Count - 1); }
+    }
+
+    private XElement? _justifiedBreak;                      // a justified paragraph's last manual line break (lines before it are stretched)
+
+    /// <summary>The paragraph's last manual line break (w:br without a type or textWrapping, w:cr) outside deletions.</summary>
+    private static XElement? LastManualBreak(XElement paragraph)
+    {
+        XElement? last = null;
+        foreach (XElement element in paragraph.Descendants())
+        {
+            bool isBreak = element.Name == W + "cr" || element.Name == W + "br" && (string?)element.Attribute(W + "type") is null or "textWrapping";
+            if (!isBreak || element.Parent?.Name != W + "r") continue;
+            XElement? owner = element.Parent.Parent;
+            while (owner is not null && owner.Name != W + "p" && owner.Name != W + "del" && owner.Name != W + "moveFrom") owner = owner.Parent;
+            if (owner == paragraph) last = element;
+        }
+        return last;
     }
 
     private XElement? _leaderTab;                           // the paragraph's last tab when it goes to an end-aligned stop
@@ -452,6 +536,8 @@ public sealed class DocxBlockHtmlRenderer
     private void AppendRunText(StringBuilder html, XElement textElement, WordRunFormatting formatting)
     {
         string text = textElement.Value;
+        if (_isTrimmingTrailingSpaces && text.Length > 0 && IsTrimmedSpace(text[text.Length - 1]) && IsInParagraphEnd(textElement))
+            text = text.TrimEnd(' ', '\t', '\u00A0');
         if (!formatting.IsUnderlined) { AppendScriptText(html, text, formatting); return; }
         int contentEnd = text.Length;
         if (contentEnd > 0 && char.IsWhiteSpace(text[contentEnd - 1]) && !UnderlinesTrailingSpaces && IsInParagraphEnd(textElement))
@@ -475,6 +561,8 @@ public sealed class DocxBlockHtmlRenderer
         }
         if (contentEnd < text.Length) AppendScriptText(html, text.Substring(contentEnd), formatting);
     }
+
+    private static bool IsTrimmedSpace(char c) => c is ' ' or '\t' or '\u00A0';
 
     private static void AppendUnderlined(StringBuilder html, string text, WordRunFormatting formatting, string underlineCss)
     {
@@ -558,6 +646,14 @@ public sealed class DocxBlockHtmlRenderer
                     if (child == _leaderTab) AppendLeaderTab(html);
                     else AppendUnderlinedMarkup(html, "\t", formatting, isSpace: true);
                     break;
+                case "br" or "cr" when child == _justifiedBreak:
+                    // the last manual break: close the justified block here (the break itself ends its last line)
+                    for (int i = _openInline.Count - 1; i >= 0; i--) html.Append(_openInline[i].close);
+                    // the rest is an ordinary last line; its own block keeps it from taking the paragraph's first-line indent again
+                    html.Append("</span><span class=\"after-justified-lines\" style=\"display:block;text-indent:0\">");
+                    foreach ((string openTag, _) in _openInline) html.Append(openTag);
+                    _justifiedBreak = LeaderTabReached;               // reached: the paragraph's closing </span> ends after-justified-lines
+                    break;
                 case "br":
                     html.Append(((string?)child.Attribute(W + "type")) == "page" ? "<span class=\"page-break\"></span>" : "<br>");
                     break;
@@ -616,7 +712,7 @@ public sealed class DocxBlockHtmlRenderer
         {
             html.Append("<span class=\"text-box\">");
             _previousStyleKey = null;
-            yield return new(RenderBlocks(textBox.Elements(), html));
+            yield return new(RenderBlocks(textBox.Elements(), html, isAutoSpacingContainer: true));
             html.Append("</span>");
         }
         _textBoxDepth--;
@@ -758,7 +854,9 @@ public sealed class DocxBlockHtmlRenderer
                 // rows is as tall as all of them, so only a single-row cell is clipped to this row's height.
                 bool isClipped = isExactHeight && rowSpan == 1;
                 if (isClipped) html.Append("<div style=\"max-height:").Append(WordParagraphFormatting.TwipsToPt(rowHeight!.Value)).Append("pt;overflow:hidden\">");
-                yield return new(RenderBlocks(cell.Elements(), html));
+                _cellDepth++;
+                yield return new(RenderBlocks(cell.Elements(), html, isAutoSpacingContainer: true));
+                _cellDepth--;
                 if (isClipped) html.Append("</div>");
                 _previousStyleKey = previous;
                 html.Append("</td>");
@@ -853,4 +951,5 @@ public sealed class DocxBlockHtmlRenderer
 /// paragraphs before it whose deleted marks join them to it. A body block gets them from the window reader (one adjacent
 /// block each side, plus the chain of joined paragraphs); blocks inside a cell or a text box from their siblings.
 /// </summary>
-public readonly record struct DocxBlockNeighbours(XElement? Previous, XElement? Next, XElement[]? MergedBefore);
+public readonly record struct DocxBlockNeighbours(XElement? Previous, XElement? Next, XElement[]? MergedBefore,
+                                                  bool IsFirstInContainer = false, bool IsLastInContainer = false);

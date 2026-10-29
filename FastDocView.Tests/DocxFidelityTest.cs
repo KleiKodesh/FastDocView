@@ -33,6 +33,7 @@ public static partial class DocxFidelityTest
         yield return Hyperlinks;
         yield return BorderGroups;
         yield return DeletedMarksRowsAndCells;
+        yield return CompatibilityLayout;
     }
 
     /// <summary>Writes a minimal package and returns every block's HTML.</summary>

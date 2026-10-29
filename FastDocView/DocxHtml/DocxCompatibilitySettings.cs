@@ -19,6 +19,9 @@ public sealed class DocxCompatibilitySettings
     /// <summary>The Word version the document is laid out for: 11 (2003), 12 (2007, also when absent), 14 (2010), 15 (2013+).</summary>
     public int CompatibilityMode { get; } = 12;
 
+    /// <summary>Whether settings.xml states a compatibility mode at all (LibreOffice keeps -1 then, and its "mode &lt;= 14" rules need 0 &lt; mode).</summary>
+    public bool HasCompatibilityMode { get; }
+
     /// <summary>w:doNotExpandShiftReturn: a justified line ending in a manual line break is NOT stretched (Word's default stretches it).</summary>
     public bool DoesNotExpandShiftReturn { get; }
 
@@ -66,7 +69,7 @@ public sealed class DocxCompatibilitySettings
                 case "ulTrailSpace": UnderlinesTrailingSpaces = isOn; break;
             }
         }
-        if (mode > 0) CompatibilityMode = mode;
+        if (mode > 0) { CompatibilityMode = mode; HasCompatibilityMode = true; }
         PresentOptions = present;
     }
 }
