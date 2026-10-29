@@ -716,6 +716,11 @@ public sealed class DocxBlockHtmlRenderer
         List<XElement> textBoxes = OutermostTextBoxes(drawing);
         if (textBoxes.Count == 0) { html.Append("<span class=\"unsupported\">[image]</span>"); yield break; }
         string? previous = _previousStyleKey;
+        // A text box inside a link is not part of the link (no <a> inside <a>, no blocks inside <a>); its own fields start fresh.
+        string? outerLink = _activeLinkOpenTag;
+        List<DocxField> outerFields = new(_openFields);
+        _activeLinkOpenTag = null;
+        _openFields.Clear();
         _textBoxDepth++;
         foreach (XElement textBox in textBoxes)
         {
@@ -724,6 +729,9 @@ public sealed class DocxBlockHtmlRenderer
             yield return new(RenderBlocks(textBox.Elements(), html, isAutoSpacingContainer: true));
             html.Append("</span>");
         }
+        _activeLinkOpenTag = outerLink;
+        _openFields.Clear();
+        _openFields.AddRange(outerFields);
         _textBoxDepth--;
         _previousStyleKey = previous;
     }

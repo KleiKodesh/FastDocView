@@ -16,7 +16,7 @@ internal sealed class DocxBodyBlockScanner
 {
     private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData, DocumentType }
 
-    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction }
+    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, DeletedContent }
 
     private const int MaxRootTagBytes = 1 << 16;
     private const int MaxHeadingTextBytes = 600;
@@ -28,6 +28,7 @@ internal sealed class DocxBodyBlockScanner
         ("w:tbl"u8.ToArray(), KnownTag.Table), ("w:sdt"u8.ToArray(), KnownTag.ContentControl), ("w:body"u8.ToArray(), KnownTag.Body),
         ("w:pStyle"u8.ToArray(), KnownTag.ParagraphStyle), ("w:numId"u8.ToArray(), KnownTag.NumberingId), ("w:ilvl"u8.ToArray(), KnownTag.NumberingLevel),
         ("w:footnoteReference"u8.ToArray(), KnownTag.FootnoteReference), ("w:endnoteReference"u8.ToArray(), KnownTag.EndnoteReference),
+        ("w:del"u8.ToArray(), KnownTag.DeletedContent), ("w:moveFrom"u8.ToArray(), KnownTag.DeletedContent),
         ("w:fldChar"u8.ToArray(), KnownTag.FieldCharacter), ("w:instrText"u8.ToArray(), KnownTag.FieldInstruction),
     ];
 
@@ -63,6 +64,7 @@ internal sealed class DocxBodyBlockScanner
     private bool _isRootTagDone;
     private bool _isInsideTextRun;              // inside <w:t>…</w:t>
     private bool _isInsideFieldInstruction;     // inside <w:instrText>…</w:instrText>
+    private int _deletedContentDepth;           // open w:del / w:moveFrom elements: fields inside them are not shown, so not followed
 
     // complex fields (w:fldChar begin / separate / end) open at the current position: instruction bytes + whether separated
     private readonly List<(MemoryStream instruction, bool isSeparated)> _openFields = new();
@@ -351,6 +353,7 @@ internal sealed class DocxBodyBlockScanner
         {
             if (_tag == KnownTag.Text) _isInsideTextRun = false;
             if (_tag == KnownTag.FieldInstruction) _isInsideFieldInstruction = false;
+            if (_tag == KnownTag.DeletedContent && _deletedContentDepth > 0) _deletedContentDepth--;
             _depth--;
             if (_tag == KnownTag.Body && _bodyDepth >= 0) { CloseHeading(); BodyEndOffset = _tagStartOffset; _bodyDepth = -1; }
             else if (_tag == KnownTag.ParagraphProperties && _bodyDepth >= 0 && _depth == _bodyDepth + 1) OnParagraphPropertiesClosed();
@@ -368,6 +371,7 @@ internal sealed class DocxBodyBlockScanner
         if (_tag == KnownTag.Body && _bodyDepth < 0) { _bodyDepth = _depth + 1; BodyEndOffset = -1; }
         if (_tag == KnownTag.Text && !isSelfClosing) _isInsideTextRun = true;
         if (_tag == KnownTag.FieldInstruction && !isSelfClosing && _bodyDepth >= 0) _isInsideFieldInstruction = true;
+        if (_tag == KnownTag.DeletedContent && !isSelfClosing && _bodyDepth >= 0) _deletedContentDepth++;
         if (!isSelfClosing) _depth++;
         _isCapturingAttributes = false;
     }
@@ -398,6 +402,7 @@ internal sealed class DocxBodyBlockScanner
         if (BlockStyleIds.Count == 0) return;
         if (_tag == KnownTag.FieldCharacter)
         {
+            if (_deletedContentDepth > 0) return;                // the renderer skips deleted runs: their field characters do not count
             switch (AttributeValue(attributes, "w:fldCharType="))
             {
                 case "begin": _openFields.Add((new MemoryStream(), false)); break;

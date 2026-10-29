@@ -32,6 +32,22 @@ public static partial class DocxFidelityTest
         List<string> across = RenderAll("links-spanning", spanning);
         TestReport.Check(across[1].Contains("href=\"https://example.org/x\"") && across[1].Contains(">part two</a>") && !across[1].Contains("plain</a>"),
                          "a HYPERLINK field result that runs into the next paragraph stays a link there (index-time open-field state)");
+    
+        // review findings: a field begun in a paragraph whose mark is deleted (joined into the next block) closes there;
+        // a deleted field end is not counted at index time; a text box inside a link is not inside the <a>
+        string deletedMark = "<w:pPr><w:rPr><w:del w:id=\"9\" w:author=\"a\" w:date=\"2026-01-01T00:00:00Z\"/></w:rPr></w:pPr>";
+        string joined = $"<w:p>{deletedMark}<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText> HYPERLINK \"https://example.org/j\" </w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + Text("in ") + "</w:p>"
+                      + "<w:p>" + Text("link") + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>" + Text(" out") + "</w:p>";
+        List<string> joinedHtml = RenderAll("links-joined", joined);
+        TestReport.Check(joinedHtml[1].Contains(">link</a>") && !joinedHtml[1].Contains("out</a>"), "a link begun in a joined paragraph ends where its field ends");
+        string deletedEnd = "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText> HYPERLINK \"https://example.org/d\" </w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + Text("a")
+                          + "<w:del w:id=\"7\" w:author=\"a\" w:date=\"2026-01-01T00:00:00Z\"><w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:del></w:p>"
+                          + "<w:p>" + Text("b") + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>";
+        TestReport.Check(RenderAll("links-deleted-end", deletedEnd)[1].Contains(">b</a>"), "a deleted field end does not close the link for the next block");
+        string boxInLink = "<w:p><w:hyperlink r:id=\"rIdL1\"><w:r><w:t>x</w:t><w:drawing><wp:inline xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\"><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent></wp:inline></w:drawing></w:r></w:hyperlink></w:p>";
+        string boxHtml = RenderAll("links-textbox", boxInLink, extraDocumentRelationships: relationships)[0];
+        TestReport.Check(boxHtml.Split("<a ").Length - 1 == 1 && !boxHtml.Contains("<a class=\"link\" href=\"https://example.org/a?b=1&amp;c=2\" title") , "a text box inside a link is not wrapped in another link");
     }
+
 
 }
