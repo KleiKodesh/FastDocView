@@ -16,7 +16,7 @@ internal sealed class DocxBodyBlockScanner
 {
     private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData, DocumentType }
 
-    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, DeletedContent }
+    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, DeletedContent, SectionProperties, PageSize, PageMargins }
 
     private const int MaxRootTagBytes = 1 << 16;
     private const int MaxHeadingTextBytes = 600;
@@ -30,6 +30,7 @@ internal sealed class DocxBodyBlockScanner
         ("w:footnoteReference"u8.ToArray(), KnownTag.FootnoteReference), ("w:endnoteReference"u8.ToArray(), KnownTag.EndnoteReference),
         ("w:del"u8.ToArray(), KnownTag.DeletedContent), ("w:moveFrom"u8.ToArray(), KnownTag.DeletedContent),
         ("w:fldChar"u8.ToArray(), KnownTag.FieldCharacter), ("w:instrText"u8.ToArray(), KnownTag.FieldInstruction),
+        ("w:sectPr"u8.ToArray(), KnownTag.SectionProperties), ("w:pgSz"u8.ToArray(), KnownTag.PageSize), ("w:pgMar"u8.ToArray(), KnownTag.PageMargins),
     ];
 
     private readonly DocxListLabelResolver? _listLabelResolver;
@@ -79,6 +80,17 @@ internal sealed class DocxBodyBlockScanner
     private string? _currentStyleId;
     private int _currentNumId = -1;
     private int _currentLevel;
+
+    // the w:sectPr being read: a body-level paragraph's pPr child (ends the section at that paragraph)
+    // or the body's last child (ends the last section); -1 outside one
+    private int _sectionDepth = -1;
+    private int _openParagraphPropertiesDepth = -1;   // depth of the w:pPr open now (a paragraph's, at any depth)
+    private int _openTables;                          // w:tbl elements open now: a cell paragraph's w:sectPr is not a section break
+    private int? _sectionPageWidth, _sectionLeftMargin, _sectionRightMargin, _sectionGutter;
+
+    /// <summary>Per section, in order: its last block (inclusive) and its text width in twips.</summary>
+    public List<int> SectionLastBlocks { get; } = new();
+    public List<int> SectionTextWidths { get; } = new();
 
     public List<long> BlockStartOffsets { get; } = new();
     public List<WordDocumentBlockKind> BlockKinds { get; } = new();
@@ -333,6 +345,7 @@ internal sealed class DocxBodyBlockScanner
             KnownTag.ParagraphStyle => _depth == _bodyDepth + 2,
             KnownTag.NumberingId or KnownTag.NumberingLevel => _depth == _bodyDepth + 3,
             KnownTag.FootnoteReference or KnownTag.EndnoteReference or KnownTag.FieldCharacter => _depth > _bodyDepth,
+            KnownTag.PageSize or KnownTag.PageMargins => _sectionDepth >= 0 && _depth == _sectionDepth + 1,
             _ => false,
         };
     }
@@ -357,6 +370,9 @@ internal sealed class DocxBodyBlockScanner
             _depth--;
             if (_tag == KnownTag.Body && _bodyDepth >= 0) { CloseHeading(); BodyEndOffset = _tagStartOffset; _bodyDepth = -1; }
             else if (_tag == KnownTag.ParagraphProperties && _bodyDepth >= 0 && _depth == _bodyDepth + 1) OnParagraphPropertiesClosed();
+            else if (_tag == KnownTag.SectionProperties && _sectionDepth >= 0 && _depth == _sectionDepth) OnSectionPropertiesClosed();
+            if (_tag == KnownTag.ParagraphProperties && _depth == _openParagraphPropertiesDepth) _openParagraphPropertiesDepth = -1;
+            if (_tag == KnownTag.Table && _bodyDepth >= 0 && _openTables > 0) _openTables--;
             return;
         }
 
@@ -369,6 +385,21 @@ internal sealed class DocxBodyBlockScanner
         // TestXWPFWordExtractor.testMultipleBodyBug reads all of them): every body's children are
         // blocks, and the body ends at the last </w:body>.
         if (_tag == KnownTag.Body && _bodyDepth < 0) { _bodyDepth = _depth + 1; BodyEndOffset = -1; }
+        // w:sectPr as the body's own child (the last section) or in a paragraph's pPr outside tables - a
+        // body-level paragraph or one in a body-level content control (sdt > sdtContent > p > pPr).
+        // A w:sectPrChange's older w:sectPr is not a pPr child and is not read.
+        if (_bodyDepth >= 0 && !isSelfClosing)
+        {
+            if (_tag == KnownTag.ParagraphProperties) _openParagraphPropertiesDepth = _depth;
+            else if (_tag == KnownTag.Table) _openTables++;
+        }
+        if (_tag == KnownTag.SectionProperties && _bodyDepth >= 0 && _sectionDepth < 0
+            && (_depth == _bodyDepth || (_openTables == 0 && _openParagraphPropertiesDepth >= 0 && _depth == _openParagraphPropertiesDepth + 1)))
+        {
+            _sectionDepth = _depth;
+            _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = null;
+            if (isSelfClosing) OnSectionPropertiesClosed();
+        }
         if (_tag == KnownTag.Text && !isSelfClosing) _isInsideTextRun = true;
         if (_tag == KnownTag.FieldInstruction && !isSelfClosing && _bodyDepth >= 0) _isInsideFieldInstruction = true;
         if (_tag == KnownTag.DeletedContent && !isSelfClosing && _bodyDepth >= 0) _deletedContentDepth++;
@@ -409,6 +440,19 @@ internal sealed class DocxBodyBlockScanner
                 case "separate" when _openFields.Count > 0: _openFields[_openFields.Count - 1] = (_openFields[_openFields.Count - 1].instruction, true); break;
                 case "end" when _openFields.Count > 0: _openFields.RemoveAt(_openFields.Count - 1); break;
             }
+            return;
+        }
+        if (_tag == KnownTag.PageSize)
+        {
+            _sectionPageWidth = WordDocumentPageSetup.ParseTwips(AttributeValue(attributes, "w:w="));
+            return;
+        }
+        if (_tag == KnownTag.PageMargins)
+        {
+            // ECMA-376 17.6.11 pgMar: w:left / w:right (w:start / w:end in some producers), w:gutter.
+            _sectionLeftMargin = WordDocumentPageSetup.ParseTwips(AttributeValue(attributes, "w:left=") ?? AttributeValue(attributes, "w:start="));
+            _sectionRightMargin = WordDocumentPageSetup.ParseTwips(AttributeValue(attributes, "w:right=") ?? AttributeValue(attributes, "w:end="));
+            _sectionGutter = WordDocumentPageSetup.ParseTwips(AttributeValue(attributes, "w:gutter="));
             return;
         }
         if (_tag is KnownTag.FootnoteReference or KnownTag.EndnoteReference)
@@ -491,6 +535,31 @@ internal sealed class DocxBodyBlockScanner
         if (label is not { } found) return;
         BlockListLabelIds[BlockListLabelIds.Count - 1] = ListLabels.Count;
         ListLabels.Add(found);
+    }
+
+    /// <summary>
+    /// A section ends at the paragraph whose pPr holds the w:sectPr, or - for the body's own w:sectPr -
+    /// at the last block. Missing values take LibreOffice's Word-import defaults (Letter, 1 in margins).
+    /// </summary>
+    private void OnSectionPropertiesClosed()
+    {
+        bool isBodyLevel = _sectionDepth == _bodyDepth;
+        _sectionDepth = -1;
+        if (BlockStartOffsets.Count == 0) return;
+        int width = WordDocumentPageSetup.TextWidth(
+            _sectionPageWidth ?? WordDocumentPageSetup.LetterPageWidthTwips,
+            _sectionLeftMargin ?? WordDocumentPageSetup.DefaultMarginTwips,
+            _sectionRightMargin ?? WordDocumentPageSetup.DefaultMarginTwips,
+            _sectionGutter ?? 0);
+        // The body-level w:sectPr is itself a block (kind Other) at the end: it closes the last section.
+        int lastBlock = BlockStartOffsets.Count - 1;
+        if (SectionLastBlocks.Count > 0 && SectionLastBlocks[SectionLastBlocks.Count - 1] >= lastBlock)
+        {
+            if (!isBodyLevel) SectionTextWidths[SectionTextWidths.Count - 1] = width;
+            return;
+        }
+        SectionLastBlocks.Add(lastBlock);
+        SectionTextWidths.Add(width);
     }
 
     private static string? AttributeValue(string attributes, string attributeWithEquals)

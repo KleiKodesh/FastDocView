@@ -345,6 +345,21 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     }
     private WordDocumentHeading[]? _headingsSnapshot;
 
+    /// <summary>Page text width per section from the index; while scanning, the sections ended so far.</summary>
+    public IReadOnlyList<WordDocumentSection> Sections
+    {
+        get
+        {
+            if (_index is { } index) return _sections ??= WordDocumentPageSetup.FromSectionEnds(index.SectionLastBlocks, index.SectionTextWidths);
+            lock (_readLock)
+            {
+                if (_builder is not { } builder) return _sections ??= WordDocumentPageSetup.FromSectionEnds(_index!.SectionLastBlocks, _index.SectionTextWidths);
+                return WordDocumentPageSetup.FromSectionEnds(builder.KnownSectionLastBlocks.ToArray(), builder.KnownSectionTextWidths.ToArray());
+            }
+        }
+    }
+    private IReadOnlyList<WordDocumentSection>? _sections;
+
     public (int footnotes, int endnotes) NoteCounts
     {
         get { lock (_readLock) return (_footnoteCount, _endnoteCount); }

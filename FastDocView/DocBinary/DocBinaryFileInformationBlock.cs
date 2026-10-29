@@ -30,6 +30,7 @@ public sealed class DocBinaryFileInformationBlock
     public (uint offset, uint length) ParagraphBinTable { get; }   // PlcfBtePapx
     public (uint offset, uint length) FootnoteReferences { get; }  // PlcffndRef
     public (uint offset, uint length) FootnoteTexts { get; }       // PlcffndTxt
+    public (uint offset, uint length) SectionDescriptors { get; }  // PlcfSed (FibRgFcLcb97 index 6)
     public (uint offset, uint length) EndnoteReferences { get; }   // PlcfendRef
     public (uint offset, uint length) EndnoteTexts { get; }        // PlcfendTxt
     public (uint offset, uint length) FontTable { get; }           // SttbfFfn
@@ -79,6 +80,7 @@ public sealed class DocBinaryFileInformationBlock
         StyleSheet = FcLcb(fib, 1);
         FootnoteReferences = FcLcb(fib, 2);
         FootnoteTexts = FcLcb(fib, 3);
+        SectionDescriptors = FcLcb(fib, 6);
         CharacterBinTable = FcLcb(fib, 12);
         ParagraphBinTable = FcLcb(fib, 13);
         PieceTable = FcLcb(fib, 33);

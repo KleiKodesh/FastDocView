@@ -14,6 +14,8 @@ internal enum RtfWord : byte
     FootnoteNumberingArabic, FootnoteNumberingLowerAlpha, FootnoteNumberingUpperAlpha, FootnoteNumberingLowerRoman, FootnoteNumberingUpperRoman, FootnoteNumberingChicago,
     EndnoteNumberingArabic, EndnoteNumberingLowerAlpha, EndnoteNumberingUpperAlpha, EndnoteNumberingLowerRoman, EndnoteNumberingUpperRoman, EndnoteNumberingChicago,
     FootnoteStart, EndnoteStart, RightToLeftDocument,
+    //  page setup (document defaults, then per section) 
+    PaperWidth, LeftMargin, RightMargin, Gutter, SectionDefault, SectionPageWidth, SectionLeftMargin, SectionRightMargin, SectionGutter,
     // ── destinations rendered ──
     Footnote, FootnoteIsEndnote, Field, FieldResult, ListText, ParagraphNumberText, UnicodePair, UnicodeDestination,
     Picture, ShapePicture, NonShapePicture, Shape, ObjectGroup, MathGroup, NestedTableProperties,
@@ -94,6 +96,9 @@ internal static class RtfControlWords
         ("aftnnar", RtfWord.EndnoteNumberingArabic), ("aftnnalc", RtfWord.EndnoteNumberingLowerAlpha), ("aftnnauc", RtfWord.EndnoteNumberingUpperAlpha),
         ("aftnnrlc", RtfWord.EndnoteNumberingLowerRoman), ("aftnnruc", RtfWord.EndnoteNumberingUpperRoman), ("aftnnchi", RtfWord.EndnoteNumberingChicago),
         ("ftnstart", RtfWord.FootnoteStart), ("aftnstart", RtfWord.EndnoteStart), ("rtldoc", RtfWord.RightToLeftDocument),
+        ("paperw", RtfWord.PaperWidth), ("margl", RtfWord.LeftMargin), ("margr", RtfWord.RightMargin), ("gutter", RtfWord.Gutter),
+        ("sectd", RtfWord.SectionDefault), ("pgwsxn", RtfWord.SectionPageWidth), ("marglsxn", RtfWord.SectionLeftMargin),
+        ("margrsxn", RtfWord.SectionRightMargin), ("guttersxn", RtfWord.SectionGutter),
         ("footnote", RtfWord.Footnote), ("ftnalt", RtfWord.FootnoteIsEndnote), ("field", RtfWord.Field), ("fldrslt", RtfWord.FieldResult),
         ("listtext", RtfWord.ListText), ("pntext", RtfWord.ParagraphNumberText), ("upr", RtfWord.UnicodePair), ("ud", RtfWord.UnicodeDestination),
         ("pict", RtfWord.Picture), ("shppict", RtfWord.ShapePicture), ("nonshppict", RtfWord.NonShapePicture), ("shp", RtfWord.Shape),

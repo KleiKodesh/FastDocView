@@ -213,6 +213,23 @@ public sealed class OdtStyleCascade
         return run;
     }
 
+    /// <summary>Page widths per master page (index time only; a reopen reads the sections from the index).</summary>
+    public OdtPageSetup PageSetup { get; set; } = OdtPageSetup.Empty;
+
+    /// <summary>The master page a paragraph / table style starts (style:master-page-name, through its parents), or null.</summary>
+    public string? MasterPageNameOf(string family, string? styleName)
+    {
+        if (styleName is null) return null;
+        if (_masterPageNames.TryGetValue((family, styleName), out string? cached)) return cached;
+        string? found = null;
+        List<XElement> chain = Chain(family, styleName, includeDefault: false);
+        for (int i = chain.Count - 1; i >= 0 && found is null; i--)
+            if ((string?)chain[i].Attribute(Style + "master-page-name") is { Length: > 0 } master) found = master;
+        _masterPageNames[(family, styleName)] = found;
+        return found;
+    }
+    private readonly Dictionary<(string family, string name), string?> _masterPageNames = new();
+
     /// <summary>default-style → root parent … → the style itself.</summary>
     private List<XElement> Chain(string family, string? name, bool includeDefault = true)
     {

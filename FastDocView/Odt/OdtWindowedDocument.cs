@@ -146,6 +146,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     {
         var styles = new OdtStyleCascade();
         if (!isFlat) foreach (XElement section in OdtPackage.ReadStylesSections(file)) styles.AddSection(section);
+        styles.PageSetup = OdtPackage.ReadPageSetup(file, isFlat);
         return styles;
     }
 
@@ -288,6 +289,22 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     {
         get { lock (_readLock) return _builder is { } builder ? builder.KnownHeadings.ToArray() : _index!.Headings; }
     }
+
+    /// <summary>Page text width per section (master pages, see <see cref="OdtPageSetup"/>); the known ones while scanning.</summary>
+    public IReadOnlyList<WordDocumentSection> Sections
+    {
+        get
+        {
+            lock (_readLock)
+            {
+                if (_builder is { } builder) return WordDocumentPageSetup.FromSectionStarts(builder.KnownSectionStarts);
+                OdtRandomAccessIndex index = _index!;
+                return _sections ??= WordDocumentPageSetup.FromSectionStarts(
+                    index.SectionFirstBlocks.Select((first, i) => new WordDocumentSection(first, index.SectionTextWidths[i])));
+            }
+        }
+    }
+    private IReadOnlyList<WordDocumentSection>? _sections;
 
     public (int footnotes, int endnotes) NoteCounts
     {

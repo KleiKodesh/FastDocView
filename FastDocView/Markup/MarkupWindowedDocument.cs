@@ -12,6 +12,9 @@ namespace FastDocView.Markup;
 /// </summary>
 public sealed class MarkupWindowedDocument : IWordWindowedDocument
 {
+    /// <summary>Text and web archives carry no page setup: Word's default text width.</summary>
+    public IReadOnlyList<WordDocumentSection> Sections => WordDocumentPageSetup.DefaultSections;
+
     private const int ReadChunkBytes = 1 << 16;
 
     private readonly MarkupRandomAccessIndex _index;

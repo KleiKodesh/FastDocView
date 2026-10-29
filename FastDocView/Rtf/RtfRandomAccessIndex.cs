@@ -14,7 +14,7 @@ public readonly record struct RtfNoteReference(int BlockIndex, WordDocumentNoteK
 public sealed class RtfRandomAccessIndex
 {
     private const string Magic = "KHRTFIDX";
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;     // 2: section text widths
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -31,6 +31,9 @@ public sealed class RtfRandomAccessIndex
     public string[] ListLabels { get; }
     public WordDocumentHeading[] Headings { get; }
     public RtfNoteReference[] NoteReferences { get; }         // body order
+    /// <summary>Per section: its last block (inclusive) and its page text width in twips.</summary>
+    public int[] SectionLastBlocks { get; init; } = [];
+    public int[] SectionTextWidths { get; init; } = [];
 
     public int BlockCount => BlockStartOffsets.Length;
 
@@ -117,6 +120,8 @@ public sealed class RtfRandomAccessIndex
         foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
         writer.Write(NoteReferences.Length);
         foreach (RtfNoteReference note in NoteReferences) { writer.Write(note.BlockIndex); writer.Write((byte)note.Kind); writer.Write(note.Number); writer.Write(note.Label); }
+        IndexBinaryArrays.Write(writer, SectionLastBlocks);
+        IndexBinaryArrays.Write(writer, SectionTextWidths);
         writer.Flush();
     }
 
@@ -145,8 +150,16 @@ public sealed class RtfRandomAccessIndex
         for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
         var notes = new RtfNoteReference[reader.ReadInt32()];
         for (int i = 0; i < notes.Length; i++) notes[i] = new RtfNoteReference(reader.ReadInt32(), (WordDocumentNoteKind)reader.ReadByte(), reader.ReadInt32(), reader.ReadString());
+        int[] sectionLastBlocks = IndexBinaryArrays.Read<int>(reader);
+        int[] sectionTextWidths = IndexBinaryArrays.Read<int>(reader);
+        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)starts.Length))
+            throw new InvalidDataException("RTF index: section table does not match the blocks.");
         return new RtfRandomAccessIndex(sourceLength, sourceTicks, tables, isRightToLeft, starts, ends, kinds, textLengths, stateIds, states,
-                                        listLevels, labelIds, labels, headings, notes);
+                                        listLevels, labelIds, labels, headings, notes)
+        {
+            SectionLastBlocks = sectionLastBlocks,
+            SectionTextWidths = sectionTextWidths,
+        };
     }
 
     public void Save(string indexPath)

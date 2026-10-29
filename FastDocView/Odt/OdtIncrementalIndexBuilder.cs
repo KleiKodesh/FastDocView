@@ -143,6 +143,19 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
         }
     }
 
+    /// <summary>Sections starting in the known blocks.</summary>
+    public IReadOnlyList<WordDocumentSection> KnownSectionStarts
+    {
+        get
+        {
+            int known = KnownBlockCount;
+            List<WordDocumentSection> sections = _scanner.SectionStarts;
+            int count = sections.Count;
+            while (count > 1 && sections[count - 1].FirstBlockIndex >= known) count--;
+            return sections.GetRange(0, count);
+        }
+    }
+
     /// <summary>Note references in the known blocks (body order).</summary>
     public IReadOnlyList<OdtNoteReference> KnownNoteReferences
     {
