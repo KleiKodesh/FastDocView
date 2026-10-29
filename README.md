@@ -22,4 +22,25 @@ npm run dev                                   # http://localhost:5189 — the ap
 node playwright/appCheck.mjs "C:\path\book.docx" [--headed]   # live DOM/console check, no screenshots
 ```
 
+## Using it
+
+One file:
+
+```csharp
+using var document = WordWindowedDocumentOpener.Open(path);
+IReadOnlyList<WordDocumentBlockHtml> window = document.RenderBlocks(0, 50);   // HTML of blocks 0-49, nothing else read
+```
+
+A host (service, dev server) that keeps documents open by id for a page:
+
+```csharp
+using var documents = new WordWindowedDocumentSet(cacheDirectory);   // locks per document, idle close, sidecar cache
+string id = documents.Open(path);
+var window = documents.Use(id, document => document.RenderBlocks(first, count));
+documents.Use(id, document => document.ScanFor(5000, TimeSpan.FromMilliseconds(20)));   // keep building a first-open index
+// WordDocumentClosedException from Use = closed, idle-closed or changed on disk: reopen
+```
+
+`FastDocView.DevServer/Program.cs` is a complete host in ~150 lines.
+
 Design, measurements, limitations and the specifications used: [NOTES.md](NOTES.md).

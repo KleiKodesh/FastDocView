@@ -10,7 +10,6 @@
 //   DELETE /api/documents/{id}                closes
 //   GET  /api/progress                        the last index progress (polled while opening)
 //   GET  /api/memory                          managed heap / working set of this process
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json.Serialization;
 using FastDocView;
@@ -34,10 +33,16 @@ app.UseCors();
 string repositoryRoot = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, ".."));
 string ResolvePath(string path) => Path.IsPathRooted(path) ? path : Path.GetFullPath(Path.Combine(repositoryRoot, path));
 
-var documents = new ConcurrentDictionary<int, IWordWindowedDocument>();
 var cacheDirectory = Path.Combine(AppContext.BaseDirectory, "index-cache");
+using var documents = new WordWindowedDocumentSet(cacheDirectory);     // the same set and locking the app's service uses
 var lastProgress = new WordDocumentIndexProgress(0, 0, 0);
-int nextId = 0;
+
+// Runs a call on an open document: 404 for an unknown id, 409 "source-changed" when it must be reopened (the demo reopens).
+IResult UseDocument(string id, Func<IWordWindowedDocument, IResult> action)
+{
+    try { return documents.Use(id, action); }
+    catch (WordDocumentClosedException) { return Results.Conflict(new ErrorBody("source-changed")); }
+}
 
 app.MapGet("/api/folder", (string path) =>
 {
@@ -54,116 +59,93 @@ app.MapPost("/api/documents", (OpenRequest request) =>
 {
     request = request with { Path = ResolvePath(request.Path) };
     if (!File.Exists(request.Path)) return Results.NotFound(new ErrorBody($"File not found: {request.Path}"));
-    var policy = new WordIndexPolicy { CacheDirectory = cacheDirectory, ForcedMode = request.ForceSidecar == true ? WordIndexMode.Sidecar : null,
-                                 IndexesOnDemand = true };
-    if (request.RebuildIndex == true && File.Exists(policy.IndexPathFor(request.Path))) File.Delete(policy.IndexPathFor(request.Path));
+    string indexPath = documents.Policy.IndexPathFor(request.Path);
+    if (request.RebuildIndex == true && File.Exists(indexPath)) File.Delete(indexPath);
     var progress = new Progress<WordDocumentIndexProgress>(p => lastProgress = p);
     var watch = Stopwatch.StartNew();
-    IWordWindowedDocument document;
-    try { document = WordWindowedDocumentOpener.Open(request.Path, policy, progress); }
+    string id;
+    try { id = documents.Open(request.Path, request.ForceSidecar == true ? WordIndexMode.Sidecar : null, progress); }
     catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException)
     {
         return Results.BadRequest(new ErrorBody(exception.Message));
     }
     double openMilliseconds = watch.Elapsed.TotalMilliseconds;
-    int id = Interlocked.Increment(ref nextId);
-    documents[id] = document;
-    WordIndexDecision decision = document switch
+    return UseDocument(id, document =>
     {
-        DocxWindowedDocument docx => docx.Decision,
-        DocBinaryWindowedDocument doc => doc.Decision,
-        _ => new WordIndexDecision(request.Path, WordIndexMode.InMemory, false, 0, 0, ""),
-    };
-    (int footnotes, int endnotes) = document.NoteCounts;
-    return Results.Ok(new DocumentSummary(id, Path.GetFileName(request.Path), request.Path, document.BlockCount, document.IsRightToLeft, document.Stylesheet,
-                                          openMilliseconds, decision.Mode.ToString(), decision.HasCachedIndex, decision.Reason,
-                                          document.GetType().Name, document.Headings.Count, footnotes, endnotes,
-                                          document.KnownBlockCount, document.IsIndexComplete));
+        WordIndexDecision decision = document switch
+        {
+            DocxWindowedDocument docx => docx.Decision,
+            DocBinaryWindowedDocument doc => doc.Decision,
+            _ => new WordIndexDecision(request.Path, WordIndexMode.InMemory, false, 0, 0, ""),
+        };
+        (int footnotes, int endnotes) = document.NoteCounts;
+        return Results.Ok(new DocumentSummary(id, Path.GetFileName(request.Path), request.Path, document.BlockCount, document.IsRightToLeft, document.Stylesheet,
+                                              openMilliseconds, decision.Mode.ToString(), decision.HasCachedIndex, decision.Reason,
+                                              document.GetType().Name, document.Headings.Count, footnotes, endnotes,
+                                              document.KnownBlockCount, document.IsIndexComplete));
+    });
 });
 
 // Page text width per section (Word / LibreOffice margins), in block order - the app page sizes its column from it.
-app.MapGet("/api/documents/{id:int}/sections", (int id) =>
-{
-    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
-    return Results.Ok(document.Sections.Select(s => new SectionBody(s.FirstBlockIndex, s.TextWidthTwips)).ToList());
-});
+app.MapGet("/api/documents/{id}/sections", (string id) => UseDocument(id, document =>
+    Results.Ok(document.Sections.Select(s => new SectionBody(s.FirstBlockIndex, s.TextWidthTwips)).ToList())));
 
 // In-document search, one batch: hit block indexes from fromBlock on (the app page loops, wraps and highlights).
-app.MapGet("/api/documents/{id:int}/search", (int id, string query, bool matchCase, int fromBlock, int maxBlocks) =>
+app.MapGet("/api/documents/{id}/search", (string id, string query, bool matchCase, int fromBlock, int maxBlocks) => UseDocument(id, document =>
 {
-    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
-    try
-    {
-        WordDocumentSearchBatch batch = document.Search(query, new WordDocumentSearchOptions { MatchCase = matchCase }, fromBlock, Math.Clamp(maxBlocks, 1, 2000));
-        return Results.Ok(new SearchBody(batch.HitBlocks, batch.NextBlock, batch.ReachedEnd));
-    }
-    catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }
-});
+    WordDocumentSearchBatch batch = document.Search(query, new WordDocumentSearchOptions { MatchCase = matchCase }, fromBlock, Math.Clamp(maxBlocks, 1, 2000));
+    return Results.Ok(new SearchBody(batch.HitBlocks, batch.NextBlock, batch.ReachedEnd));
+}));
 
 // The block a bookmark marks (in-document links, TOC entries, REF fields): an index lookup.
-app.MapGet("/api/documents/{id:int}/bookmark", (int id, string name) =>
-{
-    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
-    try { return Results.Ok(new BookmarkBody(document.FindBookmark(name))); }
-    catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }
-});
+app.MapGet("/api/documents/{id}/bookmark", (string id, string name) => UseDocument(id, document =>
+    Results.Ok(new BookmarkBody(document.FindBookmark(name)))));
 
-app.MapGet("/api/documents/{id:int}/headings", (int id) =>
-{
-    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
-    return Results.Ok(document.Headings.Select(h => new HeadingBody(h.BlockIndex, h.Level, h.Text)).ToList());
-});
+app.MapGet("/api/documents/{id}/headings", (string id) => UseDocument(id, document =>
+    Results.Ok(document.Headings.Select(h => new HeadingBody(h.BlockIndex, h.Level, h.Text)).ToList())));
 
-app.MapGet("/api/documents/{id:int}/note-references", (int id) =>
-{
-    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
-    return Results.Ok(document.NoteReferences.Select(r => new NoteReferenceBody(r.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", r.Number, r.BlockIndex)).ToList());
-});
+app.MapGet("/api/documents/{id}/note-references", (string id) => UseDocument(id, document =>
+    Results.Ok(document.NoteReferences.Select(r => new NoteReferenceBody(r.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", r.Number, r.BlockIndex)).ToList())));
 
-app.MapGet("/api/documents/{id:int}/weights", (int id) =>
+app.MapGet("/api/documents/{id}/weights", (string id) => UseDocument(id, document =>
 {
-    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
     // Raw Int32 little-endian: 123k blocks are 0.5 MB and parse in microseconds (JSON took ~200 ms).
-    int blockCount = document.BlockCount;                   // one snapshot: an on-demand index may move it between calls
-    var bytes = new byte[blockCount * 4];
-    for (int i = 0; i < blockCount; i++) BitConverter.TryWriteBytes(bytes.AsSpan(i * 4), document.EstimatedTextLength(i));
+    int[] lengths = document.EstimatedTextLengths();
+    var bytes = new byte[lengths.Length * 4];
+    Buffer.BlockCopy(lengths, 0, bytes, 0, bytes.Length);
     return Results.Bytes(bytes, "application/octet-stream");
-});
+}));
 
-app.MapGet("/api/documents/{id:int}/blocks", (int id, int first, int count, HttpResponse response) =>
+app.MapGet("/api/documents/{id}/blocks", (string id, int first, int count, HttpResponse response) => UseDocument(id, document =>
 {
-    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
     var watch = Stopwatch.StartNew();
-    IReadOnlyList<WordDocumentBlockHtml> blocks;
-    try { blocks = document.RenderBlocks(first, Math.Min(count, 500)); }
-    catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }   // the demo reopens
+    IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(first, Math.Min(count, 500));
     response.Headers["X-Render-Milliseconds"] = watch.Elapsed.TotalMilliseconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Known-Block-Count"] = document.KnownBlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Index-Complete"] = document.IsIndexComplete ? "true" : "false";
     return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, b.Html,
         b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())).ToList());
-});
+}));
 
-// A first open keeps building its index: the demo calls this until it is complete (each call indexes `blocks` more blocks; renders and sends nothing).
-app.MapPost("/api/documents/{id:int}/scan", (int id, int blocks) =>
+// A first open keeps building its index: the demo calls this until it is complete. Each call indexes up to `blocks` more
+// blocks within the app service's time budget (renders and sends nothing), so a block fetch never waits long for the lock.
+app.MapPost("/api/documents/{id}/scan", (string id, int blocks) => UseDocument(id, document =>
 {
-    if (!documents.TryGetValue(id, out IWordWindowedDocument? document)) return Results.NotFound();
-    try { document.ScanAhead(Math.Clamp(blocks, 1, 100_000)); }
-    catch (WordDocumentSourceChangedException) { return Results.Conflict(new ErrorBody("source-changed")); }
+    document.ScanFor(Math.Clamp(blocks, 1, 100_000), TimeSpan.FromMilliseconds(20));
     (int footnotes, int endnotes) = document.NoteCounts;
     return Results.Ok(new ScanBody(document.KnownBlockCount, document.IsIndexComplete, footnotes, endnotes));
-});
+}));
 
-app.MapDelete("/api/documents/{id:int}", (int id) =>
+app.MapDelete("/api/documents/{id}", (string id) =>
 {
-    if (documents.TryRemove(id, out IWordWindowedDocument? document)) document.Dispose();
+    documents.Close(id);
     return Results.Ok();
 });
 
 // Closes everything — a Playwright run that ends by closing the browser never sends its DELETEs.
 app.MapDelete("/api/documents", () =>
 {
-    foreach (int id in documents.Keys.ToList()) if (documents.TryRemove(id, out IWordWindowedDocument? document)) document.Dispose();
+    documents.CloseAll();
     return Results.Ok();
 });
 
@@ -187,7 +169,7 @@ record HeadingBody(int BlockIndex, int Level, string Text);
 record SectionBody(int FirstBlockIndex, int TextWidthTwips);
 record BookmarkBody(int? BlockIndex);
 record SearchBody(int[] HitBlocks, int NextBlock, bool ReachedEnd);
-record DocumentSummary(int Id, string FileName, string Path, int BlockCount, bool IsRightToLeft, string Stylesheet,
+record DocumentSummary(string Id, string FileName, string Path, int BlockCount, bool IsRightToLeft, string Stylesheet,
                        double OpenMilliseconds, string Mode, bool HasCachedIndex, string Reason, string ReaderType,
                        int HeadingCount, int FootnoteCount, int EndnoteCount, int KnownBlockCount, bool IsIndexComplete);
 record NoteBody(string Kind, int Number, string Label, string Html);
