@@ -454,6 +454,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                 int known = _blocks.BlockCount;
                 int end = Math.Min(known, wantedEnd);
                 var hits = new List<int>();
+                var counts = new List<int>();
                 if (fromBlock < end)
                 {
                     _searchText ??= new WordXmlSearchText(_blocks.RootOpenTag);
@@ -462,18 +463,17 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                     {
                         matcher.Reset();
                         _searchText.FeedOoxml(bytes, start, length, matcher);
-                        if (!matcher.Found && options.IncludeNotes)
+                        if (options.IncludeNotes)
                             foreach (DocxNoteReference reference in _blocks.NoteReferencesInBlocks(blockIndex, blockIndex))
                             {
                                 if (_noteReader.Read(reference.Kind, reference.NoteId) is not { } note) continue;
                                 matcher.Separator();
                                 WordXmlSearchText.FeedOoxml(note, matcher);
-                                if (matcher.Found) break;
                             }
-                        if (matcher.Found) hits.Add(blockIndex);
+                        if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                     }
                 }
-                return WordDocumentSearchBatch.Finish(hits, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
             }
             finally { _releasableFile?.Release(); }
         }

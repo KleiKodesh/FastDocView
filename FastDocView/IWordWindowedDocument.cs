@@ -117,7 +117,7 @@ public interface IWordWindowedDocument : IDisposable
     /// <summary>
     /// One bounded step of an in-document search: scans the plain text of blocks [fromBlock, fromBlock +
     /// maxBlocksToScan) - read through the same windowed path as <see cref="RenderBlocks"/>, never rendered, nothing kept
-    /// but the hit indexes - with the app's book-view search normalisation (<see cref="WordDocumentSearchMatcher"/>).
+    /// but the hit indexes and their match counts - with the app's book-view search normalisation (<see cref="WordDocumentSearchMatcher"/>).
     /// While an on-demand index is building the scan extends it as far as asked (as <see cref="RenderBlocks"/> does), so
     /// the caller just continues from <see cref="WordDocumentSearchBatch.NextBlock"/> until
     /// <see cref="WordDocumentSearchBatch.ReachedEnd"/>. A match never spans two paragraphs, cells or blocks.

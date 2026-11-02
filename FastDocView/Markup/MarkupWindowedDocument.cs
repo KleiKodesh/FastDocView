@@ -119,6 +119,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
             {
                 int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
                 var hits = new List<int>();
+                var counts = new List<int>();
                 if (fromBlock < end)
                 {
                     byte[] text = ReadText(fromBlock, end, out long textStart);
@@ -129,10 +130,10 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
                         string content = _encoding.GetString(text, from, Math.Min(length, text.Length - from));
                         matcher.Reset();
                         if (_index.Kind == MarkupSourceKind.PlainText) matcher.Feed(content.AsSpan()); else matcher.FeedHtml(content);
-                        if (matcher.Found) hits.Add(block);
+                        if (matcher.Count > 0) { hits.Add(block); counts.Add(matcher.Count); }
                     }
                 }
-                return WordDocumentSearchBatch.Finish(hits, Math.Max(end, fromBlock), isIndexComplete: true, _index.BlockCount);
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: true, _index.BlockCount);
             }
             finally { _releasableFile?.Release(); }
         }

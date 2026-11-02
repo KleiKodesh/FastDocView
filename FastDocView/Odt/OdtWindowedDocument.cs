@@ -318,6 +318,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                 }
                 int end = Math.Min(_blocks.BlockCount, wantedEnd);
                 var hits = new List<int>();
+                var counts = new List<int>();
                 if (fromBlock < end)
                 {
                     _searchText ??= new WordXmlSearchText(_blocks.RootOpenTag);
@@ -326,10 +327,10 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                     {
                         matcher.Reset();
                         _searchText.FeedOdf(bytes, start, length, matcher, options.IncludeNotes);
-                        if (matcher.Found) hits.Add(blockIndex);
+                        if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                     }
                 }
-                return WordDocumentSearchBatch.Finish(hits, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
             }
             finally { _releasableFile?.Release(); }
         }

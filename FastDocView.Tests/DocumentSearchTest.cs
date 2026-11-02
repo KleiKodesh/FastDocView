@@ -30,18 +30,26 @@ public static class DocumentSearchTest
     }
 
     private static int[] All(IWordWindowedDocument document, string query, WordDocumentSearchOptions? options = null, int batch = 2)
+        => AllWithCounts(document, query, options, batch).blocks;
+
+    /// <summary>Every hit block with its match count, over batches of <paramref name="batch"/> blocks.</summary>
+    private static (int[] blocks, int[] counts) AllWithCounts(IWordWindowedDocument document, string query, WordDocumentSearchOptions? options = null, int batch = 2)
     {
         var hits = new List<int>();
+        var counts = new List<int>();
         int from = 0;
         while (true)
         {
             WordDocumentSearchBatch result = document.Search(query, options ?? WordDocumentSearchOptions.Default, from, batch);
+            if (result.HitCounts.Length != result.HitBlocks.Length) throw new InvalidOperationException("HitCounts is not parallel to HitBlocks");
+            if (result.HitCounts.Any(count => count <= 0)) throw new InvalidOperationException("a hit block with no matches");
             hits.AddRange(result.HitBlocks);
+            counts.AddRange(result.HitCounts);
             if (result.ReachedEnd) { if (result.NextBlock != -1) throw new InvalidOperationException("ReachedEnd with a next block"); break; }
             if (result.NextBlock <= from) throw new InvalidOperationException("Search did not advance");
             from = result.NextBlock;
         }
-        return hits.ToArray();
+        return (hits.ToArray(), counts.ToArray());
     }
 
     private static string Show(int[] hits) => "[" + string.Join(",", hits) + "]";
@@ -56,7 +64,8 @@ public static class DocumentSearchTest
           + "<w:tbl><w:tr><w:tc><w:p>" + R("split") + "</w:p><w:p>" + R("here") + "</w:p></w:tc><w:tc><w:p>" + R("cell") + "</w:p></w:tc></w:tr></w:tbl>" // 3: table
           + "<w:p>" + R("\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9") + "</w:p>"                                                             // 4: maqaf, gershayim
           + "<w:p>" + R("kept ") + "<w:del w:id=\"9\" w:author=\"a\"><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"                   // 5: deleted text
-          + "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + R("7") + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>"; // 6: field
+          + "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + R("7") + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>" // 6: field
+          + "<w:p>" + R("xy ") + R("xy xy", "<w:i/>") + R(" xxx") + "</w:p>";                                                                // 7: several matches in one block
         string footnotes = "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>"
                          + "<w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>"
                          + "<w:footnote w:id=\"1\"><w:p><w:r><w:footnoteRef/></w:r>" + R(" needle in a note") + "</w:p></w:footnote>";
@@ -64,7 +73,9 @@ public static class DocumentSearchTest
         string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-search.docx");
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
-        Common(document, "docx", shalomBlock: 0, helloBlock: 1, noteBlock: 2, tableBlock: 3, maqafBlock: 4);
+        Common(document, "docx", shalomBlock: 0, helloBlock: 1, noteBlock: 2, tableBlock: 3, maqafBlock: 4, repeatBlock: 7);
+        (int[] noteBlocks, int[] noteCounts) = AllWithCounts(document, "n");
+        TestReport.Check(noteBlocks.SequenceEqual([2]) && noteCounts.SequenceEqual([3]), $"docx: matches in a note body are counted with the block's ({Show(noteCounts)})");
         TestReport.Check(All(document, "gone").Length == 0, "docx: deleted text (w:delText) is not matched");
         TestReport.Check(All(document, "kept").SequenceEqual([5]), "docx: the paragraph around a deletion still matches");
         TestReport.Check(All(document, "PAGE").Length == 0, "docx: a field code (w:instrText) is not matched");
@@ -72,8 +83,12 @@ public static class DocumentSearchTest
     }
 
     /// <summary>Checks every format shares: marks, runs, case, separators, maqaf / gershayim, notes, batches, empty query.</summary>
-    private static void Common(IWordWindowedDocument document, string format, int shalomBlock, int helloBlock, int noteBlock, int tableBlock, int maqafBlock)
+    private static void Common(IWordWindowedDocument document, string format, int shalomBlock, int helloBlock, int noteBlock, int tableBlock, int maqafBlock, int repeatBlock)
     {
+        (int[] repeatBlocks, int[] repeatCounts) = AllWithCounts(document, "xy");
+        TestReport.Check(repeatBlocks.SequenceEqual([repeatBlock]) && repeatCounts.SequenceEqual([3]), $"{format}: every match in a block is counted {Show(repeatBlocks)} x {Show(repeatCounts)}");
+        TestReport.Check(AllWithCounts(document, "xx").counts.SequenceEqual([1]), $"{format}: overlapping occurrences count once (leftmost, as the highlighter marks)");
+        TestReport.Check(AllWithCounts(document, "here").counts.SequenceEqual([1]), $"{format}: a single occurrence counts one");
         int[] hits = All(document, Shalom);
         TestReport.Check(hits.SequenceEqual([shalomBlock]), $"{format}: plain query matches pointed text (niqqud / teamim ignored){(format == "docx" ? ", across runs" : "")} {Show(hits)}");
         TestReport.Check(All(document, ShalomPointed).SequenceEqual([shalomBlock]), $"{format}: a pointed query matches too");
@@ -100,7 +115,8 @@ public static class DocumentSearchTest
          + "<text:p>abc<text:note text:id=\"ftn1\" text:note-class=\"footnote\"><text:note-citation>1</text:note-citation><text:note-body><text:p>needle in a note</text:p></text:note-body></text:note></text:p>" // 2
          + "<table:table table:name=\"T\"><table:table-column/><table:table-column/><table:table-row><table:table-cell><text:p>split</text:p><text:p>here</text:p></table:table-cell><table:table-cell><text:p>cell</text:p></table:table-cell></table:table-row></table:table>" // 3
          + "<text:p>\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9</text:p>"                                       // 4
-         + "<text:p>a<text:s text:c=\"2\"/>b<office:annotation><text:p>comment zzz</text:p></office:annotation></text:p>"; // 5
+         + "<text:p>a<text:s text:c=\"2\"/>b<office:annotation><text:p>comment zzz</text:p></office:annotation></text:p>" // 5
+         + "<text:p>xy <text:span>xy xy</text:span> xxx</text:p>";                                                             // 6
 
     private static void Odt()
     {
@@ -125,7 +141,7 @@ public static class DocumentSearchTest
         {
             using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
             string format = Path.GetExtension(path).TrimStart('.');
-            Common(document, format, 0, 1, 2, 3, 4);
+            Common(document, format, 0, 1, 2, 3, 4, repeatBlock: 6);
             TestReport.Check(All(document, "a  b").SequenceEqual([5]), $"{format}: text:s counts as its spaces");
             TestReport.Check(All(document, "zzz").Length == 0, $"{format}: comments (office:annotation) are not matched");
         }
@@ -148,19 +164,20 @@ public static class DocumentSearchTest
             + "\\trowd\\cellx3000\\cellx6000\\pard\\intbl split\\line here\\cell cell\\cell\\row\n"                                    // 3
             + "\\pard " + RtfUnicode("\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9") + "\\par\n"                                         // 4
             + "\\pard {\\listtext 1.\\tab}listed\\par\n"                                                                               // 5
+            + "\\pard xy {\\i xy xy} xxx\\par\n"                                                                                         // 6
             + "}";
         File.WriteAllText(path, rtf, Encoding.ASCII);
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
         int Block(string word) => All(document, word).FirstOrDefault(-1);
-        Common(document, "rtf", Block("world"), Block("Hello"), Block("abc"), Block("split"), Block("\u05D1"));
+        Common(document, "rtf", Block("world"), Block("Hello"), Block("abc"), Block("split"), Block("\u05D1"), Block("xxx"));
         TestReport.Check(All(document, "1.").Length == 0 && Block("listed") >= 0, "rtf: a \\listtext label is not matched, its paragraph is");
     }
 
     private static void Text()
     {
         string path = Path.Combine(TestReport.OutputDirectory, "search-v1.txt");
-        File.WriteAllText(path, string.Join("\r\n", ShalomPointed + " world", "Hello World", "abc", "here", "\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9", "a & b"), new UTF8Encoding(true));
+        File.WriteAllText(path, string.Join("\r\n", ShalomPointed + " world", "Hello World", "abc", "here", "\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9", "a & b", "xy xy xy xxx"), new UTF8Encoding(true));
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
         TestReport.Check(All(document, Shalom).SequenceEqual([0]), "txt: niqqud ignored");
@@ -168,6 +185,8 @@ public static class DocumentSearchTest
         TestReport.Check(All(document, "\u05E8\u05D1\"\u05D9").SequenceEqual([4]), "txt: gershayim fold");
         TestReport.Check(All(document, "a & b").SequenceEqual([5]), "txt: a plain-text '&' matches literally (the line is text, not HTML)");
         TestReport.Check(All(document, "abchere").Length == 0, "txt: no match across lines");
+        (int[] repeatBlocks, int[] repeatCounts) = AllWithCounts(document, "xy");
+        TestReport.Check(repeatBlocks.SequenceEqual([6]) && repeatCounts.SequenceEqual([3]) && AllWithCounts(document, "xx").counts.SequenceEqual([1]), $"txt: every match in a line is counted, overlaps once {Show(repeatCounts)}");
     }
 
     /// <summary>Batch and full-scan timings on a real file: a frequent word (time to the first hit) and a word that is absent (a full scan).</summary>
@@ -185,7 +204,7 @@ public static class DocumentSearchTest
             bool completeAtOpen = document.IsIndexComplete;
             var watch = Stopwatch.StartNew();
             long firstHitMs = -1, worstBatchMs = 0;
-            int batches = 0, hits = 0, from = 0;
+            int batches = 0, hits = 0, matches = 0, from = 0;
             while (true)
             {
                 long before = watch.ElapsedMilliseconds;
@@ -193,12 +212,13 @@ public static class DocumentSearchTest
                 worstBatchMs = Math.Max(worstBatchMs, watch.ElapsedMilliseconds - before);
                 batches++;
                 hits += result.HitBlocks.Length;
+                matches += result.HitCounts.Sum();
                 if (firstHitMs < 0 && result.HitBlocks.Length > 0) firstHitMs = watch.ElapsedMilliseconds;
                 if (result.ReachedEnd) break;
                 from = result.NextBlock;
             }
             Console.WriteLine($"   {label}: open {open.ElapsedMilliseconds} ms (index complete at open: {completeAtOpen}), {document.BlockCount} blocks, "
-                            + $"{hits} hit blocks, first hit {firstHitMs} ms, full scan {watch.ElapsedMilliseconds} ms, {batches} batches of {batch}, "
+                            + $"{hits} hit blocks ({matches} matches), first hit {firstHitMs} ms, full scan {watch.ElapsedMilliseconds} ms, {batches} batches of {batch}, "
                             + $"avg {watch.ElapsedMilliseconds / Math.Max(1, batches)} ms, worst {worstBatchMs} ms, heap {GC.GetTotalMemory(false) >> 20} MB");
         }
     }
@@ -208,8 +228,10 @@ public static class DocumentSearchTest
     {
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
         const int count = 3000;
-        int[] searched = document.Search(query, WordDocumentSearchOptions.Default, 0, count).HitBlocks;
+        WordDocumentSearchBatch batch = document.Search(query, WordDocumentSearchOptions.Default, 0, count);
+        int[] searched = batch.HitBlocks;
         var expected = new List<int>();
+        var expectedCounts = new List<int>();
         var matcher = new WordDocumentSearchMatcher(query);
         for (int first = 0; first < Math.Min(count, document.BlockCount); first += 200)
             foreach (WordDocumentBlockHtml block in document.RenderBlocks(first, Math.Min(200, count - first)))
@@ -217,11 +239,13 @@ public static class DocumentSearchTest
                 matcher.Reset();
                 matcher.FeedHtml(block.Html);
                 foreach (WordDocumentNoteHtml note in block.Notes) { matcher.Separator(); matcher.FeedHtml(note.Html); }
-                if (matcher.Found) expected.Add(block.BlockIndex);
+                if (matcher.Found) { expected.Add(block.BlockIndex); expectedCounts.Add(matcher.Count); }
             }
         int[] onlySearch = searched.Except(expected).ToArray(), onlyRendered = expected.Except(searched).ToArray();
         TestReport.Check(onlySearch.Length == 0 && onlyRendered.Length == 0,
             $"{Path.GetFileName(path)}: first {count} blocks: search hits {searched.Length} = blocks whose rendered html holds the query {expected.Count}"
             + $" (only search: {Show(onlySearch.Take(10).ToArray())}, only rendered: {Show(onlyRendered.Take(10).ToArray())})");
+        int differentCounts = searched.SequenceEqual(expected) ? batch.HitCounts.Where((c, i) => c != expectedCounts[i]).Count() : -1;
+        TestReport.Check(differentCounts == 0, $"{Path.GetFileName(path)}: per-block match counts equal the rendered html's ({batch.HitCounts.Sum()} matches; {differentCounts} blocks differ)");
     }
 }

@@ -110,14 +110,15 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             {
                 int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
                 var hits = new List<int>();
+                var counts = new List<int>();
                 _searchSink ??= new RtfSearchTextSink(_index.Tables);
                 for (int blockIndex = fromBlock; blockIndex < end; blockIndex++)
                 {
                     matcher.Reset();
                     _searchSink.Feed(_file, _index, blockIndex, matcher, options.IncludeNotes);
-                    if (matcher.Found) hits.Add(blockIndex);
+                    if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                 }
-                return WordDocumentSearchBatch.Finish(hits, Math.Max(end, fromBlock), isIndexComplete: true, _index.BlockCount);
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: true, _index.BlockCount);
             }
             finally { _releasableFile?.Release(); }
         }

@@ -186,21 +186,21 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
             {
                 int end = (int)Math.Min(BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
                 var hits = new List<int>();
+                var counts = new List<int>();
                 for (int blockIndex = fromBlock; blockIndex < end; blockIndex++)
                 {
                     int start = _index.BlockStartCps[blockIndex], blockEnd = _index.BlockEndCp(blockIndex);
                     matcher.Reset();
                     _renderer.FeedSearchText(start, blockEnd, matcher);
-                    if (!matcher.Found && options.IncludeNotes)
+                    if (options.IncludeNotes)
                         foreach (DocBinaryNoteReferences.NoteReference reference in _notes.InRange(start, blockEnd))
                         {
                             matcher.Separator();
                             _renderer.FeedSearchText(reference.TextStartCp, reference.TextEndCp, matcher);
-                            if (matcher.Found) break;
                         }
-                    if (matcher.Found) hits.Add(blockIndex);
+                    if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                 }
-                return WordDocumentSearchBatch.Finish(hits, Math.Max(end, fromBlock), isIndexComplete: true, BlockCount);
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: true, BlockCount);
             }
             finally { _releasableFile?.Release(); }
         }

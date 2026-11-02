@@ -273,7 +273,6 @@ public sealed class DocBinaryParagraphHtmlRenderer
         var fieldState = new FieldState();
         foreach (char c in _pieces.ReadText(cpStart, cpEnd))
         {
-            if (matcher.Found) return;
             if (fieldState.Consume(c, out _)) continue;           // search reads text only: link tags are not needed
             if (c >= ' ') matcher.Feed(c);
             else if (c == '\t') matcher.Feed(' ');

@@ -15,18 +15,21 @@ public sealed record WordDocumentSearchOptions(bool MatchCase = true, bool Inclu
 
 /// <summary>
 /// One bounded step of an in-document search. <see cref="HitBlocks"/>: the blocks of the scanned range whose text holds
-/// the query, ascending. <see cref="NextBlock"/>: where the next call continues; -1 once <see cref="ReachedEnd"/>
-/// (the index is complete and every block was scanned). Only block indexes are produced - no text is kept.
+/// the query, ascending; <see cref="HitCounts"/>, parallel to it: how many times the query occurs in each (the block's
+/// text first, then its notes when they are searched - the app's search steps match by match, as the book view does per
+/// line). Occurrences never overlap (leftmost first, as the app's highlighter marks them). <see cref="NextBlock"/>:
+/// where the next call continues; -1 once <see cref="ReachedEnd"/> (the index is complete and every block was scanned).
+/// Only numbers are produced - no text is kept.
 /// </summary>
-public sealed record WordDocumentSearchBatch(int[] HitBlocks, int NextBlock, bool ReachedEnd)
+public sealed record WordDocumentSearchBatch(int[] HitBlocks, int[] HitCounts, int NextBlock, bool ReachedEnd)
 {
-    internal static WordDocumentSearchBatch Finish(List<int> hits, int scannedEnd, bool isIndexComplete, int blockCount)
+    internal static WordDocumentSearchBatch Finish(List<int> hits, List<int> counts, int scannedEnd, bool isIndexComplete, int blockCount)
     {
         bool reachedEnd = isIndexComplete && scannedEnd >= blockCount;
-        return new WordDocumentSearchBatch(hits.ToArray(), reachedEnd ? -1 : scannedEnd, reachedEnd);
+        return new WordDocumentSearchBatch(hits.ToArray(), counts.ToArray(), reachedEnd ? -1 : scannedEnd, reachedEnd);
     }
 
-    internal static readonly WordDocumentSearchBatch Nothing = new([], -1, true);
+    internal static readonly WordDocumentSearchBatch Nothing = new([], [], -1, true);
 }
 
 /// <summary>
@@ -36,7 +39,9 @@ public sealed record WordDocumentSearchBatch(int[] HitBlocks, int NextBlock, boo
 /// space; every double-quote glyph (" U+05F4 U+201C U+201D U+201E) is '"'; every single-quote glyph
 /// (' U+05F3 U+2018 U+2019 U+201A `) is '\''; the query is trimmed; letters compare exactly. Final letters are NOT folded
 /// (the app does not fold them either). One KMP automaton fed character by character: no normalised copy is built.
-/// <see cref="Separator"/> ends a paragraph / cell so a match never joins two of them.
+/// <see cref="Separator"/> ends a paragraph / cell so a match never joins two of them. Every occurrence is counted
+/// (<see cref="Count"/>); occurrences never overlap - after a match the automaton starts over, which is the leftmost
+/// non-overlapping set the app's highlighter marks.
 /// </summary>
 public sealed class WordDocumentSearchMatcher
 {
@@ -60,10 +65,13 @@ public sealed class WordDocumentSearchMatcher
 
     public bool IsEmpty => _needle.Length == 0;
 
-    /// <summary>True once the needle was seen since the last <see cref="Reset"/>.</summary>
-    public bool Found { get; private set; }
+    /// <summary>How many (non-overlapping) occurrences of the needle were seen since the last <see cref="Reset"/>.</summary>
+    public int Count { get; private set; }
 
-    public void Reset() { _state = 0; Found = false; }
+    /// <summary>True once the needle was seen since the last <see cref="Reset"/>.</summary>
+    public bool Found => Count > 0;
+
+    public void Reset() { _state = 0; Count = 0; }
 
     /// <summary>A paragraph / cell / line boundary: the partial match is dropped.</summary>
     public void Separator() => _state = 0;
@@ -93,19 +101,18 @@ public sealed class WordDocumentSearchMatcher
     /// <summary>One character of document text (raw: the marks and quotes are normalised here).</summary>
     public void Feed(char c)
     {
-        if (Found || IsIgnoredMark(c)) return;
+        if (IsIgnoredMark(c)) return;
         c = Fold(c);
         if (_foldCase) c = char.ToLowerInvariant(c);
         while (_state > 0 && _needle[_state] != c) _state = _fail[_state - 1];
         if (_needle[_state] == c) _state++;
-        if (_state == _needle.Length) Found = true;
+        if (_state == _needle.Length) { Count++; _state = 0; }
     }
 
     public void Feed(ReadOnlySpan<char> text)
     {
         foreach (char c in text)
         {
-            if (Found) return;
             if (c is '\r' or '\n' or '\u0007' or '\u000B' or '\u000C') Separator(); else Feed(c);
         }
     }
@@ -117,7 +124,7 @@ public sealed class WordDocumentSearchMatcher
     public void FeedHtml(string html)
     {
         int i = 0, length = html.Length;
-        while (i < length && !Found)
+        while (i < length)
         {
             char ch = html[i];
             if (ch == '<')
@@ -210,7 +217,7 @@ internal sealed class WordXmlSearchText
             using XmlReader reader = Open(bytes, start, length);
             int textDepth = -1;
             bool skipped = false;                  // Skip() already moved to the next node
-            while (!matcher.Found && (skipped ? !reader.EOF : reader.Read()))
+            while (skipped ? !reader.EOF : reader.Read())
             {
                 skipped = false;
                 switch (reader.NodeType)
@@ -250,7 +257,6 @@ internal sealed class WordXmlSearchText
                 else if (element.Name.LocalName == "tab" && element.Parent?.Name.LocalName == "r") matcher.Feed(' ');
                 else if (element.Name.LocalName is "br" or "cr") matcher.Separator();
                 else if (element.Name.LocalName == "p") matcher.Separator();     // a nested paragraph (text box)
-                if (matcher.Found) return;
             }
             matcher.Separator();
         }
@@ -269,7 +275,7 @@ internal sealed class WordXmlSearchText
             int paragraphDepth = 0;
             bool lastWasSpace = false;
             bool skipped = false;                  // Skip() already moved to the next node
-            while (!matcher.Found && (skipped ? !reader.EOF : reader.Read()))
+            while (skipped ? !reader.EOF : reader.Read())
             {
                 skipped = false;
                 switch (reader.NodeType)
