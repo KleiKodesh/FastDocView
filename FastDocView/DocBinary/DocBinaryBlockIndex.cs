@@ -14,7 +14,7 @@ namespace FastDocView.DocBinary;
 public sealed class DocBinaryBlockIndex
 {
     private const string Magic = "KHDOCIDX";
-    private const int FormatVersion = 4;        // 4: list labels
+    private const int FormatVersion = 5;        // 4: list labels; 5: delta-varint starts, text lengths derived from the starts, 16-bit label ids
     private const int MaxHeadingTextLength = 300;
 
     public long SourceFileLength { get; }
@@ -159,12 +159,11 @@ public sealed class DocBinaryBlockIndex
             writer.Write(SourceFileLength);
             writer.Write(SourceLastWriteTicksUtc);
             writer.Write(MainTextCharacterCount);
-            IndexBinaryArrays.Write(writer, BlockStartCps);
+            IndexBinaryArrays.WriteDeltaVarints(writer, BlockStartCps);
             IndexBinaryArrays.Write(writer, BlockKinds);
-            IndexBinaryArrays.Write(writer, BlockTextLengths);
             writer.Write(Headings.Length);
             foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
-            IndexBinaryArrays.Write(writer, BlockListLabelIds);
+            IndexBinaryArrays.WriteIds(writer, BlockListLabelIds);
             writer.Write(ListLabels.Length);
             foreach (string label in ListLabels) writer.Write(label);
         }
@@ -181,12 +180,15 @@ public sealed class DocBinaryBlockIndex
             if (reader.ReadString() != Magic || reader.ReadInt32() != FormatVersion) return null;
             long length = reader.ReadInt64(), ticks = reader.ReadInt64();
             int mainText = reader.ReadInt32();
-            int[] starts = IndexBinaryArrays.Read<int>(reader);
+            int[] starts = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
             WordDocumentBlockKind[] kinds = IndexBinaryArrays.Read<WordDocumentBlockKind>(reader);
-            int[] lengths = IndexBinaryArrays.Read<int>(reader);
+            if (kinds.Length != starts.Length) return null;
+            // a block's text length is the distance to the next block (verified identical on the samples), so it is derived, not stored
+            var lengths = new int[starts.Length];
+            for (int i = 0; i < starts.Length; i++) lengths[i] = (i + 1 < starts.Length ? starts[i + 1] : mainText) - starts[i];
             var headings = new WordDocumentHeading[reader.ReadInt32()];
             for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
-            int[] blockListLabelIds = IndexBinaryArrays.Read<int>(reader);
+            int[] blockListLabelIds = IndexBinaryArrays.ReadIds(reader);
             var listLabels = new string[reader.ReadInt32()];
             for (int i = 0; i < listLabels.Length; i++) listLabels[i] = reader.ReadString();
             if (blockListLabelIds.Length != starts.Length) return null;

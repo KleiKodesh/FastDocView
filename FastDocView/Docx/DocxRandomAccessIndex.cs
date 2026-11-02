@@ -14,7 +14,7 @@ namespace FastDocView.Docx;
 public sealed class DocxRandomAccessIndex : IDocxBlockTable
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 11;     // 6: list labels carry their suffix and level CSS; 7: fields open at each block start; 8: section text widths; 9 (indent-parity): list labels carry the level pPr and lvlJc; 10 (master): bookmarks (name -> block); 11: both
+    private const int FormatVersion = 12;     // 6: list labels carry their suffix and level CSS; 7: fields open at each block start; 8: section text widths; 9 (indent-parity): list labels carry the level pPr and lvlJc; 10 (master): bookmarks (name -> block); 11: both; 12: compact layout (interned labels, varint/byte block tables, sparse open fields, sparse compressed checkpoint windows)
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -189,11 +189,11 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         writer.Write(cssTable.Count);
         foreach (string css in cssTable) writer.Write(css);
 
-        IndexBinaryArrays.Write(writer, BlockStartOffsets);
+        IndexBinaryArrays.WriteDeltaVarints(writer, BlockStartOffsets);
         IndexBinaryArrays.Write(writer, BlockKinds);
-        IndexBinaryArrays.Write(writer, BlockTextLengths);
-        IndexBinaryArrays.Write(writer, BlockStyleIds);
-        IndexBinaryArrays.Write(writer, BlockListLabelIds);
+        IndexBinaryArrays.WriteVarints(writer, BlockTextLengths);
+        IndexBinaryArrays.WriteByteIds(writer, BlockStyleIds);
+        IndexBinaryArrays.WriteIds(writer, BlockListLabelIds);
 
         writer.Write(Headings.Length);
         foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
@@ -209,7 +209,7 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         }
         writer.Write(OpenFieldStacks.Length);
         foreach (string stack in OpenFieldStacks) writer.Write(stack);
-        IndexBinaryArrays.Write(writer, BlockOpenFieldIds);
+        IndexBinaryArrays.WriteSparseIds(writer, BlockOpenFieldIds);
         IndexBinaryArrays.Write(writer, SectionLastBlocks);
         IndexBinaryArrays.Write(writer, SectionTextWidths);
         writer.Write(BookmarkNames.Length);
@@ -245,11 +245,14 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
             listLabels[i] = new DocxListLabel(text, suffix, cssTable[cssId], cssTable[paragraphId], (Html.WordListLabelAlignment)alignment);
         }
 
-        long[] starts = IndexBinaryArrays.Read<long>(reader);
+        long[] starts = IndexBinaryArrays.ReadDeltaVarints(reader);
         WordDocumentBlockKind[] kinds = IndexBinaryArrays.Read<WordDocumentBlockKind>(reader);
-        int[] textLengths = IndexBinaryArrays.Read<int>(reader);
-        short[] styleIds = IndexBinaryArrays.Read<short>(reader);
-        int[] labelIds = IndexBinaryArrays.Read<int>(reader);
+        int[] textLengths = IndexBinaryArrays.ReadVarints(reader);
+        short[] styleIds = IndexBinaryArrays.ReadByteIds(reader);
+        int[] labelIds = IndexBinaryArrays.ReadIds(reader);
+        if (kinds.Length != starts.Length || textLengths.Length != starts.Length || styleIds.Length != starts.Length || labelIds.Length != starts.Length
+            || labelIds.Any(id => id >= listLabels.Length) || styleIds.Any(id => id >= styleIdTable.Length))
+            throw new InvalidDataException("Word index: block tables do not match.");
 
         var headings = new WordDocumentHeading[reader.ReadInt32()];
         for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
@@ -260,7 +263,7 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         DocxNotesPartIndex? endnotesPart = reader.ReadBoolean() ? DocxNotesPartIndex.Read(reader) : null;
         var openFieldStacks = new string[reader.ReadInt32()];
         for (int i = 0; i < openFieldStacks.Length; i++) openFieldStacks[i] = reader.ReadString();
-        int[] blockOpenFieldIds = IndexBinaryArrays.Read<int>(reader);
+        int[] blockOpenFieldIds = IndexBinaryArrays.ReadSparseIds(reader);
         if (blockOpenFieldIds.Length != starts.Length || blockOpenFieldIds.Any(id => id >= openFieldStacks.Length))
             throw new InvalidDataException("Word index: open-field table does not match the blocks.");
         int[] sectionLastBlocks = IndexBinaryArrays.Read<int>(reader);
@@ -304,8 +307,12 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
             writer.Write((byte)checkpoint.LeftoverBitCount);
             writer.Write((byte)checkpoint.LeftoverBits);
             writer.Write(checkpoint.UncompressedOffset);
-            writer.Write(checkpoint.Window.Length);
-            writer.Write(checkpoint.Window);
+            byte[] blob = checkpoint.CompressedWindow;                         // sparse + deflated window (see DeflateCheckpoint)
+            var lengths = new List<byte>(8);
+            IndexBinaryArrays.AppendVarint(lengths, (uint)checkpoint.WindowLength);
+            IndexBinaryArrays.AppendVarint(lengths, (uint)blob.Length);
+            writer.Write(lengths.ToArray());
+            writer.Write(blob);
         }
     }
 
@@ -319,10 +326,28 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
             int leftoverBitCount = reader.ReadByte();
             int leftoverBits = reader.ReadByte();
             long uncompressedOffset = reader.ReadInt64();
-            byte[] window = reader.ReadBytes(reader.ReadInt32());
-            checkpoints.Add(new DeflateCheckpoint(compressedPosition, leftoverBitCount, leftoverBits, uncompressedOffset, window));
+            int windowLength = (int)ReadVarint(reader);
+            int blobLength = (int)ReadVarint(reader);
+            if (windowLength > DeflateCheckpoint.WindowSize || blobLength < 0) throw new InvalidDataException("Word index: checkpoint window out of range.");
+            byte[] window = reader.ReadBytes(blobLength);
+            if (window.Length != blobLength) throw new EndOfStreamException("Word index: checkpoint truncated.");
+            checkpoints.Add(new DeflateCheckpoint(compressedPosition, leftoverBitCount, leftoverBits, uncompressedOffset, windowLength, window));
         }
         return checkpoints;
+    }
+
+    private static ulong ReadVarint(BinaryReader reader)
+    {
+        ulong value = 0;
+        int shift = 0;
+        while (true)
+        {
+            byte b = reader.ReadByte();
+            value |= (ulong)(b & 0x7F) << shift;
+            if (b < 0x80) return value;
+            shift += 7;
+            if (shift > 63) throw new InvalidDataException("Word index: varint too long.");
+        }
     }
 
     // ── sidecar file helpers (file-system hosts) ───────────────────────────────────────

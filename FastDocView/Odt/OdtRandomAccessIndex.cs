@@ -14,7 +14,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex : IOdtBlockTable
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 4;     // 2: section text widths; 3: list label level geometry; 4: bookmarks (name -> block)
+    private const int FormatVersion = 5;     // 2: section text widths; 3: list label level geometry; 4: bookmarks (name -> block); 5: compact block tables, sparse compressed checkpoint windows
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -130,12 +130,12 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         WriteStrings(writer, StyleSections);
         WriteStrings(writer, ListLabels);
         WriteStrings(writer, ListLabelLayouts);
-        IndexBinaryArrays.Write(writer, BlockStartOffsets);
-        IndexBinaryArrays.Write(writer, BlockEndOffsets);
+        IndexBinaryArrays.WriteDeltaVarints(writer, BlockStartOffsets);
+        IndexBinaryArrays.WriteBlockEnds(writer, BlockStartOffsets, BlockEndOffsets);
         IndexBinaryArrays.Write(writer, BlockKinds);
-        IndexBinaryArrays.Write(writer, BlockTextLengths);
+        IndexBinaryArrays.WriteVarints(writer, BlockTextLengths);
         IndexBinaryArrays.Write(writer, BlockListLevels);
-        IndexBinaryArrays.Write(writer, BlockListLabelIds);
+        IndexBinaryArrays.WriteIds(writer, BlockListLabelIds);
         writer.Write(Headings.Length);
         foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
         writer.Write(NoteReferences.Length);
@@ -165,12 +165,14 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         string[] listLabels = ReadStrings(reader);
         string[] listLabelLayouts = ReadStrings(reader);
         if (listLabelLayouts.Length != listLabels.Length) throw new InvalidDataException("OpenDocument index: list label geometry does not match the labels.");
-        long[] starts = IndexBinaryArrays.Read<long>(reader);
-        long[] ends = IndexBinaryArrays.Read<long>(reader);
+        long[] starts = IndexBinaryArrays.ReadDeltaVarints(reader);
+        long[] ends = IndexBinaryArrays.ReadBlockEnds(reader, starts);
         WordDocumentBlockKind[] kinds = IndexBinaryArrays.Read<WordDocumentBlockKind>(reader);
-        int[] textLengths = IndexBinaryArrays.Read<int>(reader);
+        int[] textLengths = IndexBinaryArrays.ReadVarints(reader);
         byte[] listLevels = IndexBinaryArrays.Read<byte>(reader);
-        int[] labelIds = IndexBinaryArrays.Read<int>(reader);
+        int[] labelIds = IndexBinaryArrays.ReadIds(reader);
+        if (kinds.Length != starts.Length || textLengths.Length != starts.Length || labelIds.Length != starts.Length || labelIds.Any(id => id >= listLabels.Length))
+            throw new InvalidDataException("OpenDocument index: block tables do not match.");
         var headings = new WordDocumentHeading[reader.ReadInt32()];
         for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
         var notes = new OdtNoteReference[reader.ReadInt32()];

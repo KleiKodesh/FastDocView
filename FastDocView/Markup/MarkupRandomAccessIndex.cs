@@ -15,7 +15,7 @@ public enum MarkupSourceKind : byte { PlainText = 0, WebArchive = 1, Html = 2 }
 public sealed class MarkupRandomAccessIndex
 {
     private const string Magic = "KHMKPIDX";
-    private const int FormatVersion = 4; // 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind, body/html CSS rules scoped to the root
+    private const int FormatVersion = 5; // 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind, body/html CSS rules scoped to the root
 
     public MarkupSourceKind Kind { get; }
     public long SourceFileLength { get; }
@@ -73,10 +73,10 @@ public sealed class MarkupRandomAccessIndex
         writer.Write(EncodedEnd);
         writer.Write(IsRightToLeft);
         writer.Write(DocumentCss);
-        IndexBinaryArrays.Write(writer, BlockStarts);
-        IndexBinaryArrays.Write(writer, BlockResumePoints);
-        IndexBinaryArrays.Write(writer, BlockTextLengths);
-        IndexBinaryArrays.Write(writer, BlockStackIds);
+        IndexBinaryArrays.WriteDeltaVarints(writer, BlockStarts);
+        IndexBinaryArrays.WriteDeltaVarints(writer, BlockResumePoints);
+        IndexBinaryArrays.WriteVarints(writer, BlockTextLengths);
+        IndexBinaryArrays.WriteVarints(writer, BlockStackIds);
         writer.Write(Stacks.Length);
         foreach (string stack in Stacks) writer.Write(stack);
         writer.Write(Headings.Length);
@@ -97,10 +97,12 @@ public sealed class MarkupRandomAccessIndex
         long textEnd = reader.ReadInt64(), encodedEnd = reader.ReadInt64();
         bool rtl = reader.ReadBoolean();
         string css = reader.ReadString();
-        long[] starts = IndexBinaryArrays.Read<long>(reader);
-        long[] resumes = IndexBinaryArrays.Read<long>(reader);
-        int[] lengths = IndexBinaryArrays.Read<int>(reader);
-        int[] stackIds = IndexBinaryArrays.Read<int>(reader);
+        long[] starts = IndexBinaryArrays.ReadDeltaVarints(reader);
+        long[] resumes = IndexBinaryArrays.ReadDeltaVarints(reader);
+        int[] lengths = IndexBinaryArrays.ReadVarints(reader);
+        int[] stackIds = IndexBinaryArrays.ReadVarints(reader);
+        if (lengths.Length != starts.Length || stackIds.Length != starts.Length || (resumes.Length != 0 && resumes.Length != starts.Length))
+            throw new InvalidDataException("Text / web archive index: block tables do not match.");
         var stacks = new string[reader.ReadInt32()];
         for (int i = 0; i < stacks.Length; i++) stacks[i] = reader.ReadString();
         var headings = new WordDocumentHeading[reader.ReadInt32()];

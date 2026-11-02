@@ -14,7 +14,7 @@ public readonly record struct RtfNoteReference(int BlockIndex, WordDocumentNoteK
 public sealed class RtfRandomAccessIndex
 {
     private const string Magic = "KHRTFIDX";
-    private const int FormatVersion = 3;     // 2: section text widths; 3: bookmarks (name -> block)
+    private const int FormatVersion = 4;     // 2: section text widths; 3: bookmarks (name -> block); 4: compact block tables
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -111,13 +111,13 @@ public sealed class RtfRandomAccessIndex
         foreach (byte[] state in States) { writer.Write(state.Length); writer.Write(state); }
         writer.Write(ListLabels.Length);
         foreach (string label in ListLabels) writer.Write(label);
-        IndexBinaryArrays.Write(writer, BlockStartOffsets);
-        IndexBinaryArrays.Write(writer, BlockEndOffsets);
+        IndexBinaryArrays.WriteDeltaVarints(writer, BlockStartOffsets);
+        IndexBinaryArrays.WriteBlockEnds(writer, BlockStartOffsets, BlockEndOffsets);
         IndexBinaryArrays.Write(writer, BlockKinds);
-        IndexBinaryArrays.Write(writer, BlockTextLengths);
-        IndexBinaryArrays.Write(writer, BlockStateIds);
+        IndexBinaryArrays.WriteVarints(writer, BlockTextLengths);
+        IndexBinaryArrays.WriteVarints(writer, BlockStateIds);
         IndexBinaryArrays.Write(writer, BlockListLevels);
-        IndexBinaryArrays.Write(writer, BlockListLabelIds);
+        IndexBinaryArrays.WriteIds(writer, BlockListLabelIds);
         writer.Write(Headings.Length);
         foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
         writer.Write(NoteReferences.Length);
@@ -142,13 +142,15 @@ public sealed class RtfRandomAccessIndex
         for (int i = 0; i < states.Length; i++) states[i] = reader.ReadBytes(reader.ReadInt32());
         var labels = new string[reader.ReadInt32()];
         for (int i = 0; i < labels.Length; i++) labels[i] = reader.ReadString();
-        long[] starts = IndexBinaryArrays.Read<long>(reader);
-        long[] ends = IndexBinaryArrays.Read<long>(reader);
+        long[] starts = IndexBinaryArrays.ReadDeltaVarints(reader);
+        long[] ends = IndexBinaryArrays.ReadBlockEnds(reader, starts);
         WordDocumentBlockKind[] kinds = IndexBinaryArrays.Read<WordDocumentBlockKind>(reader);
-        int[] textLengths = IndexBinaryArrays.Read<int>(reader);
-        int[] stateIds = IndexBinaryArrays.Read<int>(reader);
+        int[] textLengths = IndexBinaryArrays.ReadVarints(reader);
+        int[] stateIds = IndexBinaryArrays.ReadVarints(reader);
         byte[] listLevels = IndexBinaryArrays.Read<byte>(reader);
-        int[] labelIds = IndexBinaryArrays.Read<int>(reader);
+        int[] labelIds = IndexBinaryArrays.ReadIds(reader);
+        if (kinds.Length != starts.Length || textLengths.Length != starts.Length || stateIds.Length != starts.Length || labelIds.Length != starts.Length || labelIds.Any(id => id >= labels.Length) || stateIds.Any(id => (uint)id >= (uint)states.Length))
+            throw new InvalidDataException("RTF index: block tables do not match.");
         var headings = new WordDocumentHeading[reader.ReadInt32()];
         for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
         var notes = new RtfNoteReference[reader.ReadInt32()];

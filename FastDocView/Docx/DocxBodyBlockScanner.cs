@@ -554,9 +554,16 @@ internal sealed class DocxBodyBlockScanner
         if (_listLabelResolver is null || BlockListLabelIds.Count == 0) return;
         DocxListLabel? label = _listLabelResolver(_currentStyleId, _currentNumId, _currentLevel);
         if (label is not { } found) return;
-        BlockListLabelIds[BlockListLabelIds.Count - 1] = ListLabels.Count;
-        ListLabels.Add(found);
+        // Interned by the full tuple: a 100k-item document has ~3k distinct (text, suffix, css, pPr, alignment) labels.
+        if (!_listLabelLookup.TryGetValue(found, out int labelId))
+        {
+            labelId = ListLabels.Count;
+            ListLabels.Add(found);
+            _listLabelLookup[found] = labelId;
+        }
+        BlockListLabelIds[BlockListLabelIds.Count - 1] = labelId;
     }
+    private readonly Dictionary<DocxListLabel, int> _listLabelLookup = new();
 
     /// <summary>
     /// A section ends at the paragraph whose pPr holds the w:sectPr, or - for the body's own w:sectPr -
