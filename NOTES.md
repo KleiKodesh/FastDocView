@@ -43,22 +43,71 @@ LEARNINGS 2026-10-28. The inflater stays ours; its speed work follows zlib's inf
 ## The .docx index (Docx/)
 
 `DocxRandomAccessIndexBuilder` does the one pass. While inflating it feeds every chunk to
-`DocxBodyBlockScanner`, a byte-level XML state machine (no DOM) that records, for every child of
-`<w:body>` (**block** = paragraph / table / content control / other):
+`DocxBodyBlockScanner`, a byte-level XML state machine (no DOM) that finds every child of
+`<w:body>` (**block** = paragraph / table / content control / other) with its offset, kind,
+`w:pStyle`, list label (counted here, `DocxListCounter`) and text length, plus headings, note
+references, sections, bookmarks and the fields open at each block. The root element's opening
+tag (its namespace declarations wrap each block so it can be parsed in isolation,
+`DocxBlockXmlReader`) is kept too.
 
-- uncompressed start offset (end = next block's start; last = `</w:body>` offset)
-- kind, `w:pStyle` id (for headings without reading the block), text length in bytes
-  (for the viewer's scroll-height estimate)
+### Compact sidecar (format v13, 2026-11-02)
 
-plus the root element's opening tag, whose namespace declarations wrap each block so it can be
-parsed in isolation (`DocxBlockXmlReader`).
+The sidecar holds **no per-block table**. What it stores:
+
+- **Checkpoints** (`DeflateCheckpointTable`, SeekableDeflate): one per ~2 MB of inflated XML,
+  snapped by `DeflateCheckpointSelector` to the deflate block boundary of the region's first half
+  that needs the fewest window bytes (every boundary there is captured as a candidate, sealed 32 KB
+  later with the count of window bytes the following output copied; a history-free boundary — 0
+  bytes — is taken at once). Positions as varint deltas; all sparse windows (unreferenced bytes
+  zero, history-free windows dropped) in one `DeflateWindowStore`: groups of 8 windows, each group
+  one Brotli stream (net10; Deflate on net48, which has no Brotli in the BCL — the codec byte is
+  stored, a Brotli store is unreadable on net48 and the index is rebuilt there with Deflate, which
+  both read). Sample: 37 checkpoints, 17 history-free, 24 KB.
+- **Anchors** (`DocxIndexAnchor`): one at the first block start past every 256 KB of output
+  (`AnchorSpanBytes`, independent of the checkpoints — a rescan seeks to the nearest checkpoint
+  anyway): the block's index + offset, the block before it (offset, kind, style — a window starting
+  at an anchor's block reads its neighbour without scanning backwards) and the **list-numbering
+  state** (`DocxListCounter.ExportState`: every list's counters + applied start overrides) as a
+  delta from the previous anchor; in memory a full state is kept for every 8th anchor. Sample:
+  348 anchors, 14 KB.
+- Text-length **totals per 64 blocks** (scroll weights: group average until the span is scanned,
+  exact afterwards), headings / note references / bookmarks with their blocks as **Elias-Fano**
+  (`EliasFanoSequence`, ~2 + log2(n/count) bits per block index), sections (width table + byte
+  ids), open-field stacks and string tables deflated.
+
+Block i → position / kind / style / label / text length: `DocxCompactBlockTable` finds the span,
+seeds a fresh `DocxBodyBlockScanner` at the anchor (`SeedAtBodyLevel`, list counter restored from
+the anchor's state) and scans forward only as far as asked, keeping the span scanner for later
+requests (4 spans cached, LRU). The same scanner and counter as the index pass ⇒ the same values
+by construction (CompactIndexTest compares random + span-edge blocks against a full reference
+scan; the golden dump of every block's HTML before/after the change was byte-identical for the
+123 007-block sample). The bytes inflated while locating a window stay in a bounded ring
+(256 KB, grows to 4 MB for a search batch), so the window renders from them without a second
+inflate; sequential windows stay one inflate pass.
+
+Measured, dor-hamelaktim-shabbat.docx (91.6 MB document.xml, 123 007 blocks), Release net10:
+
+| | per-block layout (v12) | compact (v13) |
+|---|---|---|
+| sidecar | 1 173 069 B | 59 326 B (24 KB windows, 14 KB anchors, 5 KB bookmarks, 4.4 KB weights, 3.5 KB headings, 3 KB sections, 3 KB rest) |
+| reopen from sidecar | 138 ms | 146 ms |
+| first window after reopen | 82 ms | 194 ms (numbering.xml now loads on the first window: labels are counted at render) |
+| random single block, 200 probes | median 3.3 ms, p90 5.7 | median 7.9 ms, p90 14.7 — inflate from the checkpoint (~1 MB at ~95 MB/s) + ≤ 256 KB rescan + span setup |
+| sequential window of 40 | — | ~+2 ms over the render itself |
+| full sequential render, 123k blocks | 13.0 s | 18.4 s (the body is scanned again while reading: ~40 MB/s with list labels) |
+| search, 2 queries over all blocks | 2.6 / 2.7 s | 3.4 / 2.7 s |
+
+Tried and not taken: 1 MB checkpoint spacing — 99 KB sidecar, random median 8.4 ms (the rescan and
+the per-span setup, not the inflate, are now the larger share). Next lever: the scanner's label path
+(attribute strings, `FormatLabel`, interning) — the tag classifier alone went from 29 to 105 MB/s
+when its linear table became a length switch.
+
+The `.doc`, `.odt`, `.rtf` and markup indexes still use their per-block layouts (the .doc sample's
+sidecar is 465 KB); the same principle (anchors every N blocks + rescanning) is the follow-up.
 
 The index is saved to `%LOCALAPPDATA%\KitveiHakodesh\FastDocView\<name>.<hash>.wordindex`
-keyed by path, validated by file length + last write time. Re-opening a 50 000-block file from
-the cached index: ~50 ms. Cold build runs at about 40 MB/s of XML with a few MB of RAM.
-
-Measured (synthetic, 50 000 blocks, 22 MB XML): build 0.5 s, index 1.2 MB, random window of 40
-blocks worst 30 ms, consecutive windows ~2 ms each.
+keyed by path, validated by file length + last write time. Cold build runs at about 40 MB/s of
+XML with a few MB of RAM.
 
 ## When indexing is worth it (WordIndexPolicy)
 

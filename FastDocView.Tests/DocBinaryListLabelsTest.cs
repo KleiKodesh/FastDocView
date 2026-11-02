@@ -67,8 +67,9 @@ public static class DocBinaryListLabelsTest
             if (File.Exists(twinPath))
             {
                 using var twin = Docx.DocxWindowedDocument.Open(twinPath, policy);
-                int twinLabelled = twin.Index.BlockListLabelIds.Count(id => id >= 0);
-                Console.WriteLine($"   .docx twin: {twinLabelled:N0} of {twin.BlockCount:N0} blocks labelled, {twin.Index.ListLabels.Length} distinct labels");
+                int twinLabelled = 0;
+                for (int first = 0; first < twin.BlockCount; first += 500) twinLabelled += twin.RenderBlocks(first, 500).Count(b => b.Html.Contains("class=\"list-label"));
+                Console.WriteLine($"   .docx twin: {twinLabelled:N0} of {twin.BlockCount:N0} blocks labelled (rendered)");
             }
             foreach (int block in firstLabelled.Take(4))
             {

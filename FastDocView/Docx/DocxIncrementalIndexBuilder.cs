@@ -24,6 +24,7 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
     private readonly long _totalBytes;
     private readonly DocxEntryInflationCursor _bodyCursor;
     private readonly DocxBodyBlockScanner _scanner;
+    private readonly DocxIndexAnchorRecorder _anchors;
     private readonly DocxIncrementalNotesPart? _footnotes;
     private readonly DocxIncrementalNotesPart? _endnotes;
     private bool _isBodyScanned;
@@ -50,8 +51,10 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
         ZipEntryLocation? footnotes = DocxRandomAccessIndexBuilder.LocateTextEntry(package, parts.PartNames.Footnotes);
         ZipEntryLocation? endnotes = DocxRandomAccessIndexBuilder.LocateTextEntry(package, parts.PartNames.Endnotes);
         _totalBytes = BodyEntry.UncompressedSize + (footnotes?.UncompressedSize ?? 0) + (endnotes?.UncompressedSize ?? 0);
-        _bodyCursor = new DocxEntryInflationCursor(package, BodyEntry, checkpointSpanBytes);
-        _scanner = new DocxBodyBlockScanner(parts.CreateListLabelResolver(), parts.Styles.HeadingLevelOf);
+        _bodyCursor = new DocxEntryInflationCursor(package, BodyEntry, checkpointSpanBytes, snapToSparseBoundaries: true);
+        DocxDocumentParts.DocxListLabeller labeller = parts.CreateListLabeller();
+        _scanner = new DocxBodyBlockScanner(labeller.Resolve, parts.Styles.HeadingLevelOf);
+        _anchors = new DocxIndexAnchorRecorder(_scanner, labeller);
         _footnotes = footnotes is null ? null : new DocxIncrementalNotesPart(package, footnotes, checkpointSpanBytes);
         _endnotes = endnotes is null ? null : new DocxIncrementalNotesPart(package, endnotes, checkpointSpanBytes);
     }
@@ -113,7 +116,7 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
         DocxNotesPartIndex? endnotesPart = _endnotes?.Complete();
         _progress?.Report(new WordDocumentIndexProgress(_totalBytes, _totalBytes, _scanner.BlockStartOffsets.Count));
         CompletedIndex = DocxRandomAccessIndexBuilder.CreateIndex(_sourceLength, _sourceLastWriteTicksUtc, BodyEntry, _scanner,
-                                                                  _bodyCursor.Checkpoints, footnotesPart, endnotesPart);
+                                                                  _bodyCursor.Checkpoints, _anchors, footnotesPart, endnotesPart);
         return CompletedIndex;
     }
 
@@ -183,6 +186,8 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
         int start = LowerBound(references, firstBlockIndex), end = LowerBound(references, lastBlockIndex + 1);
         return end > start ? references.GetRange(start, end - start).ToArray() : ReadOnlySpan<DocxNoteReference>.Empty;
     }
+
+    public byte[] ReadRange(Stream view, long start, long end) => DocxXmlFragment.ReadRange(view, start, end);
 
     private static int LowerBound(List<DocxNoteReference> references, int blockIndex)
     {

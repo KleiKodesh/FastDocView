@@ -25,6 +25,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private IDocxBlockTable _blocks;
     private readonly string? _sidecarPathToSave;
     private readonly DocxBlockXmlReader _blockReader;
+    private readonly DocxDocumentParts _parts;
     private readonly DocxStyleCascade _styles;
     private readonly DocxBlockHtmlRenderer _renderer;
     private DocxNoteXmlReader _noteReader;
@@ -142,7 +143,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
             (DocxRandomAccessIndex index, DocxRandomAccessIndexBuilder.InMemoryParts inflated) =
                 DocxRandomAccessIndexBuilder.BuildInMemory(package, parts, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
             package.Dispose();
-            return new DocxWindowedDocument(displayPath, index, null, DocxBlockXmlReader.OverBody(inflated.Body, index),
+            return new DocxWindowedDocument(displayPath, index, null, DocxBlockXmlReader.OverBody(inflated.Body, index, parts),
                                             DocxNoteXmlReader.OverBytes(inflated.Footnotes, index.FootnotesPart, inflated.Endnotes, index.EndnotesPart),
                                             parts, decision, sidecarPathToSave: null);
         }
@@ -152,7 +153,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     }
 
     private static DocxWindowedDocument OverPackage(string displayPath, Stream package, DocxRandomAccessIndex index, DocxDocumentParts parts, WordIndexDecision decision)
-        => new(displayPath, index, null, DocxBlockXmlReader.OverPackage(package, index),
+        => new(displayPath, index, null, DocxBlockXmlReader.OverPackage(package, index, parts),
                DocxNoteXmlReader.OverPackage(package, index.FootnotesPart, index.EndnotesPart), parts, decision, sidecarPathToSave: null);
 
     private static DocxWindowedDocument OpenOnDemand(Stream package, string displayPath, WordIndexDecision decision, long sourceLength,
@@ -175,9 +176,10 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         FilePath = filePath;
         _index = index;
         _builder = builder;
-        _blocks = (IDocxBlockTable?)index ?? builder!;
+        _blocks = index is not null ? blockReader.Table : builder!;
         _sidecarPathToSave = sidecarPathToSave;
         _blockReader = blockReader;
+        _parts = parts;
         _noteReader = noteReader;
         _styles = parts.Styles;
         _noteFormats = parts.NoteNumberFormats;
@@ -214,10 +216,10 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         if (_index is not null) return _index;
         DocxIncrementalIndexBuilder builder = _builder!;
         DocxRandomAccessIndex index = builder.Complete();
-        // Swap the scan's live tables for the finished index (same offsets), and free the scanner.
+        // Swap the scan's live tables for the compact table over the finished index (same offsets, recovered per span), and free the scanner.
         _index = index;
-        _blocks = index;
-        _blockReader.Table = index;
+        _blockReader.CompleteWith(index, _parts);
+        _blocks = _blockReader.Table;
         Stream package = _blockReader.Package!;
         _noteReader.Dispose();
         _noteReader = DocxNoteXmlReader.OverPackage(package, index.FootnotesPart, index.EndnotesPart);
@@ -236,11 +238,11 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     /// <summary>Past the end (a count read before the index completed) it answers 0 instead of throwing.</summary>
     public int EstimatedTextLength(int blockIndex)
     {
-        if (_index is { } index) return blockIndex < index.BlockCount ? index.BlockTextLengths[blockIndex] : 0;
         lock (_readLock)
         {
-            if (_builder is not { } builder) return blockIndex < _index!.BlockCount ? _index.BlockTextLengths[blockIndex] : 0;
-            return blockIndex < builder.KnownBlockCount ? builder.BlockTextLengthOf(blockIndex) : builder.AverageTextLength;
+            if (_builder is { } builder) return blockIndex < builder.KnownBlockCount ? builder.BlockTextLengthOf(blockIndex) : builder.AverageTextLength;
+            // exact for the blocks whose span was scanned (around the windows read so far), the 64-block group average elsewhere
+            return (_blocks as DocxCompactBlockTable)?.KnownTextLength(blockIndex) ?? _index!.EstimatedTextLength(blockIndex);
         }
     }
 

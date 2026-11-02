@@ -20,4 +20,9 @@ internal interface IDocxBlockTable
     /// <summary>The complex fields open where the block starts (a link that runs across paragraphs), or null.</summary>
     string? OpenFieldsAt(int blockIndex);
     ReadOnlySpan<DocxNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex);
+    /// <summary>
+    /// The part's bytes [start, end) — from the table's own recently scanned bytes when it has them (the compact table
+    /// inflates a window's bytes while locating its blocks), else from <paramref name="view"/>.
+    /// </summary>
+    byte[] ReadRange(Stream view, long start, long end);
 }

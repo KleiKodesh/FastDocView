@@ -100,7 +100,7 @@ for (int i = 0; i < args.Length; i++)
 }
 
 if (searchOnly) { DocumentSearchTest.Run(searchPaths); skipSynthetic = true; }
-if (fidelityOnly) { DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); OdtFirstOpenTiming.RunSynthetic(); skipSynthetic = true; }
+if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); OdtFirstOpenTiming.RunSynthetic(); skipSynthetic = true; }
 if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
 if (!skipSynthetic)
 {
@@ -114,6 +114,7 @@ if (!skipSynthetic)
     ListLabelFormatsTest.Run();
     LineSpacingTest.Run();
     MalformedXmlRecoveryTest.Run();
+    CompactIndexTest.RunEliasFano();
     DocxIndexAndRenderTest.Run(blocks);
 }
 if (hugeBlocks > 0) HugeDocumentMemoryTest.Run(hugeBlocks);
@@ -122,6 +123,7 @@ if (incrementalOpen)
 if (odtIncrementalBlocks > 0) OdtIncrementalOpenTest.Run(odtIncrementalBlocks);
 if (notesStreamingBlocks > 0) DocxNotesStreamingTest.Run(notesStreamingBlocks, noteFillerCharacters: 60_000);
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));
+if (realPaths.Count > 0) CompactIndexTest.RunRecovery(realPaths.Where(path => File.Exists(path) && path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)));
 if (fidelityOnly || realPaths.Count > 0) NotesWindowTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Count > 0) WordCoexistenceTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Any(path => path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)))

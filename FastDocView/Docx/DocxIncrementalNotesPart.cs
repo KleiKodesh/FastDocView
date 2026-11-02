@@ -21,7 +21,7 @@ internal sealed class DocxIncrementalNotesPart
     public DocxIncrementalNotesPart(Stream package, ZipEntryLocation entry, long checkpointSpanBytes)
     {
         _entry = entry;
-        _cursor = new DocxEntryInflationCursor(package, entry, checkpointSpanBytes);
+        _cursor = new DocxEntryInflationCursor(package, entry, checkpointSpanBytes, snapToSparseBoundaries: true);
     }
 
     public ZipEntryLocation Entry => _entry;

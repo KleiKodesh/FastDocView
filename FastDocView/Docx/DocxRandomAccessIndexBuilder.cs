@@ -6,13 +6,16 @@ namespace FastDocView.Docx;
 /// The one sequential pass over a .docx's text parts: the main document part (word/document.xml) through
 /// <see cref="DocxBodyBlockScanner"/>, then footnotes.xml and endnotes.xml through
 /// <see cref="DocxNotesPartScanner"/>. In sidecar mode each part gets deflate checkpoints roughly
-/// every <see cref="DefaultCheckpointSpanBytes"/> and nothing is kept (memory stays at a few MB
+/// every <see cref="DefaultCheckpointSpanBytes"/> (snapped to the thriftiest block boundary of each
+/// region, <see cref="DeflateCheckpointSelector"/>) and nothing is kept (memory stays at a few MB
 /// whatever the size); in in-memory mode — small documents, where checkpoints would cost more
 /// than they save (<see cref="WordIndexPolicy"/>) — the inflated parts are returned instead.
+/// The body's per-block findings are folded into span anchors (<see cref="DocxIndexAnchorRecorder"/>);
+/// the finished index holds no per-block table.
 /// </summary>
 public static class DocxRandomAccessIndexBuilder
 {
-    public const long DefaultCheckpointSpanBytes = 1 << 20;
+    public const long DefaultCheckpointSpanBytes = 2L << 20;
 
     /// <summary>The inflated text parts of a small document, kept for its session (in-memory mode).</summary>
     public sealed record InMemoryParts(byte[] Body, byte[]? Footnotes, byte[]? Endnotes);
@@ -69,15 +72,21 @@ public static class DocxRandomAccessIndexBuilder
         long totalBytes = body.UncompressedSize + (footnotes?.UncompressedSize ?? 0) + (endnotes?.UncompressedSize ?? 0);
         long done = 0;
 
-        var scanner = new DocxBodyBlockScanner(parts.CreateListLabelResolver(), parts.Styles.HeadingLevelOf);
+        DocxDocumentParts.DocxListLabeller labeller = parts.CreateListLabeller();
+        var scanner = new DocxBodyBlockScanner(labeller.Resolve, parts.Styles.HeadingLevelOf);
+        var cursor = new DocxEntryInflationCursor(package, body, checkpointSpanBytes, snapToSparseBoundaries: true);
+        var anchors = new DocxIndexAnchorRecorder(scanner, labeller);
         if (copies is not null) copies[0] = new MemoryStream();
-        List<DeflateCheckpoint> bodyCheckpoints = DocxEntryInflation.Run(package, body, (chunk, read) =>
+        while (true)
         {
-            scanner.Feed(chunk, read);
-            copies?[0]!.Write(chunk, 0, read);
+            cancellation.ThrowIfCancellationRequested();
+            int read = cursor.ReadNextChunk();
+            if (read == 0) break;
+            scanner.Feed(cursor.Chunk, read);
+            copies?[0]!.Write(cursor.Chunk, 0, read);
             done += read;
             progress?.Report(new WordDocumentIndexProgress(done, totalBytes, scanner.BlockStartOffsets.Count));
-        }, checkpointSpanBytes, cancellation);
+        }
         scanner.Finish();
         if (scanner.BodyEndOffset < 0) throw new InvalidDataException($"{parts.PartNames.Document} has no closing <w:body>.");
 
@@ -86,20 +95,24 @@ public static class DocxRandomAccessIndexBuilder
             if (entry is null) return null;
             var notesScanner = new DocxNotesPartScanner();
             if (copies is not null) copies[copyIndex] = new MemoryStream();
-            List<DeflateCheckpoint> checkpoints = DocxEntryInflation.Run(package, entry, (chunk, read) =>
+            var notesCursor = new DocxEntryInflationCursor(package, entry, checkpointSpanBytes, snapToSparseBoundaries: true);
+            while (true)
             {
-                notesScanner.Feed(chunk, read);
-                copies?[copyIndex]!.Write(chunk, 0, read);
+                cancellation.ThrowIfCancellationRequested();
+                int read = notesCursor.ReadNextChunk();
+                if (read == 0) break;
+                notesScanner.Feed(notesCursor.Chunk, read);
+                copies?[copyIndex]!.Write(notesCursor.Chunk, 0, read);
                 done += read;
                 progress?.Report(new WordDocumentIndexProgress(done, totalBytes, scanner.BlockStartOffsets.Count));
-            }, checkpointSpanBytes, cancellation);
-            return CreateNotesPartIndex(entry, notesScanner, checkpoints);
+            }
+            return CreateNotesPartIndex(entry, notesScanner, notesCursor.Checkpoints);
         }
 
         DocxNotesPartIndex? footnotesPart = ScanNotes(footnotes, 1);
         DocxNotesPartIndex? endnotesPart = ScanNotes(endnotes, 2);
 
-        return CreateIndex(sourceLength, sourceLastWriteTicksUtc, body, scanner, bodyCheckpoints, footnotesPart, endnotesPart);
+        return CreateIndex(sourceLength, sourceLastWriteTicksUtc, body, scanner, cursor.Checkpoints, anchors, footnotesPart, endnotesPart);
     }
 
     /// <summary>The finished notes-part index from its scanner — shared with <see cref="DocxIncrementalIndexBuilder"/> so both passes save the same sidecar.</summary>
@@ -109,16 +122,17 @@ public static class DocxRandomAccessIndexBuilder
 
     /// <summary>The finished index from a body scanner that has seen the whole part — shared with <see cref="DocxIncrementalIndexBuilder"/>.</summary>
     internal static DocxRandomAccessIndex CreateIndex(long sourceLength, long sourceLastWriteTicksUtc, ZipEntryLocation body,
-                                                      DocxBodyBlockScanner scanner, List<DeflateCheckpoint> bodyCheckpoints,
+                                                      DocxBodyBlockScanner scanner, List<DeflateCheckpoint> bodyCheckpoints, DocxIndexAnchorRecorder anchors,
                                                       DocxNotesPartIndex? footnotesPart, DocxNotesPartIndex? endnotesPart)
     {
+        int blockCount = scanner.BlockStartOffsets.Count;
+        var groupTotals = new int[(blockCount + DocxRandomAccessIndex.TextLengthGroupSize - 1) / DocxRandomAccessIndex.TextLengthGroupSize];
+        for (int i = 0; i < blockCount; i++) groupTotals[i / DocxRandomAccessIndex.TextLengthGroupSize] += scanner.BlockTextLengths[i];
         return new DocxRandomAccessIndex(
             sourceLength, sourceLastWriteTicksUtc, body, scanner.RootOpenTag, scanner.BodyEndOffset, bodyCheckpoints,
-            scanner.BlockStartOffsets.ToArray(), scanner.BlockKinds.ToArray(), scanner.BlockTextLengths.ToArray(),
-            scanner.BlockStyleIds.ToArray(), scanner.StyleIdTable.ToArray(),
-            scanner.BlockListLabelIds.ToArray(), scanner.ListLabels.ToArray(),
+            blockCount, anchors.Build(), groupTotals,
             scanner.Headings.ToArray(), scanner.NoteReferences.ToArray(),
-            footnotesPart, endnotesPart).WithOpenFields(scanner.BlockOpenFieldIds.ToArray(), scanner.OpenFieldStacks.ToArray())
+            footnotesPart, endnotesPart).WithOpenFields(scanner.BlockOpenFieldIds, scanner.OpenFieldStacks.ToArray())
                                         .WithSections(scanner.SectionLastBlocks.ToArray(), scanner.SectionTextWidths.ToArray())
                                         .WithBookmarks(scanner.BookmarkNames.ToArray(), scanner.BookmarkBlocks.ToArray());
     }

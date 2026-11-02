@@ -32,11 +32,11 @@ public static class DocxIndexAndRenderTest
         using (var cold = (DocxWindowedDocument)TestReport.Timed("index build (cold)", () => WordWindowedDocumentOpener.Open(path, policy, progress))) index = cold.Index;
         Console.WriteLine($"   document.xml {index.DocumentEntry.UncompressedSize >> 20} MB uncompressed, index file {new FileInfo(indexPath).Length >> 10} KB, {index.Checkpoints.Count} checkpoints");
         TestReport.Check(index.BlockCount == SyntheticDocxGenerator.ExpectedBlockCount(blockCount), $"block count {index.BlockCount:N0} == expected {SyntheticDocxGenerator.ExpectedBlockCount(blockCount):N0}");
-        TestReport.Check(index.BlockKinds[199] == WordDocumentBlockKind.Table, "block 199 is a table");
-        TestReport.Check(index.BlockKinds[index.BlockCount - 1] == WordDocumentBlockKind.Other, "last block (sectPr) is Other");
-        TestReport.Check(index.StyleIdOf(50) == "Heading1", "block 50 has style Heading1");
 
         using DocxWindowedDocument document = TestReport.Timed("open from cached index", () => DocxWindowedDocument.Open(path, policy));
+        TestReport.Check(document.RenderBlocks(199, 1)[0].Kind == WordDocumentBlockKind.Table, "block 199 is a table");
+        TestReport.Check(document.RenderBlocks(index.BlockCount - 1, 1)[0].Kind == WordDocumentBlockKind.Other, "last block (sectPr) is Other");
+        TestReport.Check(document.Headings.Any(h => h.BlockIndex == 50 && h.Level == 1), "block 50 is a level-1 heading (Heading1)");
         TestReport.Check(document.Decision.HasCachedIndex, "cached index used");
         TestReport.Check(document.IsRightToLeft, "document detected as right-to-left");
 

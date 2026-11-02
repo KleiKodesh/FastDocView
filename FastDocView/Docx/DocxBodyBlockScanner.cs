@@ -22,17 +22,6 @@ internal sealed class DocxBodyBlockScanner
     private const int MaxHeadingTextBytes = 600;
     private const int MaxTagNameBytes = 64;
 
-    private static readonly (byte[] name, KnownTag tag)[] KnownTags =
-    [
-        ("w:p"u8.ToArray(), KnownTag.Paragraph), ("w:t"u8.ToArray(), KnownTag.Text), ("w:pPr"u8.ToArray(), KnownTag.ParagraphProperties),
-        ("w:tbl"u8.ToArray(), KnownTag.Table), ("w:sdt"u8.ToArray(), KnownTag.ContentControl), ("w:body"u8.ToArray(), KnownTag.Body),
-        ("w:pStyle"u8.ToArray(), KnownTag.ParagraphStyle), ("w:numId"u8.ToArray(), KnownTag.NumberingId), ("w:ilvl"u8.ToArray(), KnownTag.NumberingLevel),
-        ("w:footnoteReference"u8.ToArray(), KnownTag.FootnoteReference), ("w:endnoteReference"u8.ToArray(), KnownTag.EndnoteReference),
-        ("w:del"u8.ToArray(), KnownTag.DeletedContent), ("w:moveFrom"u8.ToArray(), KnownTag.DeletedContent),
-        ("w:fldChar"u8.ToArray(), KnownTag.FieldCharacter), ("w:instrText"u8.ToArray(), KnownTag.FieldInstruction),
-        ("w:bookmarkStart"u8.ToArray(), KnownTag.BookmarkStart),
-        ("w:sectPr"u8.ToArray(), KnownTag.SectionProperties), ("w:pgSz"u8.ToArray(), KnownTag.PageSize), ("w:pgMar"u8.ToArray(), KnownTag.PageMargins),
-    ];
 
     private readonly DocxListLabelResolver? _listLabelResolver;
     private readonly Func<string, int>? _headingLevelOfStyle;
@@ -114,6 +103,24 @@ internal sealed class DocxBodyBlockScanner
     {
         _listLabelResolver = listLabelResolver;
         _headingLevelOfStyle = headingLevelOfStyle;
+    }
+
+    /// <summary>Raised when a body child starts: its index in <see cref="BlockStartOffsets"/> and its offset (before its own content is seen).</summary>
+    public event Action<int, long>? BlockStarted;
+
+    /// <summary>
+    /// Seeds a fresh scanner to continue at a body-level block start at <paramref name="offset"/> (the compact index
+    /// rescans a span from its checkpoint's first block): the state is "between body children", the root tag is taken
+    /// as already seen. Block indexes then count from 0 at that block.
+    /// </summary>
+    public void SeedAtBodyLevel(long offset)
+    {
+        if (BlockStartOffsets.Count > 0 || _offset != 0) throw new InvalidOperationException("Seed a scanner before feeding it.");
+        _offset = offset;
+        _depth = 1;
+        _bodyDepth = 1;
+        _isRootTagDone = true;
+        _state = State.Text;
     }
 
     /// <summary>Call once after the last chunk: closes the last block's heading.</summary>
@@ -355,12 +362,40 @@ internal sealed class DocxBodyBlockScanner
         };
     }
 
+    /// <summary>Tag name → known tag. Dispatch on the length first: one or two comparisons per tag (a linear scan of the table cost 0.5 µs per tag, most of the scan time).</summary>
     private static KnownTag Classify(ReadOnlySpan<byte> name)
     {
         if (name.Length < 3 || name[0] != (byte)'w' || name[1] != (byte)':') return KnownTag.Other;
-        foreach ((byte[] known, KnownTag tag) in KnownTags)
-            if (name.SequenceEqual(known)) return tag;
-        return KnownTag.Other;
+        switch (name.Length)
+        {
+            case 3: return name[2] == (byte)'p' ? KnownTag.Paragraph : name[2] == (byte)'t' ? KnownTag.Text : KnownTag.Other;
+            case 5:
+                if (name.SequenceEqual("w:pPr"u8)) return KnownTag.ParagraphProperties;
+                if (name.SequenceEqual("w:tbl"u8)) return KnownTag.Table;
+                if (name.SequenceEqual("w:sdt"u8)) return KnownTag.ContentControl;
+                if (name.SequenceEqual("w:del"u8)) return KnownTag.DeletedContent;
+                return KnownTag.Other;
+            case 6:
+                if (name.SequenceEqual("w:body"u8)) return KnownTag.Body;
+                if (name.SequenceEqual("w:ilvl"u8)) return KnownTag.NumberingLevel;
+                if (name.SequenceEqual("w:pgSz"u8)) return KnownTag.PageSize;
+                return KnownTag.Other;
+            case 7:
+                if (name.SequenceEqual("w:numId"u8)) return KnownTag.NumberingId;
+                if (name.SequenceEqual("w:pgMar"u8)) return KnownTag.PageMargins;
+                return KnownTag.Other;
+            case 8:
+                if (name.SequenceEqual("w:pStyle"u8)) return KnownTag.ParagraphStyle;
+                if (name.SequenceEqual("w:sectPr"u8)) return KnownTag.SectionProperties;
+                return KnownTag.Other;
+            case 9: return name.SequenceEqual("w:fldChar"u8) ? KnownTag.FieldCharacter : KnownTag.Other;
+            case 10: return name.SequenceEqual("w:moveFrom"u8) ? KnownTag.DeletedContent : KnownTag.Other;
+            case 11: return name.SequenceEqual("w:instrText"u8) ? KnownTag.FieldInstruction : KnownTag.Other;
+            case 15: return name.SequenceEqual("w:bookmarkStart"u8) ? KnownTag.BookmarkStart : KnownTag.Other;
+            case 18: return name.SequenceEqual("w:endnoteReference"u8) ? KnownTag.EndnoteReference : KnownTag.Other;
+            case 19: return name.SequenceEqual("w:footnoteReference"u8) ? KnownTag.FootnoteReference : KnownTag.Other;
+            default: return KnownTag.Other;
+        }
     }
 
     private void OnTagEnd()
@@ -436,6 +471,7 @@ internal sealed class DocxBodyBlockScanner
         _currentStyleId = null;
         _currentNumId = -1;
         _currentLevel = 0;
+        BlockStarted?.Invoke(BlockStartOffsets.Count - 1, _tagStartOffset);
     }
 
     private void OnCapturedAttribute(string attributes)

@@ -4,17 +4,26 @@ using SeekableDeflate;
 namespace FastDocView.Docx;
 
 /// <summary>
-/// The index of one .docx body: where word/document.xml sits in the zip, the deflate checkpoints
-/// (none in in-memory mode), and every body-level block's uncompressed offset + kind + style +
-/// list label + text length — plus the same random-access index for footnotes.xml and endnotes.xml
-/// (<see cref="DocxNotesPartIndex"/>), so notes are read on demand like blocks. Serialised to/from a <see cref="Stream"/> (the sidecar file on disk,
-/// or whatever store a WASM host provides); about 3 % of the uncompressed XML at the default 1 MB
-/// checkpoint spacing.
+/// The compact index of one .docx body. It no longer lists every block: it holds the deflate checkpoints
+/// (positions + all sparse windows in one store), and per <b>span</b> (the blocks from the first block at
+/// or after a checkpoint up to the next span's first block) one <see cref="DocxIndexAnchor"/>: that block's
+/// index and offset, the block before it (so a window starting there needs no rescan of the previous
+/// span), and the list-numbering state at that point. A block's position, kind, style, list label and
+/// text length are recovered by rescanning its span from its anchor with the same
+/// <see cref="DocxBodyBlockScanner"/> that built the index (<see cref="DocxCompactBlockTable"/>) — a few
+/// ms, and the same bytes the renderer is about to read anyway. Index-time lists that a reader needs
+/// without any scan stay: headings, note references, sections, bookmarks, the fields open at a block,
+/// text-length totals per 64 blocks (scroll weights). Measured on a 91 MB body: ~45 KB, where the
+/// per-block layout took 1.17 MB.
 /// </summary>
-public sealed class DocxRandomAccessIndex : IDocxBlockTable
+public sealed class DocxRandomAccessIndex
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 12;     // 6: list labels carry their suffix and level CSS; 7: fields open at each block start; 8: section text widths; 9 (indent-parity): list labels carry the level pPr and lvlJc; 10 (master): bookmarks (name -> block); 11: both; 12: compact layout (interned labels, varint/byte block tables, sparse open fields, sparse compressed checkpoint windows)
+    private const int FormatVersion = 13;     // 12: compact per-block tables; 13: no per-block tables — span anchors + list counter state, one window store, Elias-Fano block lists
+    public const int TextLengthGroupSize = 64;
+    /// <summary>Output bytes between span anchors: a random block rescans at most this much (~1-2 ms) on top of the inflate from its checkpoint.</summary>
+    public const long AnchorSpanBytes = 256 << 10;
+    private const int KeyStateEvery = 8;            // full list states kept in memory for every 8th anchor; the others apply their deltas from there
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -22,80 +31,29 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
     public string RootOpenTag { get; }
     public long BodyEndOffset { get; }
     public IReadOnlyList<DeflateCheckpoint> Checkpoints { get; }
-    public long[] BlockStartOffsets { get; }
-    public WordDocumentBlockKind[] BlockKinds { get; }
-    public int[] BlockTextLengths { get; }
-    public short[] BlockStyleIds { get; }
-    public string[] StyleIdTable { get; }
-    public int[] BlockListLabelIds { get; }
-    public DocxListLabel[] ListLabels { get; }
+    public int BlockCount { get; }
+    public DocxIndexAnchor[] Anchors { get; }
+    /// <summary>Sum of the text lengths of blocks [64 i, 64 i + 64).</summary>
+    public int[] TextLengthGroupTotals { get; }
     public WordDocumentHeading[] Headings { get; }
     public DocxNoteReference[] NoteReferences { get; }      // in body order
     public DocxNotesPartIndex? FootnotesPart { get; }
     public DocxNotesPartIndex? EndnotesPart { get; }
-    /// <summary>Per block: index into <see cref="OpenFieldStacks"/>, -1 = no field open where the block starts.</summary>
-    public int[] BlockOpenFieldIds { get; private set; } = [];
+    /// <summary>Blocks (ascending) where a complex field is open at the start, and the index into <see cref="OpenFieldStacks"/> for each.</summary>
+    public int[] OpenFieldBlocks { get; private set; } = [];
+    public int[] OpenFieldIds { get; private set; } = [];
     public string[] OpenFieldStacks { get; private set; } = [];
-
-    /// <summary>The fields open where a block starts (see DocxBodyBlockScanner.OpenFieldStacks), or null.</summary>
-    public string? OpenFieldsAt(int blockIndex)
-        => blockIndex < BlockOpenFieldIds.Length && BlockOpenFieldIds[blockIndex] is var id and >= 0 ? OpenFieldStacks[id] : null;
-
     /// <summary>Per section: its last block (inclusive) and its page text width in twips (see DocxBodyBlockScanner).</summary>
     public int[] SectionLastBlocks { get; private set; } = [];
     public int[] SectionTextWidths { get; private set; } = [];
-
     /// <summary>Bookmarks in body order: name and the block it marks (see DocxBodyBlockScanner.BookmarkNames).</summary>
     public string[] BookmarkNames { get; private set; } = [];
     public int[] BookmarkBlocks { get; private set; } = [];
     private Dictionary<string, int>? _bookmarkLookup;
 
-    internal DocxRandomAccessIndex WithBookmarks(string[] names, int[] blocks)
-    {
-        BookmarkNames = names;
-        BookmarkBlocks = blocks;
-        _bookmarkLookup = null;
-        return this;
-    }
-
-    /// <summary>The block a bookmark marks (the first one of that name, as Word resolves duplicates), or null.</summary>
-    public int? BlockOfBookmark(string name)
-    {
-        if (_bookmarkLookup is null)
-        {
-            var lookup = new Dictionary<string, int>(BookmarkNames.Length, StringComparer.Ordinal);
-            for (int i = 0; i < BookmarkNames.Length; i++)
-                if (!lookup.ContainsKey(BookmarkNames[i])) lookup[BookmarkNames[i]] = Math.Min(BookmarkBlocks[i], Math.Max(0, BlockStartOffsets.Length - 1));
-            _bookmarkLookup = lookup;
-        }
-        return _bookmarkLookup.TryGetValue(name, out int block) ? block : null;
-    }
-
-    internal DocxRandomAccessIndex WithSections(int[] sectionLastBlocks, int[] sectionTextWidths)
-    {
-        SectionLastBlocks = sectionLastBlocks;
-        SectionTextWidths = sectionTextWidths;
-        return this;
-    }
-
-    internal DocxRandomAccessIndex WithOpenFields(int[] blockOpenFieldIds, string[] openFieldStacks)
-    {
-        BlockOpenFieldIds = blockOpenFieldIds;
-        OpenFieldStacks = openFieldStacks;
-        return this;
-    }
-
-    public int BlockCount => BlockStartOffsets.Length;
-
-    string? IDocxBlockTable.OpenFieldsAt(int blockIndex) => OpenFieldsAt(blockIndex);
-    long IDocxBlockTable.BlockStartOffset(int blockIndex) => BlockStartOffsets[blockIndex];
-    WordDocumentBlockKind IDocxBlockTable.BlockKindOf(int blockIndex) => BlockKinds[blockIndex];
-    int IDocxBlockTable.BlockTextLengthOf(int blockIndex) => BlockTextLengths[blockIndex];
-
     public DocxRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, ZipEntryLocation documentEntry,
                                  string rootOpenTag, long bodyEndOffset, IReadOnlyList<DeflateCheckpoint> checkpoints,
-                                 long[] blockStartOffsets, WordDocumentBlockKind[] blockKinds, int[] blockTextLengths,
-                                 short[] blockStyleIds, string[] styleIdTable, int[] blockListLabelIds, DocxListLabel[] listLabels,
+                                 int blockCount, DocxIndexAnchor[] anchors, int[] textLengthGroupTotals,
                                  WordDocumentHeading[] headings, DocxNoteReference[] noteReferences,
                                  DocxNotesPartIndex? footnotesPart, DocxNotesPartIndex? endnotesPart)
     {
@@ -105,17 +63,107 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         RootOpenTag = rootOpenTag;
         BodyEndOffset = bodyEndOffset;
         Checkpoints = checkpoints;
-        BlockStartOffsets = blockStartOffsets;
-        BlockKinds = blockKinds;
-        BlockTextLengths = blockTextLengths;
-        BlockStyleIds = blockStyleIds;
-        StyleIdTable = styleIdTable;
-        BlockListLabelIds = blockListLabelIds;
-        ListLabels = listLabels;
+        BlockCount = blockCount;
+        Anchors = anchors;
+        TextLengthGroupTotals = textLengthGroupTotals;
         Headings = headings;
         NoteReferences = noteReferences;
         FootnotesPart = footnotesPart;
         EndnotesPart = endnotesPart;
+    }
+
+    internal DocxRandomAccessIndex WithBookmarks(string[] names, int[] blocks)
+    {
+        BookmarkNames = names;
+        BookmarkBlocks = blocks;
+        _bookmarkLookup = null;
+        return this;
+    }
+
+    internal DocxRandomAccessIndex WithSections(int[] sectionLastBlocks, int[] sectionTextWidths)
+    {
+        SectionLastBlocks = sectionLastBlocks;
+        SectionTextWidths = sectionTextWidths;
+        return this;
+    }
+
+    /// <summary>From the scanner's per-block ids (-1 = none): only the set blocks are kept.</summary>
+    internal DocxRandomAccessIndex WithOpenFields(IReadOnlyList<int> blockOpenFieldIds, string[] openFieldStacks)
+    {
+        var blocks = new List<int>();
+        var ids = new List<int>();
+        for (int block = 0; block < blockOpenFieldIds.Count; block++)
+            if (blockOpenFieldIds[block] >= 0) { blocks.Add(block); ids.Add(blockOpenFieldIds[block]); }
+        OpenFieldBlocks = blocks.ToArray();
+        OpenFieldIds = ids.ToArray();
+        OpenFieldStacks = openFieldStacks;
+        return this;
+    }
+
+    private DocxRandomAccessIndex WithOpenFieldPairs(int[] blocks, int[] ids, string[] stacks)
+    {
+        OpenFieldBlocks = blocks;
+        OpenFieldIds = ids;
+        OpenFieldStacks = stacks;
+        return this;
+    }
+
+    /// <summary>The fields open where a block starts (see DocxBodyBlockScanner.OpenFieldStacks), or null.</summary>
+    public string? OpenFieldsAt(int blockIndex)
+    {
+        int position = Array.BinarySearch(OpenFieldBlocks, blockIndex);
+        return position >= 0 ? OpenFieldStacks[OpenFieldIds[position]] : null;
+    }
+
+    /// <summary>The block a bookmark marks (the first one of that name, as Word resolves duplicates), or null.</summary>
+    public int? BlockOfBookmark(string name)
+    {
+        if (_bookmarkLookup is null)
+        {
+            var lookup = new Dictionary<string, int>(BookmarkNames.Length, StringComparer.Ordinal);
+            for (int i = 0; i < BookmarkNames.Length; i++)
+                if (!lookup.ContainsKey(BookmarkNames[i])) lookup[BookmarkNames[i]] = Math.Min(BookmarkBlocks[i], Math.Max(0, BlockCount - 1));
+            _bookmarkLookup = lookup;
+        }
+        return _bookmarkLookup.TryGetValue(name, out int block) ? block : null;
+    }
+
+    private byte[]?[]? _keyStates;
+
+    /// <summary>The list-numbering state at anchor <paramref name="anchorIndex"/> (what the span's scan starts counting from).</summary>
+    public byte[] ListStateOf(int anchorIndex)
+    {
+        _keyStates ??= new byte[]?[(Anchors.Length + KeyStateEvery - 1) / KeyStateEvery];
+        int key = anchorIndex / KeyStateEvery;
+        if (_keyStates[key] is null)
+        {
+            byte[] state = key > 0 ? ListStateOf(key * KeyStateEvery - 1) : [];
+            _keyStates[key] = DocxHtml.DocxListCounter.ApplyDelta(state, Anchors[key * KeyStateEvery].ListStateDelta);
+        }
+        byte[] current = _keyStates[key]!;
+        for (int i = key * KeyStateEvery + 1; i <= anchorIndex; i++) current = DocxHtml.DocxListCounter.ApplyDelta(current, Anchors[i].ListStateDelta);
+        return current;
+    }
+
+    /// <summary>The anchor (span) a block belongs to: the last anchor whose first block is ≤ the block.</summary>
+    public int AnchorIndexOf(int blockIndex)
+    {
+        int low = 0, high = Anchors.Length - 1;
+        while (low < high)
+        {
+            int middle = (low + high + 1) / 2;
+            if (Anchors[middle].FirstBlock <= blockIndex) low = middle; else high = middle - 1;
+        }
+        return low;
+    }
+
+    /// <summary>The average text length of the block's 64-block group — the scroll weight before the span is scanned.</summary>
+    public int EstimatedTextLength(int blockIndex)
+    {
+        if ((uint)blockIndex >= (uint)BlockCount) return 0;
+        int group = blockIndex / TextLengthGroupSize;
+        int members = Math.Min(TextLengthGroupSize, BlockCount - group * TextLengthGroupSize);
+        return TextLengthGroupTotals[group] / members;
     }
 
     /// <summary>The note references inside blocks [first, last] — a slice of the body-ordered array.</summary>
@@ -136,21 +184,6 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         return low;
     }
 
-    public long BlockEndOffset(int blockIndex)
-        => blockIndex + 1 < BlockStartOffsets.Length ? BlockStartOffsets[blockIndex + 1] : BodyEndOffset;
-
-    public string? StyleIdOf(int blockIndex)
-    {
-        short tableIndex = BlockStyleIds[blockIndex];
-        return tableIndex >= 0 ? StyleIdTable[tableIndex] : null;
-    }
-
-    public DocxListLabel? ListLabelOf(int blockIndex)
-    {
-        int labelIndex = BlockListLabelIds[blockIndex];
-        return labelIndex >= 0 ? ListLabels[labelIndex] : null;
-    }
-
     public bool MatchesSource(long fileLength, long lastWriteTicksUtc)
         => fileLength == SourceFileLength && lastWriteTicksUtc == SourceLastWriteTicksUtc;
 
@@ -162,59 +195,78 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
 
     // ── serialisation ─────────────────────────────────────────────────────────────────
 
-    public void Write(Stream destination)
+    /// <summary>Bytes per section of the serialised index — for size reports.</summary>
+    public IReadOnlyList<(string section, long bytes)> SizeBreakdown()
+    {
+        var sizes = new List<(string, long)>();
+        using var buffer = new MemoryStream();
+        Write(buffer, sizes);
+        return sizes;
+    }
+
+    public void Write(Stream destination) => Write(destination, null);
+
+    private void Write(Stream destination, List<(string, long)>? sizes)
     {
         var writer = new BinaryWriter(destination, Encoding.UTF8, leaveOpen: true);
+        long mark = destination.Position;
+        void Section(string name) { writer.Flush(); sizes?.Add((name, destination.Position - mark)); mark = destination.Position; }
         writer.Write(Magic);
         writer.Write(FormatVersion);
         writer.Write(SourceFileLength);
         writer.Write(SourceLastWriteTicksUtc);
         WriteEntry(writer, DocumentEntry);
-        writer.Write(RootOpenTag);
+        IndexBinaryArrays.WriteCompressedString(writer, RootOpenTag);
         writer.Write(BodyEndOffset);
-        WriteCheckpoints(writer, Checkpoints);
+        writer.Write(BlockCount);
+        Section("header");
+        DeflateCheckpointTable.Write(writer, Checkpoints);
+        Section("checkpoints + windows");
+        DocxIndexAnchor.WriteAll(writer, Anchors);
+        Section("anchors (list state)");
+        IndexBinaryArrays.WriteVarints(writer, TextLengthGroupTotals);
+        Section("text-length groups");
 
-        writer.Write(StyleIdTable.Length);
-        foreach (string styleId in StyleIdTable) writer.Write(styleId);
-        // label CSS strings repeat for every item of a level: written once, referenced by number
-        var cssTable = new List<string>();
-        var cssIds = new Dictionary<string, int>(StringComparer.Ordinal);
-        writer.Write(ListLabels.Length);
-        foreach (DocxListLabel label in ListLabels)
-        {
-            if (!cssIds.TryGetValue(label.LevelCss, out int cssId)) { cssId = cssTable.Count; cssTable.Add(label.LevelCss); cssIds[label.LevelCss] = cssId; }
-            if (!cssIds.TryGetValue(label.LevelParagraphXml, out int paragraphId)) { paragraphId = cssTable.Count; cssTable.Add(label.LevelParagraphXml); cssIds[label.LevelParagraphXml] = paragraphId; }
-            writer.Write(label.Text); writer.Write((byte)label.Suffix); writer.Write(cssId); writer.Write(paragraphId); writer.Write((byte)label.Alignment);
-        }
-        writer.Write(cssTable.Count);
-        foreach (string css in cssTable) writer.Write(css);
-
-        IndexBinaryArrays.WriteDeltaVarints(writer, BlockStartOffsets);
-        IndexBinaryArrays.Write(writer, BlockKinds);
-        IndexBinaryArrays.WriteVarints(writer, BlockTextLengths);
-        IndexBinaryArrays.WriteByteIds(writer, BlockStyleIds);
-        IndexBinaryArrays.WriteIds(writer, BlockListLabelIds);
-
-        writer.Write(Headings.Length);
-        foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
-        writer.Write(NoteReferences.Length);
+        // headings: blocks as Elias-Fano, then level + text each
+        new EliasFanoSequence(Headings.Select(h => h.BlockIndex).ToArray()).Write(writer);
+        foreach (WordDocumentHeading heading in Headings) { writer.Write((byte)heading.Level); writer.Write(heading.Text); }
+        Section("headings");
+        // note references: blocks as Elias-Fano; kind, id and number as varints (ids / numbers delta-coded per kind: Word numbers in order)
+        new EliasFanoSequence(NoteReferences.Select(r => r.BlockIndex).ToArray()).Write(writer);
+        var noteBytes = new List<byte>(NoteReferences.Length * 3);
+        var previousId = new int[2];
+        var previousNumber = new int[2];
         foreach (DocxNoteReference reference in NoteReferences)
         {
-            writer.Write(reference.BlockIndex); writer.Write((byte)reference.Kind); writer.Write(reference.NoteId); writer.Write(reference.Number);
+            int kind = (int)reference.Kind;
+            noteBytes.Add((byte)kind);
+            IndexBinaryArrays.AppendVarint(noteBytes, Zigzag(reference.NoteId - previousId[kind]));
+            IndexBinaryArrays.AppendVarint(noteBytes, Zigzag(reference.Number - previousNumber[kind]));
+            previousId[kind] = reference.NoteId;
+            previousNumber[kind] = reference.Number;
         }
+        writer.Write(noteBytes.Count);
+        writer.Write(noteBytes.ToArray());
+        Section("note references");
         foreach (DocxNotesPartIndex? part in new[] { FootnotesPart, EndnotesPart })
         {
             writer.Write(part is not null);
             part?.Write(writer);
+            Section(part is null ? "no notes part" : $"notes part {part.Entry.Name} ({part.NoteIds.Length} notes, {part.Checkpoints.Count} checkpoints)");
         }
-        writer.Write(OpenFieldStacks.Length);
-        foreach (string stack in OpenFieldStacks) writer.Write(stack);
-        IndexBinaryArrays.WriteSparseIds(writer, BlockOpenFieldIds);
-        IndexBinaryArrays.Write(writer, SectionLastBlocks);
-        IndexBinaryArrays.Write(writer, SectionTextWidths);
-        writer.Write(BookmarkNames.Length);
-        foreach (string name in BookmarkNames) writer.Write(name);
-        IndexBinaryArrays.Write(writer, BookmarkBlocks);
+        IndexBinaryArrays.WriteCompressedStrings(writer, OpenFieldStacks);
+        IndexBinaryArrays.WriteDeltaVarints(writer, OpenFieldBlocks);
+        IndexBinaryArrays.WriteVarints(writer, OpenFieldIds);
+        Section($"open fields ({OpenFieldBlocks.Length} blocks)");
+        IndexBinaryArrays.WriteDeltaVarints(writer, SectionLastBlocks);
+        // widths: a few distinct values over many sections -> a table + byte ids
+        int[] widthTable = SectionTextWidths.Distinct().OrderBy(w => w).ToArray();
+        IndexBinaryArrays.WriteVarints(writer, widthTable);
+        IndexBinaryArrays.WriteByteIds(writer, SectionTextWidths.Select(w => (short)Array.IndexOf(widthTable, w)).ToArray());
+        Section("sections");
+        IndexBinaryArrays.WriteCompressedStrings(writer, BookmarkNames);
+        new EliasFanoSequence(BookmarkBlocks).Write(writer);
+        Section($"bookmarks ({BookmarkNames.Length})");
         writer.Flush();
     }
 
@@ -226,64 +278,65 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         long sourceLength = reader.ReadInt64();
         long sourceTicks = reader.ReadInt64();
         ZipEntryLocation entry = ReadEntry(reader);
-        string rootOpenTag = reader.ReadString();
+        string rootOpenTag = IndexBinaryArrays.ReadCompressedString(reader);
         long bodyEnd = reader.ReadInt64();
-        List<DeflateCheckpoint> checkpoints = ReadCheckpoints(reader);
+        int blockCount = reader.ReadInt32();
+        if (blockCount < 0) throw new InvalidDataException("Word index: negative block count.");
+        List<DeflateCheckpoint> checkpoints = DeflateCheckpointTable.Read(reader);
+        DocxIndexAnchor[] anchors = DocxIndexAnchor.ReadAll(reader, blockCount);
+        int[] groupTotals = IndexBinaryArrays.ReadVarints(reader);
+        if (groupTotals.Length != (blockCount + TextLengthGroupSize - 1) / TextLengthGroupSize) throw new InvalidDataException("Word index: text-length groups do not match the blocks.");
 
-        var styleIdTable = new string[reader.ReadInt32()];
-        for (int i = 0; i < styleIdTable.Length; i++) styleIdTable[i] = reader.ReadString();
-        var labelParts = new (string text, DocxListLabelSuffix suffix, int cssId, int paragraphId, byte alignment)[reader.ReadInt32()];
-        for (int i = 0; i < labelParts.Length; i++) labelParts[i] = (reader.ReadString(), (DocxListLabelSuffix)reader.ReadByte(), reader.ReadInt32(), reader.ReadInt32(), reader.ReadByte());
-        var cssTable = new string[reader.ReadInt32()];
-        for (int i = 0; i < cssTable.Length; i++) cssTable[i] = reader.ReadString();
-        var listLabels = new DocxListLabel[labelParts.Length];
-        for (int i = 0; i < listLabels.Length; i++)
+        int[] headingBlocks = EliasFanoSequence.Read(reader).ToArray();
+        var headings = new WordDocumentHeading[headingBlocks.Length];
+        for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(headingBlocks[i], reader.ReadByte(), reader.ReadString());
+        int[] noteBlocks = EliasFanoSequence.Read(reader).ToArray();
+        byte[] noteBytes = reader.ReadBytes(reader.ReadInt32());
+        var noteReferences = new DocxNoteReference[noteBlocks.Length];
         {
-            (string text, DocxListLabelSuffix suffix, int cssId, int paragraphId, byte alignment) = labelParts[i];
-            if ((uint)cssId >= (uint)cssTable.Length || (uint)paragraphId >= (uint)cssTable.Length || alignment > 2)
-                throw new InvalidDataException("Word index: list label style out of range.");
-            listLabels[i] = new DocxListLabel(text, suffix, cssTable[cssId], cssTable[paragraphId], (Html.WordListLabelAlignment)alignment);
+            int position = 0;
+            var previousId = new int[2];
+            var previousNumber = new int[2];
+            for (int i = 0; i < noteReferences.Length; i++)
+            {
+                if (position >= noteBytes.Length) throw new EndOfStreamException("Word index: note references truncated.");
+                int kind = noteBytes[position++];
+                if (kind > 1) throw new InvalidDataException("Word index: bad note kind.");
+                previousId[kind] += Unzigzag(IndexBinaryArrays.ReadVarint(noteBytes, ref position));
+                previousNumber[kind] += Unzigzag(IndexBinaryArrays.ReadVarint(noteBytes, ref position));
+                noteReferences[i] = new DocxNoteReference(noteBlocks[i], (WordDocumentNoteKind)kind, previousId[kind], previousNumber[kind]);
+            }
         }
-
-        long[] starts = IndexBinaryArrays.ReadDeltaVarints(reader);
-        WordDocumentBlockKind[] kinds = IndexBinaryArrays.Read<WordDocumentBlockKind>(reader);
-        int[] textLengths = IndexBinaryArrays.ReadVarints(reader);
-        short[] styleIds = IndexBinaryArrays.ReadByteIds(reader);
-        int[] labelIds = IndexBinaryArrays.ReadIds(reader);
-        if (kinds.Length != starts.Length || textLengths.Length != starts.Length || styleIds.Length != starts.Length || labelIds.Length != starts.Length
-            || labelIds.Any(id => id >= listLabels.Length) || styleIds.Any(id => id >= styleIdTable.Length))
-            throw new InvalidDataException("Word index: block tables do not match.");
-
-        var headings = new WordDocumentHeading[reader.ReadInt32()];
-        for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
-        var noteReferences = new DocxNoteReference[reader.ReadInt32()];
-        for (int i = 0; i < noteReferences.Length; i++)
-            noteReferences[i] = new DocxNoteReference(reader.ReadInt32(), (WordDocumentNoteKind)reader.ReadByte(), reader.ReadInt32(), reader.ReadInt32());
         DocxNotesPartIndex? footnotesPart = reader.ReadBoolean() ? DocxNotesPartIndex.Read(reader) : null;
         DocxNotesPartIndex? endnotesPart = reader.ReadBoolean() ? DocxNotesPartIndex.Read(reader) : null;
-        var openFieldStacks = new string[reader.ReadInt32()];
-        for (int i = 0; i < openFieldStacks.Length; i++) openFieldStacks[i] = reader.ReadString();
-        int[] blockOpenFieldIds = IndexBinaryArrays.ReadSparseIds(reader);
-        if (blockOpenFieldIds.Length != starts.Length || blockOpenFieldIds.Any(id => id >= openFieldStacks.Length))
+        string[] openFieldStacks = IndexBinaryArrays.ReadCompressedStrings(reader);
+        int[] openFieldBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
+        int[] openFieldIds = IndexBinaryArrays.ReadVarints(reader);
+        if (openFieldIds.Length != openFieldBlocks.Length || openFieldIds.Any(id => id >= openFieldStacks.Length) || openFieldBlocks.Any(block => block >= blockCount))
             throw new InvalidDataException("Word index: open-field table does not match the blocks.");
-        int[] sectionLastBlocks = IndexBinaryArrays.Read<int>(reader);
-        int[] sectionTextWidths = IndexBinaryArrays.Read<int>(reader);
-        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)starts.Length))
+        int[] sectionLastBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
+        int[] widthTable = IndexBinaryArrays.ReadVarints(reader);
+        short[] widthIds = IndexBinaryArrays.ReadByteIds(reader);
+        if (widthIds.Any(id => id < 0 || id >= widthTable.Length)) throw new InvalidDataException("Word index: section widths out of range.");
+        int[] sectionTextWidths = widthIds.Select(id => widthTable[id]).ToArray();
+        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)blockCount))
             throw new InvalidDataException("Word index: section table does not match the blocks.");
-        var bookmarkNames = new string[reader.ReadInt32()];
-        for (int i = 0; i < bookmarkNames.Length; i++) bookmarkNames[i] = reader.ReadString();
-        int[] bookmarkBlocks = IndexBinaryArrays.Read<int>(reader);
-        if (bookmarkBlocks.Length != bookmarkNames.Length || bookmarkBlocks.Any(block => block < 0 || block > starts.Length))
+        string[] bookmarkNames = IndexBinaryArrays.ReadCompressedStrings(reader);
+        int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
+        if (bookmarkBlocks.Length != bookmarkNames.Length || bookmarkBlocks.Any(block => block < 0 || block > blockCount))
             throw new InvalidDataException("Word index: bookmark table does not match the blocks.");
 
-        return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints,
-                                         starts, kinds, textLengths, styleIds, styleIdTable, labelIds, listLabels, headings, noteReferences,
-                                         footnotesPart, endnotesPart).WithOpenFields(blockOpenFieldIds, openFieldStacks)
-                                                                      .WithSections(sectionLastBlocks, sectionTextWidths)
-                                                                      .WithBookmarks(bookmarkNames, bookmarkBlocks);
+        return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints, blockCount, anchors, groupTotals,
+                                         headings, noteReferences, footnotesPart, endnotesPart)
+            .WithOpenFieldPairs(openFieldBlocks, openFieldIds, openFieldStacks)
+            .WithSections(sectionLastBlocks, sectionTextWidths)
+            .WithBookmarks(bookmarkNames, bookmarkBlocks);
     }
 
-    // ── shared record layouts (also used by DocxNotesPartIndex) ───────────────────────
+    internal static ulong Zigzag(int value) => (ulong)(uint)((value << 1) ^ (value >> 31));
+    internal static int Unzigzag(ulong value) => (int)((uint)value >> 1) ^ -(int)((uint)value & 1);
+
+    // ── shared record layouts (also used by the .odt index) ───────────────────────────
 
     internal static void WriteEntry(BinaryWriter writer, ZipEntryLocation entry)
     {
@@ -298,6 +351,7 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
     internal static ZipEntryLocation ReadEntry(BinaryReader reader)
         => new(reader.ReadString(), reader.ReadInt64(), reader.ReadInt64(), reader.ReadInt64(), reader.ReadUInt16(), reader.ReadUInt32());
 
+    /// <summary>The per-checkpoint layout (each window deflated on its own), still used by the .odt index.</summary>
     internal static void WriteCheckpoints(BinaryWriter writer, IReadOnlyList<DeflateCheckpoint> checkpoints)
     {
         writer.Write(checkpoints.Count);
@@ -336,7 +390,7 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         return checkpoints;
     }
 
-    private static ulong ReadVarint(BinaryReader reader)
+    internal static ulong ReadVarint(BinaryReader reader)
     {
         ulong value = 0;
         int shift = 0;
@@ -374,5 +428,60 @@ public sealed class DocxRandomAccessIndex : IDocxBlockTable
         {
             return null;
         }
+    }
+}
+
+/// <summary>
+/// One span of the compact index: where the rescan of blocks [FirstBlock, next anchor's FirstBlock) starts
+/// (<see cref="Offset"/> = that block's start, at or after a deflate checkpoint), the block just before it
+/// (offset, kind, paragraph style — a window that starts at this span's first block reads its predecessor as a
+/// neighbour without scanning the previous span), and the list numbering state the scan continues from.
+/// </summary>
+public sealed record DocxIndexAnchor(int FirstBlock, long Offset, long PreviousBlockOffset, WordDocumentBlockKind PreviousBlockKind,
+                                     string? PreviousStyleId, byte[] ListStateDelta)
+{
+    internal static void WriteAll(BinaryWriter writer, DocxIndexAnchor[] anchors)
+    {
+        writer.Write(anchors.Length);
+        int previousBlock = 0;
+        long previousOffset = 0;
+        foreach (DocxIndexAnchor anchor in anchors)
+        {
+            byte[] delta = anchor.ListStateDelta;
+            var bytes = new List<byte>(24);
+            IndexBinaryArrays.AppendVarint(bytes, (uint)(anchor.FirstBlock - previousBlock));
+            IndexBinaryArrays.AppendVarint(bytes, (ulong)(anchor.Offset - previousOffset));
+            IndexBinaryArrays.AppendVarint(bytes, anchor.PreviousBlockOffset < 0 ? 0UL : (ulong)(anchor.Offset - anchor.PreviousBlockOffset));   // 0 = no previous block
+            bytes.Add((byte)anchor.PreviousBlockKind);
+            writer.Write(bytes.ToArray());
+            writer.Write(anchor.PreviousStyleId ?? "");
+            writer.Write(delta.Length);
+            writer.Write(delta);
+            previousBlock = anchor.FirstBlock;
+            previousOffset = anchor.Offset;
+        }
+    }
+
+    internal static DocxIndexAnchor[] ReadAll(BinaryReader reader, int blockCount)
+    {
+        int count = reader.ReadInt32();
+        if (count < 0 || (count == 0) != (blockCount == 0)) throw new InvalidDataException("Word index: anchors do not match the blocks.");
+        var anchors = new DocxIndexAnchor[count];
+        int previousBlock = 0;
+        long previousOffset = 0;
+        for (int i = 0; i < count; i++)
+        {
+            int firstBlock = previousBlock + (int)DocxRandomAccessIndex.ReadVarint(reader);
+            long offset = previousOffset + (long)DocxRandomAccessIndex.ReadVarint(reader);
+            long back = (long)DocxRandomAccessIndex.ReadVarint(reader);
+            var kind = (WordDocumentBlockKind)reader.ReadByte();
+            string style = reader.ReadString();
+            byte[] state = reader.ReadBytes(reader.ReadInt32());
+            if (firstBlock >= blockCount || (i > 0 && firstBlock <= previousBlock) || (i == 0 && firstBlock != 0)) throw new InvalidDataException("Word index: anchor blocks out of order.");
+            anchors[i] = new DocxIndexAnchor(firstBlock, offset, back == 0 ? -1 : offset - back, kind, style.Length == 0 ? null : style, state);
+            previousBlock = firstBlock;
+            previousOffset = offset;
+        }
+        return anchors;
     }
 }

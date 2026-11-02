@@ -47,22 +47,32 @@ public sealed class DocxNotesPartIndex
     public void Write(BinaryWriter writer)
     {
         DocxRandomAccessIndex.WriteEntry(writer, Entry);
-        writer.Write(RootOpenTag);
-        DocxRandomAccessIndex.WriteCheckpoints(writer, Checkpoints);
+        IndexBinaryArrays.WriteCompressedString(writer, RootOpenTag);
+        DeflateCheckpointTable.Write(writer, Checkpoints);
+        // ids ascend in Word's output but need not: zigzag deltas; starts ascend; an end is the next start unless stated
+        var idBytes = new List<byte>(NoteIds.Length * 2);
+        int previousId = 0;
+        foreach (int id in NoteIds) { IndexBinaryArrays.AppendVarint(idBytes, DocxRandomAccessIndex.Zigzag(id - previousId)); previousId = id; }
         writer.Write(NoteIds.Length);
-        for (int i = 0; i < NoteIds.Length; i++) { writer.Write(NoteIds[i]); writer.Write(NoteStarts[i]); writer.Write(NoteEnds[i]); }
+        writer.Write(idBytes.Count);
+        writer.Write(idBytes.ToArray());
+        IndexBinaryArrays.WriteDeltaVarints(writer, NoteStarts);
+        IndexBinaryArrays.WriteBlockEnds(writer, NoteStarts, NoteEnds);
     }
 
     public static DocxNotesPartIndex Read(BinaryReader reader)
     {
         ZipEntryLocation entry = DocxRandomAccessIndex.ReadEntry(reader);
-        string rootOpenTag = reader.ReadString();
-        List<DeflateCheckpoint> checkpoints = DocxRandomAccessIndex.ReadCheckpoints(reader);
+        string rootOpenTag = IndexBinaryArrays.ReadCompressedString(reader);
+        List<DeflateCheckpoint> checkpoints = DeflateCheckpointTable.Read(reader);
         int count = reader.ReadInt32();
+        byte[] idBytes = reader.ReadBytes(reader.ReadInt32());
         var ids = new int[count];
-        var starts = new long[count];
-        var ends = new long[count];
-        for (int i = 0; i < count; i++) { ids[i] = reader.ReadInt32(); starts[i] = reader.ReadInt64(); ends[i] = reader.ReadInt64(); }
+        int position = 0, id = 0;
+        for (int i = 0; i < count; i++) { id += DocxRandomAccessIndex.Unzigzag(IndexBinaryArrays.ReadVarint(idBytes, ref position)); ids[i] = id; }
+        long[] starts = IndexBinaryArrays.ReadDeltaVarints(reader);
+        long[] ends = IndexBinaryArrays.ReadBlockEnds(reader, starts);
+        if (starts.Length != count) throw new InvalidDataException("Word index: notes part tables do not match.");
         return new DocxNotesPartIndex(entry, rootOpenTag, checkpoints, ids, starts, ends);
     }
 }

@@ -34,6 +34,55 @@ internal static class IndexBinaryArrays
     public static BinaryReader OpenInMemory(string path)
         => new(new MemoryStream(File.ReadAllBytes(path), writable: false), System.Text.Encoding.UTF8);
 
+    // ── strings that compress well (root tags full of namespace declarations, bookmark names): one deflated blob ──
+
+    /// <summary>Strings joined by '\0', UTF-8, deflated: an int count, an int blob length, the blob.</summary>
+    public static void WriteCompressedStrings(BinaryWriter writer, IReadOnlyList<string> values)
+    {
+        var raw = new MemoryStream();
+        for (int i = 0; i < values.Count; i++)
+        {
+            if (values[i].IndexOf('\0') >= 0) throw new InvalidDataException("Index string holds '\0'.");
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(values[i]);
+            raw.Write(bytes, 0, bytes.Length);
+            if (i + 1 < values.Count) raw.WriteByte(0);
+        }
+        var blob = new MemoryStream();
+        using (var deflate = new System.IO.Compression.DeflateStream(blob, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+            deflate.Write(raw.GetBuffer(), 0, (int)raw.Length);
+        writer.Write(values.Count);
+        writer.Write((int)blob.Length);
+        writer.Write(blob.GetBuffer(), 0, (int)blob.Length);
+    }
+
+    public static string[] ReadCompressedStrings(BinaryReader reader)
+    {
+        int count = reader.ReadInt32();
+        int blobLength = reader.ReadInt32();
+        if (count < 0 || blobLength < 0) throw new InvalidDataException("Index strings: negative size.");
+        byte[] blob = reader.ReadBytes(blobLength);
+        if (blob.Length != blobLength) throw new EndOfStreamException("Index strings truncated.");
+        if (count == 0) return [];
+        var raw = new MemoryStream();
+        using (var inflate = new System.IO.Compression.DeflateStream(new MemoryStream(blob, writable: false), System.IO.Compression.CompressionMode.Decompress))
+        {
+            var chunk = new byte[1 << 14];
+            int read;
+            while ((read = inflate.Read(chunk, 0, chunk.Length)) > 0) raw.Write(chunk, 0, read);
+        }
+        string[] values = System.Text.Encoding.UTF8.GetString(raw.GetBuffer(), 0, (int)raw.Length).Split('\0');
+        if (values.Length != count) throw new InvalidDataException("Index strings: count mismatch.");
+        return values;
+    }
+
+    public static void WriteCompressedString(BinaryWriter writer, string value) => WriteCompressedStrings(writer, [value]);
+
+    public static string ReadCompressedString(BinaryReader reader)
+    {
+        string[] values = ReadCompressedStrings(reader);
+        return values.Length == 1 ? values[0] : throw new InvalidDataException("Index string: count mismatch.");
+    }
+
     // ── varint primitives ─────────────────────────────────────────────────────────────
 
     /// <summary>Appends an unsigned LEB128 varint (7 bits per byte, low group first).</summary>

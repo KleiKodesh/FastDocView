@@ -71,23 +71,53 @@ public sealed class DocxDocumentParts
     }
 
     /// <summary>The scanner's hook: paragraph style / direct numPr → the next label of that list.</summary>
-    public DocxListLabelResolver CreateListLabelResolver()
+    public DocxListLabelResolver CreateListLabelResolver() => CreateListLabeller().Resolve;
+
+    /// <summary>The list numbering of one pass: the resolver plus its counter state (stored per checkpoint by the compact index).</summary>
+    public DocxListLabeller CreateListLabeller() => new(Numbering, Styles);
+
+    /// <summary>
+    /// Counts list labels along one pass over body-level paragraphs (<see cref="Resolve"/> is the scanner's hook), and
+    /// exports / restores the counter state so a later pass can start counting from a checkpoint instead of block 0.
+    /// </summary>
+    public sealed class DocxListLabeller
     {
-        if (Numbering.IsEmpty) return (_, _, _) => null;
-        var counter = new DocxListCounter(Numbering);
-        var levelCss = new Dictionary<DocxNumberingDefinitions.LevelDefinition, string>();
-        return (styleId, numId, level) =>
+        private readonly DocxNumberingDefinitions _numbering;
+        private readonly DocxStyleCascade _styles;
+        private readonly DocxListCounter? _counter;
+        private readonly Dictionary<DocxNumberingDefinitions.LevelDefinition, string> _levelCss = new();
+        private readonly Dictionary<DocxNumberingDefinitions.LevelDefinition, string> _levelParagraphXml = new();   // serialising the level pPr per paragraph cost more than the scan
+
+        internal DocxListLabeller(DocxNumberingDefinitions numbering, DocxStyleCascade styles)
         {
+            _numbering = numbering;
+            _styles = styles;
+            _counter = numbering.IsEmpty ? null : new DocxListCounter(numbering);
+        }
+
+        public DocxListLabel? Resolve(string? styleId, int numId, int level)
+        {
+            if (_counter is null) return null;
             if (numId < 0 && styleId is not null)
-                (numId, level) = Styles.NumberingOf(styleId);
-            if (numId <= 0 || counter.NextWithDefinition(numId, level) is not { } next) return null;
+                (numId, level) = _styles.NumberingOf(styleId);
+            if (numId <= 0 || _counter.NextWithDefinition(numId, level) is not { } next) return null;
             DocxNumberingDefinitions.LevelDefinition? definition = next.definition;
             string css = "";
-            if (definition is not null && !levelCss.TryGetValue(definition, out css!))
-                levelCss[definition] = css = Styles.LevelRunCss(definition.RunProperties, isBulletMapped: definition.Format == "bullet" && next.label != definition.Text);
-            return new DocxListLabel(next.label, DocxListLabel.SuffixOf(definition?.Suffix), css,
-                                     definition?.ParagraphProperties?.ToString(SaveOptions.DisableFormatting) ?? "", DocxListLabel.AlignmentOf(definition?.Justification));
-        };
+            if (definition is not null && !_levelCss.TryGetValue(definition, out css!))
+                _levelCss[definition] = css = _styles.LevelRunCss(definition.RunProperties, isBulletMapped: definition.Format == "bullet" && next.label != definition.Text);
+            string paragraphXml = "";
+            if (definition is not null && !_levelParagraphXml.TryGetValue(definition, out paragraphXml!))
+                _levelParagraphXml[definition] = paragraphXml = definition.ParagraphProperties?.ToString(SaveOptions.DisableFormatting) ?? "";
+            return new DocxListLabel(next.label, DocxListLabel.SuffixOf(definition?.Suffix), css, paragraphXml, DocxListLabel.AlignmentOf(definition?.Justification));
+        }
+
+        /// <summary>The counter state now (empty when the document has no numbering).</summary>
+        public byte[] ExportState() => _counter?.ExportState() ?? [];
+
+        public void ImportState(byte[] state)
+        {
+            _counter?.ImportState(state);
+        }
     }
 
     /// <summary>

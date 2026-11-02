@@ -49,7 +49,7 @@ public sealed class WordIndexPolicy
 
     public WordIndexDecision Decide(string filePath, long bodyBytes, bool hasCachedIndex)
     {
-        long estimatedIndexBytes = bodyBytes / 32 + 64;     // ~3 % windows + offsets
+        long estimatedIndexBytes = bodyBytes / 2048 + 8192;     // compact .docx sidecar: ~45 KB per 90 MB; the other formats' per-block layouts are bigger
         if (hasCachedIndex)
             return new WordIndexDecision(filePath, WordIndexMode.Sidecar, true, bodyBytes, estimatedIndexBytes, "index already built");
         if (ForcedMode is { } forced)

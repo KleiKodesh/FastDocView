@@ -24,13 +24,17 @@ public sealed class DocxBlockXmlReader : IDisposable
     /// <summary>The package stream in sidecar mode (the note reader shares it), null in in-memory mode.</summary>
     public Stream? Package => _owned as Stream;
 
-    /// <summary>Sidecar mode over the package stream (which this reader then owns).</summary>
-    public static DocxBlockXmlReader OverPackage(Stream package, DocxRandomAccessIndex index)
+    /// <summary>Sidecar mode over the package stream (which this reader then owns): blocks located by rescanning spans (<see cref="DocxCompactBlockTable"/>).</summary>
+    public static DocxBlockXmlReader OverPackage(Stream package, DocxRandomAccessIndex index, DocxDocumentParts parts)
     {
         ZipEntryLocation entry = index.DocumentEntry;
         Stream view = DocxEntryInflation.OpenView(package, entry, index.Checkpoints);
-        return new DocxBlockXmlReader(view, index, package);
+        return new DocxBlockXmlReader(view, new DocxCompactBlockTable(index, view, parts.CreateListLabeller), package);
     }
+
+    /// <summary>Swaps an incremental build's table for the finished index: the compact table over the same view.</summary>
+    internal void CompleteWith(DocxRandomAccessIndex index, DocxDocumentParts parts)
+        => Table = new DocxCompactBlockTable(index, _documentXml, parts.CreateListLabeller);
 
     /// <summary>
     /// Incremental first open over the package stream (owned): the view seeks through the builder's
@@ -40,8 +44,11 @@ public sealed class DocxBlockXmlReader : IDisposable
         => new(DocxEntryInflation.OpenView(package, builder.BodyEntry, builder.BodyCheckpoints), builder, package);
 
     /// <summary>In-memory mode over the already-inflated body.</summary>
-    public static DocxBlockXmlReader OverBody(byte[] body, DocxRandomAccessIndex index)
-        => new(new MemoryStream(body, writable: false), index, null);
+    public static DocxBlockXmlReader OverBody(byte[] body, DocxRandomAccessIndex index, DocxDocumentParts parts)
+    {
+        var view = new MemoryStream(body, writable: false);
+        return new DocxBlockXmlReader(view, new DocxCompactBlockTable(index, view, parts.CreateListLabeller), null);
+    }
 
     private DocxBlockXmlReader(Stream documentXml, IDocxBlockTable table, IDisposable? owned)
     {
@@ -65,7 +72,7 @@ public sealed class DocxBlockXmlReader : IDisposable
 
         long rangeStart = table.BlockStartOffset(firstBlockIndex);
         long rangeEnd = table.BlockEndOffset(last);
-        byte[] bytes = DocxXmlFragment.ReadRange(_documentXml, rangeStart, rangeEnd);
+        byte[] bytes = table.ReadRange(_documentXml, rangeStart, rangeEnd);
 
         for (int blockIndex = firstBlockIndex; blockIndex <= last; blockIndex++)
         {
@@ -87,7 +94,8 @@ public sealed class DocxBlockXmlReader : IDisposable
         int last = Math.Min(table.BlockCount, firstBlockIndex + count) - 1;
         if (firstBlockIndex < 0 || firstBlockIndex > last) return ([], blocks);
         long rangeStart = table.BlockStartOffset(firstBlockIndex);
-        byte[] bytes = DocxXmlFragment.ReadRange(_documentXml, rangeStart, table.BlockEndOffset(last));
+        long rangeEnd = table.BlockEndOffset(last);
+        byte[] bytes = table.ReadRange(_documentXml, rangeStart, rangeEnd);
         for (int blockIndex = firstBlockIndex; blockIndex <= last; blockIndex++)
         {
             int start = (int)(table.BlockStartOffset(blockIndex) - rangeStart);
