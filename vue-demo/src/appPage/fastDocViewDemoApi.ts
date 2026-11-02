@@ -67,6 +67,14 @@ export const fastDocViewApi: FastDocViewApi = {
     const reply = await readJson<{ blockIndex: number | null }>(await fetch(`/api/documents/${documentId}/bookmark?name=${encodeURIComponent(name)}`))
     return reply.blockIndex
   },
+  async notes(documentId, first, count) {
+    return readJson<FastDocViewBlock['notes']>(await fetch(`/api/documents/${documentId}/notes?first=${first}&count=${Math.min(count, 100)}`))
+  },
+  async noteBlocks(documentId) {
+    // The service sends raw Int32s; the dev server has the same data as JSON note references.
+    const references = await readJson<{ blockIndex: number }[]>(await fetch(`/api/documents/${documentId}/note-references`))
+    return Int32Array.from(references, reference => reference.blockIndex)
+  },
   async headings(documentId) {
     return readJson<FastDocViewHeading[]>(await fetch(`/api/documents/${documentId}/headings`))
   },
