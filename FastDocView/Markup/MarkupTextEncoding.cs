@@ -65,6 +65,48 @@ public static class MarkupTextEncoding
         return (r.CodePage, r.BomLength, reason);
     }
 
+    /// <summary>
+    /// The encoding of a loose .html file: a BOM wins, then a charset declared in the first bytes (&lt;meta charset&gt; or
+    /// an http-equiv Content-Type, as the HTML prescan looks for), then the .txt detection.
+    /// </summary>
+    public static (int codePage, int bomLength, string reason) DetectHtml(ReadOnlySpan<byte> sample, long fileLength)
+    {
+        if (sample.Length >= 3 && sample[0] == 0xEF && sample[1] == 0xBB && sample[2] == 0xBF) return (Utf8, 3, "BOM");
+        if (sample.Length >= 2 && sample[0] == 0xFF && sample[1] == 0xFE) return (Utf16LittleEndian, 2, "BOM");
+        if (sample.Length >= 2 && sample[0] == 0xFE && sample[1] == 0xFF) return (Utf16BigEndian, 2, "BOM");
+        if (DeclaredCharset(sample) is { } declared && CodePageOfCharsetName(declared) is int declaredPage && IsScannable(declaredPage))
+            return (declaredPage, 0, "meta charset=" + declared);
+        return DetectPlainText(sample, fileLength);
+    }
+
+    /// <summary>The bytes the HTML prescan reads for a charset declaration (the HTML standard's prescan reads 1024; Word's heads are longer).</summary>
+    private const int CharsetPrescanBytes = 4096;
+
+    /// <summary>The charset named by the first "charset=" inside a &lt;meta&gt; tag of the first bytes, or null (ASCII-compatible text only).</summary>
+    internal static string? DeclaredCharset(ReadOnlySpan<byte> sample)
+    {
+        int length = Math.Min(sample.Length, CharsetPrescanBytes);
+        var text = new char[length];
+        for (int i = 0; i < length; i++) text[i] = sample[i] < 0x80 ? char.ToLowerInvariant((char)sample[i]) : ' ';
+        string head = new string(text);
+        for (int meta = head.IndexOf("<meta", StringComparison.Ordinal); meta >= 0; meta = head.IndexOf("<meta", meta + 5, StringComparison.Ordinal))
+        {
+            int end = head.IndexOf('>', meta);
+            if (end < 0) return null;
+            int at = head.IndexOf("charset", meta, end - meta, StringComparison.Ordinal);
+            if (at < 0) continue;
+            at += 7;
+            while (at < end && head[at] == ' ') at++;
+            if (at >= end || head[at] != '=') continue;
+            at++;
+            while (at < end && (head[at] == ' ' || head[at] == '"' || head[at] == '\'')) at++;
+            int start = at;
+            while (at < end && head[at] is not (' ' or '"' or '\'' or ';' or '/' or '>')) at++;
+            if (at > start) return head.Substring(start, at - start);
+        }
+        return null;
+    }
+
     /// <summary>Code pages <see cref="MarkupBlockScanner"/> handles: UTF-8, UTF-16 LE/BE, the
     /// double-byte ones it knows the lead bytes of, and every single-byte code page.</summary>
     public static bool IsScannable(int codePage) =>

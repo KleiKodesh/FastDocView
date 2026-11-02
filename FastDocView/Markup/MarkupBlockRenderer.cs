@@ -148,11 +148,33 @@ public static class MarkupBlockRenderer
         return false;
     }
 
-    /// <summary>The tag as written, minus event handlers (on*) and script URLs.</summary>
+    /// <summary>A link into a library app (Otzaria, Zayit, KitveiHakodesh's own) - the schemes the Word readers mark as app links.</summary>
+    private static bool IsAppLink(string value)
+    {
+        string href = System.Net.WebUtility.HtmlDecode(value).Trim();
+        int colon = href.IndexOf(':');
+        if (colon <= 0) return false;
+        return href.Substring(0, colon).ToLowerInvariant() is "otzaria" or "zayit" or "kitveihakodeshapp" or "seforimapp";
+    }
+
+    /// <summary>True when the tag's href stays in the document (#anchor) or has no scheme.</summary>
+    private static bool IsInternalHref(string tag)
+    {
+        int at = tag.IndexOf("href", StringComparison.OrdinalIgnoreCase);
+        if (at < 0) return true;
+        int eq = tag.IndexOf('=', at);
+        if (eq < 0) return true;
+        int i = eq + 1;
+        while (i < tag.Length && (char.IsWhiteSpace(tag[i]) || tag[i] == '"' || tag[i] == '\'')) i++;
+        return i < tag.Length && tag[i] == '#';
+    }
+
+    /// <summary>The tag as written, minus event handlers (on*) and script URLs; a link gets the reader's link markup.</summary>
     private static string Sanitize(string tag, string name)
     {
-        if (!HasEventAttribute(tag) && tag.IndexOf(':') < 0 && tag.IndexOf('&') < 0) return tag;      // no handler, no scheme, no entity: nothing to remove
+        if (name != "a" && !HasEventAttribute(tag) && tag.IndexOf(':') < 0 && tag.IndexOf('&') < 0) return tag;      // no handler, no scheme, no entity: nothing to remove
         var result = new StringBuilder(tag.Length);
+        bool isAppLink = false, hasHref = false;
         result.Append('<').Append(name);
         int i = 1 + name.Length;
         while (i < tag.Length)
@@ -187,9 +209,18 @@ public static class MarkupBlockRenderer
             else i = valueStart;
             if (attribute.Length == 0) { i++; continue; }
             if (attribute.StartsWith("on", StringComparison.OrdinalIgnoreCase)) continue;
-            if (UrlAttributes.Contains(attribute.ToLowerInvariant()) && !IsSafeValue(value)) continue;
+            if (name == "a" && attribute.Equals("href", StringComparison.OrdinalIgnoreCase) && IsAppLink(value)) isAppLink = true;
+            else if (UrlAttributes.Contains(attribute.ToLowerInvariant()) && !IsSafeValue(value)) continue;
+            if (name == "a" && attribute.ToLowerInvariant() is "class" or "target" or "rel" or "data-app-link") continue;   // the reader's own link markup replaces them
+            if (name == "a" && attribute.Equals("href", StringComparison.OrdinalIgnoreCase)) hasHref = true;
             result.Append(' ').Append(attribute);
             if (valueStart != i) result.Append("=\"").Append(value.Replace("\"", "&quot;")).Append('"');
+        }
+        if (name == "a" && hasHref)
+        {
+            // Links like the Word readers': app links (otzaria:// zayit:// ...) are routed by the host in place; web links open outside.
+            result.Append(isAppLink ? " class=\"link app-link\" data-app-link=\"1\"" : " class=\"link\"");
+            if (!isAppLink && !IsInternalHref(tag)) result.Append(" rel=\"noopener noreferrer\" target=\"_blank\"");
         }
         if (tag.EndsWith("/>", StringComparison.Ordinal)) result.Append(" /");
         return result.Append('>').ToString();

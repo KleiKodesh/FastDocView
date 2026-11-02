@@ -2,7 +2,7 @@ using System.Text;
 
 namespace FastDocView.Markup;
 
-public enum MarkupSourceKind : byte { PlainText = 0, WebArchive = 1 }
+public enum MarkupSourceKind : byte { PlainText = 0, WebArchive = 1, Html = 2 }
 
 /// <summary>
 /// The index of a plain-text (.txt read as HTML) or web-archive (MHTML) document. Text offsets are
@@ -15,7 +15,7 @@ public enum MarkupSourceKind : byte { PlainText = 0, WebArchive = 1 }
 public sealed class MarkupRandomAccessIndex
 {
     private const string Magic = "KHMKPIDX";
-    private const int FormatVersion = 3; // 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode
+    private const int FormatVersion = 4; // 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind, body/html CSS rules scoped to the root
 
     public MarkupSourceKind Kind { get; }
     public long SourceFileLength { get; }

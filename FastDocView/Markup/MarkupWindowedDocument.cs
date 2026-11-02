@@ -4,8 +4,9 @@ using FastDocView.Html;
 namespace FastDocView.Markup;
 
 /// <summary>
-/// A plain-text file (read as HTML: tags render, h1-h6 become the outline, one block per line) or a
-/// Word web archive (MHTML: the HTML part, one block per paragraph-level element) behind the same
+/// A plain-text file (read as HTML: tags render, h1-h6 become the outline, one block per line), a
+/// Word web archive (MHTML: the HTML part, one block per paragraph-level element) or a loose .html / .htm
+/// file (the same element blocks, read straight from the file) behind the same
 /// <see cref="IWordWindowedDocument"/> contract as the Word formats. Like a flat .fodt the file itself
 /// is the random-access view: the index pass records block offsets (and, for MHTML, transfer-decoder
 /// resume points); a window reads only its own bytes. The index is a sidecar when the file is big.
@@ -77,9 +78,12 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     {
         MarkupRandomAccessIndex index = cachedIndex is not null && cachedIndex.Kind == kind && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc)
             ? cachedIndex
-            : kind == MarkupSourceKind.PlainText
-                ? MarkupRandomAccessIndexBuilder.BuildPlainText(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation)
-                : MarkupRandomAccessIndexBuilder.BuildWebArchive(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
+            : kind switch
+            {
+                MarkupSourceKind.PlainText => MarkupRandomAccessIndexBuilder.BuildPlainText(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation),
+                MarkupSourceKind.Html => MarkupRandomAccessIndexBuilder.BuildHtml(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation),
+                _ => MarkupRandomAccessIndexBuilder.BuildWebArchive(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation),
+            };
         return new MarkupWindowedDocument(displayPath, file, index, decision);
     }
 
@@ -164,13 +168,13 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         return result;
     }
 
-    /// <summary>The text bytes of blocks [first, last): a plain read for .txt, a decode from the first block's resume point for MHTML.</summary>
+    /// <summary>The text bytes of blocks [first, last): a plain read for .txt and .html, a decode from the first block's resume point for MHTML.</summary>
     private byte[] ReadText(int first, int last, out long textStart)
     {
         textStart = _index.BlockStarts[first];
         int need = checked((int)(_index.BlockEnd(last - 1) - textStart));
         var output = new byte[need];
-        if (_index.Kind == MarkupSourceKind.PlainText)
+        if (_index.Kind != MarkupSourceKind.WebArchive)
         {
             _file.Position = textStart;
             int total = 0;

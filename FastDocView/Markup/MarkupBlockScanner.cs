@@ -53,6 +53,12 @@ public sealed class MarkupBlockScanner
     public List<string> Stacks { get; } = [""];          // id 0 = nothing open
     public List<WordDocumentHeading> Headings { get; } = [];
     public bool IsBodyStarted => _isInBody;
+
+    /// <summary>Elements mode: a content element before any &lt;body&gt; starts the body (a loose .html file). Off for MHTML.</summary>
+    public bool StartsBodyImplicitly { get; set; }
+
+    private static readonly HashSet<string> HeadElements = new(StringComparer.Ordinal)
+        { "html", "head", "meta", "link", "base", "title", "style", "script", "noscript", "template" };
     public bool IsBodyEnded { get; private set; }
 
     private State _state = State.Text;
@@ -354,6 +360,12 @@ public sealed class MarkupBlockScanner
     {
         if (_mode == MarkupBlockMode.Elements)
         {
+            if (!_isInBody && StartsBodyImplicitly && name.Length > 0 && name != "body" && !HeadElements.Contains(name))
+            {
+                // A loose .html file may omit <body>: the first content element starts it, as browsers infer.
+                _isInBody = true;
+                StartBlock(_tagStartOffset);
+            }
             if (!_isInBody)
             {
                 if (name == "body") { _isInBody = true; StartBlock(_tagStartOffset + _lastTagByteCount); }

@@ -55,7 +55,9 @@ public static class WebArchiveStylesheet
                 string trimmed = selector.Trim();
                 if (trimmed.Length == 0) continue;
                 if (!first) scoped.Append(", ");
-                scoped.Append(".word-document ").Append(trimmed);
+                string lower = trimmed.ToLowerInvariant();
+                if (lower is "body" or "html") scoped.Append(".word-document");     // the document's own body = the reader's root
+                else scoped.Append(".word-document ").Append(trimmed);
                 first = false;
             }
             if (!first) scoped.Append(" { ").Append(body).Append(" }\n");

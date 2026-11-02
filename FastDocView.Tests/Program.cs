@@ -13,7 +13,7 @@
 //   dotnet run -c Release -- --odt-incremental [N] first open of a synthetic .odt and .fodt with the index built on demand (N blocks, default 200000)
 //   dotnet run -c Release -- --odt [N]             synthetic .odt/.fodt (N repeating blocks, default 20000); with LibreOffice installed,
 //                                                  every --real .docx is also converted to .odt (TestOutput) and smoke-tested + audited
-//   dotnet run -c Release -- --text [N] / --mhtml [N]   synthetic .txt (every encoding / line ending) and MHTML (qp + base64), N filler blocks
+//   dotnet run -c Release -- --text [N] / --mhtml [N]   synthetic .txt (every encoding / line ending) and MHTML (qp + base64), N filler blocks; --mhtml also runs the .html checks
 //   dotnet run -c Release -- --text-corpus <list> [--text-largest 200 --text-random 300]   .txt corpus sample: encoding mix, 0 crashes
 //   dotnet run -c Release -- --mime-scan <word-list>   Word files that start with 'MIME' (web archives): count, open + render each
 //   dotnet run -c Release -- --profile-markup <path>...  cold / reopen / window ms of .txt / .mht files
@@ -148,7 +148,7 @@ if (odtBlocks > 0)
 }
 
 if (textBlocks > 0) { MarkupIndexAndRenderTest.RunEdgeCases(); MarkupIndexAndRenderTest.RunDoubleByteSplit(); MarkupIndexAndRenderTest.RunText(textBlocks); }
-if (mhtmlBlocks > 0) MarkupIndexAndRenderTest.RunMhtml(mhtmlBlocks);
+if (mhtmlBlocks > 0) { MarkupIndexAndRenderTest.RunMhtml(mhtmlBlocks); MarkupHtmlTest.Run(); }
 if (markupProfilePaths.Count > 0)
 {
     TestReport.Step("Markup open timings");
