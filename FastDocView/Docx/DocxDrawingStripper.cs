@@ -109,8 +109,114 @@ internal static class DocxDrawingStripper
         }
         if (IndexOfOpenTag(drawing, frame, "a:blip") is var blip and >= 0) Copy("embed", OpenTagAt(drawing, blip), "r:embed");
         WriteTextBoxShape(layout, drawing);
-        layout.Append("/>");
+        string shapes = ShapeTree(drawing, frame);
+        if (shapes.Length == 0) layout.Append("/>");
+        else layout.Append('>').Append(shapes).Append("</").Append(PictureLayoutElementName).Append('>');
         WriteUtf8(output, layout.ToString());
+    }
+
+    /// <summary>
+    /// The DrawingML elements a shape or group is drawn from (ECMA-376 Part 1 20.1 / 20.4, wps = Word 2010 shapes, wpg = groups),
+    /// copied without their prefixes (so the fragment needs no namespace declarations) and without anything else: wpg:wgp /
+    /// wpg:grpSp with wpg:grpSpPr, wps:wsp with wps:spPr / wps:style / wps:bodyPr and an empty wps:txbx marker (its
+    /// w:txbxContent is copied after the layout, in document order, as before), pic:pic with its a:blip and spPr; a:xfrm
+    /// (off / ext / chOff / chExt), a:prstGeom / a:custGeom paths, fills, colours and their transforms, a:ln. Every other
+    /// element (a:extLst, effects, 3-D, non-visual properties) is dropped with its subtree. Empty when the graphic holds no
+    /// wps / wpg content (a plain picture keeps its single layout element).
+    /// </summary>
+    private static string ShapeTree(ReadOnlySpan<byte> drawing, int frame)
+    {
+        int data = IndexOfOpenTag(drawing, frame, "a:graphicData");
+        if (data < 0) return "";
+        int dataEnd = ElementEnd(drawing, data, "a:graphicData");
+        if (dataEnd < 0) return "";
+        ReadOnlySpan<byte> graphic = drawing.Slice(data, dataEnd - data);
+        if (IndexOfOpenTag(graphic, 0, "wps:wsp") < 0 && IndexOfOpenTag(graphic, 0, "wpg:wgp") < 0) return "";
+        var tree = new StringBuilder("<shapes>");
+        int skipDepth = 0;
+        var kept = new Stack<string>();
+        int position = graphic.Slice(1).IndexOf((byte)'>') + 2;   // past the a:graphicData open tag
+        while (position > 0 && position < graphic.Length)
+        {
+            int open = graphic.Slice(position).IndexOf((byte)'<');
+            if (open < 0) break;
+            int at = position + open;
+            int close = graphic.Slice(at).IndexOf((byte)'>');
+            if (close < 0) break;
+            ReadOnlySpan<byte> tag = graphic.Slice(at + 1, close - 1);
+            position = at + close + 1;
+            if (tag.Length == 0 || tag[0] is (byte)'?' or (byte)'!') continue;
+            if (tag[0] == (byte)'/')
+            {
+                if (skipDepth > 0) { skipDepth--; continue; }
+                if (kept.Count == 0) break;   // </a:graphicData>
+                tree.Append("</").Append(kept.Pop()).Append('>');
+                continue;
+            }
+            bool selfClosing = tag[tag.Length - 1] == (byte)'/';
+            if (selfClosing) tag = tag.Slice(0, tag.Length - 1);
+            int nameEnd = 0;
+            while (nameEnd < tag.Length && tag[nameEnd] is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n')) nameEnd++;
+            string name = Encoding.ASCII.GetString(tag.Slice(0, nameEnd).ToArray());
+            if (skipDepth > 0 || !KeptShapeElements.Contains(name))
+            {
+                if (!selfClosing) skipDepth++;
+                continue;
+            }
+            tree.Append('<').Append(LocalName(name));
+            AppendUnprefixedAttributes(tree, tag.Slice(nameEnd));
+            if (name == "wps:txbx")
+            {
+                // the marker only: the text box content is copied (and stripped) after the layout
+                tree.Append("/>");
+                if (!selfClosing) skipDepth++;
+                continue;
+            }
+            if (selfClosing) tree.Append("/>");
+            else { tree.Append('>'); kept.Push(LocalName(name)); }
+        }
+        while (kept.Count > 0) tree.Append("</").Append(kept.Pop()).Append('>');   // a cut-off graphic still closes what it opened
+        tree.Append("</shapes>");
+        return tree.ToString();
+    }
+
+    private static readonly HashSet<string> KeptShapeElements = new(StringComparer.Ordinal)
+    {
+        "wpg:wgp", "wpg:grpSp", "wpg:grpSpPr", "wps:wsp", "wps:spPr", "wps:style", "wps:bodyPr", "wps:txbx", "wps:linkedTxbx",
+        "pic:pic", "pic:blipFill", "pic:spPr", "a:blip",
+        "a:xfrm", "a:off", "a:ext", "a:chOff", "a:chExt", "a:prstGeom", "a:avLst", "a:gd", "a:custGeom", "a:pathLst", "a:path",
+        "a:moveTo", "a:lnTo", "a:cubicBezTo", "a:quadBezTo", "a:arcTo", "a:close", "a:pt",
+        "a:solidFill", "a:noFill", "a:gradFill", "a:gsLst", "a:gs", "a:lin", "a:grpFill",
+        "a:srgbClr", "a:schemeClr", "a:sysClr", "a:prstClr", "a:lumMod", "a:lumOff", "a:tint", "a:shade", "a:alpha",
+        "a:ln", "a:prstDash", "a:headEnd", "a:tailEnd", "a:lnRef", "a:fillRef", "a:spAutoFit",
+    };
+
+    private static string LocalName(string name) => name.IndexOf(':') is var colon and >= 0 ? name.Substring(colon + 1) : name;
+
+    /// <summary>The tag's attributes without a prefix, plus r:embed as embed (the picture relationship); values stay escaped.</summary>
+    private static void AppendUnprefixedAttributes(StringBuilder tree, ReadOnlySpan<byte> attributes)
+    {
+        int position = 0;
+        while (position < attributes.Length)
+        {
+            while (position < attributes.Length && attributes[position] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n') position++;
+            int equals = attributes.Slice(position).IndexOf((byte)'=');
+            if (equals < 0) return;
+            string name = Encoding.ASCII.GetString(attributes.Slice(position, equals).ToArray()).Trim();
+            int valueAt = position + equals + 1;
+            while (valueAt < attributes.Length && attributes[valueAt] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n') valueAt++;
+            if (valueAt >= attributes.Length || attributes[valueAt] is not ((byte)'"' or (byte)'\'')) return;
+            byte quote = attributes[valueAt];
+            int length = attributes.Slice(valueAt + 1).IndexOf(quote);
+            if (length < 0) return;
+            if (name == "r:embed") name = "embed";
+            if (name.IndexOf(':') < 0 && name.Length > 0)
+            {
+                string value = Encoding.UTF8.GetString(attributes.Slice(valueAt + 1, length).ToArray());
+                tree.Append(' ').Append(name).Append("=\"").Append(quote == (byte)'"' ? value : value.Replace("\"", "&quot;")).Append('"');
+            }
+            position = valueAt + 1 + length + 1;
+        }
     }
 
     /// <summary>
@@ -171,7 +277,7 @@ internal static class DocxDrawingStripper
     {
         ReadOnlySpan<byte> picture = span.Slice(from, to - from);
         int imageData = IndexOfOpenTag(picture, 0, "v:imagedata");
-        if (imageData < 0) return;
+        if (imageData < 0) { WriteVmlShapeLayout(output, picture); return; }
         ReadOnlySpan<byte> imageTag = OpenTagAt(picture, imageData);
         string? embed = AttributeValue(imageTag, "r:id") ?? AttributeValue(imageTag, "o:relid");
         if (embed is null) return;
@@ -189,6 +295,49 @@ internal static class DocxDrawingStripper
             ReadOnlySpan<byte> wrapTag = OpenTagAt(picture, wrap);
             if (AttributeValue(wrapTag, "type") is { } type) layout.Append(" wrap=\"").Append(type).Append('"');
             if (AttributeValue(wrapTag, "side") is { } side) layout.Append(" wrapText=\"").Append(side).Append('"');
+        }
+        layout.Append("/>");
+        WriteUtf8(output, layout.ToString());
+    }
+
+    /// <summary>
+    /// A VML shape without a picture (ECMA-376 Part 4 14.1: v:rect / v:roundrect / v:oval / v:line / v:shape) as the same
+    /// layout element with kind="vml" and vmlShape = its element: style (size, position, wrap gaps, rotation, flip), fillcolor /
+    /// filled, strokecolor / stroked / strokeweight, arcsize (roundrect), from / to (line), the v:fill / v:stroke child's
+    /// on / color, and v:textbox inset with textBox="1" when it holds text; w10:wrap as for pictures. The attributes are the
+    /// ones LibreOffice reads (oox vmlshapecontext.cxx:397-403 stroke / fill, vmltextboxcontext.cxx:186-211 inset).
+    /// The first such element of the w:pict is the shape; a v:group is drawn as its first shape only.
+    /// </summary>
+    private static void WriteVmlShapeLayout(MemoryStream output, ReadOnlySpan<byte> picture)
+    {
+        int shape = -1;
+        string shapeName = "";
+        foreach (string name in new[] { "v:rect", "v:roundrect", "v:oval", "v:line", "v:shape" })
+            if (IndexOfOpenTag(picture, 0, name) is var at and >= 0 && (shape < 0 || at < shape)) { shape = at; shapeName = name; }
+        if (shape < 0) return;
+        ReadOnlySpan<byte> shapeTag = OpenTagAt(picture, shape);
+        var layout = new StringBuilder("<" + PictureLayoutElementName + " kind=\"vml\" vmlShape=\"" + shapeName.Substring(2) + "\"");
+        void Copy(string attribute, ReadOnlySpan<byte> tag, string name)
+        {
+            if (AttributeValue(tag, name) is { } value) layout.Append(' ').Append(attribute).Append("=\"").Append(value).Append('"');
+        }
+        foreach (string name in new[] { "style", "fillcolor", "filled", "strokecolor", "stroked", "strokeweight", "arcsize", "from", "to" }) Copy(name, shapeTag, name);
+        int shapeEnd = ElementEnd(picture, shape, shapeName);
+        ReadOnlySpan<byte> body = shapeEnd < 0 ? picture.Slice(shape) : picture.Slice(shape, shapeEnd - shape);
+        if (IndexOfOpenTag(body, 0, "v:fill") is var fill and >= 0) { Copy("fillOn", OpenTagAt(body, fill), "on"); Copy("fillColor2", OpenTagAt(body, fill), "color"); }
+        if (IndexOfOpenTag(body, 0, "v:stroke") is var stroke and >= 0) { Copy("dashstyle", OpenTagAt(body, stroke), "dashstyle"); Copy("strokeOn", OpenTagAt(body, stroke), "on"); }
+        if (IndexOfOpenTag(body, 0, "v:textbox") is var textBox and >= 0 && IndexOfOpenTag(body, textBox, TextBoxContentName) >= 0)
+        {
+            layout.Append(" textBox=\"1\"");
+            Copy("inset", OpenTagAt(body, textBox), "inset");
+            Copy("insetmode", OpenTagAt(body, textBox), "insetmode");
+            if (AttributeValue(OpenTagAt(body, textBox), "style") is { } textStyle && textStyle.Contains("mso-fit-shape-to-text:t")) layout.Append(" autoFit=\"1\"");
+        }
+        if (IndexOfOpenTag(picture, 0, "w10:wrap") is var wrap and >= 0)
+        {
+            ReadOnlySpan<byte> wrapTag = OpenTagAt(picture, wrap);
+            Copy("wrap", wrapTag, "type");
+            Copy("wrapText", wrapTag, "side");
         }
         layout.Append("/>");
         WriteUtf8(output, layout.ToString());

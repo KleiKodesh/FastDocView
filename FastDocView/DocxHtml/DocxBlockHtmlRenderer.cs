@@ -760,6 +760,12 @@ public sealed class DocxBlockHtmlRenderer
     private IEnumerable<RenderStep> AppendDrawing(StringBuilder html, XElement drawing)
     {
         List<XElement> textBoxes = OutermostTextBoxes(drawing);
+        XElement? layoutElement = drawing.Elements().FirstOrDefault(e => e.Name.LocalName == Docx.DocxDrawingStripper.PictureLayoutElementName);
+        if (layoutElement is not null && IsDrawnShape(layoutElement))
+        {
+            yield return new(AppendShapes(html, layoutElement, textBoxes));
+            yield break;
+        }
         if (textBoxes.Count == 0)
         {
             if (drawing.Elements().FirstOrDefault(e => e.Name.LocalName == Docx.DocxDrawingStripper.PictureLayoutElementName) is { } picture)
@@ -793,6 +799,113 @@ public sealed class DocxBlockHtmlRenderer
         _textBoxDepth--;
         _isParagraphRightToLeft = outerIsRightToLeft;
         _previousStyleKey = previous;
+    }
+
+    /// <summary>
+    /// Whether a drawing is drawn as shapes (<see cref="WordShapeHtml"/>): a VML shape without a picture, or DrawingML shapes /
+    /// groups - except one plain rectangle text box with only literal colours and no style reference, which keeps the text-box
+    /// rendering (<see cref="WordPictureHtml.OpenTextBox"/>: its border and fill are CSS, it grows with its text).
+    /// </summary>
+    private static bool IsDrawnShape(XElement layout)
+    {
+        if ((string?)layout.Attribute("kind") == "vml") return layout.Attribute("vmlShape") is not null;
+        if (layout.Element("shapes") is not { } tree) return false;
+        List<XElement> top = tree.Elements().ToList();
+        if (top.Count == 1 && top[0].Name.LocalName == "wsp" && top[0].Element("txbx") is not null && top[0].Element("style") is null)
+        {
+            XElement? properties = top[0].Element("spPr");
+            string? preset = (string?)properties?.Element("prstGeom")?.Attribute("prst");
+            bool plain = (preset is null or "rect") && properties?.Element("custGeom") is null
+                      && properties?.Descendants().Any(e => e.Name.LocalName is "schemeClr" or "gradFill" or "sysClr" or "prstClr" or "headEnd" or "tailEnd") != true;
+            if (plain) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// A drawing of shapes: the frame placed like a picture, every outline in one SVG, each shape's text box over its outline
+    /// (in the drawing's text box order) and group pictures at their boxes. A single shape whose text grows keeps the text in
+    /// the frame's flow. Text boxes no shape claims render after as plain boxes, so all text shows once.
+    /// </summary>
+    private IEnumerable<RenderStep> AppendShapes(StringBuilder html, XElement layout, List<XElement> textBoxes)
+    {
+        WordPictureLayout placement = DrawingLayout(layout);
+        List<WordShape> shapes;
+        if ((string?)layout.Attribute("kind") == "vml")
+        {
+            Dictionary<string, string> style = VmlStyle(layout);
+            double width = placement.WidthPt, height = placement.HeightPt;
+            WordShape shape;
+            if ((string?)layout.Attribute("vmlShape") == "line")
+            {
+                (double x1, double y1) = VmlPoint((string?)layout.Attribute("from"));
+                (double x2, double y2) = VmlPoint((string?)layout.Attribute("to"));
+                width = Math.Abs(x2 - x1); height = Math.Abs(y2 - y1);
+                shape = DocxShapeReader.ReadVml(layout, style, width, height);
+                shape.FlipHorizontal ^= x2 < x1; shape.FlipVertical ^= y2 < y1;
+                placement = placement with { WidthPt = width, HeightPt = height };
+            }
+            else shape = DocxShapeReader.ReadVml(layout, style, width, height);
+            shapes = [shape];
+        }
+        else
+            shapes = DocxShapeReader.Read(layout.Element("shapes")!, placement.WidthPt, placement.HeightPt, _styles.Theme,
+                                          embed => _pictures is not null ? _pictures(_currentPicturePart, embed) : null);
+        List<WordShape> withText = shapes.Where(s => s.TextIndex >= 0 && s.TextIndex < textBoxes.Count).ToList();
+        bool inFlow = shapes.Count == 1 && withText.Count == 1 && withText[0].TextStyle.GrowsWithText && withText[0].RotationDegrees == 0;
+
+        string? previous = _previousStyleKey;
+        string? outerLink = _activeLinkOpenTag;
+        List<DocxField> outerFields = new(_openFields);
+        _activeLinkOpenTag = null;
+        _openFields.Clear();
+        bool outerIsRightToLeft = _isParagraphRightToLeft;
+        _textBoxDepth++;
+        WordShapeHtml.OpenFrame(html, placement, inFlow);
+        WordShapeHtml.AppendGeometry(html, shapes, placement.WidthPt, placement.HeightPt, stretches: inFlow);
+        foreach (WordShape shape in shapes)
+        {
+            if (shape.Geometry == WordShapeGeometry.Picture) { WordShapeHtml.AppendPicture(html, shape); continue; }
+            if (shape.TextIndex < 0 || shape.TextIndex >= textBoxes.Count) continue;
+            WordShapeHtml.OpenShapeText(html, shape, inFlow);
+            _previousStyleKey = null;
+            yield return new(RenderBlocks(textBoxes[shape.TextIndex].Elements(), html, isAutoSpacingContainer: true));
+            WordShapeHtml.CloseShapeText(html);
+        }
+        WordShapeHtml.CloseFrame(html);
+        var claimed = new HashSet<int>(withText.Select(s => s.TextIndex));
+        for (int i = 0; i < textBoxes.Count; i++)
+        {
+            if (claimed.Contains(i)) continue;
+            html.Append("<span class=\"text-box\">");
+            _previousStyleKey = null;
+            yield return new(RenderBlocks(textBoxes[i].Elements(), html, isAutoSpacingContainer: true));
+            WordPictureHtml.CloseTextBox(html);
+        }
+        _activeLinkOpenTag = outerLink;
+        _openFields.Clear();
+        _openFields.AddRange(outerFields);
+        _textBoxDepth--;
+        _isParagraphRightToLeft = outerIsRightToLeft;
+        _previousStyleKey = previous;
+    }
+
+    /// <summary>A VML point "x,y" (lengths with units, LibreOffice vmlshape.cxx reads from / to the same way: unverified detail) in points.</summary>
+    private static (double x, double y) VmlPoint(string? value)
+    {
+        string[] parts = (value ?? "0,0").Split(',');
+        return (parts.Length > 0 ? VmlLengthPoints(parts[0]) : 0, parts.Length > 1 ? VmlLengthPoints(parts[1]) : 0);
+    }
+
+    private static Dictionary<string, string> VmlStyle(XElement picture)
+    {
+        var style = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string declaration in ((string?)picture.Attribute("style") ?? "").Split(';'))
+        {
+            int colon = declaration.IndexOf(':');
+            if (colon > 0) style[declaration.Substring(0, colon).Trim()] = declaration.Substring(colon + 1).Trim();
+        }
+        return style;
     }
 
     private const double EmuPerPoint = 12700;   // ECMA-376 20.1.2.1 (ST_Coordinate): 914400 EMU per inch, 72 pt per inch

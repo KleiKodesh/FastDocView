@@ -25,6 +25,7 @@ public static class PagePlacementFidelityTest
         RtfFloatingShapes();
         DocBinaryPicturesAndRows();
         DocxTextBoxes();
+        DocxShapesFidelityTest.Run();
     }
 
     /// <summary>The picture ids of a block's &lt;img&gt; elements (data-word-picture), in order.</summary>
@@ -245,7 +246,8 @@ public static class PagePlacementFidelityTest
         TestReport.Check(html[1].Contains("width:72pt;aspect-ratio:72/36;float:right;margin:0pt 0pt 0pt 9pt;"), "absolute, wrap square, right: floats right, mso-wrap-distance-left kept (" + html[1] + ")");
         TestReport.Check(html[2].Contains("display:block;margin:0pt auto 0pt auto;") && html[2].Contains("width:72pt;"), "wrap topAndBottom, centre: a centred block; 96px = 72pt (" + html[2] + ")");
         TestReport.Check(html[3].Contains("display:block;margin:0pt auto 0pt 18pt;"), "absolute, no w10:wrap: through the text (a block without gaps) at margin-left (" + html[3] + ")");
-        TestReport.Check(!html[4].Contains("word-picture") && html[4].Contains("[image]"), "a VML shape without an image: the placeholder, as before (" + html[4] + ")");
+        TestReport.Check(!html[4].Contains("word-picture") && html[4].Contains("<svg class=\"word-shape-geometry\"") && html[4].Contains("<rect width=\"72\" height=\"36\" fill=\"#FFFFFF\" stroke=\"#000000\""),
+                         "a VML shape without an image: drawn at its size, VML default white fill and black line (LibreOffice vmlformatting.cxx:706-770) (" + html[4] + ")");
     }
 
     /// <summary>{\shp} with a pib picture: floating at \shpleft..\shpbottom, \shpwr / \shpwrk / posh as LibreOffice reads them; the \shprslt copy not drawn.</summary>

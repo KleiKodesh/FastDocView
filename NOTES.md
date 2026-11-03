@@ -235,8 +235,8 @@ Ordered by value for text-heavy Hebrew documents:
    side, dist gaps, offset): wp:extent width, height fixed or a minimum with a:spAutoFit (LibreOffice
    oox/source/drawingml/textbodypropertiescontext.cxx:255-259), bodyPr insets (:75-80; unset = ECMA-376 Part 1 21.1.2.1.1
    defaults 0.1in / 0.05in), vert (:132), a:xfrm rot, srgbClr solid fill / noFill, a:ln width / colour / prstDash. Theme
-   colours (schemeClr) are not resolved. Linked boxes: the first box holds the chain's whole txbxContent, so it shows all the
-   text (no split). VML-only text boxes, .odt / .rtf / .doc boxes and shapes without text: still the old inline frame.
+   colours: see "Drawn shapes" below. Linked boxes: the first box holds the chain's whole txbxContent, so it shows all the
+   text (no split). .docx shapes, groups and VML shapes: drawn as SVG ("Drawn shapes" below).
    Wrap on both sides of a centred object is not possible in CSS: CSS Shapes 1 section 2 ("does not allow content to wrap
    on both sides of a float"); a centred square wrap stays top-and-bottom.
 6. Paragraph borders/shading, tab stops (`w:tabs` positions), character spacing/scale, caps/small caps, underline styles, `w:lvlRestart`, legal numbering.
@@ -1260,3 +1260,33 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
 - Single-value lookups (`ListLabelOf`, `ListLevelOf`, `BlockKindOf`): no host loops over them
   (KitveiHakodesh Core calls none), so no batch API was added.
 - Golden dumps byte-identical on .odt, .fodt, the .rtf book and the synthetic .rtf.
+
+### Drawn shapes, groups, VML shapes (.docx, 2026-11-03)
+
+- `DocxDrawingStripper.ShapeTree` copies, per drawing and at render time from the block's raw bytes, only the DrawingML a
+  shape is drawn from, without prefixes, inside the `fastDocViewPicture` element: wpg:wgp / grpSp (grpSpPr), wps:wsp (spPr,
+  style, bodyPr, an empty txbx marker), pic:pic (blip, spPr), xfrm, prstGeom / avLst, custGeom paths, fills, colours with
+  their transforms, a:ln. Everything else (extLst, effects, 3-D) is dropped with its subtree. The w:txbxContent copies stay
+  where they were (after the layout, in document order); a shape's n-th txbx marker = the n-th text box.
+- `DocxShapeReader` -> `WordShape`s (Html/WordShapeHtml.cs, format-neutral) -> one frame placed by
+  `WordPictureHtml.AppendPlacement`, one inline SVG, each shape's text in a box over its outline, group pictures by id at
+  their box. One shape whose text grows (spAutoFit) keeps its text in the flow; the SVG stretches (non-scaling strokes).
+- One plain rect text box (no wps:style, literal colours) keeps the old text-box rendering (CSS border / fill).
+- Presets drawn: rect, roundRect, ellipse, line, straightConnector1, triangle, right / left / up / down arrows
+  (transcribed from LibreOffice oox/source/drawingml/customshapes/presetShapeDefinitions.xml); other presets = a box of the
+  right size. custGeom: numeric moveTo / lnTo / cubicBezTo / quadBezTo / arcTo / close scaled from path w / h.
+- Colours: srgbClr / sysClr / schemeClr (direct to dk1 / lt1 / ..., LibreOffice color.cxx:211-238) / prstClr; lumMod /
+  lumOff (HSL) and tint / shade (gamma 2.3 linear RGB) ported from color.cxx:776-821. Fill: fillRef, then the shape's own
+  (shape.cxx:3122-3141); line: lnRef with the theme's lnStyleLst width (theme.cxx:41-58), then a:ln. gradFill = SVG linear
+  gradient (gs pos /100000, lin ang). headEnd = start, tailEnd = end (linepropertiescontext.cxx:216-221), drawn as triangles.
+- Groups: child at (x - chOff) * ext / chExt from the group's offset, chExt 0 = scale 1 (shape.cxx:1433-1456); rot / flipH /
+  flipV per shape (transform2dcontext.cxx:48-49).
+- VML (w:pict without v:imagedata): first v:rect / v:roundrect / v:oval / v:line / v:shape; fillcolor (default white),
+  strokecolor (black), strokeweight (default 1 EMU = thinnest), filled / stroked, v:fill on, v:stroke dashstyle,
+  v:textbox inset (defaults 0.1in / 0.05in, vmltextboxcontext.cxx:186-211), mso-fit-shape-to-text. Placement as VML pictures.
+- Approximations / not done: theme fill styles drawn as the fillRef colour solid; dash patterns approximate; arrow end
+  types all triangles; alpha ignored; arcTo semantics and v:roundrect default arcsize 0.2 unverified; group rotation of
+  text boxes; v:group (first shape only); wpc canvases, SmartArt, charts stay placeholders.
+- Search: shape text is w:txbxContent text, found once (mc:Fallback skipped by both scanner and reference).
+- Checks: `--fidelity` DocxShapesFidelityTest; live `vue-demo/playwright/docxShapesCheck.mjs TestOutput/fidelity-v1-shapes.docx`
+  (SVG boxes measured in the DOM, text once, no console errors).

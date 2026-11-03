@@ -33,6 +33,7 @@ public sealed class DocxTheme
     private readonly Dictionary<string, string> _schemeMapping = new(StringComparer.Ordinal);      // bg1 → light1, t1 → dark1, accent1 → accent1 …
     private readonly string? _bidiScript;        // ISO 15924 tag from w:themeFontLang/@bidi, e.g. "Hebr"
     private readonly string? _eastAsiaScript;
+    private readonly List<long> _lineStyleWidths = new();      // a:fmtScheme/a:lnStyleLst a:ln/@w (EMU) in order; -1 = no w
 
     public bool HasFonts => _major.Latin is not null || _minor.Latin is not null;
     public bool HasColors => _schemeColors.Count > 0;
@@ -50,6 +51,10 @@ public sealed class DocxTheme
                 string? hex = (string?)entry.Element(A + "srgbClr")?.Attribute("val") ?? (string?)entry.Element(A + "sysClr")?.Attribute("lastClr");
                 if (hex is { Length: 6 } && int.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out _)) _schemeColors[entry.Name.LocalName] = hex.ToUpperInvariant();
             }
+
+        if (themeDocument?.Root?.Element(A + "themeElements")?.Element(A + "fmtScheme")?.Element(A + "lnStyleLst") is { } lineStyles)
+            foreach (XElement line in lineStyles.Elements(A + "ln"))
+                _lineStyleWidths.Add(long.TryParse((string?)line.Attribute("w"), NumberStyles.Integer, CultureInfo.InvariantCulture, out long width) ? width : -1);
 
         XElement? settings = settingsDocument?.Root;
         if (settings?.Element(W + "clrSchemeMapping") is { } mapping)
@@ -159,6 +164,31 @@ public sealed class DocxTheme
         if (shade is >= 0 and < 255) { r = Shade(r, shade); g = Shade(g, shade); b = Shade(b, shade); }
         return r.ToString("X2", CultureInfo.InvariantCulture) + g.ToString("X2", CultureInfo.InvariantCulture) + b.ToString("X2", CultureInfo.InvariantCulture);
     }
+
+    /// <summary>
+    /// The RRGGBB of a DrawingML a:schemeClr value (ST_SchemeColorVal) straight from a:clrScheme. LibreOffice maps tx1 / bg1 /
+    /// tx2 / bg2 to dk1 / lt1 / dk2 / lt2 without w:clrSchemeMapping (oox/source/drawingml/color.cxx:211-238
+    /// constSchemeColorNameToIndex); the same is done here. Null when the theme has no such entry (phClr is the caller's).
+    /// </summary>
+    public string? DrawingSchemeColorHex(string? schemeColor)
+    {
+        string? entry = schemeColor switch
+        {
+            "dk1" or "tx1" or "dark1" or "text1" => "dk1",
+            "lt1" or "bg1" or "light1" or "background1" => "lt1",
+            "dk2" or "tx2" or "dark2" or "text2" => "dk2",
+            "lt2" or "bg2" or "light2" or "background2" => "lt2",
+            "accent1" or "accent2" or "accent3" or "accent4" or "accent5" or "accent6" => schemeColor,
+            "hlink" or "hyperlink" => "hlink",
+            "folHlink" or "followedHyperlink" => "folHlink",
+            _ => null,
+        };
+        return entry is not null && _schemeColors.TryGetValue(entry, out string? hex) ? hex : null;
+    }
+
+    /// <summary>The width (EMU) of the theme's line style a:lnRef idx names (1-based into a:lnStyleLst, past the end = the last, as
+    /// LibreOffice oox/source/drawingml/theme.cxx:41-58 lclGetStyleElement / getLineStyle), or -1.</summary>
+    public long LineStyleWidthEmu(int index) => index >= 1 && _lineStyleWidths.Count > 0 ? _lineStyleWidths[Math.Min(index, _lineStyleWidths.Count) - 1] : -1;
 
     private static int Tint(int component, int tint) => (int)Math.Round(255 - (255 - component) * (tint / 255.0), MidpointRounding.AwayFromZero);
     private static int Shade(int component, int shade) => (int)Math.Round(component * (shade / 255.0), MidpointRounding.AwayFromZero);

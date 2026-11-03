@@ -443,3 +443,9 @@ commit before the day's work), A/B in the same minutes: base worst 88 / 103 / 16
 window that loses the CPU decides a worst-of-N check. `WindowTimings` checks the median (a real slowdown moves every
 window) and the p95 (a slow path hit by more than one window in twenty); the worst is printed only.
 
+- **2026-11-03, shapes:** text inside a drawn shape must not reuse the plain `.text-box` class alone - the stylesheet gives
+  `.text-box` a margin and a border (the frame for boxes without a placement), which shifted every group text box by 2pt in
+  the live rig while the harness strings looked right. Measuring boxes in the DOM caught it; inline `margin:0;border:0`.
+- **2026-11-03, shapes:** LibreOffice maps DrawingML tx1 / bg1 straight to dk1 / lt1 (color.cxx), unlike w:themeColor,
+  which goes through w:clrSchemeMapping; the two theme lookups stay separate methods.
+
