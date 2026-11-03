@@ -62,7 +62,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     public static WordRunFormatting DocumentRunFormatting(RtfDocumentTables tables)
         => new() { FontName = tables.FontName(tables.DefaultFont), FontSizeHalfPoints = 24 };
 
-    public (string html, IReadOnlyList<WordDocumentNoteHtml> notes) Render(Stream file, RtfRandomAccessIndex index, int blockIndex)
+    public (string html, IReadOnlyList<WordDocumentNoteHtml> notes) Render(Stream file, RtfRandomAccessIndex index, RtfCompactBlockTable table, int blockIndex)
     {
         _bodyFlow = new Flow();
         _flow = _bodyFlow;
@@ -72,12 +72,12 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _blockNotes = notes.ToArray();
         _nextNote = 0;
         _renderedNotes = notes.Length == 0 ? null : new List<WordDocumentNoteHtml>(notes.Length);
-        _indexListLabel = index.ListLabelOf(blockIndex);
+        _indexListLabel = table.ListLabelOf(blockIndex);
         _isFirstParagraph = true;
         _fields.Clear();
 
-        _parser.RestoreSnapshot(index.States[index.BlockStateIds[blockIndex]]);
-        _parser.Run(file, index.BlockStartOffsets[blockIndex], index.BlockEndOffsets[blockIndex]);
+        _parser.RestoreSnapshot(table.SnapshotOf(blockIndex));
+        _parser.Run(file, table.BlockStartOffset(blockIndex), table.BlockEndOffset(blockIndex));
 
         // a block that ends without a terminator (the last one) or a row left open
         while (_flow != _bodyFlow) EndNote(isEndnote: false);

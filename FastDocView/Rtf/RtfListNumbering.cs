@@ -19,6 +19,23 @@ internal sealed class RtfListNumbering
 
     public RtfListNumbering(RtfDocumentTables tables) => _tables = tables;
 
+    /// <summary>The complete numbering state (every list's counters, the start overrides applied), as the compact index stores it per span anchor.</summary>
+    public byte[] ExportState() => WordListCounterState.Serialize(_countersByListId, _appliedStartOverrides);
+
+    /// <summary>Replaces the numbering state by one <see cref="ExportState"/> wrote.</summary>
+    public void ImportState(byte[] state)
+    {
+        _countersByListId.Clear();
+        _appliedStartOverrides.Clear();
+        (Dictionary<int, int[]> lists, HashSet<(int, int)> overrides) = WordListCounterState.Parse(state);
+        foreach (KeyValuePair<int, int[]> list in lists)
+        {
+            if (list.Value.Length != 9) throw new InvalidDataException("RTF index: list state has the wrong level count.");
+            _countersByListId[list.Key] = list.Value;
+        }
+        _appliedStartOverrides.UnionWith(overrides);
+    }
+
     /// <summary>LibreOffice rtfdispatchvalue.cxx getNumberFormat: \levelnfc values (the MSONFC numbers) to the shared formatter's names.</summary>
     public static string FormatName(int numberFormat) => numberFormat switch
     {

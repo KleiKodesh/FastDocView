@@ -13,12 +13,12 @@ internal sealed class RtfSearchTextSink : RtfSink
 
     public RtfSearchTextSink(RtfDocumentTables tables) => _parser = new RtfParser(this, tables, readsHeaderTables: false);
 
-    public void Feed(Stream file, RtfRandomAccessIndex index, int blockIndex, WordDocumentSearchMatcher matcher, bool includeNotes)
+    public void Feed(Stream file, RtfCompactBlockTable table, int blockIndex, WordDocumentSearchMatcher matcher, bool includeNotes)
     {
         _matcher = matcher;
         _includeNotes = includeNotes;
-        _parser.RestoreSnapshot(index.States[index.BlockStateIds[blockIndex]]);
-        _parser.Run(file, index.BlockStartOffsets[blockIndex], index.BlockEndOffsets[blockIndex]);
+        _parser.RestoreSnapshot(table.SnapshotOf(blockIndex));
+        _parser.Run(file, table.BlockStartOffset(blockIndex), table.BlockEndOffset(blockIndex));
         _matcher = null;
     }
 

@@ -50,16 +50,15 @@ public static class RtfIndexAndRenderTest
     /// <returns>The HTML of the prefix blocks, compared across modes.</returns>
     private static string[] Verify(RtfWindowedDocument document, int count, string what, string[]? reference)
     {
-        RtfRandomAccessIndex index = document.Index;
         TestReport.Check(document.BlockCount == SyntheticRtfGenerator.ExpectedBlockCount(count),
                          $"{what}: block count {document.BlockCount:N0} == {SyntheticRtfGenerator.ExpectedBlockCount(count):N0}");
         TestReport.Check(document.IsIndexComplete && document.KnownBlockCount == document.BlockCount, $"{what}: index complete");
         bool labelsMatch = true;
         foreach ((int block, string? label) in SyntheticRtfGenerator.ExpectedPrefixLabels)
-            if (index.ListLabelOf(block) != label) { labelsMatch = false; Console.WriteLine($"      block {block}: label '{index.ListLabelOf(block)}', expected '{label}'"); }
+            if (document.ListLabelOf(block) != label) { labelsMatch = false; Console.WriteLine($"      block {block}: label '{document.ListLabelOf(block)}', expected '{label}'"); }
         TestReport.Check(labelsMatch, $"{what}: list labels counted from the list table (1., 1.1, bullet), none where \\listtext gives it");
-        TestReport.Check(index.BlockKinds[6] == WordDocumentBlockKind.TableRow && index.BlockKinds[7] == WordDocumentBlockKind.TableRow
-                         && index.BlockKinds[14] == WordDocumentBlockKind.TableRow && index.BlockKinds[5] == WordDocumentBlockKind.Paragraph,
+        TestReport.Check(document.BlockKindOf(6) == WordDocumentBlockKind.TableRow && document.BlockKindOf(7) == WordDocumentBlockKind.TableRow
+                         && document.BlockKindOf(14) == WordDocumentBlockKind.TableRow && document.BlockKindOf(5) == WordDocumentBlockKind.Paragraph,
                          $"{what}: table rows are blocks of their own");
         TestReport.Check(document.Headings.Count == SyntheticRtfGenerator.ExpectedHeadings(count) && document.Headings[0].Level == 1
                          && document.Headings[0].Text.Contains(Hebrew) && document.Headings[1].Level == 2 && document.Headings[1].Text == "Heading two"
@@ -160,7 +159,7 @@ public static class RtfIndexAndRenderTest
             watch.Restart();
             RtfRandomAccessIndex index = RtfRandomAccessIndexBuilder.Build(new MemoryStream(bytes), bytes.Length, 0);
             build = Math.Min(build, watch.Elapsed.TotalMilliseconds);
-            if (run == 0) Console.WriteLine($"   {index.BlockCount:N0} blocks, {index.States.Length:N0} distinct start states");
+            if (run == 0) Console.WriteLine($"   {index.BlockCount:N0} blocks, {index.Anchors.Length:N0} span anchors");
         }
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "profile-index-cache"), ForcedMode = WordIndexMode.Sidecar };
         string indexPath = policy.IndexPathFor(path);

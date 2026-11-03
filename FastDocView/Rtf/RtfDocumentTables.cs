@@ -78,7 +78,29 @@ public sealed class RtfDocumentTables
         foreach (string? color in Colors) writer.Write(color ?? "");
         writer.Write(Styles.Count);
         foreach (KeyValuePair<int, StyleEntry> style in Styles) { writer.Write(style.Key); writer.Write(style.Value.Name); writer.Write(style.Value.OutlineLevel); }
-        // lists are needed only by the index pass (labels are stored per block)
+        // lists: the compact index counts labels again when it rescans a span
+        writer.Write(Lists.Count);
+        foreach (KeyValuePair<int, ListDefinition> list in Lists)
+        {
+            writer.Write(list.Key);
+            writer.Write(list.Value.ListId);
+            writer.Write(list.Value.Levels.Length);
+            foreach (ListLevelDefinition level in list.Value.Levels)
+            {
+                writer.Write(level.NumberFormat); writer.Write(level.StartAt); writer.Write(level.Text);
+                writer.Write(level.NumberPositions.Length); writer.Write(level.NumberPositions);
+                writer.Write(level.NoRestart); writer.Write(level.Legal); writer.Write(level.Justification); writer.Write(level.Follow);
+            }
+        }
+        writer.Write(ListOverrides.Count);
+        foreach (KeyValuePair<int, ListOverride> listOverride in ListOverrides)
+        {
+            writer.Write(listOverride.Key);
+            writer.Write(listOverride.Value.Index);
+            writer.Write(listOverride.Value.ListId);
+            writer.Write(listOverride.Value.StartAtByLevel.Count);
+            foreach (KeyValuePair<int, int> startAt in listOverride.Value.StartAtByLevel) { writer.Write(startAt.Key); writer.Write(startAt.Value); }
+        }
     }
 
     public static RtfDocumentTables Read(BinaryReader reader)
@@ -95,6 +117,39 @@ public sealed class RtfDocumentTables
         for (int i = 0; i < colors; i++) { string color = reader.ReadString(); tables.Colors.Add(color.Length == 0 ? null : color); }
         int styles = reader.ReadInt32();
         for (int i = 0; i < styles; i++) tables.Styles[reader.ReadInt32()] = new StyleEntry { Name = reader.ReadString(), OutlineLevel = reader.ReadInt32() };
+        int lists = reader.ReadInt32();
+        if (lists < 0) throw new InvalidDataException("RTF index: list table damaged.");
+        for (int i = 0; i < lists; i++)
+        {
+            int key = reader.ReadInt32();
+            var list = new ListDefinition { ListId = reader.ReadInt32() };
+            int levelCount = reader.ReadInt32();
+            if (levelCount < 0 || levelCount > 64) throw new InvalidDataException("RTF index: list table damaged.");
+            list.Levels = new ListLevelDefinition[levelCount];
+            for (int level = 0; level < levelCount; level++)
+            {
+                var definition = new ListLevelDefinition { NumberFormat = reader.ReadInt32(), StartAt = reader.ReadInt32(), Text = reader.ReadString() };
+                int positions = reader.ReadInt32();
+                if (positions < 0 || positions > 1024) throw new InvalidDataException("RTF index: list table damaged.");
+                definition.NumberPositions = reader.ReadBytes(positions);
+                if (definition.NumberPositions.Length != positions) throw new EndOfStreamException("RTF index: list table truncated.");
+                definition.NoRestart = reader.ReadBoolean(); definition.Legal = reader.ReadBoolean();
+                definition.Justification = reader.ReadInt32(); definition.Follow = reader.ReadInt32();
+                list.Levels[level] = definition;
+            }
+            tables.Lists[key] = list;
+        }
+        int overrides = reader.ReadInt32();
+        if (overrides < 0) throw new InvalidDataException("RTF index: list override table damaged.");
+        for (int i = 0; i < overrides; i++)
+        {
+            int key = reader.ReadInt32();
+            var listOverride = new ListOverride { Index = reader.ReadInt32(), ListId = reader.ReadInt32() };
+            int startAts = reader.ReadInt32();
+            if (startAts < 0 || startAts > 64) throw new InvalidDataException("RTF index: list override table damaged.");
+            for (int level = 0; level < startAts; level++) listOverride.StartAtByLevel[reader.ReadInt32()] = reader.ReadInt32();
+            tables.ListOverrides[key] = listOverride;
+        }
         return tables;
     }
 }

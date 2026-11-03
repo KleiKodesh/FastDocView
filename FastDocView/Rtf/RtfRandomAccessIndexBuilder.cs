@@ -58,12 +58,33 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     private bool _hasAutoMark;
     private int _footnoteCount, _endnoteCount;
 
+    // span anchors of the compact index: the block start past every AnchorSpanBytes (and block 0), with the parser snapshot
+    // + list state there (captured at TakeStart, committed when that block is added - a re-taken start replaces it)
+    private readonly List<(int block, long start, byte[] state)> _anchors = new();
+    private (int block, long start, byte[] state)? _pendingAnchor;
+    private long _nextAnchorAt;
+    private readonly bool _isSpanScan;
+
     private RtfRandomAccessIndexBuilder(Stream file, IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
     {
         _parser = new RtfParser(this, _tables, readsHeaderTables: true);
         _progress = progress;
         _cancellation = cancellation;
         _totalBytes = file.Length;
+    }
+
+    /// <summary>A span rescan: the same block rules over the header tables the index stores, from an anchor's parser snapshot and list state.</summary>
+    private RtfRandomAccessIndexBuilder(RtfDocumentTables tables, long anchorOffset, byte[] scanState)
+    {
+        _tables = tables;
+        _parser = new RtfParser(this, tables, readsHeaderTables: false);
+        _isSpanScan = true;
+        (byte[] snapshot, byte[] numbering) = WordIndexScanState.Split(scanState);
+        if (snapshot.Length == 0) throw new InvalidDataException("RTF index: an anchor without a parser snapshot.");
+        _parser.RestoreSnapshot(snapshot);
+        _lists = new RtfListNumbering(tables);
+        _lists.ImportState(numbering);
+        TakeStart(anchorOffset);
     }
 
     public static RtfRandomAccessIndex Build(Stream file, long sourceLength, long sourceLastWriteTicksUtc,
@@ -77,12 +98,41 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         return builder.CreateIndex(sourceLength, sourceLastWriteTicksUtc);
     }
 
+    /// <summary>
+    /// Rescans one span of the compact index: the blocks from the anchor's start up to <paramref name="end"/> (the next anchor's
+    /// start, or the last block's end with <paramref name="isLast"/>, which closes a trailing block the way the pass did).
+    /// </summary>
+    public static RtfRandomAccessIndexBuilder ScanSpan(Stream file, RtfDocumentTables tables, long anchorOffset, byte[] scanState, long end, bool isLast)
+    {
+        var scanner = new RtfRandomAccessIndexBuilder(tables, anchorOffset, scanState);
+        scanner._parser.Run(file, anchorOffset, end);
+        if (isLast) scanner.EndBlock(scanner._parser.Position, final: true);
+        return scanner;
+    }
+
+    // the span's blocks (span-local indexes), read by RtfCompactBlockTable
+    public IReadOnlyList<long> Starts => _starts;
+    public IReadOnlyList<long> Ends => _ends;
+    public IReadOnlyList<WordDocumentBlockKind> Kinds => _kinds;
+    public IReadOnlyList<int> TextLengths => _textLengths;
+    public IReadOnlyList<byte> ListLevels => _listLevels;
+    public byte[] SnapshotOf(int localIndex) => _states[_stateIds[localIndex]];
+    public string? LabelOf(int localIndex) => _labelIds[localIndex] >= 0 ? _labels[_labelIds[localIndex]] : null;
+
     private RtfRandomAccessIndex CreateIndex(long sourceLength, long sourceTicks)
     {
         bool isRightToLeft = _tables.IsRightToLeftDocument || (_paragraphs > 0 && _rightToLeftParagraphs * 2 >= _paragraphs);
-        return new RtfRandomAccessIndex(sourceLength, sourceTicks, _tables, isRightToLeft, _starts.ToArray(), _ends.ToArray(), _kinds.ToArray(),
-                                        _textLengths.ToArray(), _stateIds.ToArray(), _states.ToArray(), _listLevels.ToArray(), _labelIds.ToArray(),
-                                        _labels.ToArray(), _headings.ToArray(), _notes.ToArray())
+        var anchors = new WordIndexSpanAnchor[_anchors.Count];
+        byte[] previousState = [];
+        for (int i = 0; i < anchors.Length; i++)
+        {
+            (int block, long start, byte[] state) = _anchors[i];
+            anchors[i] = new WordIndexSpanAnchor(block, start, block > 0 ? _starts[block - 1] : -1, block > 0 ? _kinds[block - 1] : WordDocumentBlockKind.Other,
+                                                 WordIndexScanState.Delta(previousState, state));
+            previousState = state;
+        }
+        return new RtfRandomAccessIndex(sourceLength, sourceTicks, _tables, isRightToLeft, _starts.Count, _starts.Count > 0 ? _ends[_ends.Count - 1] : 0,
+                                        anchors, WordIndexTextLengthGroups.Totals(_textLengths), _headings.ToArray(), _notes.ToArray())
         {
             SectionLastBlocks = _sectionLastBlocks.ToArray(),
             SectionTextWidths = _sectionTextWidths.ToArray(),
@@ -93,9 +143,11 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     // ── block boundaries ─────────────────────────────────────────────────────────────
 
-    private void TakeStart()
+    private void TakeStart() => TakeStart(_parser.Position);
+
+    private void TakeStart(long position)
     {
-        _start = _parser.Position;
+        _start = position;
         _stateId = InternState();
         _hasStart = true;
         _hasContent = false;
@@ -105,6 +157,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _paragraphText.Clear();
         _hasListText = false;
         _listText.Clear();
+        if (!_isSpanScan && (_starts.Count == 0 || _start >= _nextAnchorAt))
+            _pendingAnchor = (_starts.Count, _start, WordIndexScanState.Join(_states[_stateId], _lists?.ExportState() ?? []));
     }
 
     private void EndBlock(long end, bool final = false, string? listLabel = null, int listLevel = -1)
@@ -118,6 +172,12 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _stateIds.Add(_stateId);
         _listLevels.Add(listLabel is null ? (byte)255 : (byte)Math.Max(0, Math.Min(254, listLevel)));
         _labelIds.Add(listLabel is null ? -1 : InternLabel(listLabel));
+        if (_pendingAnchor is { } pending && pending.block == blockIndex)
+        {
+            _anchors.Add(pending);
+            _nextAnchorAt = pending.start + RtfRandomAccessIndex.AnchorSpanBytes;
+            _pendingAnchor = null;
+        }
         if ((blockIndex & 4095) == 0)
         {
             _cancellation.ThrowIfCancellationRequested();

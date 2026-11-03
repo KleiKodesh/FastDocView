@@ -6,29 +6,31 @@ namespace FastDocView.Rtf;
 public readonly record struct RtfNoteReference(int BlockIndex, WordDocumentNoteKind Kind, int Number, string Label);
 
 /// <summary>
-/// The index of one RTF file. RTF is plain bytes, so a block is a byte range of the file itself — no checkpoints —
-/// plus the group-state stack in effect at its first byte (interned: most blocks share a handful of stacks), so a
-/// window parses only its own bytes. Also per block: kind, text length, list label (counted at index time when the
-/// paragraph carries no \listtext), heading, note references; and the header tables rendering needs.
+/// The compact index of one RTF file. RTF is plain bytes, so a block is a byte range of the file itself - no
+/// checkpoints - and the index lists no block: it keeps the header tables rendering needs and one
+/// <see cref="WordIndexSpanAnchor"/> per ~256 KB of file (that block's index and offset, the block before it, the
+/// parser's group-state snapshot there and the list-numbering state as a delta). A block's byte range, kind, text
+/// length, start snapshot and list label are recovered by rescanning its span with the same block rules the index
+/// pass ran (<see cref="RtfRandomAccessIndexBuilder.ScanSpan"/>, served by <see cref="RtfCompactBlockTable"/>).
+/// Index-time lists a reader needs without a scan stay: headings, note references, sections, bookmarks, text-length
+/// totals per 64 blocks.
 /// </summary>
 public sealed class RtfRandomAccessIndex
 {
     private const string Magic = "KHRTFIDX";
-    private const int FormatVersion = 4;     // 2: section text widths; 3: bookmarks (name -> block); 4: compact block tables
+    private const int FormatVersion = 5;     // 4: compact block tables; 5: no per-block tables - span anchors + parser snapshot + list state, Elias-Fano lists
+    /// <summary>File bytes between span anchors: a random block rescans at most this much.</summary>
+    public const long AnchorSpanBytes = 256 << 10;
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
     public RtfDocumentTables Tables { get; }
     public bool IsRightToLeft { get; }
-    public long[] BlockStartOffsets { get; }
-    public long[] BlockEndOffsets { get; }
-    public WordDocumentBlockKind[] BlockKinds { get; }
-    public int[] BlockTextLengths { get; }
-    public int[] BlockStateIds { get; }
-    public byte[][] States { get; }
-    public byte[] BlockListLevels { get; }                    // 255 = no label from the index
-    public int[] BlockListLabelIds { get; }
-    public string[] ListLabels { get; }
+    public int BlockCount { get; }
+    /// <summary>Where the last block ends (the last span's rescan stops there).</summary>
+    public long LastBlockEndOffset { get; }
+    public WordIndexSpanAnchor[] Anchors { get; }
+    public int[] TextLengthGroupTotals { get; }
     public WordDocumentHeading[] Headings { get; }
     public RtfNoteReference[] NoteReferences { get; }         // body order
     /// <summary>Per section: its last block (inclusive) and its page text width in twips.</summary>
@@ -36,38 +38,32 @@ public sealed class RtfRandomAccessIndex
     public int[] SectionTextWidths { get; init; } = [];
     /// <summary>Bookmarks ({\*\bkmkstart name}) and the block each marks.</summary>
     public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
-
-    public int BlockCount => BlockStartOffsets.Length;
+    private readonly WordListCounterState.DeltaChain _scanStates;
 
     public RtfRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, RtfDocumentTables tables, bool isRightToLeft,
-                                long[] blockStartOffsets, long[] blockEndOffsets, WordDocumentBlockKind[] blockKinds, int[] blockTextLengths,
-                                int[] blockStateIds, byte[][] states, byte[] blockListLevels, int[] blockListLabelIds, string[] listLabels,
+                                int blockCount, long lastBlockEndOffset, WordIndexSpanAnchor[] anchors, int[] textLengthGroupTotals,
                                 WordDocumentHeading[] headings, RtfNoteReference[] noteReferences)
     {
         SourceFileLength = sourceFileLength;
         SourceLastWriteTicksUtc = sourceLastWriteTicksUtc;
         Tables = tables;
         IsRightToLeft = isRightToLeft;
-        BlockStartOffsets = blockStartOffsets;
-        BlockEndOffsets = blockEndOffsets;
-        BlockKinds = blockKinds;
-        BlockTextLengths = blockTextLengths;
-        BlockStateIds = blockStateIds;
-        States = states;
-        BlockListLevels = blockListLevels;
-        BlockListLabelIds = blockListLabelIds;
-        ListLabels = listLabels;
+        BlockCount = blockCount;
+        LastBlockEndOffset = lastBlockEndOffset;
+        Anchors = anchors;
+        TextLengthGroupTotals = textLengthGroupTotals;
         Headings = headings;
         NoteReferences = noteReferences;
+        _scanStates = new WordListCounterState.DeltaChain(anchors.Select(anchor => anchor.ListStateDelta).ToArray(), WordIndexScanState.Apply);
     }
 
-    public string? ListLabelOf(int blockIndex)
-    {
-        int labelIndex = BlockListLabelIds[blockIndex];
-        return labelIndex >= 0 ? ListLabels[labelIndex] : null;
-    }
+    /// <summary>The scan state (parser snapshot + list numbering) at an anchor: what its span's rescan starts from.</summary>
+    public byte[] ScanStateOf(int anchorIndex) => _scanStates.StateAt(anchorIndex);
 
-    public int ListLevelOf(int blockIndex) => BlockListLevels[blockIndex] == 255 ? -1 : BlockListLevels[blockIndex];
+    public int AnchorIndexOf(int blockIndex) => WordIndexSpanAnchor.IndexOfBlock(Anchors, blockIndex);
+
+    /// <summary>The average text length of the block's 64-block group - the scroll weight before its span is scanned.</summary>
+    public int EstimatedTextLength(int blockIndex) => WordIndexTextLengthGroups.Average(TextLengthGroupTotals, BlockCount, blockIndex);
 
     public ReadOnlySpan<RtfNoteReference> NoteReferencesInBlock(int blockIndex)
     {
@@ -95,36 +91,63 @@ public sealed class RtfRandomAccessIndex
         return info.Exists && MatchesSource(info.Length, info.LastWriteTimeUtc.Ticks);
     }
 
-    // ── serialisation ─────────────────────────────────────────────────────────────────
+    // -- serialisation ------------------------------------------------------------------
 
-    public void Write(Stream destination)
+    /// <summary>Bytes per section of the serialised index - for size reports.</summary>
+    public IReadOnlyList<(string section, long bytes)> SizeBreakdown()
+    {
+        var sizes = new List<(string, long)>();
+        using var buffer = new MemoryStream();
+        Write(buffer, sizes);
+        return sizes;
+    }
+
+    public void Write(Stream destination) => Write(destination, null);
+
+    private void Write(Stream destination, List<(string, long)>? sizes)
     {
         var writer = new BinaryWriter(destination, Encoding.UTF8, leaveOpen: true);
+        long mark = destination.Position;
+        void Section(string name) { writer.Flush(); sizes?.Add((name, destination.Position - mark)); mark = destination.Position; }
         writer.Write(Magic);
         writer.Write(FormatVersion);
-        writer.Write(RtfGroupState.Size);                     // the snapshots are raw RtfGroupState bytes
+        writer.Write(RtfGroupState.Size);                     // the anchors' snapshots are raw RtfGroupState bytes
         writer.Write(SourceFileLength);
         writer.Write(SourceLastWriteTicksUtc);
         writer.Write(IsRightToLeft);
+        writer.Write(BlockCount);
+        writer.Write(LastBlockEndOffset);
+        Section("header");
         Tables.Write(writer);
-        writer.Write(States.Length);
-        foreach (byte[] state in States) { writer.Write(state.Length); writer.Write(state); }
-        writer.Write(ListLabels.Length);
-        foreach (string label in ListLabels) writer.Write(label);
-        IndexBinaryArrays.WriteDeltaVarints(writer, BlockStartOffsets);
-        IndexBinaryArrays.WriteBlockEnds(writer, BlockStartOffsets, BlockEndOffsets);
-        IndexBinaryArrays.Write(writer, BlockKinds);
-        IndexBinaryArrays.WriteVarints(writer, BlockTextLengths);
-        IndexBinaryArrays.WriteVarints(writer, BlockStateIds);
-        IndexBinaryArrays.Write(writer, BlockListLevels);
-        IndexBinaryArrays.WriteIds(writer, BlockListLabelIds);
-        writer.Write(Headings.Length);
-        foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
-        writer.Write(NoteReferences.Length);
-        foreach (RtfNoteReference note in NoteReferences) { writer.Write(note.BlockIndex); writer.Write((byte)note.Kind); writer.Write(note.Number); writer.Write(note.Label); }
-        IndexBinaryArrays.Write(writer, SectionLastBlocks);
-        IndexBinaryArrays.Write(writer, SectionTextWidths);
-        Bookmarks.Write(writer);
+        Section("header tables (fonts, colours, styles, lists)");
+        WordIndexSpanAnchor.WriteAll(writer, Anchors);
+        Section($"anchors ({Anchors.Length}, parser snapshot + list state)");
+        IndexBinaryArrays.WriteVarints(writer, TextLengthGroupTotals);
+        Section("text-length groups");
+        new EliasFanoSequence(Headings.Select(h => h.BlockIndex).ToArray()).Write(writer);
+        foreach (WordDocumentHeading heading in Headings) writer.Write((byte)heading.Level);
+        IndexBinaryArrays.WriteCompressedStrings(writer, Headings.Select(h => h.Text).ToArray());
+        Section($"headings ({Headings.Length})");
+        new EliasFanoSequence(NoteReferences.Select(r => r.BlockIndex).ToArray()).Write(writer);
+        var noteBytes = new List<byte>(NoteReferences.Length * 3);
+        var previousNumber = new int[2];
+        foreach (RtfNoteReference note in NoteReferences)
+        {
+            int kind = (int)note.Kind;
+            noteBytes.Add((byte)kind);
+            IndexBinaryArrays.AppendVarint(noteBytes, WordListCounterState.Zigzag(note.Number - previousNumber[kind]));
+            previousNumber[kind] = note.Number;
+        }
+        writer.Write(noteBytes.Count);
+        writer.Write(noteBytes.ToArray());
+        IndexBinaryArrays.WriteCompressedStrings(writer, NoteReferences.Select(r => r.Label).ToArray());
+        Section($"note references ({NoteReferences.Length})");
+        IndexBinaryArrays.WriteDeltaVarints(writer, SectionLastBlocks);
+        IndexBinaryArrays.WriteVarints(writer, SectionTextWidths);
+        Section($"sections ({SectionLastBlocks.Length})");
+        IndexBinaryArrays.WriteCompressedStrings(writer, Bookmarks.Names);
+        new EliasFanoSequence(Bookmarks.Blocks).Write(writer);
+        Section($"bookmarks ({Bookmarks.Names.Length})");
         writer.Flush();
     }
 
@@ -137,35 +160,53 @@ public sealed class RtfRandomAccessIndex
         long sourceLength = reader.ReadInt64();
         long sourceTicks = reader.ReadInt64();
         bool isRightToLeft = reader.ReadBoolean();
+        int blockCount = reader.ReadInt32();
+        long lastBlockEnd = reader.ReadInt64();
+        if (blockCount < 0 || lastBlockEnd < 0) throw new InvalidDataException("RTF index: negative count.");
         RtfDocumentTables tables = RtfDocumentTables.Read(reader);
-        var states = new byte[reader.ReadInt32()][];
-        for (int i = 0; i < states.Length; i++) states[i] = reader.ReadBytes(reader.ReadInt32());
-        var labels = new string[reader.ReadInt32()];
-        for (int i = 0; i < labels.Length; i++) labels[i] = reader.ReadString();
-        long[] starts = IndexBinaryArrays.ReadDeltaVarints(reader);
-        long[] ends = IndexBinaryArrays.ReadBlockEnds(reader, starts);
-        WordDocumentBlockKind[] kinds = IndexBinaryArrays.Read<WordDocumentBlockKind>(reader);
-        int[] textLengths = IndexBinaryArrays.ReadVarints(reader);
-        int[] stateIds = IndexBinaryArrays.ReadVarints(reader);
-        byte[] listLevels = IndexBinaryArrays.Read<byte>(reader);
-        int[] labelIds = IndexBinaryArrays.ReadIds(reader);
-        if (kinds.Length != starts.Length || textLengths.Length != starts.Length || stateIds.Length != starts.Length || labelIds.Length != starts.Length || labelIds.Any(id => id >= labels.Length) || stateIds.Any(id => (uint)id >= (uint)states.Length))
-            throw new InvalidDataException("RTF index: block tables do not match.");
-        var headings = new WordDocumentHeading[reader.ReadInt32()];
-        for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
-        var notes = new RtfNoteReference[reader.ReadInt32()];
-        for (int i = 0; i < notes.Length; i++) notes[i] = new RtfNoteReference(reader.ReadInt32(), (WordDocumentNoteKind)reader.ReadByte(), reader.ReadInt32(), reader.ReadString());
-        int[] sectionLastBlocks = IndexBinaryArrays.Read<int>(reader);
-        int[] sectionTextWidths = IndexBinaryArrays.Read<int>(reader);
-        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)starts.Length))
+        WordIndexSpanAnchor[] anchors = WordIndexSpanAnchor.ReadAll(reader, blockCount, lastBlockEnd);
+        int[] groupTotals = IndexBinaryArrays.ReadVarints(reader);
+        WordIndexTextLengthGroups.Validate(groupTotals, blockCount);
+        int[] headingBlocks = EliasFanoSequence.Read(reader).ToArray();
+        var levels = new byte[headingBlocks.Length];
+        for (int i = 0; i < levels.Length; i++) levels[i] = reader.ReadByte();
+        string[] headingTexts = IndexBinaryArrays.ReadCompressedStrings(reader);
+        if (headingTexts.Length != headingBlocks.Length || headingBlocks.Any(block => block >= blockCount)) throw new InvalidDataException("RTF index: headings do not match the blocks.");
+        var headings = new WordDocumentHeading[headingBlocks.Length];
+        for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(headingBlocks[i], levels[i], headingTexts[i]);
+        int[] noteBlocks = EliasFanoSequence.Read(reader).ToArray();
+        int noteByteCount = reader.ReadInt32();
+        if (noteByteCount < 0 || noteByteCount > reader.BaseStream.Length - reader.BaseStream.Position) throw new InvalidDataException("RTF index: note references damaged.");
+        byte[] noteBytes = reader.ReadBytes(noteByteCount);
+        if (noteBytes.Length != noteByteCount) throw new EndOfStreamException("RTF index: note references truncated.");
+        string[] noteLabels = IndexBinaryArrays.ReadCompressedStrings(reader);
+        if (noteLabels.Length != noteBlocks.Length || noteBlocks.Any(block => block >= Math.Max(1, blockCount))) throw new InvalidDataException("RTF index: note references do not match the blocks.");
+        var notes = new RtfNoteReference[noteBlocks.Length];
+        {
+            int position = 0;
+            var previousNumber = new int[2];
+            for (int i = 0; i < notes.Length; i++)
+            {
+                if (position >= noteBytes.Length) throw new EndOfStreamException("RTF index: note references truncated.");
+                int kind = noteBytes[position++];
+                if (kind > 1) throw new InvalidDataException("RTF index: bad note kind.");
+                previousNumber[kind] += WordListCounterState.Unzigzag(IndexBinaryArrays.ReadVarint(noteBytes, ref position));
+                notes[i] = new RtfNoteReference(noteBlocks[i], (WordDocumentNoteKind)kind, previousNumber[kind], noteLabels[i]);
+            }
+        }
+        int[] sectionLastBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
+        int[] sectionTextWidths = IndexBinaryArrays.ReadVarints(reader);
+        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)blockCount))
             throw new InvalidDataException("RTF index: section table does not match the blocks.");
-        WordDocumentBookmarkTable bookmarks = WordDocumentBookmarkTable.Read(reader, starts.Length);
-        return new RtfRandomAccessIndex(sourceLength, sourceTicks, tables, isRightToLeft, starts, ends, kinds, textLengths, stateIds, states,
-                                        listLevels, labelIds, labels, headings, notes)
+        string[] bookmarkNames = IndexBinaryArrays.ReadCompressedStrings(reader);
+        int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
+        if (bookmarkBlocks.Length != bookmarkNames.Length || bookmarkBlocks.Any(block => block < 0 || block >= Math.Max(1, blockCount)))
+            throw new InvalidDataException("RTF index: bookmark table does not match the blocks.");
+        return new RtfRandomAccessIndex(sourceLength, sourceTicks, tables, isRightToLeft, blockCount, lastBlockEnd, anchors, groupTotals, headings, notes)
         {
             SectionLastBlocks = sectionLastBlocks,
             SectionTextWidths = sectionTextWidths,
-            Bookmarks = bookmarks,
+            Bookmarks = new WordDocumentBookmarkTable(bookmarkNames, bookmarkBlocks),
         };
     }
 

@@ -26,10 +26,30 @@ public static class GoldenDumpTest
             string indexPath = policy.IndexPathFor(path);
             if (File.Exists(indexPath)) File.Delete(indexPath);
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
-            if (document is OdtWindowedDocument odt) odt.CompleteIndex();
-            Console.WriteLine($"   cold open {watch.ElapsedMilliseconds} ms, {document.BlockCount:N0} blocks, sidecar {(File.Exists(indexPath) ? new FileInfo(indexPath).Length : 0):N0} bytes");
+            string dumpText, lengthsText;
+            using (IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy))
+            {
+                if (document is OdtWindowedDocument odt) odt.CompleteIndex();
+                Console.WriteLine($"   cold open {watch.ElapsedMilliseconds} ms, {document.BlockCount:N0} blocks, sidecar {(File.Exists(indexPath) ? new FileInfo(indexPath).Length : 0):N0} bytes");
+                (dumpText, lengthsText) = Dump(document);
+            }
+            // the same from a reopen over the saved sidecar: what the file stores must give the same observable output
+            using (IWordWindowedDocument reopened = WordWindowedDocumentOpener.Open(path, policy))
+            {
+                if (reopened is OdtWindowedDocument odt) odt.CompleteIndex();
+                (string reopenedDump, _) = Dump(reopened);
+                TestReport.Check(reopenedDump == dumpText, "a reopen from the sidecar dumps the same");
+            }
+            string stem = Path.Combine(outputDirectory, Path.GetFileName(path));
+            File.WriteAllText(stem + ".golden.txt", dumpText);
+            File.WriteAllText(stem + ".lengths.txt", lengthsText);
+            Console.WriteLine($"   wrote {stem}.golden.txt ({dumpText.Length:N0} chars), total {watch.ElapsedMilliseconds} ms");
+        }
+    }
 
+    private static (string dump, string lengths) Dump(IWordWindowedDocument document)
+    {
+        {
             var dump = new StringBuilder();
             var lengths = new StringBuilder();
             dump.Append("blocks ").Append(document.BlockCount).Append(" complete ").Append(document.IsIndexComplete).Append(" known ").Append(document.KnownBlockCount).Append(" rtl ").Append(document.IsRightToLeft).Append('\n');
@@ -70,11 +90,7 @@ public static class GoldenDumpTest
             }
             dump.Append("changed ").Append(document.HasSourceChanged).Append('\n');
             for (int block = 0; block < document.BlockCount; block++) lengths.Append(document.EstimatedTextLength(block)).Append('\n');
-
-            string stem = Path.Combine(outputDirectory, Path.GetFileName(path));
-            File.WriteAllText(stem + ".golden.txt", dump.ToString());
-            File.WriteAllText(stem + ".lengths.txt", lengths.ToString());
-            Console.WriteLine($"   wrote {stem}.golden.txt ({dump.Length:N0} chars), total {watch.ElapsedMilliseconds} ms");
+            return (dump.ToString(), lengths.ToString());
         }
     }
 

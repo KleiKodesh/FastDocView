@@ -35,7 +35,7 @@ public sealed record WordIndexSpanAnchor(int FirstBlock, long Position, long Pre
     internal static WordIndexSpanAnchor[] ReadAll(BinaryReader reader, int blockCount, long maxPosition)
     {
         int byteCount = reader.ReadInt32();
-        if (byteCount < 0) throw new InvalidDataException("Index: anchors damaged.");
+        if (byteCount < 0 || byteCount > reader.BaseStream.Length - reader.BaseStream.Position) throw new InvalidDataException("Index: anchors damaged.");
         byte[] bytes = reader.ReadBytes(byteCount);
         if (bytes.Length != byteCount) throw new EndOfStreamException("Index: anchors truncated.");
         int position = 0;

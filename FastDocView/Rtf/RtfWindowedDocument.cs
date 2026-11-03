@@ -11,6 +11,7 @@ namespace FastDocView.Rtf;
 public sealed class RtfWindowedDocument : IWordWindowedDocument
 {
     private readonly RtfRandomAccessIndex _index;
+    private readonly RtfCompactBlockTable _table;
     private readonly Stream _file;
     private readonly RtfBlockHtmlRenderer _renderer;
     private readonly object _readLock = new();
@@ -84,6 +85,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         FilePath = filePath;
         _file = file;
         _index = index;
+        _table = new RtfCompactBlockTable(index, file);
         Decision = decision;
         _renderer = new RtfBlockHtmlRenderer(index.Tables);
         foreach (RtfNoteReference note in index.NoteReferences)
@@ -91,7 +93,25 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         Stylesheet = WordDocumentHtmlStylesheet.Build(RtfBlockHtmlRenderer.DocumentRunFormatting(index.Tables), IsRightToLeft);
     }
 
-    public int EstimatedTextLength(int blockIndex) => _index.BlockTextLengths[blockIndex];
+    /// <summary>Exact once the block's span has been rescanned (a window near it was read), else its 64-block group's average.</summary>
+    public int EstimatedTextLength(int blockIndex)
+    {
+        lock (_readLock) return _table.KnownTextLength(blockIndex) ?? _index.EstimatedTextLength(blockIndex);
+    }
+
+    /// <summary>The block's list label as the index pass counted it, or null - rescanned from its span.</summary>
+    public string? ListLabelOf(int blockIndex) => WithTable(() => _table.ListLabelOf(blockIndex));
+    public WordDocumentBlockKind BlockKindOf(int blockIndex) => WithTable(() => _table.BlockKindOf(blockIndex));
+
+    private T WithTable<T>(Func<T> lookup)
+    {
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try { return lookup(); }
+            finally { _releasableFile?.Release(); }
+        }
+    }
 
     /// <summary>
     /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan): each block's byte range re-parsed from its index snapshot
@@ -115,7 +135,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
                 for (int blockIndex = fromBlock; blockIndex < end; blockIndex++)
                 {
                     matcher.Reset();
-                    _searchSink.Feed(_file, _index, blockIndex, matcher, options.IncludeNotes);
+                    _searchSink.Feed(_file, _table, blockIndex, matcher, options.IncludeNotes);
                     if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                 }
                 return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: true, _index.BlockCount);
@@ -137,8 +157,8 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
                 var result = new List<WordDocumentBlockHtml>(Math.Max(0, end - first));
                 for (int blockIndex = first; blockIndex < end; blockIndex++)
                 {
-                    (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(_file, _index, blockIndex);
-                    result.Add(new WordDocumentBlockHtml(blockIndex, _index.BlockKinds[blockIndex], html, notes));
+                    (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(_file, _index, _table, blockIndex);
+                    result.Add(new WordDocumentBlockHtml(blockIndex, _table.BlockKindOf(blockIndex), html, notes));
                 }
                 return result;
             }

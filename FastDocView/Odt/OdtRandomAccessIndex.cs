@@ -209,7 +209,7 @@ public sealed class OdtRandomAccessIndex
         for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(headingBlocks[i], levels[i], headingTexts[i]);
         int[] noteBlocks = EliasFanoSequence.Read(reader).ToArray();
         int noteByteCount = reader.ReadInt32();
-        if (noteByteCount < 0) throw new InvalidDataException("OpenDocument index: note references damaged.");
+        if (noteByteCount < 0 || noteByteCount > reader.BaseStream.Length - reader.BaseStream.Position) throw new InvalidDataException("OpenDocument index: note references damaged.");
         byte[] noteBytes = reader.ReadBytes(noteByteCount);
         if (noteBytes.Length != noteByteCount) throw new EndOfStreamException("OpenDocument index: note references truncated.");
         string[] noteLabels = IndexBinaryArrays.ReadCompressedStrings(reader);

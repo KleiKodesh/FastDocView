@@ -47,6 +47,7 @@ public static class CompactIndexReport
     {
         DocBinaryWindowedDocument doc => doc.BlockIndex.SizeBreakdown(),
         OdtWindowedDocument odt => odt.Index.SizeBreakdown(),
+        Rtf.RtfWindowedDocument rtf => rtf.Index.SizeBreakdown(),
         Docx.DocxWindowedDocument docx => docx.Index.SizeBreakdown(),
         _ => [],
     };
