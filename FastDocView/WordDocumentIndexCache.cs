@@ -4,13 +4,14 @@ namespace FastDocView;
 
 /// <summary>
 /// How big the sidecar cache folder may grow. Sidecars are 3-60 KB today (compact formats; older layouts up to ~1.5 MB),
-/// so 256 MB holds thousands of documents and is still small next to the documents themselves; the count cap keeps the
-/// folder listing that a trim walks cheap.
+/// so the 16 MB / 500 default holds far more documents than one reads in a while; losing an old sidecar only costs one
+/// slower first open (decided 2026-11-03). The count cap keeps the folder listing that a trim walks cheap. A host that
+/// offers the caps as a setting assigns its own <see cref="WordIndexCacheLimits"/> to <see cref="WordDocumentIndexCache.Limits"/>.
 /// </summary>
 public sealed class WordIndexCacheLimits
 {
-    public const long DefaultMaxTotalBytes = 256L << 20;
-    public const int DefaultMaxFileCount = 4000;
+    public const long DefaultMaxTotalBytes = 16L << 20;
+    public const int DefaultMaxFileCount = 500;
 
     /// <summary>Total bytes of sidecars kept (records and temp files are tiny and not counted).</summary>
     public long MaxTotalBytes { get; init; } = DefaultMaxTotalBytes;

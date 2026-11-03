@@ -167,10 +167,11 @@ it used to grow without end.
   hour; sidecars whose document is gone (only when its folder still exists: an unplugged drive or share keeps its
   sidecars) or whose length / time differ from the record; then least recently used first until both caps hold.
   Record-less (older) sidecars take part in the LRU only.
-- **Caps** (`WordDocumentIndexCache.Limits`, a `WordIndexCacheLimits`; the host or Core sets it): 256 MB and 4,000
-  sidecars. Measured sidecars: compact formats 3-60 KB (the .docx sample 59 KB, the 40 MB .doc sample 16-17 KB), older
-  layouts on this machine up to 1.4 MB (median 59 KB of 11). 256 MB = ~4,000 of the largest compact ones, so the count
-  cap binds first in practice; the folder listing a trim walks stays a few thousand entries (ms).
+- **Caps** (`WordDocumentIndexCache.Limits`, a `WordIndexCacheLimits`; the host or Core sets it, so a
+  user setting can replace them later): default 16 MB and 500 sidecars (decided 2026-11-03; was 256 MB / 4,000, too
+  generous). Measured sidecars: compact formats 3-60 KB (the .docx sample 59 KB, the 40 MB .doc sample 16-17 KB), so
+  16 MB holds ~270 of the largest compact ones and the byte cap can bind before the count cap; losing an old sidecar
+  only costs one slower first open.
 - **When**: never on the caller's thread. Once per process per folder on the first use of the cache (a validated
   open or a save), and again after a save at least 10 minutes after the last trim; on a background thread at lowest
   priority. `TrimsAutomatically = false` turns it off (the browser build has no threads: it catches that and skips).
