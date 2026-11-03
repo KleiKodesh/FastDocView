@@ -22,6 +22,11 @@ internal sealed class MarkupCompactBlockTable
     private readonly Dictionary<int, Span> _spans = new();
     private long _useCounter;
 
+    // the text bytes (decoded, for MHTML) the span rescans fed their scanners, one contiguous range: a window or search
+    // batch whose blocks were just scanned copies its text from here instead of reading (MHTML: decoding) it again
+    private const int CollectedInitialBytes = 1 << 16, CollectedMaxBytes = 1 << 22;
+    private readonly WordIndexByteRing _collected = new(CollectedInitialBytes, CollectedMaxBytes);
+
     public MarkupCompactBlockTable(MarkupRandomAccessIndex index, Stream file)
     {
         _index = index;
@@ -40,7 +45,7 @@ internal sealed class MarkupCompactBlockTable
                 int oldest = _spans.OrderBy(pair => pair.Value.LastUse).First().Key;
                 _spans.Remove(oldest);
             }
-            span = new Span { Rescan = new MarkupSpanRescan(_file, _index, anchorIndex) };
+            span = new Span { Rescan = new MarkupSpanRescan(_file, _index, anchorIndex, _collected) };
             _spans[anchorIndex] = span;
         }
         span.LastUse = ++_useCounter;
@@ -56,6 +61,17 @@ internal sealed class MarkupCompactBlockTable
         MarkupSpanRescan rescan = GetSpan(anchorIndex).Rescan;
         rescan.ScanThrough(localIndex);
         return rescan;
+    }
+
+    /// <summary>Scans the block's span through the block (its next block has started): its text has passed the scanner.</summary>
+    public void ScanThrough(int blockIndex) => ScannedThrough(blockIndex, out _);
+
+    /// <summary>Copies text bytes [start, start + destination.Length) when the scans just passed all of them; false otherwise.</summary>
+    public bool TryCopyCollected(long start, byte[] destination)
+    {
+        if (destination.Length == 0) return true;
+        if (!_collected.Contains(start) || _collected.End < start + destination.Length) return false;
+        return _collected.CopyFrom(start, destination, 0, destination.Length) == destination.Length;
     }
 
     public long BlockStart(int blockIndex) => ScannedThrough(blockIndex, out int local).Scanner.BlockStartOffsets[local];

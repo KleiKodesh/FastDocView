@@ -189,12 +189,19 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         return result;
     }
 
-    /// <summary>The text bytes of blocks [first, last): a plain read for .txt, a decode from the first block's resume point for MHTML.</summary>
+    /// <summary>
+    /// The text bytes of blocks [first, last). The span rescans that find the blocks' bounds pass these very bytes, so they
+    /// are scanned in order and copied from what the scans collected (one read). Only when the bounds were already known
+    /// (a span scanned earlier and its bytes no longer held) are they read again: a plain read for .txt, a decode from the
+    /// first block's resume point for MHTML.
+    /// </summary>
     private byte[] ReadText(int first, int last, out long textStart)
     {
+        for (int block = first; block < last; block++) _table.ScanThrough(block);   // in order: the collected range stays one piece
         textStart = _table.BlockStart(first);
         int need = checked((int)(_table.BlockEnd(last - 1) - textStart));
         var output = new byte[need];
+        if (_table.TryCopyCollected(textStart, output)) return output;
         if (_index.Kind != MarkupSourceKind.WebArchive)
         {
             _file.Position = textStart;

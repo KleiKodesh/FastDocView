@@ -39,6 +39,38 @@ public static class MarkupIndexAndRenderTest
                                  $"{name}: trickled index identical to the one-read index");
             }
             OpenBothModes(path, MarkupSourceKind.PlainText, document => VerifyText(document, count, codePage, name));
+            SearchReadsOnce(path, MarkupSourceKind.PlainText, name);
+        }
+    }
+
+    /// <summary>
+    /// A whole-document search over a reopened index (no span scanned yet) reads each byte once: the span rescans that
+    /// find the block bounds collect the text they pass, the batch copies it from there (it used to read it again).
+    /// </summary>
+    private static void SearchReadsOnce(string path, MarkupSourceKind kind, string name)
+    {
+        byte[] bytes = File.ReadAllBytes(path);
+        MarkupRandomAccessIndex index;
+        using (MarkupWindowedDocument built = MarkupWindowedDocument.OpenFromStream(new MemoryStream(bytes), path, kind,
+                   new WordIndexDecision(path, WordIndexMode.InMemory, false, bytes.Length, 0, "test"), null, 0, 0))
+            index = built.Index;
+        foreach (int batch in new[] { 50, 500 })
+        {
+            var counting = new DocBinaryReadCountTest.CountingStream(new MemoryStream(bytes));
+            using MarkupWindowedDocument document = MarkupWindowedDocument.OpenFromStream(counting, path, kind,
+                new WordIndexDecision(path, WordIndexMode.Sidecar, true, bytes.Length, 0, "test"), index, 0, 0);
+            counting.ResetCounts();
+            int from = 0, hits = 0;
+            while (true)
+            {
+                WordDocumentSearchBatch result = document.Search("e", WordDocumentSearchOptions.Default, from, batch);
+                hits += result.HitBlocks.Length;
+                if (result.ReachedEnd) break;
+                from = result.NextBlock;
+            }
+            double ratio = (double)counting.BytesRead / bytes.Length;
+            Console.WriteLine($"   {name}: full search in batches of {batch}: read {counting.BytesRead:N0} of {bytes.Length:N0} bytes ({ratio:0.00}x), {hits:N0} hit blocks");
+            TestReport.Check(ratio < 1.2, $"{name}: a full search (batches of {batch}) reads each byte once ({ratio:0.00}x the file)");
         }
     }
 
@@ -154,6 +186,7 @@ public static class MarkupIndexAndRenderTest
                        new WordIndexDecision(path, WordIndexMode.InMemory, false, trickle.Length, 0, "test"), null, 0, 0))
                 VerifyMhtml(trickled, count, $"{transfer} fed in 1-7 byte reads");
             OpenBothModes(path, MarkupSourceKind.WebArchive, document => VerifyMhtml(document, count, transfer.ToString()));
+            SearchReadsOnce(path, MarkupSourceKind.WebArchive, transfer.ToString());
         }
     }
 

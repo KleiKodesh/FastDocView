@@ -9,7 +9,7 @@ namespace FastDocView.Tests;
 /// </summary>
 public static class DocBinaryReadCountTest
 {
-    private sealed class CountingStream(Stream inner) : Stream
+    internal sealed class CountingStream(Stream inner) : Stream
     {
         public long BytesRead, ReadCalls;
         public void ResetCounts() { BytesRead = 0; ReadCalls = 0; }

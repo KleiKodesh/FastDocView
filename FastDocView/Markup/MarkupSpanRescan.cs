@@ -18,6 +18,7 @@ internal sealed class MarkupSpanRescan
     private readonly int _blockCount;                  // the span's blocks
     private readonly bool _isLast;
     private readonly long _limit;                      // text position where the next span's scan begins
+    private readonly WordIndexByteRing? _collected;    // the text bytes the scan passes, kept for the window that asked (no second read)
 
     public MarkupBlockScanner Scanner { get; }
     /// <summary>MHTML: each block's decoder resume point, aligned with the scanner's blocks; null for .txt.</summary>
@@ -38,10 +39,11 @@ internal sealed class MarkupSpanRescan
     private long _encodedAt;
     private long _decodedTotal;
 
-    public MarkupSpanRescan(Stream file, MarkupRandomAccessIndex index, int anchorIndex)
+    public MarkupSpanRescan(Stream file, MarkupRandomAccessIndex index, int anchorIndex, WordIndexByteRing? collected = null)
     {
         _index = index;
         _file = file;
+        _collected = collected;
         MarkupSpanAnchor[] anchors = index.Anchors;
         MarkupSpanAnchor anchor = anchors[anchorIndex];
         _firstBlock = anchor.FirstBlock;
@@ -98,6 +100,7 @@ internal sealed class MarkupSpanRescan
         int read = MarkupRandomAccessIndexBuilder.ReadFully(_file, _chunk!, want);
         if (read <= 0) return false;
         Scanner.Feed(_chunk!, 0, read, _position);
+        _collected?.Retain(_position, _chunk!, 0, read);
         _position += read;
         if (read < want) _position = long.MaxValue;   // the file ended early: nothing more to feed
         return true;
@@ -122,6 +125,7 @@ internal sealed class MarkupSpanRescan
             long[] ring = _resumeRing!;
             for (int k = 0; k < usable; k++) ring[(_decodedTotal + k) & (ring.Length - 1)] = _resumePiece![from + k];
             Scanner.Feed(_decoded!, from, usable, _decodedTotal);
+            _collected?.Retain(_decodedTotal, _decoded!, from, usable);
             _decodedTotal += usable;
             MarkupRandomAccessIndexBuilder.MapResumePoints(Scanner, Resumes!, ring, _decodedTotal);
             return true;

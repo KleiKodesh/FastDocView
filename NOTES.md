@@ -667,6 +667,17 @@ anchors every 16 KB (`WebArchiveAnchorSpanBytes`; .txt stays at its 64 KB piece 
 (base64) and 2,875 -> 3,045 B (QP): the anchors compress to ~0.8 B per KB of text. Golden dumps byte-identical for
 the 11 files. Older v6 sidecars still read (anchors are stored), with 64 KB spans.
 
+**Search and windows read each byte once (2026-11-03).** `ReadText` used to read (MHTML: decode again from the first
+block's resume point, in 64 KB reads) the very bytes the span rescans had just read and decoded to find the blocks'
+bounds. Now `MarkupSpanRescan` hands every piece it feeds its scanner to a `WordIndexByteRing` owned by the table
+(64 KB, grows to 4 MB; one contiguous range), `ReadText` scans the blocks in order and copies their text from the ring;
+it reads only when the bounds were known from an earlier scan and the bytes are no longer held. Full search over a
+reopened index (no span scanned yet), synthetic 20k, batches of 50 and 500, bytes read / file size: .txt (7 encodings)
+2.00x -> 1.00x; MHTML quoted-printable 3.46x -> 1.18x, base64 3.21x -> 1.09x (what is left is the rescans' 4 KB
+encoded pieces running past each 16 KB anchor, read again by the next span). `--text` / `--mhtml` check it
+(`SearchReadsOnce`). Golden dumps byte-identical on 9 markup files (edge cases, Shift_JIS long line, search-v1,
+synthetic .txt utf8 / cp1255 CR / UTF-16 BE 20k, synthetic MHTML QP / base64 20k, Firefox MHTML).
+
 On the real books **the headings are ~90 % of the sidecar** (14,525 headings = 46.7 KB; 6,521 long ones = 53.7 KB):
 the outline's own text, deflated. Anchors are 2-4 KB, the weights 1-2 KB. At 256 KB spacing the anchors were 4x
 smaller but an MHTML random block cost 17-30 ms median (the scanner rescans ~25 MB/s of tag-heavy HTML), so 64 KB.
