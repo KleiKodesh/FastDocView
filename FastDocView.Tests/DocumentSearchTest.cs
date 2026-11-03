@@ -20,6 +20,7 @@ public static class DocumentSearchTest
     {
         TestReport.Step("Search: docx");
         Docx();
+        DocxSearchBytesTest.Run(timingPaths);
         TestReport.Step("Search: odt / fodt");
         Odt();
         TestReport.Step("Search: rtf");

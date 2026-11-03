@@ -876,6 +876,36 @@ The caller loops from `NextBlock` until `ReachedEnd` (`NextBlock` = -1).
   full scan 1.7-2.3 s (absent word), 2.3-4.2 s (word in 31,718 blocks), first hit 22-32 ms, avg batch 7-17 ms.
   .doc 40 MB, 106,442 blocks: full scan 0.4-0.7 s, first hit 6-12 ms, avg batch 1-3 ms. Cold on-demand .docx:
   open 0.2-0.75 s, full scan incl. building the index 6.5-8.4 s.
+
+### .docx byte-level search (2026-11-03)
+
+Profile first (sample above, Release, `DOTNET_TieredCompilation=0`, idle priority, 2 cores, best of 3 alternated, full
+scan of a frequent word in batches of 500): reading the batches' bytes through the index ranges alone took 2.2 s - the
+compact table rescans every span with the full `DocxBodyBlockScanner` (kinds, styles, list labels) just to find block
+offsets; the raw sequential read of the same bytes is ~0.25-0.9 s (inflate). The XmlReader text pass on top: +1.8-2.5 s
+(a node + a string per run). Notes: no measurable cost on the sample.
+
+Now (`DocxSearchTextScanner`, `DocxCompactBlockTable.ReadSearchBytes`):
+- **No span scan**: a batch reads its raw bytes from the view in one sequential pass, from the first block's start (an
+  anchor, the previous batch's end, or - out of order - one span scan) to the end block's start (an anchor or the body
+  end; otherwise on to the next anchor, the tail kept for the next batch). The scanner finds the block boundaries itself
+  with the index pass's rule (every element starting at body level begins a block) and must come out at exactly the
+  index's count at an anchor / the body end; any disagreement, an undefined entity or unterminated markup falls back to
+  the index's per-block ranges from that block on. Read in pieces of 1000 blocks: a huge batch never holds more.
+- **Text straight from the bytes**: tags skipped with vectorised searches (`>` outside quoted values), names compared
+  only for the few local names that matter and resolved by namespace (root declarations + any declared in the block);
+  w:t content decoded UTF-8 -> the matcher char by char (`FeedUtf8`), entities and character references decoded,
+  CDATA kept, comments / PIs skipped. Same rules as before: w:t only (not w:delText, w:instrText, attributes), w:tab a
+  space, w:br / w:cr / paragraph ends separators, w:pPr / w:rPr / mc:Fallback skipped. Markup inside a word (runs,
+  proofErr, bookmarks, comment ranges, niqqud in its own run) adds no character, so the word still matches.
+- The XmlReader pass stays as the **reference** (`DocxSearchTextMode.ReferenceXmlReader`): `--search <docx>` compares
+  every block and count of 10 queries x match case on / off (Hebrew plain + pointed, two words, gershayim, maqaf,
+  English, one letter, absent, mixed) over the whole sample - identical - and `DocxSearchBytesTest` checks every
+  split-markup case against both the expected hits and the reference. Notes are still read as XElement (unchanged).
+- Same conditions as the profile: full scan 4.0-5.3 s (reference) -> 0.67-0.98 s; first batch of 500 3 ms;
+  `--search` timing: frequent 981 ms (31,718 hit blocks), absent 672 ms; cold on-demand open + full scan 2.0 s (was 3.8).
+  While the on-demand index is building the batches still read per-block ranges (now with the byte scanner).
+- Not done: .odt / .fodt still use the XmlReader pass (`FeedOdf`).
 ## Bookmarks and in-document links in every format (branch work/bookmarks-all, 2026-10-29)
 
 `IWordWindowedDocument.FindBookmark(name)` returns the block a bookmark marks; links render as

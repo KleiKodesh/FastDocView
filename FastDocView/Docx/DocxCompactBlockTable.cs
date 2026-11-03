@@ -12,7 +12,7 @@ namespace FastDocView.Docx;
 /// thousands of blocks) collects the bytes as the scan passes them, whatever its length — one inflate pass,
 /// never a seek back to a checkpoint for bytes that were just inflated.
 /// </summary>
-internal sealed class DocxCompactBlockTable : IDocxBlockTable
+internal sealed partial class DocxCompactBlockTable : IDocxBlockTable
 {
     private const int MaxCachedSpans = 8;
     private const int ChunkSize = 1 << 16;

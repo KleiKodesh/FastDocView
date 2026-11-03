@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -99,6 +100,7 @@ public sealed class WordDocumentSearchMatcher
     }
 
     /// <summary>One character of document text (raw: the marks and quotes are normalised here).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Feed(char c)
     {
         if (IsIgnoredMark(c)) return;
@@ -111,10 +113,50 @@ public sealed class WordDocumentSearchMatcher
 
     public void Feed(ReadOnlySpan<char> text)
     {
-        foreach (char c in text)
+        foreach (char c in text) FeedTextCharacter(c);
+    }
+
+    /// <summary>One character of a text run: a line / paragraph control character is a separator, anything else <see cref="Feed(char)"/>.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void FeedTextCharacter(char c)
+    {
+        if (c is '\r' or '\n' or '\u0007' or '\u000B' or '\u000C') Separator(); else Feed(c);
+    }
+
+    /// <summary>
+    /// Already-decoded text as UTF-8 bytes (markup and entities resolved by the caller), decoded here character by
+    /// character - the same characters <see cref="Feed(ReadOnlySpan{char})"/> gets from the decoded string, with no
+    /// string built. A malformed sequence feeds U+FFFD per bad byte.
+    /// </summary>
+#if NET
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]   // optimised from the first call: a search runs in short bursts
+#endif
+    public void FeedUtf8(ReadOnlySpan<byte> text)
+    {
+        int length = text.Length;
+        for (int i = 0; i < length;)
         {
-            if (c is '\r' or '\n' or '\u0007' or '\u000B' or '\u000C') Separator(); else Feed(c);
+            int b = text[i];
+            if (b < 0x80) { FeedTextCharacter((char)b); i++; continue; }
+            int codePoint;
+            if ((b & 0xE0) == 0xC0 && i + 1 < length && (text[i + 1] & 0xC0) == 0x80)
+            { codePoint = ((b & 0x1F) << 6) | (text[i + 1] & 0x3F); i += 2; }
+            else if ((b & 0xF0) == 0xE0 && i + 2 < length && (text[i + 1] & 0xC0) == 0x80 && (text[i + 2] & 0xC0) == 0x80)
+            { codePoint = ((b & 0x0F) << 12) | ((text[i + 1] & 0x3F) << 6) | (text[i + 2] & 0x3F); i += 3; }
+            else if ((b & 0xF8) == 0xF0 && i + 3 < length && (text[i + 1] & 0xC0) == 0x80 && (text[i + 2] & 0xC0) == 0x80 && (text[i + 3] & 0xC0) == 0x80)
+            { codePoint = ((b & 0x07) << 18) | ((text[i + 1] & 0x3F) << 12) | ((text[i + 2] & 0x3F) << 6) | (text[i + 3] & 0x3F); i += 4; }
+            else { codePoint = 0xFFFD; i++; }
+            FeedCodePoint(codePoint);
         }
+    }
+
+    /// <summary>One Unicode scalar: a supplementary one is fed as its two UTF-16 halves, as a string holds it.</summary>
+    public void FeedCodePoint(int codePoint)
+    {
+        if (codePoint < 0x10000) { FeedTextCharacter((char)codePoint); return; }
+        codePoint -= 0x10000;
+        Feed((char)(0xD800 + (codePoint >> 10)));
+        Feed((char)(0xDC00 + (codePoint & 0x3FF)));
     }
 
     /// <summary>
