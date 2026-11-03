@@ -42,13 +42,13 @@ public static class DocxIndexAndRenderTest
 
         var random = new Random(3);
         bool allContainOrdinal = true;
-        double worst = 0;
+        var timings = new WindowTimings();
         for (int i = 0; i < 40; i++)
         {
             int first = random.Next(Math.Max(1, document.BlockCount - 40));
             var watch = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(first, 40);
-            worst = Math.Max(worst, watch.Elapsed.TotalMilliseconds);
+            timings.Add(watch.Elapsed.TotalMilliseconds);
             foreach (WordDocumentBlockHtml block in blocks)
             {
                 if (block.Kind == WordDocumentBlockKind.Other) continue;
@@ -57,9 +57,8 @@ public static class DocxIndexAndRenderTest
                 if (!block.Html.Contains(expected)) { allContainOrdinal = false; Console.WriteLine($"   block {block.BlockIndex} lacks '{expected}': {Truncate(block.Html)}"); }
             }
         }
-        Console.WriteLine($"   40 random windows of 40 blocks: worst {worst:0.#} ms");
         TestReport.Check(allContainOrdinal, "every rendered block contains its own ordinal");
-        TestReport.Check(worst < 500, "worst random window under 500 ms");
+        timings.Check("random windows of 40 blocks", 50, 500);
 
         // sequential windows (the common scroll case) should be faster than the cold seek
         var sequential = System.Diagnostics.Stopwatch.StartNew();

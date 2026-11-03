@@ -110,7 +110,16 @@ public static class WordDocumentIndexCache
         try
         {
             using (var file = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) write(file);
-            ReplaceWith(temporaryPath, path);
+            try { ReplaceWith(temporaryPath, path); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // the old file is held this instant (a reader's ReadAllBytes: sharing violation) or pending delete (a trim's
+                // delete while another handle with delete sharing is open, e.g. MarkUsed's or a scanner's: the name stays
+                // until that handle closes and every open, delete or rename onto it is access denied). Both last
+                // microseconds: one retry, then the save is a cache miss
+                PauseBeforeRetry();
+                ReplaceWith(temporaryPath, path);
+            }
         }
         finally
         {
@@ -127,6 +136,24 @@ public static class WordDocumentIndexCache
         if (File.Exists(path)) File.Replace(temporaryPath, path, null, ignoreMetadataErrors: true);
         else File.Move(temporaryPath, path);
 #endif
+    }
+
+    private static void PauseBeforeRetry()
+    {
+        try { Thread.Sleep(1); }
+        catch (PlatformNotSupportedException) { }              // the browser build: retry at once
+    }
+
+    /// <summary>
+    /// A sidecar's bytes, or null when it cannot be read this instant: gone (evicted, replaced), held by a writer or a
+    /// trim's delete (sharing violation, an <see cref="IOException"/>), or pending delete (a delete while another handle
+    /// with delete sharing is open leaves the name until that handle closes; opening it is access denied, an
+    /// <see cref="UnauthorizedAccessException"/>). Every case is a cache miss, never an error for the caller.
+    /// </summary>
+    public static byte[]? TryReadSidecar(string indexPath)
+    {
+        try { return File.ReadAllBytes(indexPath); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return null; }
     }
 
     private static int CurrentProcessId()

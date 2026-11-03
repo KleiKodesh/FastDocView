@@ -30,9 +30,12 @@ internal static class IndexBinaryArrays
         return MemoryMarshal.Cast<byte, T>(bytes).ToArray();
     }
 
-    /// <summary>The whole index file in one read, as a reader over memory (indexes are a few MB at most).</summary>
-    public static BinaryReader OpenInMemory(string path)
-        => new(new MemoryStream(File.ReadAllBytes(path), writable: false), System.Text.Encoding.UTF8);
+    /// <summary>
+    /// The whole index file in one read, as a reader over memory (indexes are a few MB at most); null when the sidecar
+    /// cannot be read this instant (gone, held, pending delete: <see cref="WordDocumentIndexCache.TryReadSidecar"/>).
+    /// </summary>
+    public static BinaryReader? TryOpenInMemory(string path)
+        => WordDocumentIndexCache.TryReadSidecar(path) is { } bytes ? new(new MemoryStream(bytes, writable: false), System.Text.Encoding.UTF8) : null;
 
     // ── strings that compress well (root tags full of namespace declarations, bookmark names): one deflated blob ──
 

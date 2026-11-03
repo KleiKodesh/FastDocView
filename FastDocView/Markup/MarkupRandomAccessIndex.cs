@@ -305,7 +305,8 @@ public sealed class MarkupRandomAccessIndex
         if (!File.Exists(indexPath)) return null;
         try
         {
-            using BinaryReader reader = IndexBinaryArrays.OpenInMemory(indexPath);
+            using BinaryReader? reader = IndexBinaryArrays.TryOpenInMemory(indexPath);
+            if (reader is null) return null;                  // gone, held or pending delete this instant: a cache miss
             MarkupRandomAccessIndex index = Read(reader.BaseStream);
             return index.Kind == kind && index.MatchesSource(documentPath) ? WordDocumentIndexCache.MarkUsed(indexPath, index) : null;
         }

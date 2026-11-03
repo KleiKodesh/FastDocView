@@ -31,6 +31,8 @@ public static class WordDocumentIndexCacheTest
             HeldOpen();
             TestReport.Step("Index cache: saves and reads racing trims");
             Concurrent();
+            TestReport.Step("Index cache: a sidecar pending delete is a cache miss, never an exception");
+            PendingDelete();
             TestReport.Step("Index cache: the real open path writes the record and marks use");
             RealOpenPath();
         }
@@ -156,27 +158,25 @@ public static class WordDocumentIndexCacheTest
             while (DateTime.UtcNow < until)
             {
                 string path = paths[random.Next(paths.Length)];
+                // the library's own read path (every format's TryLoad reads through TryReadSidecar): any exception is a bug
                 try
                 {
                     if (random.Next(2) == 0) { WordDocumentIndexCache.Save(path, stream => stream.Write(payload, 0, payload.Length)); saves++; }
-                    else if (File.Exists(path))
+                    else if (WordDocumentIndexCache.TryReadSidecar(path) is { } read)   // null: evicted, held or pending delete = a cache miss
                     {
-                        byte[] read = File.ReadAllBytes(path);
                         reads++;
                         if (!read.AsSpan().SequenceEqual(payload)) torn++;
                         WordDocumentIndexCache.MarkUsed(path, 0);
                     }
                 }
-                catch (FileNotFoundException) { }                       // evicted between the check and the read: a cache miss
-                catch (IOException) { }                                 // the trim's delete or a save's rename holds it this instant: a cache miss
-                catch (Exception exception) { lock (errors) errors.Add(exception.GetType().Name + ": " + exception.Message); }
+                catch (Exception exception) { lock (errors) errors.Add(Describe(exception)); }
             }
         });
         other.Start();
         while (DateTime.UtcNow < until)
         {
             try { WordDocumentIndexCache.Trim(directory, new WordIndexCacheLimits { MaxFileCount = 3, AbandonedTempAge = TimeSpan.Zero }); trims++; }
-            catch (Exception exception) { lock (errors) errors.Add("trim " + exception.GetType().Name + ": " + exception.Message); }
+            catch (Exception exception) { lock (errors) errors.Add("trim " + Describe(exception)); }
         }
         other.Join();
         Console.WriteLine($"   {trims:N0} trims, {saves:N0} saves, {reads:N0} reads in 3 s");
@@ -184,6 +184,65 @@ public static class WordDocumentIndexCacheTest
         TestReport.Check(torn == 0, $"no reader ever saw a partly written sidecar ({torn} torn of {reads})");
         bool whole = paths.Where(File.Exists).All(path => new FileInfo(path).Length == payload.Length);
         TestReport.Check(whole && saves > 0 && trims > 0, "every sidecar left is complete");
+    }
+
+    private static string Describe(Exception exception)
+        => exception.GetType().Name + ": " + exception.Message + " at " + (exception.StackTrace ?? "").Split('\n')[0].Trim();
+
+    /// <summary>
+    /// Regression (UnauthorizedAccessException out of a reopen and out of the race above): a delete of a file another
+    /// handle holds with delete sharing (MarkUsed's SetLastWriteTimeUtc, a virus scanner, the search indexer; any delete
+    /// on a file system without POSIX delete) leaves the name in place, pending delete, until that handle closes.
+    /// Opening, deleting or renaming onto it is then access denied - an UnauthorizedAccessException, not an IOException -
+    /// and every format's TryLoad but RTF's let it out of File.ReadAllBytes. Made here deterministically: a handle with
+    /// delete sharing, and a delete-on-close open closed next to it.
+    /// </summary>
+    private static void PendingDelete()
+    {
+        string directory = FreshFolder("pending-delete");
+        string documents = FreshFolder("pending-delete-documents");
+        string document = Path.Combine(documents, "pending-delete-v1.txt");
+        File.WriteAllText(document, string.Join("\n", Enumerable.Range(0, 2000).Select(i => "line " + i)));
+        var policy = new WordIndexPolicy { ForcedMode = WordIndexMode.Sidecar, CacheDirectory = directory };
+        string indexPath = policy.IndexPathFor(document);
+        using (MarkupWindowedDocument.Open(document, MarkupSourceKind.PlainText, policy)) { }
+        TestReport.Check(File.Exists(indexPath), "pending delete: the sidecar was saved");
+
+        var errors = new List<string>();
+        void Expect(string what, Func<bool> action)
+        {
+            try { if (!action()) errors.Add(what + ": wrong result"); }
+            catch (Exception exception) { errors.Add(what + ": " + Describe(exception)); }
+        }
+        using (new FileStream(indexPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        {
+            new FileStream(indexPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.DeleteOnClose).Dispose();
+            bool pending;
+            try { File.ReadAllBytes(indexPath); pending = false; }
+            catch (UnauthorizedAccessException) { pending = true; }
+            TestReport.Check(pending && File.Exists(indexPath), "pending delete: the name stays and a plain read is access denied (the race, reproduced)");
+
+            Expect("TryReadSidecar", () => WordDocumentIndexCache.TryReadSidecar(indexPath) is null);
+            Expect("docx TryLoad", () => Docx.DocxRandomAccessIndex.TryLoad(indexPath, document) is null);
+            Expect("doc TryLoad", () => DocBinary.DocBinaryBlockIndex.TryLoad(indexPath, document) is null);
+            Expect("odt TryLoad", () => Odt.OdtRandomAccessIndex.TryLoad(indexPath, document) is null);
+            Expect("rtf TryLoad", () => Rtf.RtfRandomAccessIndex.TryLoad(indexPath, document) is null);
+            Expect("markup TryLoad", () => MarkupRandomAccessIndex.TryLoad(indexPath, document, MarkupSourceKind.PlainText) is null);
+            Expect("MarkUsed", () => WordDocumentIndexCache.MarkUsed(indexPath, 1) == 1);
+            Expect("Save onto it (retried once, then a cache miss)", () => !WordDocumentIndexCache.Save(indexPath, stream => stream.WriteByte(1), document));
+            Expect("Trim", () => WordDocumentIndexCache.Trim(directory, new WordIndexCacheLimits { MaxFileCount = 0 }).EvictedCount == 0);
+            Expect("open (the index rebuilt, the save a cache miss)", () =>
+            {
+                using MarkupWindowedDocument reopened = MarkupWindowedDocument.Open(document, MarkupSourceKind.PlainText, policy);
+                return reopened.BlockCount == 2000 && !reopened.Decision.HasCachedIndex;
+            });
+            TestReport.Check(errors.Count == 0, $"pending delete: every read, save, mark, trim and open is a cache miss, no exception ({string.Join("; ", errors)})");
+            TestReport.Check(Directory.GetFiles(directory, "*.tmp").Length == 0, "pending delete: the failed save left no temp file");
+        }
+        TestReport.Check(!File.Exists(indexPath), "pending delete: the delete completes when the last handle closes");
+        using (MarkupWindowedDocument.Open(document, MarkupSourceKind.PlainText, policy)) { }
+        using (MarkupWindowedDocument again = MarkupWindowedDocument.Open(document, MarkupSourceKind.PlainText, policy))
+            TestReport.Check(File.Exists(indexPath) && again.Decision.HasCachedIndex, "pending delete: afterwards the sidecar is saved and used again");
     }
 
     private static void RealOpenPath()

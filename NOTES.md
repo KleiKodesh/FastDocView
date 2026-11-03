@@ -178,6 +178,13 @@ it used to grow without end.
   `File.ReadAllBytes`, writers' temp files) fails on the sharing violation and is skipped (`SkippedInUseCount`); a
   sidecar whose last-write time moved since the listing (used again) is kept; files that vanish mid-trim are ignored.
   A reader that loses the race to a delete sees a missing file = a cache miss, rebuilt.
+- **Pending delete** (2026-11-03): a delete of a file another handle holds with delete sharing (MarkUsed's
+  SetLastWriteTimeUtc, a virus scanner, the indexer; every delete on a file system without POSIX delete) leaves the name
+  until that handle closes, and any open, delete or rename onto it is access denied - an `UnauthorizedAccessException`,
+  not an `IOException`. Every format's `TryLoad` but RTF's let it out of `File.ReadAllBytes`; all now read through
+  `WordDocumentIndexCache.TryReadSidecar` (null = a cache miss). A save whose rename onto the old sidecar fails (held,
+  pending delete) retries once after 1 ms, then is a cache miss. Test: `PendingDelete` in `--index-cache` makes the state
+  deterministically (a delete-sharing handle + a delete-on-close open) and checks every read, save, mark, trim and open.
 - Tests: `--index-cache` (also in the default run): eviction order, count cap, size cap, stale (changed, deleted,
   folder missing, no record), orphan temps / records, a sidecar held open, 3 s of saves + reads racing ~5,600 trims
   (0 exceptions, 0 torn reads), the real open path (record written, reopen marks use, change -> stale).

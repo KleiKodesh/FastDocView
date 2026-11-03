@@ -218,7 +218,8 @@ public sealed class RtfRandomAccessIndex
         if (!File.Exists(indexPath)) return null;
         try
         {
-            using BinaryReader reader = IndexBinaryArrays.OpenInMemory(indexPath);
+            using BinaryReader? reader = IndexBinaryArrays.TryOpenInMemory(indexPath);
+            if (reader is null) return null;                  // gone, held or pending delete this instant: a cache miss
             RtfRandomAccessIndex index = Read(reader.BaseStream);
             return index.MatchesSource(documentPath) ? WordDocumentIndexCache.MarkUsed(indexPath, index) : null;
         }

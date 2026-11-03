@@ -428,3 +428,18 @@ only a computed-style check in the live page did (`display` of `.list-marker`). 
   may be the writer's bug, not the parser's. The vue-demo stubs serviceClient: every new export the app's fastDocViewApi
   imports must exist in serviceClientDemoStub.ts or the demo page does not load.
 
+## 2026-11-03: a file pending delete is access denied, not in use
+
+On NTFS (Windows 10 1809+) `File.Delete` is a POSIX delete: the name goes at once even while others hold the file, and
+a later open is FileNotFound. But when POSIX delete is not used (other file systems, delete-on-close, some filter
+drivers) the name stays until the last handle closes, and opening, deleting or renaming onto it fails with
+ERROR_ACCESS_DENIED -> `UnauthorizedAccessException`. Code that treats only `IOException` as "busy" lets it through.
+Reproduce: hold a handle with `FileShare.Delete`, open and close a `FileOptions.DeleteOnClose` handle beside it.
+
+## 2026-11-03: random-window timings: median and p95, not the worst
+
+"Worst of 40 windows under 500 ms" failed at 787-1640 ms under idle priority on a loaded machine - also on d40cbde (the
+commit before the day's work), A/B in the same minutes: base worst 88 / 103 / 1640 ms, head 45 / 82 / 133 ms. One
+window that loses the CPU decides a worst-of-N check. `WindowTimings` checks the median (a real slowdown moves every
+window) and the p95 (a slow path hit by more than one window in twenty); the worst is printed only.
+

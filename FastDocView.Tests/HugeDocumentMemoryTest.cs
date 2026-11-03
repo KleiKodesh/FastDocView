@@ -43,7 +43,7 @@ public static class HugeDocumentMemoryTest
         Console.WriteLine($"   managed heap: {heapBefore >> 20} MB before → {heapAfterOpen >> 20} MB after open (index: ~32 KB/checkpoint + 24 B/block)");
 
         var random = new Random(11);
-        double worst = 0, total = 0;
+        var timings = new WindowTimings();
         const int windows = 200;
         for (int i = 0; i < windows; i++)
         {
@@ -51,13 +51,13 @@ public static class HugeDocumentMemoryTest
             var windowWatch = Stopwatch.StartNew();
             IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(first, 40);
             double ms = windowWatch.Elapsed.TotalMilliseconds;
-            worst = Math.Max(worst, ms); total += ms;
+            timings.Add(ms);
             if (blocks.Count == 0) TestReport.Check(false, $"window at {first} rendered nothing");
         }
         long heapAfterWindows = HeapAfterCollect();
-        Console.WriteLine($"   {windows} random windows of 40 blocks: average {total / windows:0.#} ms, worst {worst:0.#} ms");
+        Console.WriteLine($"   {windows} random windows of 40 blocks");
         Console.WriteLine($"   managed heap after windows: {heapAfterWindows >> 20} MB (process working set {Environment.WorkingSet >> 20} MB)");
-        TestReport.Check(worst < 300, "worst random window under 300 ms");
+        timings.Check("random windows of 40 blocks", 30, 300);
         TestReport.Check(heapAfterWindows - heapAfterOpen < 16 << 20, $"heap grew {(heapAfterWindows - heapAfterOpen) >> 20} MB across {windows} random windows (< 16 MB: nothing retained)");
         TestReport.Check(heapAfterOpen - heapBefore < (document.Index.DocumentEntry.UncompressedSize / 8), "open holds far less than the body (< 1/8 of document.xml)");
     }

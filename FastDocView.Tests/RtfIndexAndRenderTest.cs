@@ -93,8 +93,17 @@ public static class RtfIndexAndRenderTest
                          $"{what}: table row: two cells, \\cellx widths, \\clcbpat shading, footnote in a cell");
         TestReport.Check(Html(8).Contains(HebrewFour) && Html(8).Contains(" end") && !Html(8).Contains("?") && !Html(8).Contains("x"),
                          $"{what}: \\uN with \\uc1 / \\uc2 / \\uc0 skipping, \\bin data with braces skipped");
-        TestReport.Check(Regex.Matches(Html(9), "\\[image\\]").Count == 2 && Html(9).Contains("done") && !Html(9).Contains("8950"),
-                         $"{what}: \\pict and \\shppict as one placeholder each, \\nonshppict dropped");
+        // RTF 1.9.1 "Pictures": a reader that knows shapes takes {\*\shppict} and skips {\nonshppict} (the copy for older
+        // readers); each picture is one lazy <img data-word-picture> by id (block:ordinal), its bytes from ReadPicture
+        string pictures = Html(9);
+        string[] pictureIds = Regex.Matches(pictures, "data-word-picture=\"([^\"]+)\"").Select(match => match.Groups[1].Value).ToArray();
+        WordDocumentPicture? bare = document.ReadPicture("9:0"), shape = document.ReadPicture("9:1");
+        TestReport.Check(pictureIds.SequenceEqual(["9:0", "9:1"]) && Regex.Matches(pictures, "<img class=\"word-picture\"").Count == 2
+                         && !pictures.Contains("[image]") && !pictures.Contains("data:image") && pictures.Contains("done") && !pictures.Contains("8950")
+                         && bare is { ContentType: "image/png" } && bare.Bytes.SequenceEqual(new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x7b, 0x7d })
+                         && shape is { ContentType: "image/png" } && shape.Bytes.SequenceEqual(new byte[] { 0x89, 0x50, 0x4e, 0x47 })
+                         && document.ReadPicture("9:2") is null,
+                         $"{what}: \\pict and \\shppict drawn once each by id (the \\shppict PNG), \\nonshppict dropped ({pictures})");
         string formats = Html(10);
         TestReport.Check(formats.Contains("font-weight:bold") && formats.Contains("font-style:italic") && formats.Contains("text-decoration:underline")
                          && formats.Contains("line-through") && formats.Contains("font-size:20pt") && formats.Contains("color:#FF0000")
@@ -113,14 +122,14 @@ public static class RtfIndexAndRenderTest
         if (reference is not null) TestReport.Check(prefixHtml.SequenceEqual(reference), $"{what}: same HTML as the trickle-fed in-memory index");
 
         var random = new Random(7);
-        double worst = 0;
+        var timings = new WindowTimings();
         bool ordinals = true;
         for (int i = 0; i < 30; i++)
         {
             int first = SyntheticRtfGenerator.PrefixBlockCount + random.Next(Math.Max(1, count - 40));
             var watch = Stopwatch.StartNew();
             IReadOnlyList<WordDocumentBlockHtml> window = document.RenderBlocks(first, 40);
-            worst = Math.Max(worst, watch.Elapsed.TotalMilliseconds);
+            timings.Add(watch.Elapsed.TotalMilliseconds);
             foreach (WordDocumentBlockHtml block in window)
             {
                 int ordinal = block.BlockIndex - SyntheticRtfGenerator.PrefixBlockCount;
@@ -132,9 +141,8 @@ public static class RtfIndexAndRenderTest
                 { ordinals = false; Console.WriteLine($"      block {block.BlockIndex}: group state at its start lost"); }
             }
         }
-        Console.WriteLine($"   30 random windows of 40 blocks: worst {worst:0.#} ms");
         TestReport.Check(ordinals, $"{what}: every rendered block holds its own ordinal, notes, row and group formatting");
-        TestReport.Check(worst < 500, $"{what}: worst random window under 500 ms");
+        timings.Check($"{what}: random windows of 40 blocks", 50, 500);
         File.WriteAllText(Path.Combine(TestReport.OutputDirectory, "synthetic-rtf-sample.html"),
             $"<!doctype html><meta charset=utf-8><style>{document.Stylesheet}</style><div class=word-document dir=rtl>{string.Concat(prefixHtml)}</div>");
         return prefixHtml;
