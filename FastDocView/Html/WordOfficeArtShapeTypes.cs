@@ -19,6 +19,45 @@ public static class WordOfficeArtShapeTypes
     public const int Rectangle = 1, RoundRectangle = 2, Ellipse = 3, Diamond = 4, IsoscelesTriangle = 5, RightTriangle = 6, Arrow = 13,
                      Line = 20, LeftArrow = 66, DownArrow = 67, UpArrow = 68, LeftRightArrow = 69, PictureFrame = 75, TextBox = 202;
 
+    /// <summary>
+    /// The SVG dash pattern (multiples of the line width; null = solid) of an OfficeArt lineDashing value (MSO_LineDashing,
+    /// LibreOffice include/svx/msdffdef.hxx:696-708), as LibreOffice draws it (filter/source/msfilter/msdffimp.cxx:941-1036:
+    /// one "dot" of dotLen, "dashes" of dashLen, each followed by the distance, in percent of the line width; defaults dotLen
+    /// 300, distance 300).
+    /// </summary>
+    public static double[]? Dash(int lineDashing)
+    {
+        // (dotLen, dashes, dashLen, distance) per msdffimp.cxx:962-1033
+        (double dot, int dashes, double dash, double distance) = lineDashing switch
+        {
+            0 => (0, 0, 0, 0),
+            1 => (3, 0, 0, 1),        // mso_lineDashSys
+            5 => (1, 0, 0, 3),        // mso_lineDotGEL
+            6 => (4, 0, 0, 3),        // mso_lineDashGEL
+            7 => (8, 0, 0, 3),        // mso_lineLongDashGEL
+            8 => (4, 1, 1, 3),        // mso_lineDashDotGEL
+            9 => (8, 1, 1, 3),        // mso_lineLongDashDotGEL
+            10 => (8, 2, 1, 3),       // mso_lineLongDashDotDotGEL
+            3 => (3, 1, 1, 1),        // mso_lineDashDotSys
+            4 => (3, 2, 1, 1),        // mso_lineDashDotDotSys
+            _ => (1, 0, 0, 1),        // mso_lineDotSys and the switch's default
+        };
+        if (dot == 0) return null;
+        var pattern = new List<double> { dot, distance };
+        for (int i = 0; i < dashes; i++) { pattern.Add(dash); pattern.Add(distance); }
+        return pattern.ToArray();
+    }
+
+    /// <summary>OfficeArt fills a shape type by default unless LibreOffice svx EnhancedCustomShapeGeometry.cxx:6155-6167 (mso_DefaultFillingTable) says not.</summary>
+    public static bool IsFilledByDefault(int type)
+    {
+        ushort[] notFilled = [0x0000, 0x0018, 0x01ff, 0x0000, 0x0c00, 0x01e0, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0600, 0x0000, 0x0000, 0x0000, 0x0000];
+        return type is < 0 or >= 0x100 || (notFilled[type >> 4] & (1 << (type & 0xF))) == 0;
+    }
+
+    /// <summary>OfficeArt strokes a shape type by default unless EnhancedCustomShapeGeometry.cxx:6197-6213 (mso_DefaultStrokingTable: only 75, the picture frame) says not.</summary>
+    public static bool IsStrokedByDefault(int type) => type != PictureFrame;
+
     /// <summary>Sets the geometry of <paramref name="shape"/> (its Width / Height already set) for shape type <paramref name="type"/>.</summary>
     public static void Apply(WordShape shape, int type, int? adjust1, int? adjust2)
     {

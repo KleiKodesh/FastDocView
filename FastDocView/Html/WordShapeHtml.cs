@@ -26,6 +26,8 @@ public sealed class WordShape
     /// <summary>Linear gradient direction in degrees clockwise from left-to-right (DrawingML a:lin ang).</summary>
     public double GradientAngleDegrees;
     public string? LineColor;
+    /// <summary>Fill / line opacity 0..1 (1 = opaque; OfficeArt fillOpacity / lineOpacity 16.16).</summary>
+    public double FillOpacity = 1, LineOpacity = 1;
     public double LineWidthPt;
     /// <summary>SVG stroke-dasharray in multiples of the line width (null = solid).</summary>
     public double[]? Dash;
@@ -94,6 +96,8 @@ public static class WordShapeHtml
         bool isLine = shape.Geometry == WordShapeGeometry.Line;
         string fill = isLine ? "none" : gradientId is not null ? "url(#" + gradientId + ")" : shape.FillColor ?? "none";
         var paint = new StringBuilder(" fill=\"").Append(fill).Append('"');
+        if (shape.FillOpacity < 1 && !isLine) paint.Append(" fill-opacity=\"").Append(Number(Math.Max(0, shape.FillOpacity))).Append('"');
+        if (shape.LineOpacity < 1 && shape.LineColor is not null) paint.Append(" stroke-opacity=\"").Append(Number(Math.Max(0, shape.LineOpacity))).Append('"');
         double lineWidth = Math.Max(0.25, shape.LineWidthPt);
         if (shape.LineColor is { } line)
         {

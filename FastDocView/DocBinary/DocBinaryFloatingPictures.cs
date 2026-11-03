@@ -22,8 +22,10 @@ namespace FastDocView.DocBinary;
 /// 0 / 2 / 4 / 5 = text on the sides; wrk 1 = text only on the left (the picture on the right). Size = xaRight - xaLeft by
 /// yaBottom - yaTop. The browser has no page, so yaTop and the page / margin origin (bx, by) are not drawn; a picture
 /// relative to the column (bx 2) or margin (bx 0) keeps xaLeft as its offset from the start of the line.
-/// Only the main text's shapes (headers are not rendered here); a group or a shape without a picture keeps a box.
-/// The tables are read on the first floating picture: CPs (4 bytes a shape), spid -> pib, pib -> blip offset; no bytes.
+/// Only the main text's shapes (headers are not rendered here). A group, a shape without a picture or one with a text box
+/// (lTxid) is a drawing: <see cref="Drawing"/> reads its records then (<see cref="DocBinaryDrawnShapes"/>).
+/// The tables are read on the first floating picture: CPs (4 bytes a shape), spid -> pib, pib -> blip offset, spid -> the
+/// shape's container offsets (a group: its SpgrContainer); no bytes, no shape properties.
 /// </summary>
 internal sealed class DocBinaryFloatingPictures
 {
@@ -41,6 +43,9 @@ internal sealed class DocBinaryFloatingPictures
     private int[]? _anchorCps;
     private Dictionary<uint, int>? _pibBySpid;
     private List<(uint offset, bool insideTable)>? _blips;
+    private Dictionary<uint, (long start, long end, bool isGroup)>? _containerBySpid;
+    private HashSet<uint>? _textBoxSpids;
+    private readonly DocBinaryTextBoxStories _stories;
 
     public DocBinaryFloatingPictures(Stream tableStream, Stream wordDocument, Stream? dataStream, DocBinaryFileInformationBlock fib)
     {
@@ -49,6 +54,44 @@ internal sealed class DocBinaryFloatingPictures
         _dataStream = dataStream;
         _plcSpa = fib.MainShapeAnchors;
         _drawing = fib.DrawingGroup;
+        _stories = new DocBinaryTextBoxStories(tableStream, fib);
+    }
+
+    /// <summary>The drawing anchored at <paramref name="cp"/> when it is not a lone picture <see cref="At"/> shows: shapes, groups, text boxes.</summary>
+    public DocBinaryDrawing? Drawing(int cp)
+    {
+        if (Fspa(cp) is not { } fspa) return null;
+        if (_pibBySpid is null) ReadDrawing();
+        if (!_containerBySpid!.TryGetValue(fspa.spid, out var container)) return null;
+        return DocBinaryDrawnShapes.Read(_tableStream, container.start, container.end, container.isGroup, LayoutOf(fspa), _stories);
+    }
+
+    /// <summary>The text-box CP ranges of the drawings anchored in [<paramref name="startCp"/>, <paramref name="endCp"/>) (the search).</summary>
+    public IEnumerable<(int start, int end)> TextRangesIn(int startCp, int endCp)
+    {
+        int[] cps = _anchorCps ??= ReadAnchorCps();
+        if (cps.Length < 2) yield break;
+        int index = Array.BinarySearch(cps, 0, cps.Length - 1, startCp);
+        if (index < 0) index = ~index;
+        for (; index < cps.Length - 1 && cps[index] < endCp; index++)
+        {
+            if (Fspa(cps[index]) is not { } fspa) continue;
+            if (_pibBySpid is null) ReadDrawing();
+            if (!_containerBySpid!.TryGetValue(fspa.spid, out var container)) continue;
+            foreach ((int start, int end) range in DocBinaryDrawnShapes.TextRanges(_tableStream, container.start, container.end, container.isGroup, _stories))
+                yield return range;
+        }
+    }
+
+    private static WordPictureLayout LayoutOf((uint spid, int xaLeft, int yaTop, int xaRight, int yaBottom, int flags) fspa)
+    {
+        double widthPt = Math.Max(1, fspa.xaRight - (double)fspa.xaLeft) / 20, heightPt = Math.Max(1, fspa.yaBottom - (double)fspa.yaTop) / 20;
+        int bx = (fspa.flags >> 1) & 3, wr = (fspa.flags >> 5) & 0xF, wrk = (fspa.flags >> 9) & 0xF;
+        bool pageRelative = bx == 1 || (fspa.flags & 0x2000) != 0;
+        WordPictureWrap wrap = wr switch { 1 => WordPictureWrap.TopAndBottom, 3 => WordPictureWrap.None, _ => WordPictureWrap.Square };
+        WordPictureSide side = (wr is 2 or 4 && wrk == 1) ? WordPictureSide.Right : WordPictureSide.Left;
+        double offsetPt = side == WordPictureSide.Left && !pageRelative ? Math.Max(0, fspa.xaLeft / 20.0) : 0;
+        return new WordPictureLayout(widthPt, heightPt, wrap, side, 0, 0, 0, 0, offsetPt);
     }
 
     /// <summary>The layout and id of the picture anchored at <paramref name="cp"/>; null when there is none we can show.</summary>
@@ -56,14 +99,9 @@ internal sealed class DocBinaryFloatingPictures
     {
         if (Fspa(cp) is not { } fspa) return null;
         if (Locate(fspa.spid) is null) return null;
-        double widthPt = Math.Max(1, fspa.xaRight - (double)fspa.xaLeft) / 20, heightPt = Math.Max(1, fspa.yaBottom - (double)fspa.yaTop) / 20;
-        int bx = (fspa.flags >> 1) & 3, wr = (fspa.flags >> 5) & 0xF, wrk = (fspa.flags >> 9) & 0xF;
-        bool pageRelative = bx == 1 || (fspa.flags & 0x2000) != 0;
-        WordPictureWrap wrap = wr switch { 1 => WordPictureWrap.TopAndBottom, 3 => WordPictureWrap.None, _ => WordPictureWrap.Square };
-        WordPictureSide side = (wr is 2 or 4 && wrk == 1) ? WordPictureSide.Right : WordPictureSide.Left;
-        double offsetPt = side == WordPictureSide.Left && !pageRelative ? Math.Max(0, fspa.xaLeft / 20.0) : 0;
-        var layout = new WordPictureLayout(widthPt, heightPt, wrap, side, 0, 0, 0, 0, offsetPt);
-        return (layout, IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (_containerBySpid!.TryGetValue(fspa.spid, out var container) && container.isGroup) return null;     // a group is a drawing
+        if (_textBoxSpids!.Contains(fspa.spid)) return null;                                                  // a picture with a text box too
+        return (LayoutOf(fspa), IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     /// <summary>The bytes of floating picture <paramref name="pictureId"/> (see <see cref="At"/>), or null.</summary>
@@ -120,6 +158,8 @@ internal sealed class DocBinaryFloatingPictures
     {
         _pibBySpid = [];
         _blips = [];
+        _containerBySpid = [];
+        _textBoxSpids = [];
         (uint offset, uint length) = _drawing;
         Stream table = _tableStream;
         long end = Math.Min(table.Length, offset + (long)length);
@@ -173,19 +213,40 @@ internal sealed class DocBinaryFloatingPictures
         {
             if (DocBinaryPictures.RecordHeader(_tableStream, position) is not { } record) return;
             long body = position + 8, bodyEnd = Math.Min(end, body + record.Length);
-            if (record.Type == 0xF003 && depth < 8) ReadShapes(body, bodyEnd, depth + 1);
-            else if (record.Type == 0xF004) ReadShape(body, bodyEnd);
+            if (record.Type == 0xF003 && depth < 8)
+            {
+                ReadShapes(body, bodyEnd, depth + 1);
+                // the group's own shape is its first SpContainer (msdffdef.hxx:57): an anchor on it names the whole group
+                if (DocBinaryPictures.RecordHeader(_tableStream, body) is { Type: 0xF004 } own
+                    && SpidOf(body + 8, Math.Min(bodyEnd, body + 8 + own.Length)) is { } groupSpid)
+                    _containerBySpid![groupSpid] = (body, bodyEnd, true);
+            }
+            else if (record.Type == 0xF004 && ReadShape(body, bodyEnd) is { } spid && !_containerBySpid!.ContainsKey(spid))
+                _containerBySpid[spid] = (body, bodyEnd, false);
             position = body + record.Length;
         }
     }
 
-    private void ReadShape(long position, long end)
+    private uint? SpidOf(long position, long end)
     {
+        while (position + 8 <= end)
+        {
+            if (DocBinaryPictures.RecordHeader(_tableStream, position) is not { } record) return null;
+            if (record.Type == 0xF00A && record.Length >= 4 && DocBinaryPictures.Read(_tableStream, position + 8, 4) is { Length: 4 } id) return BitConverter.ToUInt32(id, 0);
+            position += 8 + record.Length;
+        }
+        return null;
+    }
+
+    /// <summary>One SpContainer: its spid, pib and whether it has a text box (lTxid 128); returns the spid.</summary>
+    private uint? ReadShape(long position, long end)
+    {
+        bool hasText = false;
         uint? spid = null;
         int? pib = null;
         while (position + 8 <= end)
         {
-            if (DocBinaryPictures.RecordHeader(_tableStream, position) is not { } record) return;
+            if (DocBinaryPictures.RecordHeader(_tableStream, position) is not { } record) return spid;
             long body = position + 8;
             if (record.Type == 0xF00A && record.Length >= 4)
                 spid = BitConverter.ToUInt32(DocBinaryPictures.Read(_tableStream, body, 4) is { Length: 4 } id ? id : new byte[4], 0);
@@ -194,11 +255,16 @@ internal sealed class DocBinaryFloatingPictures
                 int count = record.Instance;            // recInstance = the property count (msdffdef.hxx:45 DFF_msofbtOPT)
                 byte[] entries = DocBinaryPictures.Read(_tableStream, body, (int)Math.Min(record.Length, (long)count * 6));
                 for (int index = 0; index + 6 <= entries.Length; index += 6)
-                    if ((BitConverter.ToUInt16(entries, index) & 0x3FFF) == PropertyPib)
-                        pib = (int)BitConverter.ToUInt32(entries, index + 2);
+                {
+                    int property = BitConverter.ToUInt16(entries, index) & 0x3FFF;
+                    if (property == PropertyPib) pib = (int)BitConverter.ToUInt32(entries, index + 2);
+                    else if (property == 128) hasText = true;              // lTxid (msdffdef.hxx:107)
+                }
             }
             position = body + record.Length;
         }
         if (spid is { } shapeId && pib is { } blipIndex) _pibBySpid![shapeId] = blipIndex;
+        if (spid is { } textShape && hasText) _textBoxSpids!.Add(textShape);
+        return spid;
     }
 }

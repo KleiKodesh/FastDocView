@@ -110,6 +110,9 @@ internal sealed class RtfShapePlacement
     public bool StartArrow, EndArrow;
     /// <summary>adjustValue / adjust2Value (the shape type's 21600 space; null = its default).</summary>
     public int? Adjust1, Adjust2;
+    /// <summary>lineDashing (MSO_LineDashing; null = solid), fillOpacity / lineOpacity (fixed 16.16, 65536 = opaque).</summary>
+    public int? LineDashing;
+    public long? FillOpacity, LineOpacity;
     /// <summary>The pib picture, when the renderer read one.</summary>
     public RtfPicture? Picture;
     /// <summary>The shape has a {\shptxt}; its rendered HTML (the renderer).</summary>
@@ -152,6 +155,9 @@ internal sealed class RtfShapePlacement
             case "lineStartArrowhead": StartArrow = number != 0; break;
             case "lineEndArrowhead": EndArrow = number != 0; break;
             case "adjustValue": Adjust1 = clamped; break;
+            case "lineDashing": LineDashing = clamped; break;
+            case "fillOpacity": FillOpacity = number; break;
+            case "lineOpacity": LineOpacity = number; break;
             case "adjust2Value": Adjust2 = clamped; break;
         }
     }

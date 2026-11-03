@@ -1218,8 +1218,7 @@ others hold the files, as Word retries a save.
   (WW8_FSPA), ww8scan.cxx:1808-1811 / 6117 / 6138, msdffimp.cxx:5967-6095 (GetCtrlData, BStore), 6215-6245 (FSP, FOPT),
   6414-6475 (GetBLIP), dffpropset.cxx:1128 (id & 0x3FFF). Id = "s" + spid. Wrap 1 = above and below, 3 = through,
   else square (wrk 1 = picture right); size from the FSPA; xaLeft kept as the offset when bx is column / margin.
-  Not drawn: yaTop / page origin, wrap gaps (FOPT dxWrapDist*), header shapes (PlcSpaHdr), groups, shapes without a pib
-  (WordArt, text boxes keep "[image]"). Check: `--fidelity` DocBinaryFloatingPicturesTest (POI PngPicture.doc,
+  Not drawn: yaTop / page origin, wrap gaps (FOPT dxWrapDist*), header shapes (PlcSpaHdr); groups, shapes and text boxes: see .doc text boxes and shapes. Check: `--fidelity` DocBinaryFloatingPicturesTest (POI PngPicture.doc,
   FloatingPictures.doc, pictures_escher.doc). Golden dumps change only on those three files.
 - **VML** (w:pict / w:object): v:imagedata r:id (o:relid), shape style width / height / position /
   mso-position-horizontal / margin-left / mso-wrap-distance-*, w10:wrap type / side, read as oox vmlshapecontext.cxx and
@@ -1372,3 +1371,31 @@ ow are
   Placement as RTF pictures. Text-box paragraphs = `text-box-paragraph` block spans.
 - Check: `--fidelity` RtfShapesFidelityTest (hand-written .rtf; the .odt shapes fixture saved as .rtf by LibreOffice - its RTF
   export drops draw:g groups); live `vue-demo/playwright/rtfDocShapesCheck.mjs <file> <frames> <texts...>`.
+
+### .doc text boxes and shapes (2026-11-03)
+
+Sources read online 2026-11-03: LibreOffice core master sw/source/filter/ww8/ww8graf.cxx:852-945 (GetTxbxTextSttEndCp: lTxid
+story / sequence, fReusable, break table, last mark dropped), ww8scan.cxx:5730-5760 (text-box story base CP), :5969-5976 (ccpTxbx),
+:6138-6150 / :6208-6216 (PlcftxbxTxt index 56, PlcftxbxBkd index 75), :1866 (22-byte FTXBXS), ww8struc.hxx:967-975 (WW8_TXBXS),
+ww8par.cxx:3594-3622 + ww8par.hxx:1737 (a 0x01 inside a SHAPE field result is skipped), fields.cxx:129 (field 95 = SHAPE);
+include/svx/msdffdef.hxx (property ids, MSO_LineDashing, record types), include/filter/msfilter/escherex.hxx:83-99 (FSP flags),
+filter/source/msfilter/msdffimp.cxx (line :903-1050 incl. dash patterns, fill :1313-1330, text insets :1474-1477, FitTextToShape
+:1598, MSO_CLR :3420-3600, lTxid :5560), dffpropset.cxx (boolean groups :1146-1157, defaults table), svx
+EnhancedCustomShapeGeometry.cxx (default filling / stroking tables :6155-6213); [MS-DOC] 2.8.30 PlcfTxbxBkd / 2.9.312 Tbkd (6 bytes).
+
+- `DocBinaryFloatingPictures` now also maps spid -> its SpContainer (a group: its SpgrContainer) on the drawing walk it already
+  made; `At` keeps lone pictures (ids unchanged), anything else at a 0x08 is `Drawing(cp)`: `DocBinaryDrawnShapes` reads that
+  drawing's records only when its block renders (FSP type / flags, FOPT, ChildAnchor, FSPGR) into the shared `WordShape` model
+  (`WordOfficeArtShapeTypes` outlines, dashes, default fill / stroke tables; `WordShapeGroups.Turn` for group rotation / flips,
+  shared with RTF). Text: lTxid -> `DocBinaryTextBoxStories` -> a CP range of the text-box story, rendered by the normal
+  paragraph renderer as `text-box-paragraph` spans. Plain rectangle text boxes use `WordPictureHtml.OpenTextBox`.
+- **Search**: the text-box story was never searched before (the one-pass cursor reads the main text only). Now each block's
+  anchored drawings feed their text-box ranges after the block text (`TextRangesIn`), in the one-pass and the block-range
+  path alike - each story part once, at its shape's anchor.
+- Checks: `--fidelity` DocBinaryShapesFidelityTest (the .odt shapes fixture saved as .doc by LibreOffice: every box text shown
+  and found once, no placeholder; POI Bug41898.doc and LibreOffice tdf112618 / tdf76349 / shapes-line-ellipse.doc); live
+  `vue-demo/playwright/rtfDocShapesCheck.mjs` on the LibreOffice .doc.
+- Not done yet (next): the full MSO preset table (only the outlines in `WordOfficeArtShapeTypes` are drawn; other types are a
+  box of their size), custom geometry (pVertices / pSegmentInfo), gradient / pattern / picture fills (fillType), WordArt text
+  (gtextUNICODE complex property in .doc), header / footer shapes (PlcSpaHdr), text-box tables drawn as paragraphs, system
+  colours (the defaults are used), RTF fillType gradients.

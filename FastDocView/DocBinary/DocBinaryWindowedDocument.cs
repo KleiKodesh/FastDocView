@@ -266,6 +266,13 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
                         blockEnd = _table.BlockEndCp(blockIndex);
                         _renderer.FeedSearchText(start, blockEnd, matcher);
                     }
+                    // text-box text belongs to the block that anchors its shape (the story is not in the main text: found once)
+                    if (_renderer.FloatingPictures is { } drawings)
+                        foreach ((int textStart, int textEnd) in drawings.TextRangesIn(start, blockEnd))
+                        {
+                            matcher.Separator();
+                            _renderer.FeedSearchText(textStart, textEnd, matcher);
+                        }
                     if (options.IncludeNotes)
                         foreach (DocBinaryNoteReferences.NoteReference reference in _notes.InRange(start, blockEnd))
                         {

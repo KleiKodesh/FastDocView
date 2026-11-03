@@ -185,9 +185,11 @@ public sealed class DocBinaryParagraphHtmlRenderer
     {
         (WordParagraphFormatting formatting, int styleIndex) = ResolveParagraph(cpStart, cpEnd);
         int headingLevel = _styles.HeadingLevelOf(styleIndex);
-        string tag = headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
+        string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
 
-        WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(previousStyleKey), null, formatting.IsRightToLeft);
+        bool outerRightToLeft = _isParagraphRightToLeft;
+        WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : ""),
+                                   _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
         _isParagraphRightToLeft = formatting.IsRightToLeft;
         if (listLabel is { Length: > 0 }) AppendListLabel(html, listLabel, formatting);
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
@@ -196,6 +198,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
             AppendRunHtml(html, runFormatting, formatting.RunFormatting, text, isSpecial, runCp, fieldState, noteLabel, picture);
         if (fieldState.CloseOpenLink()) html.Append("</a>");          // a link field that goes on past the paragraph
         html.Append("</").Append(tag).Append('>');
+        if (_textBoxDepth > 0) _isParagraphRightToLeft = outerRightToLeft;
         return formatting.StyleKey;
     }
 
@@ -418,13 +421,18 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 case '\u000B': visible.Append("<br>"); continue;
                 case '\u001E': visible.Append('‑'); continue;
                 case '\u001F': visible.Append('­'); continue;
+                case '\u0001' when isSpecial && fieldState.IsInShapeResult && !(i + 1 < text.Length && text[i + 1] == '\u0001'): continue;
                 case '\u0001' when isSpecial && picture is { } location:
                     Flush();
                     AppendPicture(html, location);
                     continue;
-                case '\u0008' when isSpecial && FloatingPictures?.At(runCp + i) is { } floating:
+                case '\u0008' when isSpecial && _textBoxDepth == 0 && FloatingPictures?.At(runCp + i) is { } floating:
                     Flush();
                     WordPictureHtml.Append(html, floating.layout, floating.pictureId);
+                    continue;
+                case '\u0008' when isSpecial && _textBoxDepth == 0 && FloatingPictures?.Drawing(runCp + i) is { } drawing:
+                    Flush();
+                    AppendDrawing(html, drawing);
                     continue;
                 case '\u0001': case '\u0008': if (isSpecial) visible.Append("<span class=\"unsupported\">[image]</span>"); continue;
                 case AutoNumberedNoteMark:
@@ -436,6 +444,62 @@ public sealed class DocBinaryParagraphHtmlRenderer
             visible.Append(WordHtmlText.Encode(c.ToString()));
         }
         Flush();
+    }
+
+    private int _textBoxDepth;
+
+    /// <summary>
+    /// A drawing object (shapes, a group, text boxes): a plain rectangle text box as <see cref="WordPictureHtml.OpenTextBox"/> with
+    /// its line as the border and its fill; anything else as <see cref="WordShapeHtml"/> (one frame at the FSPA placement, the
+    /// outlines in one SVG, each text box over its shape, group pictures at their box). A text box's paragraphs are its story's
+    /// CP range rendered as block spans; shapes inside a text box are not drawn again (their anchors are in that story).
+    /// </summary>
+    private void AppendDrawing(StringBuilder html, DocBinaryDrawing drawing)
+    {
+        _textBoxDepth++;
+        try
+        {
+            if (drawing.IsPlainTextBox)
+            {
+                WordShape box = drawing.Shapes[0];
+                WordTextBoxStyle style = box.TextStyle with
+                {
+                    BorderColor = box.LineColor, BorderWidthPt = box.LineWidthPt, FillColor = box.FillColor, GrowsWithText = drawing.GrowsWithText,
+                };
+                WordPictureHtml.OpenTextBox(html, drawing.Layout, style);
+                AppendStory(html, drawing.TextRanges[box.TextIndex]);
+                WordPictureHtml.CloseTextBox(html);
+                return;
+            }
+            bool inFlow = drawing.Shapes.Count == 1 && drawing.TextRanges.Count == 1 && drawing.GrowsWithText && drawing.Shapes[0].RotationDegrees == 0;
+            WordShapeHtml.OpenFrame(html, drawing.Layout, inFlow);
+            WordShapeHtml.AppendGeometry(html, drawing.Shapes, drawing.Layout.WidthPt, drawing.Layout.HeightPt, stretches: inFlow);
+            foreach (WordShape shape in drawing.Shapes)
+            {
+                if (shape.Geometry == WordShapeGeometry.Picture) { WordShapeHtml.AppendPicture(html, shape); continue; }
+                if (shape.TextIndex < 0) continue;
+                WordShapeHtml.OpenShapeText(html, shape, inFlow);
+                AppendStory(html, drawing.TextRanges[shape.TextIndex]);
+                WordShapeHtml.CloseShapeText(html);
+            }
+            WordShapeHtml.CloseFrame(html);
+        }
+        finally { _textBoxDepth--; }
+    }
+
+    /// <summary>A text-box story range as paragraphs (each ends at a paragraph mark, the last at the range's end).</summary>
+    private void AppendStory(StringBuilder html, (int start, int end) range)
+    {
+        string text = _pieces.ReadText(range.start, range.end);
+        int paragraphStart = range.start;
+        string? previousStyleKey = null;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] is not ('\r' or CellOrRowMark) && i != text.Length - 1) continue;
+            int end = range.start + i + 1;
+            if (end > paragraphStart) previousStyleKey = AppendParagraph(html, paragraphStart, end, previousStyleKey, null);
+            paragraphStart = end;
+        }
     }
 
     /// <summary>The Data stream's pictures (inline 0x01 pictures); none for a document without a Data stream.</summary>
@@ -487,6 +551,15 @@ public sealed class DocBinaryParagraphHtmlRenderer
         private bool _isLinkOpen;
 
         /// <summary>
+        /// Inside a SHAPE field's result: there a 0x01 is not a picture of its own unless another 0x01 follows - LibreOffice
+        /// ww8par.cxx:3594-3622 (IsInlineEscherHack, ww8par.hxx:1737-1738: the innermost field is 95) reads the shape from the 0x08
+        /// and skips the 0x01.
+        /// </summary>
+        public bool IsInShapeResult => _innermostIsShape && _fields.Count > 0 && !_fields[_fields.Count - 1].isCode;
+        private bool _innermostIsShape;
+        private readonly List<bool> _isShape = new();   // per open field: a SHAPE field (field 95, LibreOffice sw/source/filter/ww8/fields.cxx:129)
+
+        /// <summary>
         /// True when the character is consumed (a field mark, or inside a field code); <paramref name="linkTag"/> is the
         /// &lt;a&gt; or &lt;/a&gt; to write at this point, if any.
         /// </summary>
@@ -495,11 +568,15 @@ public sealed class DocBinaryParagraphHtmlRenderer
             linkTag = null;
             switch (c)
             {
-                case '\u0013': _fields.Add((true, new StringBuilder(), false)); return true;
+                case '\u0013': _fields.Add((true, new StringBuilder(), false)); _isShape.Add(false); _innermostIsShape = false; return true;
                 case '\u0014':
                     if (_fields.Count > 0 && _fields[_fields.Count - 1].isCode)
                     {
                         string code = _fields[_fields.Count - 1].code!.ToString();
+                        bool isShape = code.TrimStart().StartsWith("SHAPE", StringComparison.OrdinalIgnoreCase)
+                                       && (code.TrimStart().Length == 5 || !char.IsLetter(code.TrimStart()[5]));
+                        _isShape[_isShape.Count - 1] = isShape;
+                        _innermostIsShape = isShape;
                         string? tag = _isLinkOpen ? null : DocxHtml.DocxBlockHtmlRenderer.HyperlinkFieldTag(code);
                         _fields[_fields.Count - 1] = (false, null, tag is not null);
                         if (tag is not null) { _isLinkOpen = true; linkTag = tag; }
@@ -510,6 +587,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
                     {
                         bool wasLink = _fields[_fields.Count - 1].isLink;
                         _fields.RemoveAt(_fields.Count - 1);
+                        if (_isShape.Count > 0) _isShape.RemoveAt(_isShape.Count - 1);
+                        _innermostIsShape = _isShape.Count > 0 && _isShape[_isShape.Count - 1];
                         if (wasLink && _isLinkOpen) { _isLinkOpen = false; linkTag = "</a>"; }
                     }
                     return true;

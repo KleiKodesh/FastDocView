@@ -49,27 +49,7 @@ internal static class RtfShapeDrawing
                     Collect(child, x + (child.Left - shape.Left) / 20.0, y + (child.Top - shape.Top) / 20.0, Math.Abs(child.Right - child.Left) / 20.0,
                             Math.Abs(child.Bottom - child.Top) / 20.0, shapes, texts, pictureId);
             }
-            // a rotated or flipped group turns its children about the group's centre ("rotation of the shape"; flips "applied after
-            // the rotation", same spec page): each child's centre moves, its own rotation and flips compose with the group's
-            if (shape.RotationDegrees != 0 || shape.FlipHorizontal || shape.FlipVertical)
-            {
-                double centreX = x + width / 2, centreY = y + height / 2, radians = shape.RotationDegrees * Math.PI / 180;
-                for (int i = first; i < shapes.Count; i++)
-                {
-                    WordShape part = shapes[i];
-                    double dx = part.X + part.Width / 2 - centreX, dy = part.Y + part.Height / 2 - centreY;
-                    double rx = dx * Math.Cos(radians) - dy * Math.Sin(radians), ry = dx * Math.Sin(radians) + dy * Math.Cos(radians);
-                    if (shape.FlipHorizontal) rx = -rx;
-                    if (shape.FlipVertical) ry = -ry;
-                    part.X = centreX + rx - part.Width / 2;
-                    part.Y = centreY + ry - part.Height / 2;
-                    // flip after rotate: a mirror turns a rotation by a into one by -a (two mirrors = a half turn, rotations add)
-                    double rotation = part.RotationDegrees + shape.RotationDegrees;
-                    part.RotationDegrees = shape.FlipHorizontal ^ shape.FlipVertical ? -rotation : rotation;
-                    part.FlipHorizontal ^= shape.FlipHorizontal;
-                    part.FlipVertical ^= shape.FlipVertical;
-                }
-            }
+            WordShapeGroups.Turn(shapes, first, x, y, width, height, shape.RotationDegrees, shape.FlipHorizontal, shape.FlipVertical);
             return;
         }
         var drawn = new WordShape
@@ -78,6 +58,9 @@ internal static class RtfShapeDrawing
             RotationDegrees = shape.RotationDegrees, FlipHorizontal = shape.FlipHorizontal, FlipVertical = shape.FlipVertical,
             FillColor = FillColorCss(shape), LineColor = LineColorCss(shape), LineWidthPt = LineWidthPt(shape),
             HeadArrow = shape.StartArrow, TailArrow = shape.EndArrow,
+            Dash = shape.LineDashing is { } dashing ? WordOfficeArtShapeTypes.Dash(dashing) : null,
+            FillOpacity = shape.FillOpacity is { } fillOpacity ? fillOpacity / 65536.0 : 1,
+            LineOpacity = shape.LineOpacity is { } lineOpacity ? lineOpacity / 65536.0 : 1,
             TextStyle = TextStyle(shape),
         };
         WordOfficeArtShapeTypes.Apply(drawn, shape.ShapeType < 0 ? WordOfficeArtShapeTypes.Rectangle : shape.ShapeType, shape.Adjust1, shape.Adjust2);

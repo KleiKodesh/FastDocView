@@ -24,6 +24,7 @@ public sealed class DocBinaryFileInformationBlock
     public int HeaderCharacterCount { get; }        // ccpHdd
     public int CommentCharacterCount { get; }       // ccpAtn
     public int EndnoteCharacterCount { get; }       // ccpEdn
+    public int TextBoxCharacterCount { get; }       // ccpTxbx (FibRgLw97 after ccpEdn; LibreOffice ww8scan.cxx:5969-5976 read order)
     public (uint offset, uint length) StyleSheet { get; }          // Stshf
     public (uint offset, uint length) PieceTable { get; }          // Clx
     public (uint offset, uint length) CharacterBinTable { get; }   // PlcfBteChpx
@@ -41,10 +42,14 @@ public sealed class DocBinaryFileInformationBlock
     public (uint offset, uint length) BookmarkStarts { get; }      // PlcfBkf (index 22)
     public (uint offset, uint length) MainShapeAnchors { get; }    // PlcSpaMom (index 40; LibreOffice ww8scan.cxx:6117 read order)
     public (uint offset, uint length) DrawingGroup { get; }        // OfficeArtContent at fcDggInfo (index 50; ww8scan.cxx:6138)
+    public (uint offset, uint length) TextBoxTexts { get; }        // PlcftxbxTxt (index 56; ww8scan.cxx:6138-6150 read order)
+    public (uint offset, uint length) TextBoxBreaks { get; }       // PlcftxbxBkd (index 75; ww8scan.cxx:6208-6216, at 0x2da + 3 * 8)
 
     /// <summary>Where each story starts in the CP space: main text, footnotes, headers, comments, endnotes ([MS-DOC] §2.3).</summary>
     public int FootnoteStoryStart => MainTextCharacterCount;
     public int EndnoteStoryStart => MainTextCharacterCount + FootnoteCharacterCount + HeaderCharacterCount + CommentCharacterCount;
+    /// <summary>The main text-box story starts after the endnotes (ww8scan.cxx GetBaseCp MAN_TXBX).</summary>
+    public int TextBoxStoryStart => EndnoteStoryStart + EndnoteCharacterCount;
 
     public DocBinaryFileInformationBlock(Stream wordDocumentStream)
     {
@@ -78,6 +83,7 @@ public sealed class DocBinaryFileInformationBlock
         HeaderCharacterCount = BitConverter.ToInt32(fib, 0x54);
         CommentCharacterCount = BitConverter.ToInt32(fib, 0x5C);
         EndnoteCharacterCount = BitConverter.ToInt32(fib, 0x60);
+        TextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x64));
         if (MainTextCharacterCount < 0 || FootnoteCharacterCount < 0 || HeaderCharacterCount < 0 || CommentCharacterCount < 0 || EndnoteCharacterCount < 0)
             throw new InvalidDataException("Damaged Word document: the FIB gives a negative character count.");
 
@@ -99,6 +105,8 @@ public sealed class DocBinaryFileInformationBlock
         BookmarkStarts = FcLcb(fib, 22);
         MainShapeAnchors = FcLcb(fib, 40);
         DrawingGroup = FcLcb(fib, 50);
+        TextBoxTexts = FcLcb(fib, 56);
+        TextBoxBreaks = FcLcb(fib, 75);
     }
 
     private readonly int _fcLcbCount;
