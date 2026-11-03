@@ -22,6 +22,7 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
 
     private readonly OdtStyleCascade _styles;
     private readonly OdtBodyBlockScanner _scanner;
+    private readonly OdtIndexAnchorRecorder _anchors;
     private readonly long _sourceLength;
     private readonly long _sourceLastWriteTicksUtc;
     private readonly IProgress<WordDocumentIndexProgress>? _progress;
@@ -50,6 +51,7 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
     {
         _styles = styles;
         _scanner = new OdtBodyBlockScanner(styles);
+        _anchors = new OdtIndexAnchorRecorder(_scanner);
         _bookmarks = new WordDocumentBookmarkScanLookup(_scanner.BookmarkNames, _scanner.BookmarkBlocks);
         _sourceLength = sourceLength;
         _sourceLastWriteTicksUtc = sourceLastWriteTicksUtc;
@@ -63,7 +65,7 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
         else
         {
             ContentEntry = OdtPackage.LocateContentEntry(file);
-            _contentCursor = new DocxEntryInflationCursor(file, ContentEntry, OdtRandomAccessIndexBuilder.DefaultCheckpointSpanBytes);
+            _contentCursor = new DocxEntryInflationCursor(file, ContentEntry, OdtRandomAccessIndexBuilder.DefaultCheckpointSpanBytes, snapToSparseBoundaries: true);
             _totalBytes = ContentEntry.UncompressedSize;
         }
     }
@@ -121,7 +123,7 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
         if (CompletedIndex is not null) return CompletedIndex;
         while (!IsBodyScanned) AdvanceOneChunk();
         _progress?.Report(new WordDocumentIndexProgress(_totalBytes, _totalBytes, _scanner.BlockStartOffsets.Count));
-        CompletedIndex = OdtRandomAccessIndexBuilder.Finish(_scanner, _styles, _sourceLength, _sourceLastWriteTicksUtc, _flatFile is not null,
+        CompletedIndex = OdtRandomAccessIndexBuilder.Finish(_scanner, _anchors, _styles, _sourceLength, _sourceLastWriteTicksUtc, _flatFile is not null,
                                                             ContentEntry, _contentCursor?.Checkpoints ?? []);
         return CompletedIndex;
     }
@@ -205,6 +207,8 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
     }
 
     public int ListLevelOf(int blockIndex) => _scanner.BlockListLevels[blockIndex] == 255 ? -1 : _scanner.BlockListLevels[blockIndex];
+
+    public byte[] ReadRange(Stream view, long start, long end) => OdtXmlFragment.ReadRange(view, start, end);
 
     public ReadOnlySpan<OdtNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex)
     {

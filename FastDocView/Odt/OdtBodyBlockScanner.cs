@@ -119,6 +119,84 @@ internal sealed class OdtBodyBlockScanner
     /// <summary>Block-level elements skipped because no rule handles them (element name → count) — for the audit.</summary>
     public Dictionary<string, int> SkippedBlockElements { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Raised when a block's start tag is met, before its label is counted and before it is recorded: the block's index (the
+    /// one about to be added) and its start offset. The compact index captures <see cref="ExportScanState"/> here.
+    /// </summary>
+    public event Action<int, long>? BlockStarting;
+
+    /// <summary>The list styles that labelled a paragraph so far (see <see cref="OdtListNumbering.UsedListStyles"/>).</summary>
+    public Dictionary<string, OdtListStyle> UsedListStyles => _numbering.UsedListStyles;
+
+    /// <summary>
+    /// What a rescan needs to continue from a block's start tag: the element frames open around it (bottom first) and
+    /// the list-numbering state (<see cref="OdtListNumbering.ExportState"/>). Captured at <see cref="BlockStarting"/>,
+    /// when the tokenizer is between tags; everything else (notes, headings, sections, bookmarks) is index-time data
+    /// the rescan does not reproduce.
+    /// </summary>
+    public byte[] ExportScanState()
+    {
+        byte[] numbering = _numbering.ExportState();
+        var bytes = new List<byte>(_frames.Count + numbering.Length + 4);
+        IndexBinaryArrays.AppendVarint(bytes, (uint)_frames.Count);
+        foreach (Frame frame in _frames) bytes.Add((byte)frame);
+        bytes.AddRange(numbering);
+        return bytes.ToArray();
+    }
+
+    /// <summary>The frames part of a scan state (what <see cref="DeltaScanState"/> keeps whole) and its numbering part.</summary>
+    private static (byte[] frames, byte[] numbering) SplitScanState(byte[] state)
+    {
+        if (state.Length == 0) return ([], []);
+        int position = 0;
+        int count = (int)IndexBinaryArrays.ReadVarint(state, ref position);
+        if (count < 0 || count > state.Length - position) throw new InvalidDataException("OpenDocument index: scan state damaged.");
+        var frames = new byte[position + count];
+        Buffer.BlockCopy(state, 0, frames, 0, frames.Length);
+        var numbering = new byte[state.Length - frames.Length];
+        Buffer.BlockCopy(state, frames.Length, numbering, 0, numbering.Length);
+        return (frames, numbering);
+    }
+
+    /// <summary><paramref name="current"/> as a delta from <paramref name="previous"/>: the frames whole, the numbering as <see cref="OdtListNumbering.DeltaState"/>.</summary>
+    public static byte[] DeltaScanState(byte[] previous, byte[] current)
+    {
+        (byte[] frames, byte[] numbering) = SplitScanState(current);
+        (_, byte[] previousNumbering) = SplitScanState(previous);
+        return frames.Concat(OdtListNumbering.DeltaState(previousNumbering, numbering)).ToArray();
+    }
+
+    public static byte[] ApplyScanStateDelta(byte[] previous, byte[] delta)
+    {
+        (byte[] frames, byte[] numberingDelta) = SplitScanState(delta);
+        (_, byte[] previousNumbering) = SplitScanState(previous);
+        return frames.Concat(OdtListNumbering.ApplyDelta(previousNumbering, numberingDelta)).ToArray();
+    }
+
+    /// <summary>
+    /// Seats a fresh scanner at a block's start tag in the body (a span anchor of the compact index): the root open
+    /// tag (element names are classified by its prefixes), the absolute offset the next fed byte has, and the frames +
+    /// numbering state captured there. Blocks found from here on are numbered from 0 (span-local).
+    /// </summary>
+    public void SeedAt(string rootOpenTag, long offset, byte[] scanState)
+    {
+        RootOpenTag = rootOpenTag;
+        _namesByLength = BuildNames(rootOpenTag);
+        _offset = offset;
+        _state = State.Text;
+        _frames.Clear();
+        (byte[] frames, byte[] numbering) = SplitScanState(scanState);
+        int position = 0;
+        int count = frames.Length == 0 ? 0 : (int)IndexBinaryArrays.ReadVarint(frames, ref position);
+        for (int i = 0; i < count; i++)
+        {
+            byte frame = frames[position++];
+            if (frame > (byte)Frame.NoteBody) throw new InvalidDataException("OpenDocument index: scan state damaged.");
+            _frames.Add((Frame)frame);
+        }
+        _numbering.ImportState(numbering);
+    }
+
     public OdtBodyBlockScanner(OdtStyleCascade styles)
     {
         _styles = styles;
@@ -354,6 +432,7 @@ internal sealed class OdtBodyBlockScanner
 
     private Frame BlockLevel(Name name, ReadOnlySpan<byte> tag, int nameEnd, long tagEndOffset, bool isListItemParagraph)
     {
+        if (name is Name.Paragraph or Name.Heading or Name.Table) BlockStarting?.Invoke(BlockStartOffsets.Count, _tagStartOffset);
         switch (name)
         {
             case Name.Paragraph or Name.Heading:

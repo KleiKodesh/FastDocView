@@ -18,4 +18,9 @@ internal interface IOdtBlockTable
     string ListLabelLayoutOf(int blockIndex);
     int ListLevelOf(int blockIndex);
     ReadOnlySpan<OdtNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex);
+    /// <summary>
+    /// The body's bytes [start, end) - from the table's own recently scanned bytes when it has them (the compact table reads a
+    /// window's bytes while locating its blocks), else from <paramref name="view"/>.
+    /// </summary>
+    byte[] ReadRange(Stream view, long start, long end);
 }

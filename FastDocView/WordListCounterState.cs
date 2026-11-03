@@ -93,12 +93,15 @@ internal static class WordListCounterState
     public sealed class DeltaChain
     {
         private readonly byte[][] _deltas;
+        private readonly Func<byte[], byte[], byte[]> _apply;
         private readonly int _keyEvery;
         private readonly byte[]?[] _keyStates;
 
-        public DeltaChain(byte[][] deltas, int keyEvery = 8)
+        /// <param name="apply">(previous, delta) -> full state; <see cref="WordListCounterState.Apply"/> when null (a format with its own state layout passes its own).</param>
+        public DeltaChain(byte[][] deltas, Func<byte[], byte[], byte[]>? apply = null, int keyEvery = 8)
         {
             _deltas = deltas;
+            _apply = apply ?? Apply;
             _keyEvery = keyEvery;
             _keyStates = new byte[]?[(deltas.Length + keyEvery - 1) / keyEvery];
         }
@@ -109,10 +112,10 @@ internal static class WordListCounterState
             if (_keyStates[key] is null)
             {
                 byte[] state = key > 0 ? StateAt(key * _keyEvery - 1) : [];
-                _keyStates[key] = Apply(state, _deltas[key * _keyEvery]);
+                _keyStates[key] = _apply(state, _deltas[key * _keyEvery]);
             }
             byte[] current = _keyStates[key]!;
-            for (int i = key * _keyEvery + 1; i <= anchorIndex; i++) current = Apply(current, _deltas[i]);
+            for (int i = key * _keyEvery + 1; i <= anchorIndex; i++) current = _apply(current, _deltas[i]);
             return current;
         }
     }

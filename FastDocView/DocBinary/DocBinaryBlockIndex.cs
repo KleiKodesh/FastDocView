@@ -195,7 +195,7 @@ public sealed class DocBinaryBlockIndex
             DocBinaryBlockIndex index = Read(reader.BaseStream);
             return index.MatchesSource(documentPath) ? index : null;
         }
-        catch (Exception exception) when (exception is IOException or EndOfStreamException or InvalidDataException or OverflowException or ArgumentException)
+        catch (Exception exception) when (exception is IOException or EndOfStreamException or InvalidDataException or OverflowException or ArgumentException or FormatException)
         {
             return null;
         }

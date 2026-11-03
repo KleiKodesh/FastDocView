@@ -201,7 +201,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         FilePath = filePath;
         _index = index;
         _builder = builder;
-        _blocks = (IOdtBlockTable?)index ?? builder!;
+        _blocks = index is not null ? reader.Table : builder!;
         _sidecarPathToSave = sidecarPathToSave;
         _reader = reader;
         _styles = styles;
@@ -237,8 +237,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         OdtRandomAccessIndex index = _builder!.Complete();
         // Swap the scan's live tables for the finished index (same offsets, same checkpoints) and free the scanner.
         _index = index;
-        _blocks = index;
-        _reader.Table = index;
+        _blocks = _reader.SwitchToIndex(index);
         _builder = null;
         _noteReferences = null;
         CountNewNoteReferences();
@@ -256,8 +255,22 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         lock (_readLock)
         {
             if (_builder is { } builder) return blockIndex < builder.KnownBlockCount ? builder.BlockTextLengthOf(blockIndex) : builder.AverageTextLength;
-            return blockIndex < _index!.BlockCount ? _index.BlockTextLengths[blockIndex] : 0;
+            // exact once the block's span has been rescanned (a window near it was read), else its 64-block group's average
+            return blockIndex < _index!.BlockCount ? ((OdtCompactBlockTable)_blocks).KnownTextLength(blockIndex) ?? _index.EstimatedTextLength(blockIndex) : 0;
         }
+    }
+
+    /// <summary>The block's list label as the index pass counted it (null when not a numbered list paragraph) - rescanned from its span.</summary>
+    public string? ListLabelOf(int blockIndex) { lock (_readLock) return WithFileReleased(() => _blocks.ListLabelOf(blockIndex)); }
+    /// <summary>The list depth (0-based) of a list paragraph, or -1.</summary>
+    public int ListLevelOf(int blockIndex) { lock (_readLock) return WithFileReleased(() => _blocks.ListLevelOf(blockIndex)); }
+    public WordDocumentBlockKind BlockKindOf(int blockIndex) { lock (_readLock) return WithFileReleased(() => _blocks.BlockKindOf(blockIndex)); }
+
+    private T WithFileReleased<T>(Func<T> lookup)
+    {
+        if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+        try { return lookup(); }
+        finally { _releasableFile?.Release(); }
     }
 
     public IReadOnlyList<WordDocumentBlockHtml> RenderBlocks(int firstBlockIndex, int count)

@@ -22,13 +22,25 @@ public sealed class OdtBlockXmlReader : IDisposable
     internal IOdtBlockTable Table { get; set; }
 
     public static OdtBlockXmlReader OverPackage(Stream package, OdtRandomAccessIndex index)
-        => new(DocxEntryInflation.OpenView(package, index.ContentEntry!, index.Checkpoints), index, package);
+        => OverIndex(DocxEntryInflation.OpenView(package, index.ContentEntry!, index.Checkpoints), index, package);
 
     public static OdtBlockXmlReader OverBytes(byte[] content, OdtRandomAccessIndex index)
-        => new(new MemoryStream(content, writable: false), index, null);
+        => OverIndex(new MemoryStream(content, writable: false), index, null);
 
     /// <summary>A .fodt: the file is the view (owned).</summary>
-    public static OdtBlockXmlReader OverFlatFile(Stream file, OdtRandomAccessIndex index) => new(file, index, null);
+    public static OdtBlockXmlReader OverFlatFile(Stream file, OdtRandomAccessIndex index) => OverIndex(file, index, null);
+
+    /// <summary>A finished compact index: blocks are located by <see cref="OdtCompactBlockTable"/> over the same view.</summary>
+    private static OdtBlockXmlReader OverIndex(Stream view, OdtRandomAccessIndex index, IDisposable? owned)
+        => new(view, new OdtCompactBlockTable(index, view), owned);
+
+    /// <summary>An on-demand scan has completed: the live tables are swapped for the compact table over the finished index (same view, same offsets).</summary>
+    internal OdtCompactBlockTable SwitchToIndex(OdtRandomAccessIndex index)
+    {
+        var table = new OdtCompactBlockTable(index, _view);
+        Table = table;
+        return table;
+    }
 
     /// <summary>An on-demand open: content.xml through the builder's live checkpoint list (it seeks anywhere scanned so far), or the .fodt file.</summary>
     internal static OdtBlockXmlReader OverIncrementalBuild(Stream file, OdtIncrementalIndexBuilder builder)
@@ -53,7 +65,7 @@ public sealed class OdtBlockXmlReader : IDisposable
         _rootElementName ??= OdtXmlFragment.RootElementName(table.RootOpenTag);
         long rangeStart = table.BlockStartOffset(firstBlockIndex);
         long rangeEnd = table.BlockEndOffset(last);
-        byte[] bytes = OdtXmlFragment.ReadRange(_view, rangeStart, rangeEnd);
+        byte[] bytes = table.ReadRange(_view, rangeStart, rangeEnd);
         for (int blockIndex = firstBlockIndex; blockIndex <= last; blockIndex++)
         {
             int start = (int)(table.BlockStartOffset(blockIndex) - rangeStart);
@@ -74,7 +86,8 @@ public sealed class OdtBlockXmlReader : IDisposable
         int last = Math.Min(table.BlockCount, firstBlockIndex + count) - 1;
         if (firstBlockIndex < 0 || firstBlockIndex > last) return ([], blocks);
         long rangeStart = table.BlockStartOffset(firstBlockIndex);
-        byte[] bytes = OdtXmlFragment.ReadRange(_view, rangeStart, table.BlockEndOffset(last));
+        long rangeEnd = table.BlockEndOffset(last);
+        byte[] bytes = table.ReadRange(_view, rangeStart, rangeEnd);
         for (int blockIndex = firstBlockIndex; blockIndex <= last; blockIndex++)
         {
             int start = (int)(table.BlockStartOffset(blockIndex) - rangeStart);

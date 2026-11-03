@@ -6,14 +6,15 @@ namespace FastDocView.Odt;
 /// <summary>
 /// The one sequential pass over an OpenDocument body through <see cref="OdtBodyBlockScanner"/>.
 /// Package (.odt/.ott): content.xml is inflated chunk by chunk; in sidecar mode deflate checkpoints
-/// are captured roughly every <see cref="DefaultCheckpointSpanBytes"/>, in in-memory mode the
-/// inflated content.xml is returned instead. Flat (.fodt): the file itself is read chunk by chunk —
-/// offsets are file offsets, nothing to checkpoint or keep. The style cascade must already hold
-/// styles.xml (package); the scanner adds the sections it captures.
+/// are captured roughly every <see cref="DefaultCheckpointSpanBytes"/> (snapped to the thriftiest
+/// block boundary, as for .docx), in in-memory mode the inflated content.xml is returned instead.
+/// Flat (.fodt): the file itself is read chunk by chunk - offsets are file offsets, nothing to
+/// checkpoint or keep. The style cascade must already hold styles.xml (package); the scanner adds
+/// the sections it captures. An <see cref="OdtIndexAnchorRecorder"/> rides along for the span anchors.
 /// </summary>
 public static class OdtRandomAccessIndexBuilder
 {
-    public const long DefaultCheckpointSpanBytes = 1 << 20;
+    public const long DefaultCheckpointSpanBytes = 2L << 20;
     internal const int ChunkSize = 1 << 18;
 
     public static OdtRandomAccessIndex BuildFromPackage(Stream package, OdtStyleCascade styles, long sourceLength, long sourceLastWriteTicksUtc,
@@ -22,21 +23,25 @@ public static class OdtRandomAccessIndexBuilder
     {
         ZipEntryLocation content = OdtPackage.LocateContentEntry(package);
         var scanner = new OdtBodyBlockScanner(styles);
-        long done = 0;
-        List<DeflateCheckpoint> checkpoints = DocxEntryInflation.Run(package, content, (chunk, read) =>
+        var anchors = new OdtIndexAnchorRecorder(scanner);
+        var cursor = new DocxEntryInflationCursor(package, content, checkpointSpanBytes, snapToSparseBoundaries: true);
+        while (true)
         {
-            scanner.Feed(chunk, read);
-            copy?.Write(chunk, 0, read);
-            done += read;
-            progress?.Report(new WordDocumentIndexProgress(done, content.UncompressedSize, scanner.BlockStartOffsets.Count));
-        }, checkpointSpanBytes, cancellation);
-        return Finish(scanner, styles, sourceLength, sourceLastWriteTicksUtc, isFlat: false, content, checkpoints);
+            cancellation.ThrowIfCancellationRequested();
+            int read = cursor.ReadNextChunk();
+            if (read == 0) break;
+            scanner.Feed(cursor.Chunk, read);
+            copy?.Write(cursor.Chunk, 0, read);
+            progress?.Report(new WordDocumentIndexProgress(cursor.BytesInflated, content.UncompressedSize, scanner.BlockStartOffsets.Count));
+        }
+        return Finish(scanner, anchors, styles, sourceLength, sourceLastWriteTicksUtc, isFlat: false, content, cursor.Checkpoints);
     }
 
     public static OdtRandomAccessIndex BuildFromFlat(Stream file, OdtStyleCascade styles, long sourceLength, long sourceLastWriteTicksUtc,
                                                      IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
     {
         var scanner = new OdtBodyBlockScanner(styles);
+        var anchors = new OdtIndexAnchorRecorder(scanner);
         var chunk = new byte[ChunkSize];
         file.Position = 0;
         long done = 0;
@@ -49,21 +54,22 @@ public static class OdtRandomAccessIndexBuilder
             done += read;
             progress?.Report(new WordDocumentIndexProgress(done, file.Length, scanner.BlockStartOffsets.Count));
         }
-        return Finish(scanner, styles, sourceLength, sourceLastWriteTicksUtc, isFlat: true, null, []);
+        return Finish(scanner, anchors, styles, sourceLength, sourceLastWriteTicksUtc, isFlat: true, null, []);
     }
 
-    internal static OdtRandomAccessIndex Finish(OdtBodyBlockScanner scanner, OdtStyleCascade styles, long sourceLength, long sourceLastWriteTicksUtc, bool isFlat,
+    internal static OdtRandomAccessIndex Finish(OdtBodyBlockScanner scanner, OdtIndexAnchorRecorder anchors, OdtStyleCascade styles,
+                                               long sourceLength, long sourceLastWriteTicksUtc, bool isFlat,
                                                ZipEntryLocation? content, List<DeflateCheckpoint> checkpoints)
     {
         if (!scanner.IsBodyComplete && !scanner.KeepCompleteBlocks())
             throw new InvalidDataException("OpenDocument: no complete office:text body.");
+        int blockCount = scanner.BlockStartOffsets.Count;
+        long lastEnd = blockCount > 0 ? scanner.BlockEndOffsets[blockCount - 1] : 0;
         return new OdtRandomAccessIndex(sourceLength, sourceLastWriteTicksUtc, isFlat, content, checkpoints, scanner.RootOpenTag,
-                                        styles.SectionsForRendering(), scanner.BlockStartOffsets.ToArray(), scanner.BlockEndOffsets.ToArray(),
-                                        scanner.BlockKinds.ToArray(), scanner.BlockTextLengths.ToArray(), scanner.BlockListLevels.ToArray(),
-                                        scanner.BlockListLabelIds.ToArray(), scanner.ListLabels.ToArray(), scanner.Headings.ToArray(),
-                                        scanner.NoteReferences.ToArray())
+                                        styles.SectionsForRendering(), new Dictionary<string, OdtListStyle>(scanner.UsedListStyles, StringComparer.Ordinal),
+                                        blockCount, lastEnd, anchors.Build(blockCount), WordIndexTextLengthGroups.Totals(scanner.BlockTextLengths),
+                                        scanner.Headings.ToArray(), scanner.NoteReferences.ToArray())
         {
-            ListLabelLayouts = scanner.ListLabelLayouts.ToArray(),
             SectionFirstBlocks = scanner.SectionStarts.Select(section => section.FirstBlockIndex).ToArray(),
             SectionTextWidths = scanner.SectionStarts.Select(section => section.TextWidthTwips).ToArray(),
             Bookmarks = new WordDocumentBookmarkTable(scanner.BookmarkNames.ToArray(), scanner.BookmarkBlocks.ToArray()),

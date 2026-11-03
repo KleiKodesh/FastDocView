@@ -357,6 +357,36 @@ public sealed class OdtListStyle
 
     public Level LevelAt(int level) => _levels[Math.Max(0, Math.Min(MaxLevels - 1, level))];
 
+    /// <summary>The label-relevant fields of every level, as the compact index stores the list styles a rescan needs.</summary>
+    public void Write(BinaryWriter writer)
+    {
+        foreach (Level level in _levels)
+        {
+            writer.Write(level.IsBullet);
+            writer.Write(level.BulletCharacter);
+            writer.Write(level.NumberFormat);
+            writer.Write(level.Prefix);
+            writer.Write(level.Suffix);
+            writer.Write(level.StartValue);
+            writer.Write(level.DisplayLevels);
+            writer.Write(level.Layout);
+        }
+    }
+
+    public static OdtListStyle Read(BinaryReader reader)
+    {
+        var style = new OdtListStyle();
+        for (int i = 0; i < MaxLevels; i++)
+        {
+            style._levels[i] = new Level
+            {
+                IsBullet = reader.ReadBoolean(), BulletCharacter = reader.ReadString(), NumberFormat = reader.ReadString(),
+                Prefix = reader.ReadString(), Suffix = reader.ReadString(), StartValue = reader.ReadInt32(), DisplayLevels = reader.ReadInt32(), Layout = reader.ReadString(),
+            };
+        }
+        return style;
+    }
+
     /// <summary>
     /// The label of an item at <paramref name="level"/> given the current counters of its list:
     /// the last display-levels numbers joined with ".", wrapped in this level's prefix and suffix.

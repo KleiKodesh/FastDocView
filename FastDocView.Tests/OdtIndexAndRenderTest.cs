@@ -50,14 +50,13 @@ public static class OdtIndexAndRenderTest
 
     private static void Verify(OdtWindowedDocument document, int count, string what)
     {
-        OdtRandomAccessIndex index = document.Index;
         TestReport.Check(document.BlockCount == SyntheticOdtGenerator.ExpectedBlockCount(count), $"{what}: block count {document.BlockCount:N0} == {SyntheticOdtGenerator.ExpectedBlockCount(count):N0}");
         bool labelsMatch = true;
         foreach ((int block, string? label) in SyntheticOdtGenerator.ExpectedPrefixLabels)
-            if (index.ListLabelOf(block) != label) { labelsMatch = false; Console.WriteLine($"      block {block}: label '{index.ListLabelOf(block)}', expected '{label}'"); }
+            if (document.ListLabelOf(block) != label) { labelsMatch = false; Console.WriteLine($"      block {block}: label '{document.ListLabelOf(block)}', expected '{label}'"); }
         TestReport.Check(labelsMatch, $"{what}: list labels (nested 2.a), start-value 7, header unnumbered, continue-numbering 8, new list 1, continue-list 9, bullet)");
-        TestReport.Check(index.ListLevelOf(4) == 1 && index.ListLevelOf(2) == 0 && index.ListLevelOf(7) == -1, $"{what}: list depths");
-        TestReport.Check(index.BlockKinds[11] == WordDocumentBlockKind.Table, $"{what}: block 11 is the table");
+        TestReport.Check(document.ListLevelOf(4) == 1 && document.ListLevelOf(2) == 0 && document.ListLevelOf(7) == -1, $"{what}: list depths");
+        TestReport.Check(document.BlockKindOf(11) == WordDocumentBlockKind.Table, $"{what}: block 11 is the table");
         TestReport.Check(document.IsRightToLeft, $"{what}: right-to-left document");
         TestReport.Check(document.Headings.Count == SyntheticOdtGenerator.ExpectedHeadings(count) && document.Headings[0].Level == 1 && document.Headings[1].Level == 2
                          && document.Headings[0].Text.EndsWith(" 1", StringComparison.Ordinal),

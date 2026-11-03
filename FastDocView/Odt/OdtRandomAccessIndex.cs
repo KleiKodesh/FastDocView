@@ -5,16 +5,22 @@ using FastDocView.Docx;
 namespace FastDocView.Odt;
 
 /// <summary>
-/// The index of one OpenDocument text: where content.xml sits in the zip and its deflate
-/// checkpoints (a .fodt has neither — block offsets are plain file offsets), the root open tag,
-/// the captured style sections (font faces, automatic styles; a .fodt's office:styles too), and per
-/// block its byte range, kind, list depth + label and text length, plus headings and note
-/// references with their bodies' byte ranges. Serialised to/from a <see cref="Stream"/>.
+/// The compact index of one OpenDocument text. It lists no block: it holds where content.xml sits in the zip and its
+/// deflate checkpoints (a .fodt has neither - offsets are file offsets), the root open tag and the captured style
+/// sections, the list styles that labelled a paragraph (a reopen never reads styles.xml, so the rescan counts from
+/// these), and one <see cref="WordIndexSpanAnchor"/> per ~256 KB of body: that block's index and offset, the block
+/// before it, and the scanner's frames + list-numbering state there (as a delta). A block's byte range, kind, text
+/// length, list level / label / layout are recovered by rescanning its span with the same
+/// <see cref="OdtBodyBlockScanner"/> the index pass ran (<see cref="OdtCompactBlockTable"/>). Index-time lists a
+/// reader needs without a scan stay: headings, note references, sections, bookmarks,
+/// text-length totals per 64 blocks.
 /// </summary>
-public sealed class OdtRandomAccessIndex : IOdtBlockTable
+public sealed class OdtRandomAccessIndex
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 5;     // 2: section text widths; 3: list label level geometry; 4: bookmarks (name -> block); 5: compact block tables, sparse compressed checkpoint windows
+    private const int FormatVersion = 6;     // 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists
+    /// <summary>Body bytes between span anchors: a random block rescans at most this much on top of the inflate from its checkpoint.</summary>
+    public const long AnchorSpanBytes = 256 << 10;
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -23,15 +29,13 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
     public IReadOnlyList<DeflateCheckpoint> Checkpoints { get; }
     public string RootOpenTag { get; }
     public string[] StyleSections { get; }
-    public long[] BlockStartOffsets { get; }
-    public long[] BlockEndOffsets { get; }
-    public WordDocumentBlockKind[] BlockKinds { get; }
-    public int[] BlockTextLengths { get; }
-    public byte[] BlockListLevels { get; }                    // 255 = not a list paragraph
-    public int[] BlockListLabelIds { get; }
-    public string[] ListLabels { get; }
-    /// <summary>Per list label: its level geometry (<see cref="OdtListStyle.Level.Layout"/>), parallel to <see cref="ListLabels"/>.</summary>
-    public string[] ListLabelLayouts { get; init; } = [];
+    /// <summary>The list styles that labelled a paragraph during the index pass, by name - what a span rescan counts labels from.</summary>
+    public IReadOnlyDictionary<string, OdtListStyle> UsedListStyles { get; }
+    public int BlockCount { get; }
+    /// <summary>Where the last block ends (the last span's rescan stops there).</summary>
+    public long LastBlockEndOffset { get; }
+    public WordIndexSpanAnchor[] Anchors { get; }
+    public int[] TextLengthGroupTotals { get; }
     public WordDocumentHeading[] Headings { get; }
     public OdtNoteReference[] NoteReferences { get; }        // body order
     /// <summary>Per section: its first block and its page text width in twips (see OdtPageSetup).</summary>
@@ -39,13 +43,12 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
     public int[] SectionTextWidths { get; init; } = [];
     /// <summary>Bookmarks and reference marks (name -> block), see OdtBodyBlockScanner.BookmarkNames.</summary>
     public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
-
-    public int BlockCount => BlockStartOffsets.Length;
+    private readonly WordListCounterState.DeltaChain _scanStates;
 
     public OdtRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, bool isFlat, ZipEntryLocation? contentEntry,
                                 IReadOnlyList<DeflateCheckpoint> checkpoints, string rootOpenTag, string[] styleSections,
-                                long[] blockStartOffsets, long[] blockEndOffsets, WordDocumentBlockKind[] blockKinds, int[] blockTextLengths,
-                                byte[] blockListLevels, int[] blockListLabelIds, string[] listLabels,
+                                IReadOnlyDictionary<string, OdtListStyle> usedListStyles, int blockCount, long lastBlockEndOffset,
+                                WordIndexSpanAnchor[] anchors, int[] textLengthGroupTotals,
                                 WordDocumentHeading[] headings, OdtNoteReference[] noteReferences)
     {
         SourceFileLength = sourceFileLength;
@@ -55,38 +58,25 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         Checkpoints = checkpoints;
         RootOpenTag = rootOpenTag;
         StyleSections = styleSections;
-        BlockStartOffsets = blockStartOffsets;
-        BlockEndOffsets = blockEndOffsets;
-        BlockKinds = blockKinds;
-        BlockTextLengths = blockTextLengths;
-        BlockListLevels = blockListLevels;
-        BlockListLabelIds = blockListLabelIds;
-        ListLabels = listLabels;
+        UsedListStyles = usedListStyles;
+        BlockCount = blockCount;
+        LastBlockEndOffset = lastBlockEndOffset;
+        Anchors = anchors;
+        TextLengthGroupTotals = textLengthGroupTotals;
         Headings = headings;
         NoteReferences = noteReferences;
+        _scanStates = new WordListCounterState.DeltaChain(anchors.Select(anchor => anchor.ListStateDelta).ToArray(), OdtBodyBlockScanner.ApplyScanStateDelta);
     }
 
-    long IOdtBlockTable.BlockStartOffset(int blockIndex) => BlockStartOffsets[blockIndex];
-    long IOdtBlockTable.BlockEndOffset(int blockIndex) => BlockEndOffsets[blockIndex];
-    WordDocumentBlockKind IOdtBlockTable.BlockKindOf(int blockIndex) => BlockKinds[blockIndex];
-    int IOdtBlockTable.BlockTextLengthOf(int blockIndex) => BlockTextLengths[blockIndex];
+    /// <summary>The scanner state (frames + numbering) at an anchor: what its span's rescan starts from.</summary>
+    public byte[] ScanStateOf(int anchorIndex) => _scanStates.StateAt(anchorIndex);
 
-    public string? ListLabelOf(int blockIndex)
-    {
-        int labelIndex = BlockListLabelIds[blockIndex];
-        return labelIndex >= 0 ? ListLabels[labelIndex] : null;
-    }
+    public int AnchorIndexOf(int blockIndex) => WordIndexSpanAnchor.IndexOfBlock(Anchors, blockIndex);
 
-    public string ListLabelLayoutOf(int blockIndex)
-    {
-        int labelIndex = BlockListLabelIds[blockIndex];
-        return labelIndex >= 0 && labelIndex < ListLabelLayouts.Length ? ListLabelLayouts[labelIndex] : "";
-    }
+    /// <summary>The average text length of the block's 64-block group - the scroll weight before its span is scanned.</summary>
+    public int EstimatedTextLength(int blockIndex) => WordIndexTextLengthGroups.Average(TextLengthGroupTotals, BlockCount, blockIndex);
 
-    /// <summary>The list depth (0-based) of a list paragraph, or -1.</summary>
-    public int ListLevelOf(int blockIndex) => BlockListLevels[blockIndex] == 255 ? -1 : BlockListLevels[blockIndex];
-
-    /// <summary>The note references inside blocks [first, last] — a slice of the body-ordered array.</summary>
+    /// <summary>The note references inside blocks [first, last] - a slice of the body-ordered array.</summary>
     public ReadOnlySpan<OdtNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex)
     {
         int start = LowerBound(firstBlockIndex), end = LowerBound(lastBlockIndex + 1);
@@ -113,11 +103,24 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         return info.Exists && MatchesSource(info.Length, info.LastWriteTimeUtc.Ticks);
     }
 
-    // ── serialisation ─────────────────────────────────────────────────────────────────
+    // -- serialisation ------------------------------------------------------------------
 
-    public void Write(Stream destination)
+    /// <summary>Bytes per section of the serialised index - for size reports.</summary>
+    public IReadOnlyList<(string section, long bytes)> SizeBreakdown()
+    {
+        var sizes = new List<(string, long)>();
+        using var buffer = new MemoryStream();
+        Write(buffer, sizes);
+        return sizes;
+    }
+
+    public void Write(Stream destination) => Write(destination, null);
+
+    private void Write(Stream destination, List<(string, long)>? sizes)
     {
         var writer = new BinaryWriter(destination, Encoding.UTF8, leaveOpen: true);
+        long mark = destination.Position;
+        void Section(string name) { writer.Flush(); sizes?.Add((name, destination.Position - mark)); mark = destination.Position; }
         writer.Write(Magic);
         writer.Write(FormatVersion);
         writer.Write(SourceFileLength);
@@ -125,28 +128,53 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         writer.Write(IsFlat);
         writer.Write(ContentEntry is not null);
         if (ContentEntry is not null) DocxRandomAccessIndex.WriteEntry(writer, ContentEntry);
-        DocxRandomAccessIndex.WriteCheckpoints(writer, Checkpoints);
-        writer.Write(RootOpenTag);
-        WriteStrings(writer, StyleSections);
-        WriteStrings(writer, ListLabels);
-        WriteStrings(writer, ListLabelLayouts);
-        IndexBinaryArrays.WriteDeltaVarints(writer, BlockStartOffsets);
-        IndexBinaryArrays.WriteBlockEnds(writer, BlockStartOffsets, BlockEndOffsets);
-        IndexBinaryArrays.Write(writer, BlockKinds);
-        IndexBinaryArrays.WriteVarints(writer, BlockTextLengths);
-        IndexBinaryArrays.Write(writer, BlockListLevels);
-        IndexBinaryArrays.WriteIds(writer, BlockListLabelIds);
-        writer.Write(Headings.Length);
-        foreach (WordDocumentHeading heading in Headings) { writer.Write(heading.BlockIndex); writer.Write((byte)heading.Level); writer.Write(heading.Text); }
-        writer.Write(NoteReferences.Length);
+        writer.Write(BlockCount);
+        writer.Write(LastBlockEndOffset);
+        Section("header");
+        DeflateCheckpointTable.Write(writer, Checkpoints);
+        Section($"checkpoints + windows ({Checkpoints.Count})");
+        IndexBinaryArrays.WriteCompressedString(writer, RootOpenTag);
+        IndexBinaryArrays.WriteCompressedStrings(writer, StyleSections);
+        Section("root tag + style sections");
+        string[] styleNames = UsedListStyles.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        IndexBinaryArrays.WriteCompressedStrings(writer, styleNames);
+        using (var raw = new MemoryStream())
+        {
+            using (var styleWriter = new BinaryWriter(raw, Encoding.UTF8, leaveOpen: true))
+                foreach (string name in styleNames) UsedListStyles[name].Write(styleWriter);
+            WordIndexDeflatedBlob.Write(writer, raw.ToArray());
+        }
+        Section($"list styles ({styleNames.Length})");
+        WordIndexSpanAnchor.WriteAll(writer, Anchors);
+        Section($"anchors ({Anchors.Length}, scan state)");
+        IndexBinaryArrays.WriteVarints(writer, TextLengthGroupTotals);
+        Section("text-length groups");
+        new EliasFanoSequence(Headings.Select(h => h.BlockIndex).ToArray()).Write(writer);
+        foreach (WordDocumentHeading heading in Headings) writer.Write((byte)heading.Level);
+        IndexBinaryArrays.WriteCompressedStrings(writer, Headings.Select(h => h.Text).ToArray());
+        Section($"headings ({Headings.Length})");
+        // note references: blocks as Elias-Fano; kind + number as varints (numbers delta-coded per kind); labels deflated. The bodies' byte
+        // ranges are not stored: nothing reads them (a note is rendered inside its block), so a loaded index reports -1 for them.
+        new EliasFanoSequence(NoteReferences.Select(r => r.BlockIndex).ToArray()).Write(writer);
+        var noteBytes = new List<byte>(NoteReferences.Length * 3);
+        var previousNumber = new int[2];
         foreach (OdtNoteReference note in NoteReferences)
         {
-            writer.Write(note.BlockIndex); writer.Write((byte)note.Kind); writer.Write(note.Number); writer.Write(note.Label);
-            writer.Write(note.BodyStart); writer.Write(note.BodyEnd);
+            int kind = (int)note.Kind;
+            noteBytes.Add((byte)kind);
+            IndexBinaryArrays.AppendVarint(noteBytes, WordListCounterState.Zigzag(note.Number - previousNumber[kind]));
+            previousNumber[kind] = note.Number;
         }
-        IndexBinaryArrays.Write(writer, SectionFirstBlocks);
-        IndexBinaryArrays.Write(writer, SectionTextWidths);
-        Bookmarks.Write(writer);
+        writer.Write(noteBytes.Count);
+        writer.Write(noteBytes.ToArray());
+        IndexBinaryArrays.WriteCompressedStrings(writer, NoteReferences.Select(r => r.Label).ToArray());
+        Section($"note references ({NoteReferences.Length})");
+        IndexBinaryArrays.WriteDeltaVarints(writer, SectionFirstBlocks);
+        IndexBinaryArrays.WriteVarints(writer, SectionTextWidths);
+        Section($"sections ({SectionFirstBlocks.Length})");
+        IndexBinaryArrays.WriteCompressedStrings(writer, Bookmarks.Names);
+        new EliasFanoSequence(Bookmarks.Blocks).Write(writer);
+        Section($"bookmarks ({Bookmarks.Names.Length})");
         writer.Flush();
     }
 
@@ -159,54 +187,64 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
         long sourceTicks = reader.ReadInt64();
         bool isFlat = reader.ReadBoolean();
         ZipEntryLocation? entry = reader.ReadBoolean() ? DocxRandomAccessIndex.ReadEntry(reader) : null;
-        List<DeflateCheckpoint> checkpoints = DocxRandomAccessIndex.ReadCheckpoints(reader);
-        string rootOpenTag = reader.ReadString();
-        string[] styleSections = ReadStrings(reader);
-        string[] listLabels = ReadStrings(reader);
-        string[] listLabelLayouts = ReadStrings(reader);
-        if (listLabelLayouts.Length != listLabels.Length) throw new InvalidDataException("OpenDocument index: list label geometry does not match the labels.");
-        long[] starts = IndexBinaryArrays.ReadDeltaVarints(reader);
-        long[] ends = IndexBinaryArrays.ReadBlockEnds(reader, starts);
-        WordDocumentBlockKind[] kinds = IndexBinaryArrays.Read<WordDocumentBlockKind>(reader);
-        int[] textLengths = IndexBinaryArrays.ReadVarints(reader);
-        byte[] listLevels = IndexBinaryArrays.Read<byte>(reader);
-        int[] labelIds = IndexBinaryArrays.ReadIds(reader);
-        if (kinds.Length != starts.Length || textLengths.Length != starts.Length || labelIds.Length != starts.Length || labelIds.Any(id => id >= listLabels.Length))
-            throw new InvalidDataException("OpenDocument index: block tables do not match.");
-        var headings = new WordDocumentHeading[reader.ReadInt32()];
-        for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(reader.ReadInt32(), reader.ReadByte(), reader.ReadString());
-        var notes = new OdtNoteReference[reader.ReadInt32()];
-        for (int i = 0; i < notes.Length; i++)
-            notes[i] = new OdtNoteReference(reader.ReadInt32(), (WordDocumentNoteKind)reader.ReadByte(), reader.ReadInt32(), reader.ReadString(), reader.ReadInt64(), reader.ReadInt64());
-        int[] sectionFirstBlocks = IndexBinaryArrays.Read<int>(reader);
-        int[] sectionTextWidths = IndexBinaryArrays.Read<int>(reader);
-        if (sectionFirstBlocks.Length != sectionTextWidths.Length || sectionFirstBlocks.Any(block => (uint)block >= (uint)Math.Max(1, starts.Length)))
-            throw new InvalidDataException("OpenDocument index: section table does not match the blocks.");
-        WordDocumentBookmarkTable bookmarks = WordDocumentBookmarkTable.Read(reader, starts.Length);
-        return new OdtRandomAccessIndex(sourceLength, sourceTicks, isFlat, entry, checkpoints, rootOpenTag, styleSections,
-                                        starts, ends, kinds, textLengths, listLevels, labelIds, listLabels, headings, notes)
+        int blockCount = reader.ReadInt32();
+        long lastBlockEnd = reader.ReadInt64();
+        if (blockCount < 0 || lastBlockEnd < 0) throw new InvalidDataException("OpenDocument index: negative count.");
+        List<DeflateCheckpoint> checkpoints = DeflateCheckpointTable.Read(reader);
+        string rootOpenTag = IndexBinaryArrays.ReadCompressedString(reader);
+        string[] styleSections = IndexBinaryArrays.ReadCompressedStrings(reader);
+        string[] styleNames = IndexBinaryArrays.ReadCompressedStrings(reader);
+        var usedListStyles = new Dictionary<string, OdtListStyle>(StringComparer.Ordinal);
+        using (var styleReader = new BinaryReader(new MemoryStream(WordIndexDeflatedBlob.Read(reader)), Encoding.UTF8))
+            foreach (string name in styleNames) usedListStyles[name] = OdtListStyle.Read(styleReader);
+        WordIndexSpanAnchor[] anchors = WordIndexSpanAnchor.ReadAll(reader, blockCount, lastBlockEnd);
+        int[] groupTotals = IndexBinaryArrays.ReadVarints(reader);
+        WordIndexTextLengthGroups.Validate(groupTotals, blockCount);
+        int[] headingBlocks = EliasFanoSequence.Read(reader).ToArray();
+        var levels = new byte[headingBlocks.Length];
+        for (int i = 0; i < levels.Length; i++) levels[i] = reader.ReadByte();
+        string[] headingTexts = IndexBinaryArrays.ReadCompressedStrings(reader);
+        if (headingTexts.Length != headingBlocks.Length || headingBlocks.Any(block => block >= blockCount)) throw new InvalidDataException("OpenDocument index: headings do not match the blocks.");
+        var headings = new WordDocumentHeading[headingBlocks.Length];
+        for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(headingBlocks[i], levels[i], headingTexts[i]);
+        int[] noteBlocks = EliasFanoSequence.Read(reader).ToArray();
+        int noteByteCount = reader.ReadInt32();
+        if (noteByteCount < 0) throw new InvalidDataException("OpenDocument index: note references damaged.");
+        byte[] noteBytes = reader.ReadBytes(noteByteCount);
+        if (noteBytes.Length != noteByteCount) throw new EndOfStreamException("OpenDocument index: note references truncated.");
+        string[] noteLabels = IndexBinaryArrays.ReadCompressedStrings(reader);
+        if (noteLabels.Length != noteBlocks.Length || noteBlocks.Any(block => block >= blockCount)) throw new InvalidDataException("OpenDocument index: note references do not match the blocks.");
+        var notes = new OdtNoteReference[noteBlocks.Length];
         {
-            ListLabelLayouts = listLabelLayouts,
+            int position = 0;
+            var previousNumber = new int[2];
+            for (int i = 0; i < notes.Length; i++)
+            {
+                if (position >= noteBytes.Length) throw new EndOfStreamException("OpenDocument index: note references truncated.");
+                int kind = noteBytes[position++];
+                if (kind > 1) throw new InvalidDataException("OpenDocument index: bad note kind.");
+                previousNumber[kind] += WordListCounterState.Unzigzag(IndexBinaryArrays.ReadVarint(noteBytes, ref position));
+                notes[i] = new OdtNoteReference(noteBlocks[i], (WordDocumentNoteKind)kind, previousNumber[kind], noteLabels[i], -1, -1);
+            }
+        }
+        int[] sectionFirstBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
+        int[] sectionTextWidths = IndexBinaryArrays.ReadVarints(reader);
+        if (sectionFirstBlocks.Length != sectionTextWidths.Length || sectionFirstBlocks.Any(block => (uint)block >= (uint)Math.Max(1, blockCount)))
+            throw new InvalidDataException("OpenDocument index: section table does not match the blocks.");
+        string[] bookmarkNames = IndexBinaryArrays.ReadCompressedStrings(reader);
+        int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
+        if (bookmarkBlocks.Length != bookmarkNames.Length || bookmarkBlocks.Any(block => block < 0 || block >= Math.Max(1, blockCount)))
+            throw new InvalidDataException("OpenDocument index: bookmark table does not match the blocks.");
+        return new OdtRandomAccessIndex(sourceLength, sourceTicks, isFlat, entry, checkpoints, rootOpenTag, styleSections, usedListStyles,
+                                        blockCount, lastBlockEnd, anchors, groupTotals, headings, notes)
+        {
             SectionFirstBlocks = sectionFirstBlocks,
             SectionTextWidths = sectionTextWidths,
-            Bookmarks = bookmarks,
+            Bookmarks = new WordDocumentBookmarkTable(bookmarkNames, bookmarkBlocks),
         };
     }
 
-    private static void WriteStrings(BinaryWriter writer, string[] values)
-    {
-        writer.Write(values.Length);
-        foreach (string value in values) writer.Write(value);
-    }
-
-    private static string[] ReadStrings(BinaryReader reader)
-    {
-        var values = new string[reader.ReadInt32()];
-        for (int i = 0; i < values.Length; i++) values[i] = reader.ReadString();
-        return values;
-    }
-
-    // ── sidecar file helpers ──────────────────────────────────────────────────────────
+    // -- sidecar file helpers -----------------------------------------------------------
 
     public void Save(string indexPath)
     {
@@ -226,7 +264,7 @@ public sealed class OdtRandomAccessIndex : IOdtBlockTable
             OdtRandomAccessIndex index = Read(reader.BaseStream);
             return index.MatchesSource(documentPath) ? index : null;
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or EndOfStreamException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or EndOfStreamException or OverflowException or ArgumentException or FormatException)
         {
             return null;
         }
