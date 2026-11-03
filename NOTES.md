@@ -1325,23 +1325,45 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   `WordPictureHtml.AppendPlacement`, one inline SVG, each shape's text in a box over its outline, group pictures by id at
   their box. One shape whose text grows (spAutoFit) keeps its text in the flow; the SVG stretches (non-scaling strokes).
 - One plain rect text box (no wps:style, literal colours) keeps the old text-box rendering (CSS border / fill).
-- Presets drawn: rect, roundRect, ellipse, line, straightConnector1, triangle, right / left / up / down arrows
-  (transcribed from LibreOffice oox/source/drawingml/customshapes/presetShapeDefinitions.xml); other presets = a box of the
-  right size. custGeom: numeric moveTo / lnTo / cubicBezTo / quadBezTo / arcTo / close scaled from path w / h.
-- Colours: srgbClr / sysClr / schemeClr (direct to dk1 / lt1 / ..., LibreOffice color.cxx:211-238) / prstClr; lumMod /
-  lumOff (HSL) and tint / shade (gamma 2.3 linear RGB) ported from color.cxx:776-821. Fill: fillRef, then the shape's own
-  (shape.cxx:3122-3141); line: lnRef with the theme's lnStyleLst width (theme.cxx:41-58), then a:ln. gradFill = SVG linear
-  gradient (gs pos /100000, lin ang). headEnd = start, tailEnd = end (linepropertiescontext.cxx:216-221), drawn as triangles.
+- Geometry (`DocxShapeGeometry`, 2026-11-03): every preset from ECMA-376 annex D presetShapeDefinitions.xml (LibreOffice's
+  copy, embedded as a resource, parsed once on first use), the shape's avLst replacing the preset's adjust values by name;
+  custGeom with avLst / gdLst guides. Every ST_GeomGuideFormula operator is evaluated with LibreOffice's meaning
+  (customshapegeometry.cxx:71-90, :486-606), built-in names first (:180-372), the shape's own a:ext in EMU as w / h. Paths:
+  both w and h set = that path's own space, otherwise the shape's EMU (customshapeproperties.cxx:236-244, svx
+  EnhancedCustomShape2d SetPathSize :650-700); fill modes and stroke per path; moveTo / close / checkClosed as
+  CreateSubPath builds the polygon (:2134-2236); arcTo angles are on the ellipse (lcl_getNormalizedCircleAngleRad
+  :2051-2068), swAng clamped to +-360, a negative sweep reversed, drawn as LibreOffice's 30-degree Bezier pieces (basegfx
+  createPolygonFromUnitEllipseSegment). Each a:path = one object: fill closes every subpath, even-odd (vcl skia kEvenOdd),
+  darken / lighten brightness per GetColorData; stroke separately. A prst name that is no preset = a box.
+- Colours (`DocxDrawingColor`): srgbClr / scrgbClr / hslClr / sysClr / schemeClr / prstClr (LibreOffice's preset table, so
+  dkGray = A9A9A9, not CSS darkgray), every transform of color.cxx getColor :756-874 and alpha / alphaMod / alphaOff
+  (:467-477) -> fill-opacity / stroke-opacity / stop-opacity.
+- Fill: none, then the theme fill style fillRef idx names (fillStyleLst 1-999, bgFillStyleLst 1001+, past the end = the last,
+  theme.cxx:41-55; phClr = the fillRef colour), then the shape's own over it (assignUsed), a:grpFill = the group's fill.
+  Linear gradients span the box grown for the angle (gradienttools.cxx init1DGradientInfo), a:path circle = radial gradient
+  of the box diagonal about the fillToRect centre (initEllipticalGradientInfo, fillproperties.cxx:528-551), rotWithShape="0"
+  counter-rotated. Line: none, the theme a:ln lnRef idx names (all of it: width, fill, dash, cap, ends), then the shape's a:ln.
+- Dashes: lclConvertPresetDash (lineproperties.cxx:60-84) dots / dashes / distance in line widths; a round or square cap is
+  inside the length (0.99 moved from dash to gap, :451-462); a:custDash drawn stop by stop (d / sp in 1000ths of a percent or
+  "n%"). Line ends: triangle / stealth / diamond / oval / arrow with sm / med / lg width and length, LibreOffice's marker
+  outlines and sizes (lineproperties.cxx:223-367, minimum base 0.7 mm), placed and the shaft cut back as drawinglayer does
+  (b2dlinegeometry.cxx:38-178, polygonprimitive2d.cxx:704-770), on every open subpath; headEnd = start, tailEnd = end.
 - Groups: child at (x - chOff) * ext / chExt from the group's offset, chExt 0 = scale 1 (shape.cxx:1433-1456); rot / flipH /
   flipV per shape (transform2dcontext.cxx:48-49).
 - VML (w:pict without v:imagedata): first v:rect / v:roundrect / v:oval / v:line / v:shape; fillcolor (default white),
-  strokecolor (black), strokeweight (default 1 EMU = thinnest), filled / stroked, v:fill on, v:stroke dashstyle,
-  v:textbox inset (defaults 0.1in / 0.05in, vmltextboxcontext.cxx:186-211), mso-fit-shape-to-text. Placement as VML pictures.
-- Approximations / not done: theme fill styles drawn as the fillRef colour solid; dash patterns approximate; arrow end
-  types all triangles; alpha ignored; arcTo semantics and v:roundrect default arcsize 0.2 unverified; group rotation of
-  text boxes; v:group (first shape only); wpc canvases, SmartArt, charts stay placeholders.
+  strokecolor (black), strokeweight (default 1 EMU = thinnest), filled / stroked, v:fill on, v:stroke dashstyle (as
+  LibreOffice maps it to DrawingML presets, vmlformatting.cxx:565-597; a number list = dash / space pairs in line widths,
+  W3C NOTE-VML), endcap, start / end arrows (block / classic / diamond / oval / open, :599-633), v:textbox inset (defaults
+  0.1in / 0.05in, vmltextboxcontext.cxx:186-211), mso-fit-shape-to-text. v:roundrect arcsize = a fraction of half the shorter
+  side, default 0.2 (W3C NOTE-VML; vmlshape.cxx:1066-1077 the same radius). Outlines are the rect / roundRect / ellipse
+  presets. Placement as VML pictures.
+- Not done yet: gradient a:path rect / shape (LibreOffice's rectangular gradient; drawn as its first stop's colour), blip
+  and pattern fills on shapes (the fill under them stays), the preset text rectangle (text uses the whole box); group
+  rotation / flip applied to children and text boxes; v:group children; wpc canvases, SmartArt and charts.
 - Search: shape text is w:txbxContent text, found once (mc:Fallback skipped by both scanner and reference).
-- Checks: `--fidelity` DocxShapesFidelityTest; live `vue-demo/playwright/docxShapesCheck.mjs TestOutput/fidelity-v1-shapes.docx`
+- Checks: `--fidelity` DocxShapesFidelityTest and DocxDrawingFidelityTest; live `vue-demo/playwright/docxDrawingDetailsCheck.mjs TestOutput/fidelity-v1-drawing-details.docx` (every path parses, gradients resolve, markers measured at the line ends) (hand-worked values from the cited source:
+  dashes, every line end, alpha, arcTo, path without w / h, every guide operator, darken / lighten, theme styles, grpFill,
+  VML strokes); live `vue-demo/playwright/docxShapesCheck.mjs TestOutput/fidelity-v1-shapes.docx`
   (SVG boxes measured in the DOM, text once, no console errors).
 
 ### RTF text boxes and shapes (2026-11-03)

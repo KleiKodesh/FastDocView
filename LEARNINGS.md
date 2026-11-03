@@ -448,4 +448,10 @@ window) and the p95 (a slow path hit by more than one window in twenty); the wor
   the live rig while the harness strings looked right. Measuring boxes in the DOM caught it; inline `margin:0;border:0`.
 - **2026-11-03, shapes:** LibreOffice maps DrawingML tx1 / bg1 straight to dk1 / lt1 (color.cxx), unlike w:themeColor,
   which goes through w:clrSchemeMapping; the two theme lookups stay separate methods.
+- **2026-11-03, drawing details:** a:prstClr names are not CSS names: DrawingML dkGray is A9A9A9 (LibreOffice
+  constDmlColors), and "dkgray" is no CSS colour at all, so passing the name through drew nothing. Guide names are looked up
+  after the built-ins (l t r b w h hc vc ...), so a guide called "b" is the shape's height; a test fixture that used it
+  proved the lookup order, not the formula. arcTo stAng / swAng are angles on the ellipse, not its parameter (LibreOffice
+  lcl_getNormalizedCircleAngleRad); the earlier parametric reading put 45-degree arcs on 2:1 ellipses off the 45-degree ray.
+  A theme a:ln without its own fill draws no line (getActualLineProperties) - fixtures need the solidFill phClr Word writes.
 

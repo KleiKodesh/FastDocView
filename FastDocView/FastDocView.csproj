@@ -26,6 +26,11 @@
     <ProjectReference Include="..\..\TextEncodingDetection\TextEncodingDetection\TextEncodingDetection.csproj" />
   </ItemGroup>
 
+  <!-- ECMA-376 Part 1 presetShapeDefinitions.xml as LibreOffice ships it (oox/source/drawingml/customshapes): every preset outline. -->
+  <ItemGroup>
+    <EmbeddedResource Include="DocxHtml\presetShapeDefinitions.xml" LogicalName="FastDocView.presetShapeDefinitions.xml" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(TargetFramework)'=='net48'">
     <Reference Include="System.IO.Compression" />
     <PackageReference Include="System.Memory" Version="4.5.5" />

@@ -12,19 +12,24 @@ namespace FastDocView.DocxHtml;
 ///   own offset, a missing or zero chExt meaning scale 1 (oox/source/drawingml/shape.cxx:1433-1456). The top group fills
 ///   the frame (wp:extent).
 /// - a:xfrm rot in 60000ths of a degree clockwise, flipH / flipV (oox/source/drawingml/transform2dcontext.cxx:48-49).
-/// - fill: no fill unless the theme style (wps:style a:fillRef) or the shape's own fill says so, the shape's own winning
-///   (shape.cxx:3122-3141); line: likewise a:lnRef then a:ln (shape.cxx:1777-1784). A style reference is drawn as a solid
-///   colour of its own colour (the theme's fill style list is not read: approximation) and a line of its colour with the
-///   theme line style's width (theme.cxx:41-58).
-/// - a:gradFill: gs pos in 100000ths (oox/source/drawingml/misccontexts.cxx:74-76), a:lin ang in 60000ths of a degree (:99);
-///   drawn as an SVG linear gradient (path / radial gradients approximated as linear).
-/// - a:headEnd is the line's start, a:tailEnd its end (oox/source/drawingml/linepropertiescontext.cxx:216-221); every end
-///   type other than none is drawn as a triangle (approximation).
-/// - custGeom paths: a:path w / h are the path's own coordinate space (customshapegeometry.cxx:997-998), scaled to the shape;
-///   moveTo / lnTo / cubicBezTo / quadBezTo / arcTo / close. Points must be numbers (guide names are not evaluated: such a
-///   shape is drawn as a box). Unverified: an a:path without w / h is taken to use the shape's own size in EMU.
-/// - presets drawn: rect, roundRect, ellipse, line, straightConnector1, triangle, right / left / up / down arrows; every other
-///   preset is a box of the right size.
+/// - geometry: <see cref="DocxShapeGeometry"/> (every preset, guides, custom paths).
+/// - fill (Shape::getActualFillProperties, shape.cxx:3122-3148): none, then the theme fill style a:fillRef idx names
+///   (theme.cxx:49-54, its phClr = the fillRef colour), then the shape's own fill over it (FillProperties::assignUsed:
+///   a gradient without its own stops keeps the style's), a:grpFill = the parent group's fill.
+/// - line (getActualLineProperties, shape.cxx:3150-3170): none, then the theme a:ln a:lnRef idx names (phClr = the lnRef
+///   colour), then the shape's own a:ln, each attribute / child used only when set (LineProperties::assignUsed,
+///   lineproperties.cxx:407-430); its colour: a solid fill's, a gradient's first stop (its second when it has more than two,
+///   FillProperties::getBestSolidColor fillproperties.cxx:401-424).
+/// - dashes (lineproperties.cxx:60-84 lclConvertPresetDash): a preset is dots of DotLen and dashes of DashLen each followed
+///   by Distance, in line widths; with a round or square cap (a preset) or a round cap (a custom dash) the cap is inside the
+///   length, so LibreOffice takes 0.99 off each dash and adds it to the gap (:451-462), and the SVG cap adds it back. A
+///   custom dash (a:custDash a:ds d / sp, 1000ths of a percent of the line width, linepropertiescontext.cxx:135-185) is
+///   drawn stop by stop.
+/// - gradients: gs pos in 100000ths (misccontexts.cxx:74-76), a:lin ang in 60000ths of a degree (:99), a:path circle =
+///   radial about the a:fillToRect centre (fillproperties.cxx:528-551); rotWithShape="0" keeps the angle off the shape's
+///   rotation (:521-525). a:path rect / shape and blip / pattern fills are not drawn (the fill below them stays).
+/// - a:headEnd is the line's start, a:tailEnd its end (oox/source/drawingml/linepropertiescontext.cxx:216-221).
+/// - alpha: every colour's opacity (DocxDrawingColor) goes to fill-opacity / stroke-opacity / stop-opacity.
 /// </summary>
 internal static class DocxShapeReader
 {
@@ -37,7 +42,7 @@ internal static class DocxShapeReader
         var shapes = new List<WordShape>();
         int textIndex = 0;
         foreach (XElement child in shapeTree.Elements())
-            Walk(child, shapes, theme, pictureId, ref textIndex, x => x, y => y, 1, 1, frameWidth, frameHeight, isTop: true);
+            Walk(child, shapes, theme, pictureId, ref textIndex, x => x, y => y, 1, 1, frameWidth, frameHeight, isTop: true, groupFill: null);
         return shapes;
     }
 
@@ -46,20 +51,23 @@ internal static class DocxShapeReader
     /// points, <paramref name="scaleX"/> / <paramref name="scaleY"/> its EMU lengths; a top-level shape or group fills the frame.
     /// </summary>
     private static void Walk(XElement element, List<WordShape> shapes, DocxTheme? theme, PictureIdResolver pictureId, ref int textIndex,
-                             Func<double, double> mapX, Func<double, double> mapY, double scaleX, double scaleY, double frameWidth, double frameHeight, bool isTop)
+                             Func<double, double> mapX, Func<double, double> mapY, double scaleX, double scaleY, double frameWidth, double frameHeight, bool isTop,
+                             ShapeFill? groupFill)
     {
         switch (element.Name.LocalName)
         {
             case "wgp" or "grpSp":
             {
-                XElement? transform = element.Element("grpSpPr")?.Element("xfrm");
+                XElement? properties = element.Element("grpSpPr");
+                XElement? transform = properties?.Element("xfrm");
                 (double x, double y, double width, double height) = Box(transform, mapX, mapY, scaleX, scaleY, frameWidth, frameHeight, isTop);
                 double childOffsetX = Attribute(transform?.Element("chOff"), "x"), childOffsetY = Attribute(transform?.Element("chOff"), "y");
                 double childWidth = Attribute(transform?.Element("chExt"), "cx"), childHeight = Attribute(transform?.Element("chExt"), "cy");
                 double childScaleX = childWidth > 0 ? width / childWidth : scaleX, childScaleY = childHeight > 0 ? height / childHeight : scaleY;
+                ShapeFill? fill = ShapeFill.Apply(ShapeFill.None, OwnFill(properties), theme, null, groupFill);
                 foreach (XElement child in element.Elements())
                     Walk(child, shapes, theme, pictureId, ref textIndex, cx => x + (cx - childOffsetX) * childScaleX, cy => y + (cy - childOffsetY) * childScaleY,
-                         childScaleX, childScaleY, frameWidth, frameHeight, isTop: false);
+                         childScaleX, childScaleY, frameWidth, frameHeight, isTop: false, fill);
                 break;
             }
             case "wsp":
@@ -67,7 +75,7 @@ internal static class DocxShapeReader
                 XElement? properties = element.Element("spPr");
                 XElement? transform = properties?.Element("xfrm");
                 (double x, double y, double width, double height) = Box(transform, mapX, mapY, scaleX, scaleY, frameWidth, frameHeight, isTop);
-                WordShape shape = Shape(properties, element.Element("style"), theme, x, y, width, height);
+                WordShape shape = Shape(properties, element.Element("style"), theme, x, y, width, height, groupFill);
                 if (element.Element("txbx") is not null) { shape.TextIndex = textIndex++; shape.TextStyle = TextStyle(element.Element("bodyPr")); }
                 shapes.Add(shape);
                 break;
@@ -95,7 +103,10 @@ internal static class DocxShapeReader
                 Attribute(transform.Element("ext"), "cx") * scaleX, Attribute(transform.Element("ext"), "cy") * scaleY);
     }
 
-    private static WordShape Shape(XElement? properties, XElement? style, DocxTheme? theme, double x, double y, double width, double height)
+    private static XElement? OwnFill(XElement? properties)
+        => properties?.Elements().FirstOrDefault(e => e.Name.LocalName is "noFill" or "solidFill" or "gradFill" or "grpFill" or "blipFill" or "pattFill");
+
+    private static WordShape Shape(XElement? properties, XElement? style, DocxTheme? theme, double x, double y, double width, double height, ShapeFill? groupFill)
     {
         XElement? transform = properties?.Element("xfrm");
         var shape = new WordShape
@@ -104,151 +115,243 @@ internal static class DocxShapeReader
             RotationDegrees = Attribute(transform, "rot") / 60000,
             FlipHorizontal = IsOn(transform, "flipH"), FlipVertical = IsOn(transform, "flipV"),
         };
-        if (properties?.Element("prstGeom") is { } preset)
-        {
-            shape.Geometry = (string?)preset.Attribute("prst") switch
-            {
-                "rect" => WordShapeGeometry.Rectangle,
-                "roundRect" => WordShapeGeometry.RoundRectangle,
-                "ellipse" => WordShapeGeometry.Ellipse,
-                "line" or "straightConnector1" => WordShapeGeometry.Line,
-                "triangle" => WordShapeGeometry.Triangle,
-                "rightArrow" => WordShapeGeometry.RightArrow,
-                "leftArrow" => WordShapeGeometry.LeftArrow,
-                "upArrow" => WordShapeGeometry.UpArrow,
-                "downArrow" => WordShapeGeometry.DownArrow,
-                _ => WordShapeGeometry.Box,
-            };
-            shape.Adjust = AdjustValues(preset.Element("avLst"));
-        }
-        else if (properties?.Element("custGeom") is { } custom && CustomPath(custom, width, height) is { } path)
+        double ownWidth = Attribute(transform?.Element("ext"), "cx"), ownHeight = Attribute(transform?.Element("ext"), "cy");
+        XElement? geometry = properties?.Elements().FirstOrDefault(e => e.Name.LocalName is "prstGeom" or "custGeom");
+        if (geometry is not null && DocxShapeGeometry.Paths(geometry, width, height, ownWidth, ownHeight) is { } paths)
         {
             shape.Geometry = WordShapeGeometry.Path;
-            shape.PathData = path;
+            shape.Paths = paths;
         }
-        else shape.Geometry = properties?.Element("custGeom") is not null ? WordShapeGeometry.Box : WordShapeGeometry.Rectangle;
+        else if (geometry is null)
+        {
+            // no geometry: a rectangle (the ECMA-376 default shape)
+            shape.Geometry = WordShapeGeometry.Path;
+            shape.Paths = DocxShapeGeometry.Paths(new XElement("prstGeom", new XAttribute("prst", "rect")), width, height, ownWidth, ownHeight);
+        }
+        else shape.Geometry = WordShapeGeometry.Box;   // a name that is no ECMA-376 preset, or a custom geometry without a path
 
-        // fill: the style reference, then the shape's own
+        // fill: none, the theme style, the shape's own
         XElement? fillReference = style?.Element("fillRef");
-        string? placeholder = DocxDrawingColor.Hex(fillReference, theme);
-        if (fillReference is not null && Attribute(fillReference, "idx") > 0) shape.FillColor = DocxDrawingColor.Css(fillReference, theme);
-        XElement? ownFill = properties?.Elements().FirstOrDefault(e => e.Name.LocalName is "noFill" or "solidFill" or "gradFill");
-        switch (ownFill?.Name.LocalName)
-        {
-            case "noFill": shape.FillColor = null; break;
-            case "solidFill": shape.FillColor = DocxDrawingColor.Css(ownFill, theme, placeholder); break;
-            case "gradFill":
-                var stops = new List<(double, string)>();
-                foreach (XElement stop in ownFill.Element("gsLst")?.Elements("gs") ?? [])
-                    if (DocxDrawingColor.Css(stop, theme, placeholder) is { } color)
-                        stops.Add((Math.Max(0, Math.Min(1, Attribute(stop, "pos") / 100000)), color));
-                if (stops.Count > 0) { shape.GradientStops = stops; shape.FillColor = stops[0].Item2; }
-                shape.GradientAngleDegrees = Attribute(ownFill.Element("lin"), "ang") / 60000;
-                break;
-        }
+        string? fillPlaceholder = DocxDrawingColor.Hex(fillReference, theme);
+        ShapeFill fill = ShapeFill.None;
+        if (fillReference is not null && theme?.FillStyle((int)Attribute(fillReference, "idx")) is { } themeFill)
+            fill = ShapeFill.Apply(fill, themeFill, theme, fillPlaceholder, groupFill) ?? fill;
+        fill = ShapeFill.Apply(fill, OwnFill(properties), theme, fillPlaceholder, groupFill) ?? fill;
+        fill.ApplyTo(shape);
 
-        // line: the style reference, then the shape's own a:ln
+        // line: none, the theme a:ln, the shape's own
         XElement? lineReference = style?.Element("lnRef");
-        int lineIndex = (int)Attribute(lineReference, "idx");
         string? linePlaceholder = DocxDrawingColor.Hex(lineReference, theme);
-        if (lineReference is not null && lineIndex > 0)
-        {
-            shape.LineColor = DocxDrawingColor.Css(lineReference, theme);
-            long themeWidth = theme?.LineStyleWidthEmu(lineIndex) ?? -1;
-            shape.LineWidthPt = themeWidth > 0 ? themeWidth / EmuPerPoint : 0;
-        }
-        if (properties?.Element("ln") is { } line)
-        {
-            if (line.Attribute("w") is not null) shape.LineWidthPt = Attribute(line, "w") / EmuPerPoint;
-            if (line.Element("noFill") is not null) shape.LineColor = null;
-            else if (line.Element("solidFill") is { } lineFill) shape.LineColor = DocxDrawingColor.Css(lineFill, theme, linePlaceholder);
-            else if (line.Element("gradFill")?.Element("gsLst")?.Element("gs") is { } firstStop) shape.LineColor = DocxDrawingColor.Css(firstStop, theme, linePlaceholder);
-            shape.Dash = (string?)line.Element("prstDash")?.Attribute("val") switch
-            {
-                // ST_PresetLineDashVal names as dash / space lengths in line widths: an approximation, the exact patterns not checked against the spec or Word
-                "dot" or "sysDot" => [1, 1],
-                "dash" or "sysDash" => [3, 1],
-                "lgDash" => [8, 3],
-                "dashDot" or "sysDashDot" => [4, 3, 1, 3],
-                "lgDashDot" => [8, 3, 1, 3],
-                "lgDashDotDot" or "sysDashDotDot" => [8, 3, 1, 3, 1, 3],
-                _ => null,
-            };
-            shape.HeadArrow = (string?)line.Element("headEnd")?.Attribute("type") is { } head && head != "none";
-            shape.TailArrow = (string?)line.Element("tailEnd")?.Attribute("type") is { } tail && tail != "none";
-        }
+        var line = new ShapeLine();
+        if (lineReference is not null && theme?.LineStyle((int)Attribute(lineReference, "idx")) is { } themeLine) line.Apply(themeLine, theme, linePlaceholder);
+        if (properties?.Element("ln") is { } ownLine) line.Apply(ownLine, theme, linePlaceholder);
+        line.ApplyTo(shape);
         return shape;
     }
 
-    /// <summary>a:avLst gd fmla="val n" values in order (only constants: Word writes those).</summary>
-    private static double[] AdjustValues(XElement? list)
+    /// <summary>A resolved DrawingML fill (oox FillProperties as far as it is drawn here).</summary>
+    private sealed class ShapeFill
     {
-        if (list is null) return [];
-        var values = new List<double>();
-        foreach (XElement guide in list.Elements("gd"))
-        {
-            string formula = ((string?)guide.Attribute("fmla") ?? "").Trim();
-            if (formula.StartsWith("val ", StringComparison.Ordinal) && double.TryParse(formula.Substring(4), NumberStyles.Float, CultureInfo.InvariantCulture, out double value)) values.Add(value);
-            else return values.ToArray();
-        }
-        return values.ToArray();
-    }
+        public static readonly ShapeFill None = new() { Kind = FillKind.None };
+        public enum FillKind { None, Solid, Gradient }
+        public FillKind Kind;
+        public DocxResolvedColor Color;
+        public List<(double Position, DocxResolvedColor Color)>? Stops;
+        public double? AngleDegrees;
+        public bool? RotateWithShape;
+        public string? PathKind;
+        public double CenterX = 0.5, CenterY = 0.5;
 
-    /// <summary>The custGeom outline as SVG path data in the shape's points, or null when a point is not a number.</summary>
-    private static string? CustomPath(XElement custom, double width, double height)
-    {
-        var d = new StringBuilder();
-        foreach (XElement path in custom.Element("pathLst")?.Elements("path") ?? [])
+        /// <summary>
+        /// <paramref name="element"/> (a fill element) over <paramref name="under"/> as assignUsed does: noFill / solidFill replace
+        /// it, a gradFill keeps the stops, angle and path it does not set itself, a:grpFill takes the group's; a blip or
+        /// pattern fill (not drawn) or no element leaves <paramref name="under"/>. Null only when grpFill has no group.
+        /// </summary>
+        public static ShapeFill? Apply(ShapeFill under, XElement? element, DocxTheme? theme, string? placeholder, ShapeFill? groupFill)
         {
-            double pathWidth = Attribute(path, "w"), pathHeight = Attribute(path, "h");
-            double sx = width / (pathWidth > 0 ? pathWidth : width * EmuPerPoint), sy = height / (pathHeight > 0 ? pathHeight : height * EmuPerPoint);
-            if (double.IsNaN(sx) || double.IsInfinity(sx)) sx = 0;
-            if (double.IsNaN(sy) || double.IsInfinity(sy)) sy = 0;
-            double currentX = 0, currentY = 0;
-            foreach (XElement command in path.Elements())
+            switch (element?.Name.LocalName)
             {
-                var points = new List<(double x, double y)>();
-                foreach (XElement point in command.Elements("pt"))
+                case "noFill": return None;
+                case "solidFill":
+                    return DocxDrawingColor.Resolve(element, theme, placeholder) is { } color ? new ShapeFill { Kind = FillKind.Solid, Color = color } : under;
+                case "grpFill": return groupFill ?? under;
+                case "gradFill":
                 {
-                    if (!double.TryParse((string?)point.Attribute("x"), NumberStyles.Float, CultureInfo.InvariantCulture, out double px)
-                        || !double.TryParse((string?)point.Attribute("y"), NumberStyles.Float, CultureInfo.InvariantCulture, out double py)) return null;
-                    points.Add((px * sx, py * sy));
-                }
-                string letter;
-                switch (command.Name.LocalName)
-                {
-                    case "moveTo" when points.Count == 1: letter = "M"; break;
-                    case "lnTo" when points.Count == 1: letter = "L"; break;
-                    case "cubicBezTo" when points.Count == 3: letter = "C"; break;
-                    case "quadBezTo" when points.Count == 2: letter = "Q"; break;
-                    case "close": d.Append('Z'); continue;
-                    case "arcTo":
+                    var fill = new ShapeFill { Kind = FillKind.Gradient };
+                    ShapeFill? baseGradient = under.Kind == FillKind.Gradient ? under : null;
+                    if (element.Element("gsLst") is { } list)
                     {
-                        // an arc of the ellipse with radii wR / hR from angle stAng sweeping swAng (60000ths of a degree) starting at the current point;
-                        // read as the attribute names say, the spec text not consulted (unverified)
-                        if (!TryNumber(command, "wR", out double radiusX) || !TryNumber(command, "hR", out double radiusY)
-                            || !TryNumber(command, "stAng", out double start) || !TryNumber(command, "swAng", out double sweep)) return null;
-                        radiusX *= sx; radiusY *= sy;
-                        double startRadians = start / 60000 * Math.PI / 180, endRadians = (start + sweep) / 60000 * Math.PI / 180;
-                        double centerX = currentX - radiusX * Math.Cos(startRadians), centerY = currentY - radiusY * Math.Sin(startRadians);
-                        currentX = centerX + radiusX * Math.Cos(endRadians); currentY = centerY + radiusY * Math.Sin(endRadians);
-                        d.Append('A').Append(WordShapeHtml.Number(radiusX)).Append(' ').Append(WordShapeHtml.Number(radiusY)).Append(" 0 ")
-                         .Append(Math.Abs(sweep) > 180 * 60000 ? '1' : '0').Append(' ').Append(sweep > 0 ? '1' : '0').Append(' ')
-                         .Append(WordShapeHtml.Number(currentX)).Append(' ').Append(WordShapeHtml.Number(currentY));
-                        continue;
+                        fill.Stops = new List<(double, DocxResolvedColor)>();
+                        foreach (XElement stop in list.Elements("gs"))
+                            if (DocxDrawingColor.Resolve(stop, theme, placeholder) is { } stopColor)
+                                fill.Stops.Add((Math.Max(0, Math.Min(1, Attribute(stop, "pos") / 100000)), stopColor));
+                        fill.Stops.Sort((a, b) => a.Position.CompareTo(b.Position));
                     }
-                    default: return null;
+                    else fill.Stops = baseGradient?.Stops;
+                    if (element.Element("lin") is { } linear) { fill.AngleDegrees = Attribute(linear, "ang") / 60000; fill.PathKind = null; }
+                    else if (element.Element("path") is { } path)
+                    {
+                        fill.PathKind = (string?)path.Attribute("path") ?? "circle";
+                        XElement? rect = path.Element("fillToRect");
+                        // fillproperties.cxx:530-536: centre = (100000 + l - r) / 2, (100000 + t - b) / 2, limited to 0..100 %
+                        fill.CenterX = Math.Max(0, Math.Min(1, (100000 + Attribute(rect, "l") - Attribute(rect, "r")) / 2 / 100000));
+                        fill.CenterY = Math.Max(0, Math.Min(1, (100000 + Attribute(rect, "t") - Attribute(rect, "b")) / 2 / 100000));
+                    }
+                    else if (baseGradient is not null)
+                    {
+                        fill.AngleDegrees = baseGradient.AngleDegrees; fill.PathKind = baseGradient.PathKind;
+                        fill.CenterX = baseGradient.CenterX; fill.CenterY = baseGradient.CenterY;
+                    }
+                    fill.RotateWithShape = element.Attribute("rotWithShape") is not null ? IsOn(element, "rotWithShape") : baseGradient?.RotateWithShape;
+                    return fill.Stops is { Count: > 0 } ? fill : under;
                 }
-                d.Append(letter);
-                for (int i = 0; i < points.Count; i++) d.Append(i == 0 ? "" : " ").Append(WordShapeHtml.Number(points[i].x)).Append(' ').Append(WordShapeHtml.Number(points[i].y));
-                (currentX, currentY) = points[points.Count - 1];
+                default: return under;
             }
         }
-        return d.Length == 0 ? null : d.ToString();
+
+        public void ApplyTo(WordShape shape)
+        {
+            switch (Kind)
+            {
+                case FillKind.Solid:
+                    shape.FillColor = Color.Css; shape.FillOpacity = Color.Opacity;
+                    break;
+                case FillKind.Gradient when PathKind is null or "circle":
+                    shape.GradientStops = Stops!.Select(s => (s.Position, s.Color.Css)).ToList();
+                    shape.GradientStopOpacities = Stops!.Select(s => s.Color.Opacity).ToList();
+                    shape.FillColor = Stops![0].Color.Css;
+                    shape.GradientRadial = PathKind == "circle";
+                    shape.GradientCenterX = CenterX; shape.GradientCenterY = CenterY;
+                    double angle = AngleDegrees ?? 0;
+                    if (RotateWithShape == false) angle -= shape.FlipHorizontal ^ shape.FlipVertical ? -shape.RotationDegrees : shape.RotationDegrees;
+                    shape.GradientAngleDegrees = angle;
+                    break;
+                case FillKind.Gradient:
+                    // a:path rect / shape: LibreOffice's rectangular gradient is not drawn here; the first stop's colour fills the shape
+                    shape.FillColor = Stops![0].Color.Css; shape.FillOpacity = Stops[0].Color.Opacity;
+                    break;
+            }
+        }
     }
 
-    private static bool TryNumber(XElement element, string name, out double value)
-        => double.TryParse((string?)element.Attribute(name), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+    /// <summary>A resolved DrawingML line (oox LineProperties): each setting used only when an a:ln sets it.</summary>
+    private sealed class ShapeLine
+    {
+        private ShapeFill _fill = ShapeFill.None;
+        private double? _widthEmu;
+        private string? _cap, _presetDash;
+        private List<(double Dash, double Space)>? _customDash;
+        private string? _headType, _headWidth, _headLength, _tailType, _tailWidth, _tailLength;
+
+        public void Apply(XElement line, DocxTheme? theme, string? placeholder)
+        {
+            if (line.Attribute("w") is not null) _widthEmu = Attribute(line, "w");
+            if ((string?)line.Attribute("cap") is { } cap) _cap = cap;
+            XElement? fill = line.Elements().FirstOrDefault(e => e.Name.LocalName is "noFill" or "solidFill" or "gradFill" or "pattFill");
+            if (fill?.Name.LocalName == "pattFill")
+            {
+                // getBestSolidColor: the pattern's background colour, else its foreground (fillproperties.cxx:419-421)
+                if ((DocxDrawingColor.Resolve(fill.Element("bgClr"), theme, placeholder) ?? DocxDrawingColor.Resolve(fill.Element("fgClr"), theme, placeholder)) is { } pattern)
+                    _fill = new ShapeFill { Kind = ShapeFill.FillKind.Solid, Color = pattern };
+            }
+            else if (fill is not null) _fill = ShapeFill.Apply(_fill, fill, theme, placeholder, null) ?? _fill;
+            if ((string?)line.Element("prstDash")?.Attribute("val") is { } preset) _presetDash = preset;
+            if (line.Element("custDash") is { } custom)
+            {
+                var stops = new List<(double, double)>();
+                foreach (XElement stop in custom.Elements("ds")) stops.Add((DashPercent((string?)stop.Attribute("d")), DashPercent((string?)stop.Attribute("sp"))));
+                if (stops.Count > 0) _customDash = stops;
+            }
+            if (line.Element("headEnd") is { } head) { _headType = (string?)head.Attribute("type") ?? _headType; _headWidth = (string?)head.Attribute("w") ?? _headWidth; _headLength = (string?)head.Attribute("len") ?? _headLength; }
+            if (line.Element("tailEnd") is { } tail) { _tailType = (string?)tail.Attribute("type") ?? _tailType; _tailWidth = (string?)tail.Attribute("w") ?? _tailWidth; _tailLength = (string?)tail.Attribute("len") ?? _tailLength; }
+        }
+
+        /// <summary>ST_PositivePercentage as linepropertiescontext.cxx:139-178 reads it: "n%" or 1000ths of a percent; in line widths.</summary>
+        private static double DashPercent(string? value)
+        {
+            if (value is null) return 0;
+            value = value.Trim();
+            if (value.EndsWith("%", StringComparison.Ordinal))
+                return int.TryParse(value.Substring(0, value.Length - 1).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int percent) ? percent / 100.0 : 0;
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int thousandths) ? thousandths / 100000.0 : 0;
+        }
+
+        public void ApplyTo(WordShape shape)
+        {
+            DocxResolvedColor? color = _fill.Kind switch
+            {
+                ShapeFill.FillKind.Solid => _fill.Color,
+                ShapeFill.FillKind.Gradient => _fill.Stops![_fill.Stops.Count > 2 ? 1 : 0].Color,
+                _ => null,
+            };
+            shape.LineWidthPt = (_widthEmu ?? 0) / EmuPerPoint;
+            if (color is null) { shape.LineColor = null; return; }
+            shape.LineColor = color.Value.Css;
+            shape.LineOpacity = color.Value.Opacity;
+            shape.LineCap = _cap switch { "rnd" => WordLineCap.Round, "sq" => WordLineCap.Square, _ => WordLineCap.Flat };
+            shape.Dash = Dash(shape.LineCap);
+            shape.HeadEnd = End(_headType, _headWidth, _headLength);
+            shape.TailEnd = End(_tailType, _tailWidth, _tailLength);
+            shape.HeadArrow = shape.HeadEnd.Type != WordLineEndType.None;
+            shape.TailArrow = shape.TailEnd.Type != WordLineEndType.None;
+        }
+
+        private double[]? Dash(WordLineCap cap)
+        {
+            if (_presetDash is not null && _presetDash != "solid")
+            {
+                // lclConvertPresetDash (lineproperties.cxx:60-84): dots, dot length, dashes, dash length, distance (line widths)
+                (int dots, double dotLength, int dashes, double dashLength, double distance) = _presetDash switch
+                {
+                    "dot" => (1, 1, 0, 0, 3),
+                    "dash" => (1, 4, 0, 0, 3),
+                    "dashDot" => (1, 4, 1, 1, 3),
+                    "lgDash" => (1, 8, 0, 0, 3),
+                    "lgDashDot" => (1, 8, 1, 1, 3),
+                    "lgDashDotDot" => (1, 8, 2, 1, 3),
+                    "sysDot" => (1, 1, 0, 0, 1),
+                    "sysDash" => (1, 3, 0, 0, 1),
+                    "sysDashDot" => (1, 3, 1, 1, 1),
+                    "sysDashDotDot" => (1, 3, 2, 1, 1),
+                    _ => (1, 4, 0, 0, 3),   // an unknown preset: LibreOffice's fallback "dash" (:78-79)
+                };
+                if (cap != WordLineCap.Flat)
+                {
+                    if (dotLength >= 1 || dashLength >= 1) distance += 0.99;
+                    if (dotLength >= 1) dotLength -= 0.99;
+                    if (dashLength >= 1) dashLength -= 0.99;
+                }
+                var pattern = new List<double>();
+                for (int i = 0; i < dots; i++) { pattern.Add(dotLength); pattern.Add(distance); }
+                for (int i = 0; i < dashes; i++) { pattern.Add(dashLength); pattern.Add(distance); }
+                return pattern.ToArray();
+            }
+            if (_customDash is { Count: > 0 } custom)
+            {
+                var pattern = new List<double>();
+                foreach ((double dash, double space) in custom)
+                {
+                    // a custom dash includes a round cap (and not a square one): lineproperties.cxx:451-454
+                    bool trim = cap == WordLineCap.Round && dash >= 1;
+                    pattern.Add(trim ? dash - 0.99 : dash);
+                    pattern.Add(trim ? space + 0.99 : space);
+                }
+                return pattern.ToArray();
+            }
+            return null;
+        }
+
+        private static WordLineEnd End(string? type, string? width, string? length)
+        {
+            WordLineEndType kind = type switch
+            {
+                "triangle" => WordLineEndType.Triangle, "stealth" => WordLineEndType.Stealth, "diamond" => WordLineEndType.Diamond,
+                "oval" => WordLineEndType.Oval, "arrow" => WordLineEndType.Arrow, _ => WordLineEndType.None,
+            };
+            static int Size(string? value) => value switch { "sm" => 0, "lg" => 2, _ => 1 };   // lclGetArrowSize: default medium
+            return new WordLineEnd(kind, Size(width), Size(length));
+        }
+    }
 
     /// <summary>A shape's text area from wps:bodyPr (same defaults and readings as the plain text box: DocxBlockHtmlRenderer.TextBoxStyle).</summary>
     private static WordTextBoxStyle TextStyle(XElement? body)
@@ -277,8 +380,9 @@ internal static class DocxShapeReader
 
     /// <summary>
     /// A VML shape (ECMA-376 Part 4 14.1) from its layout element, in its own frame (style width / height): v:rect / v:shape
-    /// = rectangle, v:roundrect (arcsize: a fraction, or n "f" in 65536ths; unset = the VML default, unverified here, taken as
-    /// 0.2), v:oval, v:line (from / to). Fill: filled unless filled="f", fillcolor default white; line: stroked unless
+    /// = rectangle, v:roundrect (arcsize: the corner radius as a fraction of half the shorter side, default 0.2: W3C
+    /// NOTE-VML 1998 roundrect; LibreOffice vmlshape.cxx:1066-1077 likewise takes min(w, h) / 2 times n "f" / 65536 or
+    /// n "%" / 100), v:oval, v:line (from / to). Fill: filled unless filled="f", fillcolor default white; line: stroked unless
     /// stroked="f", strokecolor default black, strokeweight default 1 EMU = the thinnest line (LibreOffice
     /// oox/source/vml/vmlformatting.cxx:706-712 and :757-770). Colours #RRGGBB / #RGB, else a colour name (the part before a
     /// space; vmlformatting.cxx:240-279). Text insets: v:textbox inset, unset parts 0.1in / 0.05in / 0.1in / 0.05in
@@ -288,29 +392,46 @@ internal static class DocxShapeReader
     {
         string kind = (string?)layout.Attribute("vmlShape") ?? "rect";
         var shape = new WordShape { Width = width, Height = height };
-        shape.Geometry = kind switch
-        {
-            "roundrect" => WordShapeGeometry.RoundRectangle,
-            "oval" => WordShapeGeometry.Ellipse,
-            "line" => WordShapeGeometry.Line,
-            _ => WordShapeGeometry.Rectangle,
-        };
+        double arcFraction = 0.2;
         if (kind == "roundrect")
         {
             string arc = ((string?)layout.Attribute("arcsize") ?? "0.2").Trim();
-            double fraction = arc.EndsWith("f", StringComparison.Ordinal) && double.TryParse(arc.TrimEnd('f'), NumberStyles.Float, CultureInfo.InvariantCulture, out double f) ? f / 65536
-                            : double.TryParse(arc.TrimEnd('%'), NumberStyles.Float, CultureInfo.InvariantCulture, out double plain) ? (arc.EndsWith("%", StringComparison.Ordinal) ? plain / 100 : plain) : 0.2;
-            shape.Adjust = [fraction * 100000];
+            arcFraction = arc.EndsWith("f", StringComparison.Ordinal) && double.TryParse(arc.TrimEnd('f'), NumberStyles.Float, CultureInfo.InvariantCulture, out double f) ? f / 65536
+                        : double.TryParse(arc.TrimEnd('%'), NumberStyles.Float, CultureInfo.InvariantCulture, out double plain) ? (arc.EndsWith("%", StringComparison.Ordinal) ? plain / 100 : plain) : 0.2;
+        }
+        // the outline as the DrawingML preset it is (rect, roundRect with radius = ss * adj / 100000, so arcsize 1 = adj 50000, ellipse) or the line
+        shape.Geometry = WordShapeGeometry.Path;
+        if (kind == "line")
+        {
+            var line = new WordShapeSubpath { StartX = 0, StartY = 0 };
+            line.Segments.Add(WordShapeSegment.Line(width, height));
+            var path = new WordShapePath { Fill = WordShapePathFill.None };
+            path.Subpaths.Add(line);
+            shape.Paths = [path];
+        }
+        else
+        {
+            var preset = new XElement("prstGeom", new XAttribute("prst", kind switch { "roundrect" => "roundRect", "oval" => "ellipse", _ => "rect" }));
+            if (kind == "roundrect")
+                preset.Add(new XElement("avLst", new XElement("gd", new XAttribute("name", "adj"), new XAttribute("fmla", "val " + Math.Round(arcFraction * 50000).ToString(CultureInfo.InvariantCulture)))));
+            shape.Paths = DocxShapeGeometry.Paths(preset, width, height, 0, 0);
         }
         bool filled = !IsOff((string?)layout.Attribute("filled")) && !IsOff((string?)layout.Attribute("fillOn"));
         if (filled && kind != "line") shape.FillColor = VmlColor((string?)layout.Attribute("fillcolor")) ?? "#FFFFFF";
         bool stroked = !IsOff((string?)layout.Attribute("stroked")) && !IsOff((string?)layout.Attribute("strokeOn"));
         if (stroked)
         {
+            double widthPt = (string?)layout.Attribute("strokeweight") is { } weight ? DocxBlockHtmlRenderer.VmlLengthPoints(weight.Contains("pt") || weight.Any(char.IsLetter) ? weight : weight + "pt") : 1 / EmuPerPoint;
+            // the v:stroke settings as the DrawingML line LibreOffice turns them into (oox/source/vml/vmlformatting.cxx:565-664, :700-715)
+            var line = new XElement("ln", new XAttribute("w", Math.Round(widthPt * EmuPerPoint).ToString(CultureInfo.InvariantCulture)),
+                                    new XAttribute("cap", (string?)layout.Attribute("endcap") switch { "square" => "sq", "round" => "rnd", _ => "flat" }),
+                                    new XElement("solidFill", new XElement("srgbClr", new XAttribute("val", "000000"))));
+            if (VmlDash((string?)layout.Attribute("dashstyle")) is { } dash) line.Add(dash);
+            line.Add(VmlArrow("headEnd", layout, "start"), VmlArrow("tailEnd", layout, "end"));
+            var resolved = new ShapeLine();
+            resolved.Apply(line, null, null);
+            resolved.ApplyTo(shape);
             shape.LineColor = VmlColor((string?)layout.Attribute("strokecolor")) ?? "#000000";
-            shape.LineWidthPt = (string?)layout.Attribute("strokeweight") is { } weight ? DocxBlockHtmlRenderer.VmlLengthPoints(weight.Contains("pt") || weight.Any(char.IsLetter) ? weight : weight + "pt") : 1 / EmuPerPoint;
-            string? dash = (string?)layout.Attribute("dashstyle");
-            if (dash is not null && dash != "solid") shape.Dash = dash.Contains("dot") && !dash.Contains("dash") ? [1, 1] : [3, 1];
         }
         if (style.TryGetValue("rotation", out string? rotation) && double.TryParse(rotation.TrimEnd('f', 'd', 'e', 'g'), NumberStyles.Float, CultureInfo.InvariantCulture, out double degrees))
             shape.RotationDegrees = degrees;
@@ -330,6 +451,33 @@ internal static class DocxShapeReader
         }
         return shape;
     }
+
+    /// <summary>VML dashstyle as LibreOffice lclGetDmlLineDash (vmlformatting.cxx:565-597) maps it to a DrawingML preset; a list of numbers
+    /// is dash / space pairs in line widths (W3C NOTE-VML 1998, stroke dashstyle: "a length of 1 is equal to the line width", an odd last number ignored).</summary>
+    private static XElement? VmlDash(string? dashStyle)
+    {
+        if (dashStyle is null) return null;
+        string? preset = dashStyle.Trim() switch
+        {
+            "solid" => "solid", "shortdot" => "sysDot", "shortdash" => "sysDash", "shortdashdot" => "sysDashDot", "shortdashdotdot" => "sysDashDotDot",
+            "dot" => "dot", "dash" => "dash", "dashdot" => "dashDot", "longdash" => "lgDash", "longdashdot" => "lgDashDot", "longdashdotdot" => "lgDashDotDot",
+            _ => null,
+        };
+        if (preset is not null) return new XElement("prstDash", new XAttribute("val", preset));
+        string[] numbers = dashStyle.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var custom = new XElement("custDash");
+        for (int i = 0; i + 1 < numbers.Length; i += 2)
+            if (double.TryParse(numbers[i], NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && double.TryParse(numbers[i + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out double sp))
+                custom.Add(new XElement("ds", new XAttribute("d", Math.Round(d * 100000).ToString(CultureInfo.InvariantCulture)), new XAttribute("sp", Math.Round(sp * 100000).ToString(CultureInfo.InvariantCulture))));
+        return custom.HasElements ? custom : null;
+    }
+
+    /// <summary>A VML arrow (startarrow / endarrow and their width / length) as the DrawingML end: lclGetDmlArrowType / Width / Length (vmlformatting.cxx:599-633).</summary>
+    private static XElement VmlArrow(string name, XElement layout, string prefix)
+        => new(name,
+               new XAttribute("type", (string?)layout.Attribute(prefix + "arrow") switch { "block" => "triangle", "classic" => "stealth", "diamond" => "diamond", "oval" => "oval", "open" => "arrow", _ => "none" }),
+               new XAttribute("w", (string?)layout.Attribute(prefix + "arrowwidth") switch { "narrow" => "sm", "wide" => "lg", _ => "med" }),
+               new XAttribute("len", (string?)layout.Attribute(prefix + "arrowlength") switch { "short" => "sm", "long" => "lg", _ => "med" }));
 
     private static bool IsOff(string? value) => value is "f" or "false" or "0" or "off";
 

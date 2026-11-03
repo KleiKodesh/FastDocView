@@ -55,6 +55,12 @@ public sealed class DocxTheme
         if (themeDocument?.Root?.Element(A + "themeElements")?.Element(A + "fmtScheme")?.Element(A + "lnStyleLst") is { } lineStyles)
             foreach (XElement line in lineStyles.Elements(A + "ln"))
                 _lineStyleWidths.Add(long.TryParse((string?)line.Attribute("w"), NumberStyles.Integer, CultureInfo.InvariantCulture, out long width) ? width : -1);
+        if (themeDocument?.Root?.Element(A + "themeElements")?.Element(A + "fmtScheme") is { } formatScheme)
+        {
+            foreach (XElement fill in formatScheme.Element(A + "fillStyleLst")?.Elements() ?? []) _fillStyles.Add(WithoutNamespaces(fill));
+            foreach (XElement fill in formatScheme.Element(A + "bgFillStyleLst")?.Elements() ?? []) _backgroundFillStyles.Add(WithoutNamespaces(fill));
+            foreach (XElement line in formatScheme.Element(A + "lnStyleLst")?.Elements(A + "ln") ?? []) _lineStyles.Add(WithoutNamespaces(line));
+        }
 
         XElement? settings = settingsDocument?.Root;
         if (settings?.Element(W + "clrSchemeMapping") is { } mapping)
@@ -189,6 +195,22 @@ public sealed class DocxTheme
     /// <summary>The width (EMU) of the theme's line style a:lnRef idx names (1-based into a:lnStyleLst, past the end = the last, as
     /// LibreOffice oox/source/drawingml/theme.cxx:41-58 lclGetStyleElement / getLineStyle), or -1.</summary>
     public long LineStyleWidthEmu(int index) => index >= 1 && _lineStyleWidths.Count > 0 ? _lineStyleWidths[Math.Min(index, _lineStyleWidths.Count) - 1] : -1;
+
+    private readonly List<XElement> _fillStyles = new(), _backgroundFillStyles = new(), _lineStyles = new();   // a:fmtScheme lists, without namespaces
+
+    /// <summary>The fill a:fillRef idx names (LibreOffice theme.cxx:41-55 getFillStyle: 1-999 a:fillStyleLst, 1001+ a:bgFillStyleLst, both
+    /// 1-based, past the end = the last; 0 / 1000 = none): its fill element (a:solidFill, a:gradFill...) without namespaces, or null.</summary>
+    public XElement? FillStyle(int index)
+        => index >= 1000 ? StyleElement(_backgroundFillStyles, index - 1000) : StyleElement(_fillStyles, index);
+
+    /// <summary>The a:ln a:lnRef idx names (theme.cxx getLineStyle), without namespaces, or null.</summary>
+    public XElement? LineStyle(int index) => StyleElement(_lineStyles, index);
+
+    private static XElement? StyleElement(List<XElement> list, int index) => list.Count == 0 || index < 1 ? null : list[Math.Min(index - 1, list.Count - 1)];
+
+    private static XElement WithoutNamespaces(XElement element)
+        => new(element.Name.LocalName, element.Attributes().Where(a => !a.IsNamespaceDeclaration).Select(a => new XAttribute(a.Name.LocalName, a.Value)),
+               element.Nodes().OfType<XElement>().Select(WithoutNamespaces));
 
     private static int Tint(int component, int tint) => (int)Math.Round(255 - (255 - component) * (tint / 255.0), MidpointRounding.AwayFromZero);
     private static int Shade(int component, int shade) => (int)Math.Round(component * (shade / 255.0), MidpointRounding.AwayFromZero);

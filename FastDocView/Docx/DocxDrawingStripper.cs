@@ -188,6 +188,10 @@ internal static class DocxDrawingStripper
         "a:moveTo", "a:lnTo", "a:cubicBezTo", "a:quadBezTo", "a:arcTo", "a:close", "a:pt",
         "a:solidFill", "a:noFill", "a:gradFill", "a:gsLst", "a:gs", "a:lin", "a:grpFill",
         "a:srgbClr", "a:schemeClr", "a:sysClr", "a:prstClr", "a:lumMod", "a:lumOff", "a:tint", "a:shade", "a:alpha",
+        // the rest of the colour model (DocxDrawingColor), guides, gradient paths and custom dashes
+        "a:scrgbClr", "a:hslClr", "a:alphaMod", "a:alphaOff", "a:lum", "a:hue", "a:hueMod", "a:hueOff", "a:sat", "a:satMod", "a:satOff",
+        "a:red", "a:redMod", "a:redOff", "a:green", "a:greenMod", "a:greenOff", "a:blue", "a:blueMod", "a:blueOff",
+        "a:gray", "a:comp", "a:inv", "a:gamma", "a:invGamma", "a:gdLst", "a:fillToRect", "a:custDash", "a:ds",
         "a:ln", "a:prstDash", "a:headEnd", "a:tailEnd", "a:lnRef", "a:fillRef", "a:spAutoFit",
     };
 
@@ -325,7 +329,12 @@ internal static class DocxDrawingStripper
         int shapeEnd = ElementEnd(picture, shape, shapeName);
         ReadOnlySpan<byte> body = shapeEnd < 0 ? picture.Slice(shape) : picture.Slice(shape, shapeEnd - shape);
         if (IndexOfOpenTag(body, 0, "v:fill") is var fill and >= 0) { Copy("fillOn", OpenTagAt(body, fill), "on"); Copy("fillColor2", OpenTagAt(body, fill), "color"); }
-        if (IndexOfOpenTag(body, 0, "v:stroke") is var stroke and >= 0) { Copy("dashstyle", OpenTagAt(body, stroke), "dashstyle"); Copy("strokeOn", OpenTagAt(body, stroke), "on"); }
+        if (IndexOfOpenTag(body, 0, "v:stroke") is var stroke and >= 0)
+        {
+            ReadOnlySpan<byte> strokeTag = OpenTagAt(body, stroke);
+            Copy("dashstyle", strokeTag, "dashstyle"); Copy("strokeOn", strokeTag, "on"); Copy("endcap", strokeTag, "endcap");
+            foreach (string end in new[] { "startarrow", "startarrowwidth", "startarrowlength", "endarrow", "endarrowwidth", "endarrowlength" }) Copy(end, strokeTag, end);
+        }
         if (IndexOfOpenTag(body, 0, "v:textbox") is var textBox and >= 0 && IndexOfOpenTag(body, textBox, TextBoxContentName) >= 0)
         {
             layout.Append(" textBox=\"1\"");

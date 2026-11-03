@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace FastDocView.Tests;
 
 /// <summary>
-/// .docx drawn shapes (--fidelity, seconds): wps presets / custGeom / fills / theme colours / lines and arrow ends, a wpg group
+/// .docx drawn shapes (--fidelity, seconds; the theme line styles carry their solidFill phClr as Word writes them: LibreOffice takes the line colour from the theme a:ln, shape.cxx:3150-3170): wps presets / custGeom / fills / theme colours / lines and arrow ends, a wpg group
 /// with child-space scaling, nested group, picture and text box, a shape with text, VML shapes with text boxes, and
 /// mc:AlternateContent (Choice drawn, Fallback skipped): every shape text shows and is found exactly once.
 /// </summary>
@@ -21,7 +21,7 @@ public static class DocxShapesFidelityTest
         <a:accent1><a:srgbClr val="4472C4"/></a:accent1><a:accent2><a:srgbClr val="ED7D31"/></a:accent2><a:accent3><a:srgbClr val="A5A5A5"/></a:accent3><a:accent4><a:srgbClr val="FFC000"/></a:accent4>
         <a:accent5><a:srgbClr val="5B9BD5"/></a:accent5><a:accent6><a:srgbClr val="70AD47"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme>
         <a:fontScheme name="T"><a:majorFont><a:latin typeface="Calibri Light"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme>
-        <a:fmtScheme name="T"><a:fillStyleLst/><a:lnStyleLst><a:ln w="6350"/><a:ln w="12700"/><a:ln w="19050"/></a:lnStyleLst></a:fmtScheme>
+        <a:fmtScheme name="T"><a:fillStyleLst/><a:lnStyleLst><a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst></a:fmtScheme>
         </a:themeElements></a:theme>
         """;
 
@@ -60,29 +60,39 @@ public static class DocxShapesFidelityTest
                 }
             });
         // lumMod 75000 of 4472C4 in HSL luminance as LibreOffice color.cxx: 2F5597 (Word's "accent 1, darker 25%")
-        TestReport.Check(html[0].Contains("<svg class=\"word-shape-geometry\"") && html[0].Contains("width:72pt;height:36pt;") && html[0].Contains("fill=\"#2F5597\" stroke=\"#FF0000\" stroke-width=\"1\"")
-                         && html[0].Contains("<path d=\"M0 9L54 9L54 0L72 18L54 36L54 27L0 27Z\""),
+        // lumMod 75000 of 4472C4 in HSL luminance as LibreOffice color.cxx: 2F5597 (Word's "accent 1, darker 25%"); the outline is
+        // presetShapeDefinitions.xml rightArrow, filled then stroked as two objects (svx EnhancedCustomShape2d.cxx CreateSubPath :2631-2667)
+        TestReport.Check(html[0].Contains("<svg class=\"word-shape-geometry\"") && html[0].Contains("width:72pt;height:36pt;")
+                         && html[0].Contains("<path d=\"M0 9L54 9L54 0L72 18L54 36L54 27L0 27Z\" fill-rule=\"evenodd\" fill=\"#2F5597\" stroke=\"none\"/>")
+                         && html[0].Contains("<path d=\"M0 9L54 9L54 0L72 18L54 36L54 27L0 27Z\" fill=\"none\" stroke=\"#FF0000\" stroke-width=\"1\"/>"),
                          "rightArrow: SVG at wp:extent, schemeClr accent1 lumMod 75% = #2F5597, red 1pt line, preset outline (" + html[0] + ")");
-        TestReport.Check(html[1].Contains("<linearGradient") && html[1].Contains("x1=\"0.5\" y1=\"0\" x2=\"0.5\" y2=\"1\"") && html[1].Contains("stop-color=\"#FF0000\"") && html[1].Contains("<ellipse"),
-                         "ellipse: gradFill as a top-to-bottom linear gradient (ang 90 deg) (" + html[1] + ")");
-        TestReport.Check(html[2].Contains("stroke=\"#0000FF\" stroke-width=\"2\" stroke-dasharray=\"6 2\"") && html[2].Contains("<path d=\"M72 36L") && html[2].Contains("fill=\"#0000FF\" stroke=\"none\""),
+        // a:lin ang 90 deg: LibreOffice init1DGradientInfo spans the box grown for the angle, here the height (gradienttools.cxx:52-121)
+        TestReport.Check(html[1].Contains("<linearGradient") && html[1].Contains("gradientUnits=\"userSpaceOnUse\" x1=\"36\" y1=\"0\" x2=\"36\" y2=\"36\"") && html[1].Contains("stop-color=\"#FF0000\"")
+                         && html[1].Contains("<path d=\"M0 18C"),
+                         "ellipse: gradFill as a top-to-bottom linear gradient (ang 90 deg) over the ellipse preset's arcs (" + html[1] + ")");
+        // prstDash dash = a 4-width dash and a 3-width gap (lineproperties.cxx:65); a medium triangle at a 2pt line: 3 x 2pt wide and long,
+        // its tip on the end, the shaft cut back by its length less width / 15 (lineproperties.cxx:290-303, polygonprimitive2d.cxx:735-750)
+        TestReport.Check(html[2].Contains("<path d=\"M0 0L66.99 33.5\" fill=\"none\" stroke=\"#0000FF\" stroke-width=\"2\" stroke-dasharray=\"8 6\"/>")
+                         && html[2].Contains("<path d=\"M72 36L65.29 36L67.98 30.63L72 36Z\" fill=\"#0000FF\" stroke=\"none\"/>"),
                          "connector: dashed 2pt blue line with a filled arrow head at its tail end (" + html[2] + ")");
-        TestReport.Check(html[3].Contains("<rect width=\"72\" height=\"36\" fill=\"#00FF00\""), "unknown preset (star5): a box of the right size (" + html[3] + ")");
-        TestReport.Check(html[4].Contains("rotate(45) scale(-1 1)") && html[4].Contains("fill=\"none\" stroke=\"#ED7D31\" stroke-width=\"1\""),
-                         "rect: rot 45 deg + flipH; spPr noFill over fillRef; lnRef idx 2 = accent2 at the theme's 1pt (" + html[4] + ")");
-        TestReport.Check(html[5].Contains("<path d=\"M0 36L36 0L72 36Z\" fill=\"#123456\""), "custGeom: the path scaled from its w / h to the shape (" + html[5] + ")");
-        TestReport.Check(html[6].Contains("min-height:36pt;") && html[6].Contains("vector-effect=\"non-scaling-stroke\"") && html[6].Contains("word-shape-text") && Count(html[6], "ovaltext") == 1,
+        TestReport.Check(html[3].Contains("<path d=\"M0 13.75L27.5 13.75L36 0L44.5 13.75L72 13.75L49.75 22.25L58.25 36L36 27.5L13.75 36L22.25 22.25Z\" fill-rule=\"evenodd\" fill=\"#00FF00\""),
+                         "star5: the presetShapeDefinitions.xml outline from its guides (" + html[3] + ")");
+        TestReport.Check(html[4].Contains("rotate(45) scale(-1 1)") && html[4].Contains("fill=\"none\" stroke=\"#ED7D31\" stroke-width=\"1\"") && !html[4].Contains("fill-rule"),
+                         "rect: rot 45 deg + flipH; spPr noFill over fillRef; lnRef idx 2 = the theme's 1pt a:ln in accent2 (" + html[4] + ")");
+        TestReport.Check(html[5].Contains("<path d=\"M0 36L36 0L72 36Z\" fill-rule=\"evenodd\" fill=\"#123456\""), "custGeom: the path scaled from its w / h to the shape (" + html[5] + ")");
+        TestReport.Check(html[6].Contains("min-height:36pt;") && html[6].Contains("preserveAspectRatio=\"none\"") && html[6].Contains("word-shape-text") && Count(html[6], "ovaltext") == 1,
                          "ellipse with growing text: the frame grows, the outline stretches, the text once (" + html[6] + ")");
         string group = html[7];
-        TestReport.Check(group.Contains("<rect width=\"36\" height=\"18\"") && group.Contains("translate(54 9)") && group.Contains("translate(18 27)"), "group: a child at chOff scaled by ext / chExt (half size) (" + group + ")");
+        TestReport.Check(group.Contains("<path d=\"M0 0L36 0L36 18L0 18Z\"") && group.Contains("translate(54 9)") && group.Contains("translate(18 27)"), "group: a child at chOff scaled by ext / chExt (half size) (" + group + ")");
         TestReport.Check(group.Contains("position:absolute;left:36pt;top:0pt;width:36pt;height:18pt;") && Count(group, "grouptext") == 1, "group: the child's text box over its outline");
         TestReport.Check(group.Contains("left:0pt;top:18pt;") && Count(group, "nestedtext") == 1, "nested group: its child scaled through both groups");
         TestReport.Check(group.Contains("data-word-picture=\"m:rIdP\"") && group.Contains("left:36pt;top:18pt;"), "group picture: by id at its box");
         string vml = html[8];
-        TestReport.Check(vml.Contains("float:right;") && vml.Contains("width:144pt;height:72pt;") && vml.Contains("rx=\"") && vml.Contains("fill=\"yellow\" stroke=\"#FF0000\" stroke-width=\"2\"")
-                         && vml.Contains("padding:1pt 2pt 3pt 4pt;") && Count(vml, "vmltext") == 1,
-                         "VML roundrect: style size, square wrap right, fillcolor / strokecolor / strokeweight, v:textbox inset (left,top,right,bottom) (" + vml + ")");
-        TestReport.Check(html[9].Contains("<ellipse") && Count(html[9], "choicetext") == 1 && !html[9].Contains("fallbacktext"), "AlternateContent: the Choice drawn, the VML Fallback not (" + html[9] + ")");
+        // arcsize 10923f = 1/6 of half the shorter side (W3C NOTE-VML roundrect; vmlshape.cxx:1066-1077): radius 72 / 2 / 6 = 6pt
+        TestReport.Check(vml.Contains("float:right;") && vml.Contains("width:144pt;height:72pt;") && vml.Contains("<path d=\"M0 6C") && vml.Contains("fill=\"yellow\" stroke=\"none\"")
+                         && vml.Contains("fill=\"none\" stroke=\"#FF0000\" stroke-width=\"2\"") && vml.Contains("padding:1pt 2pt 3pt 4pt;") && Count(vml, "vmltext") == 1,
+                         "VML roundrect: style size, square wrap right, arcsize radius, fillcolor / strokecolor / strokeweight, v:textbox inset (left,top,right,bottom) (" + vml + ")");
+        TestReport.Check(html[9].Contains("fill=\"#00FFFF\"") && html[9].Contains("<path d=\"M0 18C") && Count(html[9], "choicetext") == 1 && !html[9].Contains("fallbacktext"), "AlternateContent: the Choice drawn, the VML Fallback not (" + html[9] + ")");
     }
 
     private static int Count(string html, string text) => Regex.Matches(html, text).Count;
