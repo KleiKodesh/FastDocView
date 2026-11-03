@@ -46,6 +46,7 @@ var rtfProfilePaths = new List<string>();
 string? goldenDirectory = null;
 var compactReportPaths = new List<string>();
 var goldenPaths = new List<string>();
+var rereadPaths = new List<string>();
 var docReadPaths = new List<string>();
 var docSearchGoldenPaths = new List<string>();
 for (int i = 0; i < args.Length; i++)
@@ -100,6 +101,7 @@ for (int i = 0; i < args.Length; i++)
         case "--golden": goldenDirectory = args[++i]; while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) goldenPaths.Add(args[++i]); break;   // <out-dir> <files...>: observable-output dump per file (index-change proof)
         case "--doc-search-golden": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) docSearchGoldenPaths.Add(args[++i]); break;   // .doc one-pass search = the old block-range path, on these files only
         case "--coexistence-probe": WordCoexistenceTest.Probe(args[++i], int.Parse(args[++i])); return TestReport.FailureCount == 0 ? 0 : 1;   // <file> <rounds>: save-by-replace refusals with / without our document open, and who held the file
+        case "--reread": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rereadPaths.Add(args[++i]); break;   // re-shown windows / notes: checkpoint resumes, bytes inflated
         case "--doc-reads": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) docReadPaths.Add(args[++i]); break;   // .doc reopen / full-search bytes read, read calls, ms
         case "--compact-report": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) compactReportPaths.Add(args[++i]); break;   // sidecar size breakdown + reopen / window / random-block timings
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
@@ -111,6 +113,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (goldenDirectory is not null) { GoldenDumpTest.Run(goldenDirectory, goldenPaths.Where(File.Exists)); skipSynthetic = true; }
 if (docSearchGoldenPaths.Count > 0) { DocBinarySearchOnePassTest.CompareFiles(docSearchGoldenPaths.Where(File.Exists)); skipSynthetic = true; }
+if (rereadPaths.Count > 0) { RereadCostTest.Run(rereadPaths.Where(File.Exists)); skipSynthetic = true; }
 if (docReadPaths.Count > 0) { DocBinaryReadCountTest.Run(docReadPaths.Where(File.Exists)); skipSynthetic = true; }
 if (compactReportPaths.Count > 0) { CompactIndexReport.Run(compactReportPaths.Where(File.Exists)); skipSynthetic = true; }
 if (searchOnly) { DocumentSearchTest.Run(searchPaths); skipSynthetic = true; }

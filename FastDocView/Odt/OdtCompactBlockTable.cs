@@ -31,9 +31,9 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
     private readonly byte[] _chunk = new byte[ChunkSize];
     private long _useCounter;
 
-    private byte[] _ring = new byte[RetainedBytes];
-    private long _ringStart = -1;
-    private int _ringLength;
+    // the last bytes read from the view (scan chunks and window reads), one contiguous range extended at either end: a window
+    // shown again, forward or paged back, is served from it instead of a seek back into content.xml (a checkpoint resume)
+    private readonly WordIndexByteRing _ring = new(RetainedBytes, MaxRetainedBytes);
 
     public OdtCompactBlockTable(OdtRandomAccessIndex index, Stream view)
     {
@@ -115,6 +115,7 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
         long end = SpanEnd(span.Anchor);
         int toRead = (int)Math.Min(ChunkSize, end - span.ScannedTo);
         if (toRead <= 0) { Complete(span); return; }
+        _ring.CloseGapTo(_view, span.ScannedTo);   // the next span's anchor, just past the bytes the previous scan reached: the ring stays one piece
         if (_view.Position != span.ScannedTo) _view.Position = span.ScannedTo;
         int read = _view.Read(_chunk, 0, toRead);
         if (read <= 0) throw new EndOfStreamException("OpenDocument body ended inside a span.");
@@ -131,61 +132,12 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
             throw new InvalidDataException("OpenDocument index: the span's rescan found a different block count (the document changed?).");
     }
 
-    private void Retain(long offset, byte[] bytes, int from, int count)
-    {
-        if (count > _ring.Length)
-        {
-            if (count > MaxRetainedBytes) { _ringStart = -1; _ringLength = 0; return; }
-            var bigger = new byte[Math.Min(MaxRetainedBytes, Math.Max(count, _ring.Length * 2))];
-            Buffer.BlockCopy(_ring, 0, bigger, 0, _ringLength);
-            _ring = bigger;
-        }
-        if (_ringStart < 0 || _ringStart + _ringLength != offset) { _ringStart = offset; _ringLength = 0; }
-        if (_ringLength + count > _ring.Length && _ring.Length < MaxRetainedBytes)
-        {
-            var bigger = new byte[Math.Min(MaxRetainedBytes, Math.Max(_ringLength + count, _ring.Length * 2))];
-            Buffer.BlockCopy(_ring, 0, bigger, 0, _ringLength);
-            _ring = bigger;
-        }
-        if (_ringLength + count > _ring.Length)
-        {
-            int drop = Math.Max(count, _ring.Length / 2);
-            drop = Math.Min(drop, _ringLength);
-            Buffer.BlockCopy(_ring, drop, _ring, 0, _ringLength - drop);
-            _ringStart += drop;
-            _ringLength -= drop;
-        }
-        Buffer.BlockCopy(bytes, from, _ring, _ringLength, count);
-        _ringLength += count;
-    }
+    private void Retain(long offset, byte[] bytes, int from, int count) => _ring.Retain(offset, bytes, from, count);
 
     public byte[] ReadRange(Stream view, long start, long end)
     {
         var bytes = new byte[end - start];
-        int filled = 0;
-        if (_ringStart >= 0 && start >= _ringStart && start < _ringStart + _ringLength)
-        {
-            filled = (int)Math.Min(bytes.Length, _ringStart + _ringLength - start);
-            Buffer.BlockCopy(_ring, (int)(start - _ringStart), bytes, 0, filled);
-            if (filled == bytes.Length) return bytes;
-            if (view.Position != start + filled) view.Position = start + filled;
-            while (filled < bytes.Length)
-            {
-                int read = view.Read(bytes, filled, bytes.Length - filled);
-                if (read <= 0) throw new EndOfStreamException("OpenDocument body ended inside an element.");
-                Retain(start + filled, bytes, filled, read);
-                filled += read;
-            }
-            return bytes;
-        }
-        view.Position = start;
-        while (filled < bytes.Length)
-        {
-            int read = view.Read(bytes, filled, bytes.Length - filled);
-            if (read <= 0) throw new EndOfStreamException("OpenDocument body ended inside an element.");
-            filled += read;
-        }
-        Retain(start, bytes, 0, bytes.Length);
+        _ring.Fill(view, start, bytes, 0);
         return bytes;
     }
 

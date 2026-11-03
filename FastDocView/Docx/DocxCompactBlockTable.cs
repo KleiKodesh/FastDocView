@@ -7,8 +7,9 @@ namespace FastDocView.Docx;
 /// and list counter the index pass ran (seeded with the anchor's numbering state), so every value equals
 /// the one the pass found. A span is scanned only as far as asked and kept scanning on later requests;
 /// a handful of spans stay cached (the ones around the window). The bytes inflated while scanning are kept
-/// in a bounded ring (<see cref="RetainedBytes"/>), so a window that was just located is rendered from them
-/// without inflating again, and a longer read (<see cref="ReadBlockBytes"/>: a window, a search batch of
+/// in a bounded ring (<see cref="RetainedBytes"/>, a <see cref="WordIndexByteRing"/>), and so are the bytes a window
+/// reads past the scan: a window that was just located, or is shown again (forward or paged back), is rendered from
+/// them without inflating again, and a longer read (<see cref="ReadBlockBytes"/>: a window, a search batch of
 /// thousands of blocks) collects the bytes as the scan passes them, whatever its length — one inflate pass,
 /// never a seek back to a checkpoint for bytes that were just inflated.
 /// </summary>
@@ -34,10 +35,8 @@ internal sealed partial class DocxCompactBlockTable : IDocxBlockTable
     private readonly byte[] _chunk = new byte[ChunkSize];
     private long _useCounter;
 
-    // the last bytes the scan read from the view, contiguous: [_ringStart, _ringStart + _ringLength)
-    private readonly byte[] _ring = new byte[RetainedBytes];
-    private long _ringStart = -1;
-    private int _ringLength;
+    // the last bytes read from the view (by the scan or by a read past it), one contiguous range extended at either end
+    private readonly WordIndexByteRing _ring = new(RetainedBytes, RetainedBytes);
 
     // a read in progress (ReadBlockBytes): every scanned chunk that continues it is appended as it passes. The buffer is
     // reused across reads, bounded by the largest read so far (a search batch's few MB): growing a fresh one per batch
@@ -128,6 +127,7 @@ internal sealed partial class DocxCompactBlockTable : IDocxBlockTable
         long end = SpanEnd(span.Anchor);
         int toRead = (int)Math.Min(ChunkSize, end - span.ScannedTo);
         if (toRead <= 0) { span.IsComplete = true; return; }
+        _ring.CloseGapTo(_view, span.ScannedTo);   // the next span's anchor, just past the bytes the previous scan reached: the ring stays one piece
         if (_view.Position != span.ScannedTo) _view.Position = span.ScannedTo;
         int read = _view.Read(_chunk, 0, toRead);
         if (read <= 0) throw new EndOfStreamException("Part ended inside a span.");
@@ -137,22 +137,11 @@ internal sealed partial class DocxCompactBlockTable : IDocxBlockTable
         if (span.ScannedTo >= end) span.IsComplete = true;
     }
 
-    /// <summary>Keeps a scanned chunk: appended to the ring (restarted when the chunk does not continue it) and to the read in progress when it continues that.</summary>
+    /// <summary>Keeps a scanned chunk: in the ring, and in the read in progress when it continues that.</summary>
     private void Retain(long offset, byte[] bytes, int count)
     {
         if (_isCollecting && offset == _collectorEnd) Collect(bytes, 0, count);
-        if (count > _ring.Length) { _ringStart = -1; _ringLength = 0; return; }
-        if (_ringStart < 0 || _ringStart + _ringLength != offset) { _ringStart = offset; _ringLength = 0; }
-        if (_ringLength + count > _ring.Length)
-        {
-            int drop = Math.Max(count, _ring.Length / 2);
-            drop = Math.Min(drop, _ringLength);
-            Buffer.BlockCopy(_ring, drop, _ring, 0, _ringLength - drop);
-            _ringStart += drop;
-            _ringLength -= drop;
-        }
-        Buffer.BlockCopy(bytes, 0, _ring, _ringLength, count);
-        _ringLength += count;
+        _ring.Retain(offset, bytes, 0, count);
     }
 
     private void Collect(byte[] bytes, int from, int count)
@@ -175,8 +164,13 @@ internal sealed partial class DocxCompactBlockTable : IDocxBlockTable
         _collectedLength = 0;
         _collectorEnd = start;
         _isCollecting = true;
-        if (_ringStart >= 0 && start >= _ringStart && start < _ringStart + _ringLength)
-            Collect(_ring, (int)(start - _ringStart), (int)(_ringStart + _ringLength - start));
+        if (_ring.Contains(start))
+        {
+            int held = (int)(_ring.End - start);
+            if (held > _collected.Length) _collected = new byte[held];
+            _collectedLength = _ring.CopyFrom(start, _collected, 0, held);
+            _collectorEnd = start + _collectedLength;
+        }
         long end;
         try { end = BlockEndOffset(lastBlockIndex); }
         finally { _isCollecting = false; }
@@ -184,14 +178,9 @@ internal sealed partial class DocxCompactBlockTable : IDocxBlockTable
         int filled = (int)Math.Min(bytes.Length, _collectorEnd - start);
         Buffer.BlockCopy(_collected, 0, bytes, 0, filled);
         if (filled == bytes.Length) return bytes;
-        // the rest (a block before an anchor answered without a scan, the body's tail, bytes the ring let go): straight from the view
-        view.Position = start + filled;
-        while (filled < bytes.Length)
-        {
-            int read = view.Read(bytes, filled, bytes.Length - filled);
-            if (read <= 0) throw new EndOfStreamException("Part ended inside an element.");
-            filled += read;
-        }
+        // the rest (a block before an anchor answered without a scan, the body's tail, a span scanned earlier): from the ring
+        // where it holds them, else from the view — retained, so the next window, which overlaps this one, starts inside the ring
+        _ring.Fill(view, start, bytes, filled);
         return bytes;
     }
 

@@ -1084,6 +1084,45 @@ the label's END), core/text/txtfld.cxx (a bullet portion is the bullet character
   column, tables, pictures, ignore-margins) and `playwright/notesLayoutCheck.mjs <file-with-notes>` (pane 25 %, notes
   column = text column).
 
+## Re-shown windows: no needless re-inflation (2026-11-03)
+
+Measured with `--reread <files>` (RereadCostTest: sidecar mode; 20 windows of 40 blocks from the middle read forward,
+paged back, forward again; notes: a jump to the middle note window, 20 windows of 10 notes paged back, the jumped-to
+window again; counters `DeflateRandomAccessStream.ProcessCheckpointResumeCount` / `ProcessBytesInflated`).
+Checkpoint resumes / MB inflated, before -> after:
+
+| | .docx (91.6 MB document.xml) | .odt (LibreOffice conversion of the same book) |
+|---|---|---|
+| body, first read (20 windows) | 7 / 3.26 -> 3 / 1.51 | 8 / 15.19 -> 3 / 5.77 |
+| body, paged back | 18 / 5.99 -> 4 / 0.71 | 20 / 36.13 -> 0 / 0.00 |
+| body, forward again | 18 / 5.99 -> 0 / 0.53 | 0 / 0.33 -> 0 / 0.00 |
+| notes, jump | 1 / 0.21 -> 1 / 0.21 | 1 / 1.10 -> 1 / 1.10 |
+| notes, paged back (20 windows) | 11 / 1.22 -> 3 / 0.32 | 6 / 5.18 -> 1 / 0.93 |
+| notes, jumped-to window again | 0 / 0.00 -> 0 / 0.00 | 0 / 0.30 -> 0 / 0.16 |
+
+What was wrong and what changed:
+
+- **The docx fallback read was not retained.** When a span was already scanned and the ring held other bytes, a
+  window's bytes came straight from the view and were dropped; the next window (which starts one block back, the
+  neighbour read of `RenderBlocksLocked`) began outside the ring again and seeked back to a checkpoint.
+- **The .odt ring restarted on any read that did not continue it exactly**, so a page back (a range just before
+  the ring) re-inflated about one checkpoint span.
+- Both tables now keep their bytes in one `WordIndexByteRing`: one contiguous range, extended at **either end**
+  (append, prepend; full = the far end goes), restarted only by a read elsewhere. `Fill` serves a range from the
+  ring and reads only the missing part from the view (up to where the ring begins), retaining it. A read or a span
+  scan that starts a little past the ring's end (<= 64 KB: the next block of a window, the next span's anchor after
+  bytes the previous scan had not reached) reads the gap first — the view is there anyway — so the range stays one
+  piece. Bounds unchanged: .docx 512 KB, .odt 512 KB growing to 4 MB for a long read; a read longer than the ring
+  keeps its last bytes.
+- **SeekableDeflate: a seek back served from the inflater's history.** `DeflateRandomAccessStream` resumed from a
+  checkpoint for any backward seek, even a few bytes. The inflater's output buffer always holds at least the last
+  32 KB it delivered (`HistoryStart`; after a resume only from the checkpoint on, since a sealed window is sparse);
+  a read at an offset in [HistoryStart, TotalOut) is now copied from there (`CopyFromHistory`) without moving the
+  inflater, and the read after it continues inflating. Harness: back-seeks of 0, 1, 32 KB-1, 32 KB served with no
+  resume, 32 KB+1 and before a resumed checkpoint correct either way.
+- Remaining .docx body page-back resumes: 20 windows of this book are ~600 KB, more than the 512 KB ring; the
+  earliest windows of the page back come from a checkpoint once. Raising the bound is a memory decision, not taken.
+
 ## Word save while we read: intermittent refusals are the environment (2026-11-03)
 
 `--real`'s "file can be replaced (Word's save)" failed 2-5 times per run. `--coexistence-probe <file> <rounds>`
