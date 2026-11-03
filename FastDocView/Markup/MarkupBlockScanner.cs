@@ -50,7 +50,9 @@ public sealed class MarkupBlockScanner
     public List<long> BlockStartOffsets { get; } = [];
     public List<int> BlockTextLengths { get; } = [];
     public List<int> BlockStackIds { get; } = [];
-    public List<string> Stacks { get; } = [""];          // id 0 = nothing open
+    public List<string> Stacks { get; private set; } = [""];   // id 0 = nothing open
+    /// <summary>The document-wide index of <see cref="BlockStartOffsets"/>[0] (blocks before it were handed off and removed).</summary>
+    public int BlockIndexBase { get; private set; }
     public List<WordDocumentHeading> Headings { get; } = [];
     public bool IsBodyStarted => _isInBody;
 
@@ -74,7 +76,8 @@ public sealed class MarkupBlockScanner
     private int _unpushedDepth;                          // elements past MaximumStackDepth: their end tags are absorbed first
     private bool _isStackDirty;
     private int _stackId;
-    private readonly Dictionary<string, int> _stackIds = new(StringComparer.Ordinal) { [""] = 0 };
+    private Dictionary<string, int> _stackIds = new(StringComparer.Ordinal) { [""] = 0 };
+    private bool _isStackTableShared;                    // a span rescan: every stack it meets was interned by the index pass
 
     private bool _isInBody;
     private int _tableDepth;
@@ -377,7 +380,7 @@ public sealed class MarkupBlockScanner
         if (name.Length == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6' && _headingBlock < 0 && !isSelfClosing)
         {
             _headingLevel = name[1] - '0';
-            _headingBlock = BlockStartOffsets.Count - 1;
+            _headingBlock = BlockIndexBase + BlockStartOffsets.Count - 1;
             _headingBytes.Clear();
         }
         if (VoidElements.Contains(name) || isSelfClosing) return;
@@ -455,6 +458,7 @@ public sealed class MarkupBlockScanner
         string text = key.ToString();
         if (!_stackIds.TryGetValue(text, out _stackId))
         {
+            if (_isStackTableShared) throw new InvalidDataException("Markup index: a span rescan met an element stack the index pass did not (the document changed?).");
             _stackId = Stacks.Count;
             Stacks.Add(text);
             _stackIds.Add(text, _stackId);
@@ -488,4 +492,91 @@ public sealed class MarkupBlockScanner
     /// <summary>Where the body ends: <see cref="Finish"/>'s offset, or the &lt;/body&gt; tag's start in Elements mode.</summary>
     public long EndOffset { get; private set; }
     public long BodyEndTagOffset => _tagStartOffset;
+
+    // -- compact index: hand-off of finished blocks, span snapshots ---------------------------------------
+
+    /// <summary>Removes the first <paramref name="count"/> blocks (they are finished: only the last block still grows).</summary>
+    public void RemoveFirstBlocks(int count)
+    {
+        if (count <= 0) return;
+        if (count >= BlockStartOffsets.Count) throw new ArgumentOutOfRangeException(nameof(count), "the current block stays");
+        BlockStartOffsets.RemoveRange(0, count);
+        BlockTextLengths.RemoveRange(0, count);
+        BlockStackIds.RemoveRange(0, count);
+        BlockIndexBase += count;
+    }
+
+    /// <summary>
+    /// True between two fed pieces when the scanner holds nothing but text-level state (no tag, comment, raw text,
+    /// pending CR or half a code unit), inside the body with a block open: a <see cref="ExportSpanState"/> taken here
+    /// lets a fresh scanner continue exactly as this one would.
+    /// </summary>
+    public bool IsAtSpanPoint => _state == State.Text && !_pendingCarriageReturn && _carry < 0 && _isInBody && !IsBodyEnded
+                                 && BlockStartOffsets.Count > 0;
+
+    /// <summary>What a span rescan needs to continue from here (see <see cref="IsAtSpanPoint"/>); headings are not carried.</summary>
+    public MarkupScanState ExportSpanState()
+    {
+        if (!IsAtSpanPoint) throw new InvalidOperationException("not at a span point");
+        int last = BlockStartOffsets.Count - 1;
+        _isStackDirty = true;
+        int liveStackId = CurrentStackId();
+        var tagLengths = new int[_stack.Count];
+        for (int i = 0; i < _stack.Count; i++) tagLengths[i] = _stack[i].tag.Length;
+        return new MarkupScanState(BlockIndexBase + last, BlockStartOffsets[last], BlockStackIds[last], BlockTextLengths[last],
+                                   liveStackId, tagLengths, _unpushedDepth, _tableDepth, _blockHasContent, _isDoubleByteTrailNext);
+    }
+
+    /// <summary>A scanner that continues from <paramref name="state"/> with the index pass's interned stacks.</summary>
+    public static MarkupBlockScanner ResumeSpan(MarkupBlockMode mode, int unitSize, bool bigEndian, Encoding encoding,
+                                                List<string> stacks, Dictionary<string, int> stackIds, MarkupScanState state)
+    {
+        var scanner = new MarkupBlockScanner(mode, unitSize, bigEndian, encoding);
+        scanner.ShareStackTable(stacks, stackIds);
+        if ((uint)state.LiveStackId >= (uint)stacks.Count || (uint)state.BlockStackId >= (uint)stacks.Count) throw new InvalidDataException("Markup index: anchor stack out of range.");
+        string live = stacks[state.LiveStackId];
+        int at = 0;
+        foreach (int length in state.TagLengths)
+        {
+            if (length < 2 || length > live.Length - at) throw new InvalidDataException("Markup index: anchor stack damaged.");
+            string tag = live.Substring(at, length);
+            at += length;
+            scanner._stack.Add((ParseTag(tag).name, tag));
+        }
+        if (at != live.Length) throw new InvalidDataException("Markup index: anchor stack damaged.");
+        scanner._stackId = state.LiveStackId;
+        scanner._isStackDirty = false;
+        scanner._unpushedDepth = state.UnpushedDepth;
+        scanner._tableDepth = state.TableDepth;
+        scanner._isInBody = true;
+        scanner.BlockIndexBase = state.Block;
+        scanner.BlockStartOffsets.Add(state.BlockStart);
+        scanner.BlockTextLengths.Add(state.BlockTextLength);
+        scanner.BlockStackIds.Add(state.BlockStackId);
+        scanner._blockStartOffset = state.BlockStart;
+        scanner._blockHasContent = state.BlockHasContent;
+        scanner._isDoubleByteTrailNext = state.IsDoubleByteTrailNext;
+        return scanner;
+    }
+
+    /// <summary>A rescan from the very start (span 0) with the index pass's interned stacks.</summary>
+    public static MarkupBlockScanner FromStart(MarkupBlockMode mode, int unitSize, bool bigEndian, Encoding encoding,
+                                              List<string> stacks, Dictionary<string, int> stackIds)
+    {
+        var scanner = new MarkupBlockScanner(mode, unitSize, bigEndian, encoding);
+        scanner.ShareStackTable(stacks, stackIds);
+        return scanner;
+    }
+
+    private void ShareStackTable(List<string> stacks, Dictionary<string, int> stackIds)
+    {
+        Stacks = stacks;
+        _stackIds = stackIds;
+        _isStackTableShared = true;
+    }
 }
+
+/// <summary>A <see cref="MarkupBlockScanner"/> snapshot at a span point: the open block (document index, start, stack id,
+/// text length so far) and the text-level state (element stack as an interned stack + its tags' lengths, depths, flags).</summary>
+public sealed record MarkupScanState(int Block, long BlockStart, int BlockStackId, int BlockTextLength, int LiveStackId, int[] TagLengths,
+                                     int UnpushedDepth, int TableDepth, bool BlockHasContent, bool IsDoubleByteTrailNext);

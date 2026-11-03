@@ -127,8 +127,8 @@ A random block now costs: inflate from the checkpoint (~1.2 MB at ~400 MB/s ≈ 
 from the anchor (≤ 256 KB at ~120 MB/s ≈ 1 ms) + render. Only a faster inflater (native zlib via
 the synthetic stream, or a yet faster managed loop) moves the median much further.
 
-The `.doc`, `.odt`, `.rtf` and markup indexes still use their per-block layouts (the .doc sample's
-sidecar is 465 KB); the same principle (anchors every N blocks + rescanning) is the follow-up.
+The `.doc`, `.odt`, `.rtf` and markup (.txt / MHTML) indexes follow the same principle (anchors +
+rescanning, no per-block table) since 2026-11-03; see each format's section.
 
 The index is saved to `%LOCALAPPDATA%\KitveiHakodesh\FastDocView\<name>.<hash>.wordindex`
 keyed by path, validated by file length + last write time. Cold build runs at about 40 MB/s of
@@ -587,6 +587,37 @@ Measured (.txt, sidecar forced): largest real txt 4.6 GB / 6.9 M blocks — cold
 60-block window 0.35 ms avg; synthetic 37 MB / 1 M blocks — cold 311 ms, reopen 15 ms, window 0.24 ms.
 Corpus sample (largest 200 + random 300 of 11,276 txt): 0 crashes; windows-1255 234, UTF-8 201,
 7-bit 44, UTF-8 BOM 18, UTF-16 LE BOM 3.
+
+**Compact sidecar (format 6, 2026-11-03)**: no per-block table. The index keeps one `MarkupSpanAnchor` per
+~64 KB of text (`AnchorSpanBytes`): a `MarkupBlockScanner` snapshot (`MarkupScanState`: the open block - index,
+start, stack id, text length so far - plus the live element stack as an interned stack + its tags' lengths, the
+unpushed / table depths, two flags) taken between two fed pieces where the scanner holds only text-level state
+(`IsAtSpanPoint`: no tag, comment, raw text, pending CR or half a code unit); MHTML adds the decoder resume points of
+the snapshot position and of the open block's start. Anchor 0 is a fresh scan from the text's start. Besides the
+anchors: text-length totals per 64 blocks (scroll weights; exact once a span is scanned), the interned stacks, the
+headings (Elias-Fano blocks, levels, texts deflated), the head CSS. A block's start / end / text length / stack /
+resume point: `MarkupCompactBlockTable` rescans its span with the same scanner seeded from the anchor (8 spans
+cached, LRU). The index pass hands finished blocks off into the groups (no per-block lists even while building).
+**.txt is fed in fixed 64 KB pieces** (after the 128 KB detection sample) by both the pass and the rescans: a line
+over 64 KB splits at the first space the per-byte path sees, and where that path starts depends on the piece
+boundaries, so a rescan must see the same boundaries (the pass now reads full pieces even from a trickling stream).
+Golden dumps (every block's HTML, headings, search hits, reopen from the sidecar) byte-identical before/after for 11
+files: real Otzaria books (UTF-8 44 MB, the same text as windows-1255 19 MB and UTF-16 39 MB), the edge-case and
+Shift_JIS long-line fixtures, synthetic UTF-16 BE, synthetic MHTML 20k and 300k blocks (QP + base64), Firefox MHTML.
+
+Measured 2026-11-03 (Release net10, idle priority, 2 cores; shared box, +-20 %):
+
+| file | sidecar before (v5) | after (v6) | % of file | reopen before / after | first window | random block median / p90 before -> after |
+|---|---|---|---|---|---|---|
+| real UTF-8 .txt 44.6 MB, 53,677 blocks | 439,366 B | 59,764 B | 0.13 % | 5 / 12 ms | 0.6 / 1.3 ms | 0.3 / 0.4 -> 0.5 / 0.7 ms |
+| same text cp1255 19.3 MB | 723,710 B | 49,989 B | 0.26 % | 20 / 34 ms | 7.5 / 17.6 ms | 0.3 / 0.3 -> 0.7 / 1.2 ms |
+| same text UTF-16 38.7 MB | 724,504 B | 51,578 B | 0.13 % | 6 / 14 ms | 0.6 / 2.0 ms | 0.3 / 0.4 -> 0.9 / 1.4 ms |
+| synthetic MHTML base64 18.7 MB, 300k blocks | 1,513,976 B | 3,197 B | 0.017 % | 8 / 2 ms | 4.7 / 22 ms | 0.8 / 1.5 -> 3.6 / 5.5 ms |
+| synthetic MHTML QP 17.3 MB, 300k blocks | 1,513,976 B | 2,875 B | 0.017 % | 13 / 11 ms | 3.1 / 2.9 ms | 1.5 / 1.8 -> 2.8 / 5.2 ms |
+
+On the real books **the headings are ~90 % of the sidecar** (14,525 headings = 46.7 KB; 6,521 long ones = 53.7 KB):
+the outline's own text, deflated. Anchors are 2-4 KB, the weights 1-2 KB. At 256 KB spacing the anchors were 4x
+smaller but an MHTML random block cost 17-30 ms median (the scanner rescans ~25 MB/s of tag-heavy HTML), so 64 KB.
 
 Open: a Word table as one block is not
 bounded (one huge table = one big block); EstimatedTextLength counts bytes (UTF-8) or units (UTF-16).

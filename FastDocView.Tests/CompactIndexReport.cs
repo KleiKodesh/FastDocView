@@ -23,7 +23,7 @@ public static class CompactIndexReport
             using (IWordWindowedDocument first = TestReport.Timed("cold open (index pass)", () => WordWindowedDocumentOpener.Open(path, policy)))
             {
                 if (first is OdtWindowedDocument odt) odt.CompleteIndex();
-                Console.WriteLine($"   {first.BlockCount:N0} blocks, sidecar {new FileInfo(indexPath).Length:N0} bytes");
+                Console.WriteLine($"   {first.BlockCount:N0} blocks, sidecar {new FileInfo(indexPath).Length:N0} bytes ({100.0 * new FileInfo(indexPath).Length / new FileInfo(path).Length:F3} % of the {new FileInfo(path).Length:N0}-byte file)");
                 foreach ((string section, long bytes) in Breakdown(first)) Console.WriteLine($"      {bytes,9:N0}  {section}");
             }
             using IWordWindowedDocument document = TestReport.Timed("reopen from sidecar", () => WordWindowedDocumentOpener.Open(path, policy));
@@ -48,6 +48,7 @@ public static class CompactIndexReport
         DocBinaryWindowedDocument doc => doc.BlockIndex.SizeBreakdown(),
         OdtWindowedDocument odt => odt.Index.SizeBreakdown(),
         Rtf.RtfWindowedDocument rtf => rtf.Index.SizeBreakdown(),
+        MarkupWindowedDocument markup => markup.Index.SizeBreakdown(),
         Docx.DocxWindowedDocument docx => docx.Index.SizeBreakdown(),
         _ => [],
     };

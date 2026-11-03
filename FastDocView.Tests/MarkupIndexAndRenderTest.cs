@@ -35,7 +35,7 @@ public static class MarkupIndexAndRenderTest
                 VerifyText(trickled, count, codePage, name + " fed in 1-7 byte reads");
                 using MarkupWindowedDocument whole = MarkupWindowedDocument.OpenFromStream(new MemoryStream(File.ReadAllBytes(path)), path, MarkupSourceKind.PlainText,
                        new WordIndexDecision(path, WordIndexMode.InMemory, false, 0, 0, "test"), null, 0, 0);
-                TestReport.Check(whole.Index.BlockStarts.SequenceEqual(trickled.Index.BlockStarts) && whole.Index.BlockStackIds.SequenceEqual(trickled.Index.BlockStackIds),
+                TestReport.Check(whole.BlockCount == trickled.BlockCount && Enumerable.Range(0, whole.BlockCount).All(b => whole.BlockStartOf(b) == trickled.BlockStartOf(b) && whole.OpenTagsOf(b) == trickled.OpenTagsOf(b)),
                                  $"{name}: trickled index identical to the one-read index");
             }
             OpenBothModes(path, MarkupSourceKind.PlainText, document => VerifyText(document, count, codePage, name));
@@ -56,9 +56,9 @@ public static class MarkupIndexAndRenderTest
         string path = Path.Combine(TestReport.OutputDirectory, "markup-edge-cases-v1.txt");
         File.WriteAllText(path, text, new UTF8Encoding(false));
         using var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
-        string[] stacks = Enumerable.Range(0, document.BlockCount).Select(i => document.Index.Stacks[document.Index.BlockStackIds[i]]).ToArray();
+        string[] stacks = Enumerable.Range(0, document.BlockCount).Select(i => document.OpenTagsOf(i)).ToArray();
         TestReport.Check(stacks[1] == "<ul><li><p>" && stacks[2] == "<ul><li><p>", $"implied end tags: li closes p and li (stack '{stacks[2]}')");
-        int longBlocks = Enumerable.Range(0, document.BlockCount).Count(i => document.Index.BlockEnd(i) - document.Index.BlockStarts[i] > MarkupBlockScanner.LineBlockHardLimitBytes);
+        int longBlocks = Enumerable.Range(0, document.BlockCount).Count(i => document.BlockEndOf(i) - document.BlockStartOf(i) > MarkupBlockScanner.LineBlockHardLimitBytes);
         TestReport.Check(longBlocks == 0, "a 300 KB line without spaces is split into bounded blocks");
         IReadOnlyList<WordDocumentBlockHtml> all = document.RenderBlocks(0, document.BlockCount);
         int italic = all.ToList().FindIndex(b => b.Html.Contains("<i>i</i>"));

@@ -389,3 +389,13 @@ Append-only. Date, what we learned, what it changed.
 - A shared worktree with another agent's half-written files breaks the build at random moments;
   measurements of "base" need their own worktree pinned to the base commit (and the sibling
   SeekableDeflate pinned too - the symlinked one follows master).
+
+## 2026-11-03 - Markup compact index: the .txt scanner is not chunk-agnostic
+
+`MarkupBlockScanner` in Lines mode decides "watch for a split space" once per text run: a run that starts before the
+64 KB mark is skipped vectorised past it, so where a line over 64 KB splits depends on where the fed pieces begin.
+A span rescan that fed different pieces would find different blocks. Fix: the pass and every rescan feed the same
+fixed pieces (detection sample, then 64 KB), and anchors sit only at piece boundaries. MHTML's Elements mode has no
+such rule and is fed in any pieces. (Also: a shared scratchpad helper script was overwritten by a concurrent session
+mid-run, so a "byte-identical" compare once ran the old binary - name helpers per task and check the sizes printed.)
+

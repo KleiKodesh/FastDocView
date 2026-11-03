@@ -19,6 +19,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     private const int ReadChunkBytes = 1 << 16;
 
     private readonly MarkupRandomAccessIndex _index;
+    private readonly MarkupCompactBlockTable _table;
     private readonly Stream _file;
     private readonly Encoding _encoding;
     private readonly object _readLock = new();
@@ -90,6 +91,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         FilePath = filePath;
         _file = file;
         _index = index;
+        _table = new MarkupCompactBlockTable(index, file);
         _encoding = MarkupTextEncoding.FromCodePage(index.CodePage);
         Decision = decision;
         Stylesheet = WordDocumentHtmlStylesheet.Build(new WordRunFormatting(), index.IsRightToLeft)
@@ -98,7 +100,25 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
                      + index.DocumentCss;
     }
 
-    public int EstimatedTextLength(int blockIndex) => _index.BlockTextLengths[blockIndex];
+    public int EstimatedTextLength(int blockIndex)
+    {
+        lock (_readLock) return _table.KnownTextLength(blockIndex) ?? _index.EstimatedTextLength(blockIndex);
+    }
+
+    /// <summary>A block's text range (text coordinates) and the element stack open at its start - rescanned from its span.</summary>
+    public long BlockStartOf(int blockIndex) => WithTable(() => _table.BlockStart(blockIndex));
+    public long BlockEndOf(int blockIndex) => WithTable(() => _table.BlockEnd(blockIndex));
+    public string OpenTagsOf(int blockIndex) => WithTable(() => _table.OpenTags(blockIndex));
+    public int StackIdOf(int blockIndex) => WithTable(() => _table.StackId(blockIndex));
+
+    private T WithTable<T>(Func<T> read)
+    {
+        lock (_readLock)
+        {
+            try { return read(); }
+            finally { _releasableFile?.Release(); }
+        }
+    }
 
     /// <summary>
     /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan) with one read of their bytes (an MHTML decode from the first
@@ -123,8 +143,9 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
                     byte[] text = ReadText(fromBlock, end, out long textStart);
                     for (int block = fromBlock; block < end; block++)
                     {
-                        int from = (int)(_index.BlockStarts[block] - textStart);
-                        int length = (int)(_index.BlockEnd(block) - _index.BlockStarts[block]);
+                        long blockStart = _table.BlockStart(block);
+                        int from = (int)(blockStart - textStart);
+                        int length = (int)(_table.BlockEnd(block) - blockStart);
                         string content = _encoding.GetString(text, from, Math.Min(length, text.Length - from));
                         matcher.Reset();
                         if (_index.Kind == MarkupSourceKind.PlainText) matcher.Feed(content.AsSpan()); else matcher.FeedHtml(content);
@@ -156,10 +177,11 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         byte[] text = ReadText(first, last, out long textStart);
         for (int block = first; block < last; block++)
         {
-            int from = (int)(_index.BlockStarts[block] - textStart);
-            int length = (int)(_index.BlockEnd(block) - _index.BlockStarts[block]);
+            long blockStart = _table.BlockStart(block);
+            int from = (int)(blockStart - textStart);
+            int length = (int)(_table.BlockEnd(block) - blockStart);
             string content = _encoding.GetString(text, from, Math.Min(length, text.Length - from));
-            string openTags = _index.Stacks[_index.BlockStackIds[block]];
+            string openTags = _table.OpenTags(block);
             string html = _index.Kind == MarkupSourceKind.PlainText ? MarkupBlockRenderer.RenderLine(openTags, content) : MarkupBlockRenderer.Render(openTags, content);
             WordDocumentBlockKind kind = content.TrimStart().StartsWith("<table", StringComparison.OrdinalIgnoreCase) ? WordDocumentBlockKind.Table : WordDocumentBlockKind.Paragraph;
             result.Add(new WordDocumentBlockHtml(block, kind, html, []));
@@ -170,8 +192,8 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     /// <summary>The text bytes of blocks [first, last): a plain read for .txt, a decode from the first block's resume point for MHTML.</summary>
     private byte[] ReadText(int first, int last, out long textStart)
     {
-        textStart = _index.BlockStarts[first];
-        int need = checked((int)(_index.BlockEnd(last - 1) - textStart));
+        textStart = _table.BlockStart(first);
+        int need = checked((int)(_table.BlockEnd(last - 1) - textStart));
         var output = new byte[need];
         if (_index.Kind != MarkupSourceKind.WebArchive)
         {
@@ -186,7 +208,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
             return output;
         }
 
-        long resume = _index.BlockResumePoints[first];
+        long resume = _table.Resume(first);
         int skip = MimeTransferDecoder.SkipOf(resume);
         long encodedAt = MimeTransferDecoder.EncodedOffsetOf(resume);
         var decoder = new MimeTransferDecoder(_index.TransferEncoding);
