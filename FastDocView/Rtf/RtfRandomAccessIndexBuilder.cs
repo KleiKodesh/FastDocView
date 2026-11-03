@@ -99,16 +99,61 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     }
 
     /// <summary>
-    /// Rescans one span of the compact index: the blocks from the anchor's start up to <paramref name="end"/> (the next anchor's
-    /// start, or the last block's end with <paramref name="isLast"/>, which closes a trailing block the way the pass did).
+    /// A resumable rescan of one span of the compact index: the blocks from the anchor's start up to <paramref name="end"/> (the
+    /// next anchor's start, or the last block's end with <paramref name="isLast"/>, which closes a trailing block the way the pass
+    /// did). Nothing is read here; <see cref="ScanThrough"/> parses only as far as the asked-for block, pausing the parser right
+    /// after that block ends, and a later call resumes there (the same parse as one run to the end: same blocks, same values).
     /// </summary>
+    public static RtfRandomAccessIndexBuilder ResumableSpan(Stream file, RtfDocumentTables tables, long anchorOffset, byte[] scanState, long end, bool isLast)
+        => new(tables, anchorOffset, scanState) { _spanFile = file, _spanEnd = end, _isLastSpan = isLast };
+
+    /// <summary>The whole span rescanned in one go (the reference the resumable scan must equal).</summary>
     public static RtfRandomAccessIndexBuilder ScanSpan(Stream file, RtfDocumentTables tables, long anchorOffset, byte[] scanState, long end, bool isLast)
     {
-        var scanner = new RtfRandomAccessIndexBuilder(tables, anchorOffset, scanState);
-        scanner._parser.Run(file, anchorOffset, end);
-        if (isLast) scanner.EndBlock(scanner._parser.Position, final: true);
+        RtfRandomAccessIndexBuilder scanner = ResumableSpan(file, tables, anchorOffset, scanState, end, isLast);
+        scanner.ScanThrough(int.MaxValue - 1);
         return scanner;
     }
+
+    // a resumable span rescan
+    private Stream? _spanFile;
+    private long _spanEnd;
+    private bool _isLastSpan, _isSpanStarted;
+    private int _pauseAtBlockCount = int.MaxValue;
+
+    /// <summary>The span has been parsed to its end: every block of it is known.</summary>
+    public bool IsComplete { get; private set; }
+
+    /// <summary>Parses on until span-local block <paramref name="localIndex"/> has ended (or the span is complete).</summary>
+    public void ScanThrough(int localIndex)
+    {
+        while (!IsComplete && _starts.Count <= localIndex)
+        {
+            _pauseAtBlockCount = localIndex + 1;
+            if (!_isSpanStarted) { _isSpanStarted = true; _parser.Run(_spanFile!, _start, _spanEnd); }
+            else _parser.Continue();
+            if (_parser.IsPaused) continue;
+            if (_isLastSpan) EndBlock(_parser.Position, final: true);
+            IsComplete = true;
+            _spanFile = null;
+        }
+    }
+
+    /// <summary>
+    /// Feeds the matcher while the span goes on being scanned: the blocks from the next one to end through span-local block
+    /// <paramref name="lastLocalIndex"/> - their text and separators from the same parse that finds their bounds (one pass).
+    /// </summary>
+    public void Search(RtfSpanSearch search, int lastLocalIndex)
+    {
+        _search = search;
+        _searchFrom = _starts.Count;
+        try { ScanThrough(lastLocalIndex); }
+        finally { _search = null; }
+    }
+
+    private RtfSpanSearch? _search;
+    private int _searchFrom;
+    private bool IsSearching => _search is not null && _starts.Count >= _searchFrom;
 
     // the span's blocks (span-local indexes), read by RtfCompactBlockTable
     public IReadOnlyList<long> Starts => _starts;
@@ -172,6 +217,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _stateIds.Add(_stateId);
         _listLevels.Add(listLabel is null ? (byte)255 : (byte)Math.Max(0, Math.Min(254, listLevel)));
         _labelIds.Add(listLabel is null ? -1 : InternLabel(listLabel));
+        if (_search is not null && blockIndex >= _searchFrom) _search.BlockEnded(blockIndex);
+        if (_isSpanScan && !final && _starts.Count >= _pauseAtBlockCount) _parser.RequestPause();
         if (_pendingAnchor is { } pending && pending.block == blockIndex)
         {
             _anchors.Add(pending);
@@ -218,7 +265,9 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     // ── parser events ───────────────────────────────────────────────────────────────
 
-    public override bool WantsText
+    public override bool WantsText => IsSearching || IndexWantsText;
+
+    private bool IndexWantsText
     {
         get
         {
@@ -247,6 +296,11 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void Text(ReadOnlySpan<char> text, in RtfGroupState state)
     {
+        if (IsSearching)
+        {
+            _search!.Text(text, _parser);
+            if (!IndexWantsText) { TextLength(_parser.TextByteCount, state); return; }   // what the index pass saw
+        }
         if (_parser.IsInListText) { _hasContent = true; _listText.Append(text.ToArray()); return; }
         if (_parser.IsInFootnote) return;
         _hasContent = true;
@@ -266,7 +320,11 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void Embedded(RtfEmbeddedKind kind, in RtfGroupState state) { if (!_parser.IsInFootnote) { _hasContent = true; _textLength += 8; } }
 
-    public override void Break(RtfWord word, in RtfGroupState state) { if (!_parser.IsInFootnote) _hasContent = true; }
+    public override void Break(RtfWord word, in RtfGroupState state)
+    {
+        if (IsSearching) _search!.Separator();
+        if (!_parser.IsInFootnote) _hasContent = true;
+    }
 
     public override void PageSetup(RtfWord word, int value)
     {
@@ -298,6 +356,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void ParagraphEnd(in RtfGroupState state, bool isSectionEnd)
     {
+        if (IsSearching) _search!.Separator();
         if (_parser.IsInFootnote || _parser.IsInListText) return;
         _hasContent = true;
         string? label = CountList(state, out bool hasListParagraph);
@@ -335,6 +394,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void CellEnd(in RtfGroupState state, bool isNested)
     {
+        if (IsSearching) _search!.Separator();
         if (_parser.IsInFootnote) return;
         _hasContent = true;
         _isRow = true;
@@ -345,6 +405,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void RowEnd(in RtfGroupState state, bool isNested)
     {
+        if (IsSearching) _search!.Separator();
         if (_parser.IsInFootnote || isNested) return;
         _hasContent = true;
         _isRow = true;
@@ -365,10 +426,15 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _hasContent = true;          // the bookmark's group belongs to this block (a root-level group would otherwise move the block start past it)
     }
 
-    public override void FootnoteStart() => _hasContent = true;
+    public override void FootnoteStart()
+    {
+        if (IsSearching) _search!.Separator();
+        _hasContent = true;
+    }
 
     public override void FootnoteEnd(bool isEndnote)
     {
+        if (IsSearching) _search!.Separator();
         WordDocumentNoteKind kind = isEndnote ? WordDocumentNoteKind.Endnote : WordDocumentNoteKind.Footnote;
         int number = 0;
         string label = "*";

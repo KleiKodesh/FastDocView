@@ -1202,3 +1202,35 @@ others hold the files, as Word retries a save.
 - Not done: floating .doc pictures (0x08 + FSPA + drawing group, e.g. POI PngPicture.doc), DIB / metafiles, page-relative
   offsets, \shpgrp groups.
 
+
+## RTF / ODT / FODT: no needless re-reads (2026-11-03)
+
+Measured with `--read-counts <files>` (FileReadCountTest: sidecar mode, reopened; counters
+`WordDocumentFileStream.ProcessOpenCount` / `ProcessBytesRead` / `ProcessSourceChecks`). RTF = LibreOffice
+conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
+
+| | .rtf book | .fodt | .odt |
+|---|---|---|---|
+| first window (30 blocks) | 0.264 -> 0.074 MB | same | same |
+| random jump (30 blocks) | 0.283 -> 0.094 MB | same | same |
+| notes, 10 pages of 10 | 99 opens / 99 stats -> 10 / 10 | 5 / 99 -> 4 / 10 | 1 / 99 -> 1 / 10 |
+| full search, batches of 500 | 422 MB (2.0x file) -> 211 MB (1.0x) | same | same |
+
+- **Resumable RTF span rescan** (`RtfRandomAccessIndexBuilder.ResumableSpan` / `ScanThrough`, model
+  `MarkupSpanRescan`): the cached span's parser pauses right after the asked-for block ends
+  (`RtfParser.RequestPause` / `Continue`; each `Fill` seeks, so the stream may be shared meanwhile) and
+  resumes on the next request; the block count is checked when the span completes. A window at a span's
+  start reads one 64 KB buffer, not the span's 256 KB.
+- **RTF search in one parse**: the span rescan feeds the matcher as it finds the bounds
+  (`RtfSpanSearch`, `RtfCompactBlockTable.Search`); a sequential batch resumes the paused rescan. Text that
+  the index pass would only count is decoded for the matcher and counted by its byte length
+  (`RtfParser.TextByteCount`), so block values do not change. Old path kept as the reference:
+  `RtfWindowedDocument.SearchByBlockReparse`; `--rtf-search-golden <files>` (RtfSearchOnePassTest) checks
+  stepped rescan = whole rescan and one pass = old path (8 queries incl. Hebrew plain / pointed, English,
+  mixed; match case and notes on / off; batches 500 / 37 / 1; random starts).
+- **Notes pages**: RTF and ODT/FODT `RenderNotes` run all the page's block runs under one lock, one source
+  check and one release. Not done: a notes-only render (the body HTML of a note's block is still built and
+  dropped) - it needs renderer changes.
+- Single-value lookups (`ListLabelOf`, `ListLevelOf`, `BlockKindOf`): no host loops over them
+  (KitveiHakodesh Core calls none), so no batch API was added.
+- Golden dumps byte-identical on .odt, .fodt, the .rtf book and the synthetic .rtf.

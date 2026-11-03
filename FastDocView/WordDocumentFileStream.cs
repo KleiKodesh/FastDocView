@@ -22,9 +22,19 @@ public sealed class WordDocumentFileStream : Stream
 
     public string Path { get; }
 
+    // process-wide counters (tests measure what a window, search or notes page costs in file opens, reads and stats)
+    private static long _processOpenCount, _processBytesRead, _processSourceChecks;
+    public static long ProcessOpenCount => Interlocked.Read(ref _processOpenCount);
+    public static long ProcessBytesRead => Interlocked.Read(ref _processBytesRead);
+    public static long ProcessSourceChecks => Interlocked.Read(ref _processSourceChecks);
+
     /// <summary>Opens a file for reading while letting any other process read, write, rename or delete it.</summary>
     public static FileStream OpenShared(string path)
-        => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, BufferSize);
+    {
+        var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, BufferSize);
+        Interlocked.Increment(ref _processOpenCount);
+        return file;
+    }
 
     public WordDocumentFileStream(string path)
     {
@@ -40,6 +50,7 @@ public sealed class WordDocumentFileStream : Stream
     {
         get
         {
+            Interlocked.Increment(ref _processSourceChecks);
             var info = new FileInfo(Path);
             return !info.Exists || info.Length != _lengthAtOpen || info.LastWriteTimeUtc.Ticks != _lastWriteTicksAtOpen;
         }
@@ -52,7 +63,14 @@ public sealed class WordDocumentFileStream : Stream
         _file = null;
     }
 
-    private FileStream File => _file ??= OpenShared(Path);
+    private FileStream File
+    {
+        get
+        {
+            _file ??= OpenShared(Path);
+            return _file;
+        }
+    }
 
     public override int Read(byte[] buffer, int offset, int count)
     {
@@ -60,6 +78,7 @@ public sealed class WordDocumentFileStream : Stream
         if (file.Position != _position) file.Position = _position;
         int read = file.Read(buffer, offset, count);
         _position += read;
+        Interlocked.Add(ref _processBytesRead, read);
         return read;
     }
 

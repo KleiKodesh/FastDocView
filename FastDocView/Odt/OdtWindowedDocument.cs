@@ -548,7 +548,17 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     /// the known references, so the on-demand scan is not extended.
     /// </summary>
     public IReadOnlyList<WordDocumentNoteHtml> RenderNotes(int firstNoteIndex, int count)
-        => WordDocumentNoteWindow.RenderFromBlocks(NoteReferences, firstNoteIndex, count, RenderBlocks);
+    {
+        lock (_readLock)
+        {
+            // all of the window's runs under one lock, one source check and one file open (not one per run)
+            IReadOnlyList<WordDocumentNoteReference> references = NoteReferences;
+            if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
+                throw new WordDocumentSourceChangedException(FilePath);
+            try { return WordDocumentNoteWindow.RenderFromBlocks(references, firstNoteIndex, count, RenderBlocksLocked); }
+            finally { _releasableFile?.Release(); }
+        }
+    }
 
     private static FileStream OpenRead(string path) => WordDocumentFileStream.OpenShared(path);     // Word / LibreOffice may hold the file open
 

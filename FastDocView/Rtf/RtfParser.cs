@@ -102,9 +102,30 @@ internal sealed class RtfParser
         _bufferOffset = start;
         _position = _end = 0;
         _limit = end;
+        _isPauseRequested = _isPaused = false;
         Parse();
-        FlushText();
+        if (!_isPaused) FlushText();
     }
+
+    private bool _isPauseRequested, _isPaused;
+
+    /// <summary>The sink asks the run to stop before the next token (<see cref="IsPaused"/>); <see cref="Continue"/> goes on from there.</summary>
+    public void RequestPause() => _isPauseRequested = true;
+
+    /// <summary>The last <see cref="Run"/> / <see cref="Continue"/> stopped on a <see cref="RequestPause"/>, not at its end.</summary>
+    public bool IsPaused => _isPaused;
+
+    /// <summary>Resumes a paused run exactly where it stopped (the read-ahead buffer is kept; each fill seeks, so the source may be moved meanwhile).</summary>
+    public void Continue()
+    {
+        if (!_isPaused || _source is null) return;
+        _isPaused = false;
+        Parse();
+        if (!_isPaused) FlushText();
+    }
+
+    /// <summary>The file bytes behind the text just given to <see cref="RtfSink.Text"/> (what <see cref="RtfSink.TextLength"/> would have said).</summary>
+    public int TextByteCount { get; private set; }
 
     // ── snapshots ─────────────────────────────────────────────────────────────────────
 
@@ -193,6 +214,7 @@ internal sealed class RtfParser
         long remaining = _limit - _bufferOffset;
         if (remaining <= 0 || _source is null) return false;
         int wanted = (int)Math.Min(_buffer.Length, remaining);
+        _source.Position = _bufferOffset;                     // the stream may be shared (a span rescan resumed between two fills)
         int read = 0;
         while (read < wanted)
         {
@@ -239,6 +261,7 @@ internal sealed class RtfParser
     {
         while (true)
         {
+            if (_isPauseRequested) { _isPauseRequested = false; _isPaused = true; return; }
             if (_position >= _end && !Fill()) return;
             byte b = _buffer[_position];
             switch (b)
@@ -473,7 +496,7 @@ internal sealed class RtfParser
         ref RtfGroupState state = ref _stack[_depth];
         if (IsTextDestination(state))
         {
-            if (_sink.WantsText) { Span<char> one = stackalloc char[1]; one[0] = character; _sink.Text(one, state); }
+            if (_sink.WantsText) { Span<char> one = stackalloc char[1]; one[0] = character; TextByteCount = 1; _sink.Text(one, state); }
             else _sink.TextLength(1, state);
         }
         else if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart) _captured.Append(character);
@@ -489,6 +512,7 @@ internal sealed class RtfParser
         if (!_sink.WantsText) { _sink.TextLength(count, state); return; }
         if (_chars.Length < count) _chars = new char[Math.Max(count, _chars.Length * 2)];
         int decoded = RtfCodePages.Decode(_textBytes.AsSpan(0, count), _textCodePage, _chars);
+        TextByteCount = count;
         _sink.Text(_chars.AsSpan(0, decoded), state);
     }
 

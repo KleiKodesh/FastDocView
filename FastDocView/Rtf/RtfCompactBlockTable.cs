@@ -2,10 +2,12 @@ namespace FastDocView.Rtf;
 
 /// <summary>
 /// Serves block ranges, kinds, start snapshots and list labels from a compact <see cref="RtfRandomAccessIndex"/>: a
-/// block's values are recovered by rescanning its whole span (the file bytes from the anchor's block start to the next
-/// anchor's) with the same block rules the index pass ran (<see cref="RtfRandomAccessIndexBuilder.ScanSpan"/>), seeded
-/// with the anchor's parser snapshot and list state, so every value equals the one the pass found. A span is at most
-/// 256 KB of RTF (a few ms); a handful of spans stay cached (LRU).
+/// block's values are recovered by rescanning its span (the file bytes from the anchor's block start towards the next
+/// anchor's) with the same block rules the index pass ran (<see cref="RtfRandomAccessIndexBuilder.ResumableSpan"/>), seeded
+/// with the anchor's parser snapshot and list state, so every value equals the one the pass found. The rescan runs only
+/// as far as the asked-for block and resumes from there on the next request (a window at a span's start reads one 64 KB
+/// buffer, not the span's 256 KB); a handful of spans stay cached (LRU). A search batch is fed from the same rescan
+/// (<see cref="Search"/>), so its blocks are parsed once.
 /// </summary>
 internal sealed class RtfCompactBlockTable
 {
@@ -37,23 +39,47 @@ internal sealed class RtfCompactBlockTable
 
     private Span GetSpan(int anchorIndex)
     {
-        if (!_spans.TryGetValue(anchorIndex, out Span? span))
-        {
-            if (_spans.Count >= MaxCachedSpans)
-            {
-                int oldest = _spans.OrderBy(pair => pair.Value.LastUse).First().Key;
-                _spans.Remove(oldest);
-            }
-            WordIndexSpanAnchor anchor = Anchors[anchorIndex];
-            RtfRandomAccessIndexBuilder scanner = RtfRandomAccessIndexBuilder.ScanSpan(_file, _index.Tables, anchor.Position, _index.ScanStateOf(anchorIndex),
-                                                                                       SpanEnd(anchorIndex), isLast: anchorIndex + 1 >= Anchors.Length);
-            if (scanner.Starts.Count != SpanBlockCount(anchorIndex))
-                throw new InvalidDataException("RTF index: the span's rescan found a different block count (the document changed?).");
-            span = new Span { Anchor = anchorIndex, Scanner = scanner };
-            _spans[anchorIndex] = span;
-        }
+        if (!_spans.TryGetValue(anchorIndex, out Span? span)) span = StartSpan(anchorIndex);
         span.LastUse = ++_useCounter;
         return span;
+    }
+
+    /// <summary>A fresh (not yet read) rescan of the span, cached in place of any earlier one.</summary>
+    private Span StartSpan(int anchorIndex)
+    {
+        _spans.Remove(anchorIndex);
+        if (_spans.Count >= MaxCachedSpans)
+        {
+            int oldest = _spans.OrderBy(pair => pair.Value.LastUse).First().Key;
+            _spans.Remove(oldest);
+        }
+        WordIndexSpanAnchor anchor = Anchors[anchorIndex];
+        RtfRandomAccessIndexBuilder scanner = RtfRandomAccessIndexBuilder.ResumableSpan(_file, _index.Tables, anchor.Position, _index.ScanStateOf(anchorIndex),
+                                                                                        SpanEnd(anchorIndex), isLast: anchorIndex + 1 >= Anchors.Length);
+        var span = new Span { Anchor = anchorIndex, Scanner = scanner, LastUse = ++_useCounter };
+        _spans[anchorIndex] = span;
+        return span;
+    }
+
+    /// <summary>Scans the span on through <paramref name="localIndex"/>; at the span's end its block count must be the index's.</summary>
+    private void ScanThrough(int anchorIndex, RtfRandomAccessIndexBuilder scanner, int localIndex, RtfSpanSearch? search = null)
+    {
+        try
+        {
+            if (search is null) scanner.ScanThrough(localIndex);
+            else scanner.Search(search, localIndex);
+        }
+        catch
+        {
+            _spans.Remove(anchorIndex);            // a rescan that failed part-way is not kept
+            throw;
+        }
+        int expected = SpanBlockCount(anchorIndex);
+        if (scanner.IsComplete ? scanner.Starts.Count != expected : scanner.Starts.Count > expected)
+        {
+            _spans.Remove(anchorIndex);
+            throw new InvalidDataException("RTF index: the span's rescan found a different block count (the document changed?).");
+        }
     }
 
     private RtfRandomAccessIndexBuilder SpanOf(int blockIndex, out int localIndex)
@@ -61,7 +87,35 @@ internal sealed class RtfCompactBlockTable
         if ((uint)blockIndex >= (uint)BlockCount) throw new ArgumentOutOfRangeException(nameof(blockIndex));
         int anchorIndex = _index.AnchorIndexOf(blockIndex);
         localIndex = blockIndex - Anchors[anchorIndex].FirstBlock;
-        return GetSpan(anchorIndex).Scanner;
+        RtfRandomAccessIndexBuilder scanner = GetSpan(anchorIndex).Scanner;
+        if (localIndex >= scanner.Starts.Count) ScanThrough(anchorIndex, scanner, localIndex);
+        return scanner;
+    }
+
+    /// <summary>
+    /// Feeds blocks [<paramref name="fromBlock"/>, <paramref name="endBlock"/>) to <paramref name="search"/> from the span rescans
+    /// themselves: a cached rescan paused right before a block goes on from there (the next batch of a sequential search reads
+    /// on where the last one stopped, a rescan short of the block is continued to it); otherwise the span is rescanned afresh from its anchor (the blocks before the batch are
+    /// parsed without feeding the matcher). Either way each block is parsed once.
+    /// </summary>
+    public void Search(int fromBlock, int endBlock, RtfSpanSearch search)
+    {
+        int block = fromBlock;
+        while (block < endBlock)
+        {
+            int anchorIndex = _index.AnchorIndexOf(block);
+            int spanFirst = Anchors[anchorIndex].FirstBlock;
+            int local = block - spanFirst;
+            int last = Math.Min(endBlock, spanFirst + SpanBlockCount(anchorIndex)) - 1 - spanFirst;
+            Span span = _spans.TryGetValue(anchorIndex, out Span? cached) && !cached.Scanner.IsComplete && cached.Scanner.Starts.Count <= local
+                ? cached
+                : StartSpan(anchorIndex);
+            span.LastUse = ++_useCounter;
+            if (local > 0 && span.Scanner.Starts.Count < local) ScanThrough(anchorIndex, span.Scanner, local - 1);
+            search.SpanFirstBlock = spanFirst;
+            ScanThrough(anchorIndex, span.Scanner, last, search);
+            block = spanFirst + last + 1;
+        }
     }
 
     public long BlockStartOffset(int blockIndex) => SpanOf(blockIndex, out int local).Starts[local];
@@ -83,6 +137,7 @@ internal sealed class RtfCompactBlockTable
     {
         if ((uint)blockIndex >= (uint)BlockCount) return null;
         int anchorIndex = _index.AnchorIndexOf(blockIndex);
-        return _spans.TryGetValue(anchorIndex, out Span? span) ? span.Scanner.TextLengths[blockIndex - Anchors[anchorIndex].FirstBlock] : null;
+        int local = blockIndex - Anchors[anchorIndex].FirstBlock;
+        return _spans.TryGetValue(anchorIndex, out Span? span) && local < span.Scanner.TextLengths.Count ? span.Scanner.TextLengths[local] : null;
     }
 }

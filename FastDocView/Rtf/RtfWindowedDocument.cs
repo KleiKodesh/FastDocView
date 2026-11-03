@@ -114,11 +114,31 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     }
 
     /// <summary>
-    /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan): each block's byte range re-parsed from its index snapshot
-    /// into a text-only sink (<see cref="RtfSearchTextSink"/>) - no HTML. Footnotes are groups inside the block, fed when
-    /// <see cref="WordDocumentSearchOptions.IncludeNotes"/>.
+    /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan) in one parse: the span rescan that finds the block bounds feeds
+    /// their text to the matcher as it goes (<see cref="RtfCompactBlockTable.Search"/>) - no HTML, no second parse.
+    /// Footnotes are groups inside the block, fed when <see cref="WordDocumentSearchOptions.IncludeNotes"/>.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
+    {
+        var matcher = new WordDocumentSearchMatcher(query, options);
+        if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
+        fromBlock = Math.Max(0, fromBlock);
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
+                var search = new RtfSpanSearch(matcher, options.IncludeNotes);
+                if (fromBlock < end) _table.Search(fromBlock, end, search);
+                return WordDocumentSearchBatch.Finish(search.Hits, search.Counts, Math.Max(end, fromBlock), isIndexComplete: true, _index.BlockCount);
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
+    /// <summary>The per-block reference the one-pass search must equal: each block's range re-parsed from its snapshot (<see cref="RtfSearchTextSink"/>).</summary>
+    internal WordDocumentSearchBatch SearchByBlockReparse(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
     {
         var matcher = new WordDocumentSearchMatcher(query, options);
         if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
@@ -150,20 +170,22 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         lock (_readLock)
         {
             if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
-            try
-            {
-                int first = Math.Max(0, firstBlockIndex);
-                int end = (int)Math.Min(_index.BlockCount, (long)firstBlockIndex + Math.Max(0, count));
-                var result = new List<WordDocumentBlockHtml>(Math.Max(0, end - first));
-                for (int blockIndex = first; blockIndex < end; blockIndex++)
-                {
-                    (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(_file, _index, _table, blockIndex);
-                    result.Add(new WordDocumentBlockHtml(blockIndex, _table.BlockKindOf(blockIndex), html, notes));
-                }
-                return result;
-            }
+            try { return RenderBlocksLocked(firstBlockIndex, count); }
             finally { _releasableFile?.Release(); }
         }
+    }
+
+    private List<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count)
+    {
+        int first = Math.Max(0, firstBlockIndex);
+        int end = (int)Math.Min(_index.BlockCount, (long)firstBlockIndex + Math.Max(0, count));
+        var result = new List<WordDocumentBlockHtml>(Math.Max(0, end - first));
+        for (int blockIndex = first; blockIndex < end; blockIndex++)
+        {
+            (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(_file, _index, _table, blockIndex);
+            result.Add(new WordDocumentBlockHtml(blockIndex, _table.BlockKindOf(blockIndex), html, notes));
+        }
+        return result;
     }
 
     /// <inheritdoc/>
@@ -187,9 +209,19 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         }
     }
 
-    /// <summary>Notes are inline in RTF (footnote groups): only the blocks holding the window's notes are rendered.</summary>
+    /// <summary>
+    /// Notes are inline in RTF (footnote groups): only the blocks holding the window's notes are rendered - all of the
+    /// window's runs under one lock, one source check and one file open.
+    /// </summary>
     public IReadOnlyList<WordDocumentNoteHtml> RenderNotes(int firstNoteIndex, int count)
-        => WordDocumentNoteWindow.RenderFromBlocks(NoteReferences, firstNoteIndex, count, RenderBlocks);
+    {
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try { return WordDocumentNoteWindow.RenderFromBlocks(NoteReferences, firstNoteIndex, count, RenderBlocksLocked); }
+            finally { _releasableFile?.Release(); }
+        }
+    }
 
     public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
 
