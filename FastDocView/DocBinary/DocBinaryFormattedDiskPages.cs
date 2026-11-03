@@ -20,7 +20,8 @@ public sealed class DocBinaryFormattedDiskPages
     private readonly uint[] _paragraphBinPages;
     private readonly uint[] _characterBinFcs;
     private readonly uint[] _characterBinPages;
-    private readonly Dictionary<uint, byte[]> _pageCache = new();
+    private readonly Dictionary<uint, LinkedListNode<(uint pageNumber, byte[] page)>> _pageCache = new();
+    private readonly LinkedList<(uint pageNumber, byte[] page)> _pageUse = new();     // most recently used first
 
     private readonly Stream? _dataStream;
 
@@ -140,13 +141,23 @@ public sealed class DocBinaryFormattedDiskPages
             if (binFcs[middle] <= fc) low = middle; else high = middle - 1;
         }
         uint pageNumber = binPages[low] & 0x3FFFFF;
-        if (_pageCache.TryGetValue(pageNumber, out byte[]? cached)) return cached;
-        if (_pageCache.Count >= CachedPageLimit) _pageCache.Clear();
+        if (_pageCache.TryGetValue(pageNumber, out LinkedListNode<(uint pageNumber, byte[] page)>? cached))
+        {
+            _pageUse.Remove(cached);                       // least recently used last: the one a full cache evicts
+            _pageUse.AddFirst(cached);
+            return cached.Value.page;
+        }
+        if (_pageCache.Count >= CachedPageLimit)
+        {
+            // only the least recently used page goes (its array is not reused: a caller may still be reading it)
+            _pageCache.Remove(_pageUse.Last!.Value.pageNumber);
+            _pageUse.RemoveLast();
+        }
         var page = new byte[PageSize];
         _wordDocument.Position = (long)pageNumber * PageSize;
         int read = 0;
         while (read < PageSize) { int n = _wordDocument.Read(page, read, PageSize - read); if (n <= 0) break; read += n; }
-        _pageCache[pageNumber] = page;
+        _pageCache[pageNumber] = _pageUse.AddFirst((pageNumber, page));
         return page;
     }
 

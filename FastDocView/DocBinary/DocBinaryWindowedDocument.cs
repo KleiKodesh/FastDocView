@@ -133,15 +133,17 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         Bookmarks = DocBinaryBookmarks.Read(_tableStream, FileInformationBlock);
         _renderer.Bookmarks = Bookmarks;
 
+        int[] sectionStartCps = DocBinarySectionTable.ReadStartCps(_tableStream, FileInformationBlock.SectionDescriptors);
         bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc)
-                            && cachedIndex.NoteReferenceBlocks.Length == _notes.References.Length;
+                            && cachedIndex.NoteReferenceBlocks.Length == _notes.References.Length
+                            && cachedIndex.SectionFirstBlocks.Length == sectionStartCps.Length;
         Decision = policy.Decide(displayPath, (long)FileInformationBlock.MainTextCharacterCount * 2, isCacheValid);
         _index = isCacheValid ? cachedIndex!
-               : DocBinaryBlockIndex.Build(PieceTable, _renderer, _styles, ListDefinitions, _notes.References.Select(r => r.ReferenceCp).ToArray(), FileInformationBlock.MainTextCharacterCount,
+               : DocBinaryBlockIndex.Build(PieceTable, _renderer, _styles, ListDefinitions, _notes.References.Select(r => r.ReferenceCp).ToArray(), sectionStartCps, FileInformationBlock.MainTextCharacterCount,
                                            sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
 
         _table = new DocBinaryCompactBlockTable(_index, PieceTable, _renderer, _styles, ListDefinitions);
-        Sections = DocBinarySectionTable.Read(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, _table.BlockAt);
+        Sections = DocBinarySectionTable.Read(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, _index.SectionFirstBlocks);
         IsRightToLeft = DetectRightToLeft();
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(0).RunFormatting, IsRightToLeft);
     }
@@ -194,11 +196,21 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
 
     /// <summary>
-    /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan): each block's characters straight from the piece table
-    /// (no FKP formatting, no rendering), and with <see cref="WordDocumentSearchOptions.IncludeNotes"/> the bodies of the
-    /// notes it references. The index of a .doc is always complete.
+    /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan): one pass over the piece characters gives both the block
+    /// boundaries and the text the matcher reads (<see cref="DocBinarySearchCursor"/> - no FKP formatting, no rendering, no
+    /// span rescan, no second read), and with <see cref="WordDocumentSearchOptions.IncludeNotes"/> the bodies of the notes a
+    /// block references. A batch that starts where the previous one ended continues its cursor. The index of a .doc is always complete.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
+        => SearchBlocks(query, options, fromBlock, maxBlocksToScan, onePass: true);
+
+    /// <summary>The search as it was before the one pass: block ranges from the compact table, each block's text read again - the golden reference.</summary>
+    internal WordDocumentSearchBatch SearchByBlockRanges(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
+        => SearchBlocks(query, options, fromBlock, maxBlocksToScan, onePass: false);
+
+    private DocBinarySearchCursor? _searchCursor;
+
+    private WordDocumentSearchBatch SearchBlocks(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan, bool onePass)
     {
         var matcher = new WordDocumentSearchMatcher(query, options);
         if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
@@ -212,11 +224,29 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
                 int end = (int)Math.Min(BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
                 var hits = new List<int>();
                 var counts = new List<int>();
+                DocBinarySearchCursor? cursor = null;
+                if (onePass && fromBlock < end)
+                {
+                    cursor = _searchCursor is { } previous && previous.NextBlock == fromBlock ? previous
+                           : new DocBinarySearchCursor(PieceTable, _renderer, _styles, ListDefinitions, fromBlock, _table.BlockStartCp(fromBlock),
+                                                       BlockCount, FileInformationBlock.MainTextCharacterCount);
+                    _searchCursor = null;                  // a cursor that throws mid-batch is not resumed
+                }
                 for (int blockIndex = fromBlock; blockIndex < end; blockIndex++)
                 {
-                    int start = _table.BlockStartCp(blockIndex), blockEnd = _table.BlockEndCp(blockIndex);
+                    int start, blockEnd;
                     matcher.Reset();
-                    _renderer.FeedSearchText(start, blockEnd, matcher);
+                    if (cursor is not null)
+                    {
+                        cursor.TryNext(out start, out blockEnd, out ReadOnlySpan<char> text);
+                        DocBinaryParagraphHtmlRenderer.FeedSearchCharacters(text, matcher);
+                    }
+                    else
+                    {
+                        start = _table.BlockStartCp(blockIndex);
+                        blockEnd = _table.BlockEndCp(blockIndex);
+                        _renderer.FeedSearchText(start, blockEnd, matcher);
+                    }
                     if (options.IncludeNotes)
                         foreach (DocBinaryNoteReferences.NoteReference reference in _notes.InRange(start, blockEnd))
                         {
@@ -225,6 +255,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
                         }
                     if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                 }
+                cursor?.ReleaseLargeBuffer();
+                _searchCursor = cursor ?? _searchCursor;
                 return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: true, BlockCount);
             }
             finally { _releasableFile?.Release(); }

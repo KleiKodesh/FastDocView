@@ -268,10 +268,15 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// The search's view of [cpStart, cpEnd): the text Word shows (field codes hidden, results kept), a tab a space,
     /// paragraph / cell / row / line / page marks separators, other control characters (note references, pictures) dropped.
     /// </summary>
+    /// <summary>Feeds a CP range's text to the matcher, read from the piece table (notes; the golden reference for the body's one-pass search).</summary>
     public void FeedSearchText(int cpStart, int cpEnd, WordDocumentSearchMatcher matcher)
+        => FeedSearchCharacters(_pieces.ReadText(cpStart, cpEnd).AsSpan(), matcher);
+
+    /// <summary>Feeds one block's (or note's) characters to the matcher: field codes skipped, tabs as spaces, marks as separators.</summary>
+    public static void FeedSearchCharacters(ReadOnlySpan<char> text, WordDocumentSearchMatcher matcher)
     {
         var fieldState = new FieldState();
-        foreach (char c in _pieces.ReadText(cpStart, cpEnd))
+        foreach (char c in text)
         {
             if (fieldState.Consume(c, out _)) continue;           // search reads text only: link tags are not needed
             if (c >= ' ') matcher.Feed(c);

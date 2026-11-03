@@ -29,6 +29,7 @@ public static class DocumentSearchTest
         OdtSearchBytesTest.Run(timingPaths);
         TestReport.Step("Search: rtf");
         Rtf();
+        DocBinarySearchOnePassTest.Run(timingPaths);
         TestReport.Step("Search: txt");
         Text();
         foreach (string path in timingPaths) Timing(path);

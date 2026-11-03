@@ -93,7 +93,8 @@ public sealed class DocBinaryListDefinitions
         if (plfLst.length < 2 || plfLfo.length < 4) return Empty;
         try
         {
-            using var reader = new BinaryReader(tableStream, Encoding.Unicode, leaveOpen: true);
+            // LSTFs, LVLs and LFOs are many tiny records: read through a buffer, not one table-stream read per field
+            using var reader = new BinaryReader(new BufferedStream(tableStream, 1 << 14), Encoding.Unicode, leaveOpen: true);
             return new DocBinaryListDefinitions(ReadLists(reader, plfLst), ReadOverrides(reader, plfLfo));
         }
         catch (Exception exception) when (exception is EndOfStreamException or IOException or ArgumentOutOfRangeException)
@@ -214,29 +215,44 @@ public sealed class DocBinaryListDefinitions
         return lists;
     }
 
-    /// <summary>LVL: LVLF (28 bytes), grpprlPapx, grpprlChpx, xst (cch + UTF-16 chars).</summary>
+    /// <summary>
+    /// LVL: LVLF (28 bytes), grpprlPapx, grpprlChpx, xst (cch + UTF-16 chars) - read in three calls (the LVLF; both grpprls
+    /// with cch; the characters), not one per field. A LVL cut short by the stream's end throws, as the field reads did.
+    /// </summary>
     private static LevelDefinition ReadLevel(BinaryReader reader)
     {
-        var definition = new LevelDefinition { StartAt = reader.ReadInt32(), NumberFormatCode = reader.ReadByte() };
-        byte flags = reader.ReadByte();
-        definition.Justification = (byte)(flags & 0x03);
-        definition.IsLegal = (flags & 0x04) != 0;
-        definition.NoRestart = (flags & 0x08) != 0;
-        definition.PlaceholderOffsets = reader.ReadBytes(9);
-        definition.FollowCharacter = reader.ReadByte();
-        reader.ReadInt32();                                                            // dxaIndentSav
-        reader.ReadInt32();                                                            // unused2
-        definition.CharacterGrpprlLength = reader.ReadByte();
-        definition.ParagraphGrpprlLength = reader.ReadByte();
-        definition.RestartLimitLevel = reader.ReadByte();
-        reader.ReadByte();                                                             // grfhic
-        definition.ParagraphGrpprl = reader.ReadBytes(definition.ParagraphGrpprlLength);      // LVL order: grpprlPapx, then grpprlChpx
-        definition.CharacterGrpprl = reader.ReadBytes(definition.CharacterGrpprlLength);
-        int characterCount = reader.ReadUInt16();
+        byte[] lvlf = ReadExactly(reader, LvlfSize);
+        byte flags = lvlf[5];
+        var definition = new LevelDefinition
+        {
+            StartAt = BitConverter.ToInt32(lvlf, 0),
+            NumberFormatCode = lvlf[4],
+            Justification = (byte)(flags & 0x03),
+            IsLegal = (flags & 0x04) != 0,
+            NoRestart = (flags & 0x08) != 0,
+            PlaceholderOffsets = lvlf.AsSpan(6, 9).ToArray(),
+            FollowCharacter = lvlf[15],
+            // 16: dxaIndentSav, 20: unused2 (4 bytes each)
+            CharacterGrpprlLength = lvlf[24],
+            ParagraphGrpprlLength = lvlf[25],
+            RestartLimitLevel = lvlf[26],
+            // 27: grfhic
+        };
+        int paragraphLength = definition.ParagraphGrpprlLength, characterLength = definition.CharacterGrpprlLength;
+        byte[] grpprls = ReadExactly(reader, paragraphLength + characterLength + 2);
+        definition.ParagraphGrpprl = grpprls.AsSpan(0, paragraphLength).ToArray();                 // LVL order: grpprlPapx, then grpprlChpx
+        definition.CharacterGrpprl = grpprls.AsSpan(paragraphLength, characterLength).ToArray();
+        int characterCount = BitConverter.ToUInt16(grpprls, paragraphLength + characterLength);
         byte[] characters = reader.ReadBytes(characterCount * 2);
         definition.NumberText = Encoding.Unicode.GetString(characters, 0, characters.Length);
         if (definition.StartAt < 0) definition.StartAt = 0;
         return definition;
+    }
+
+    private static byte[] ReadExactly(BinaryReader reader, int count)
+    {
+        byte[] bytes = reader.ReadBytes(count);
+        return bytes.Length == count ? bytes : throw new EndOfStreamException("A list level (LVL) is cut short by the table stream's end.");
     }
 
     // ── PlfLfo ──────────────────────────────────────────────────────────────────────────

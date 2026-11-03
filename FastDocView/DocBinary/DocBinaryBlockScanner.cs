@@ -40,6 +40,8 @@ internal sealed class DocBinaryBlockScanner
     /// block that starts there.
     /// </summary>
     public int CaptureStateAtOrAfterCp { get; set; } = int.MaxValue;
+    /// <summary>False for the search's scan: only block boundaries are needed, so no heading text is read.</summary>
+    public bool CollectsHeadings { get; init; } = true;
     private (int cp, byte[] state)? _pendingState;
     public byte[]? StateOfLastBlock { get; private set; }
 
@@ -112,6 +114,7 @@ internal sealed class DocBinaryBlockScanner
         if (_rowStart >= 0) { AddBlock(_rowStart, start, WordDocumentBlockKind.TableRow); _rowStart = -1; }   // a row without its end mark
         AddBlock(start, end, WordDocumentBlockKind.Paragraph);
         if (label is { Length: > 0 }) SetListLabel(label);
+        if (!CollectsHeadings) return;
         int level = _styles.HeadingLevelOf(styleIndex);
         if (level > 0)
         {

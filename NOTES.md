@@ -279,6 +279,44 @@ positions (CP) to file offsets, each piece either 8-bit cp1252 or UTF-16. So:
   inside that piece (§2.4.6.1 / §2.4.6.2). The samples have no Prm (0 of 1,962 pieces); the
   corpus pass is the only coverage so far.
 
+### .doc reads: reopen and search without re-reading (2026-11-03)
+
+A measured audit found needless re-reads; fixed (`--doc-reads <file>` reports them: an unbuffered counting stream,
+so the numbers are the bytes and read calls the reader asks the file for; `--doc-search-golden <files>` compares the
+one-pass search with the old path on any files).
+
+- **Section first blocks in the index** (sidecar format v7, older sidecars are rebuilt): the index pass records the
+  block each PlcfSed section starts in (`SectionFirstBlocks`, Elias-Fano), as .docx does. A reopen used to rescan a
+  span per section (`BlockAt` for 278 sections through an 8-span cache).
+- **Search is one pass** (`DocBinarySearchCursor`): the piece characters are read once in 64K chunks and serve both
+  the block scanner (boundaries) and the matcher (each block's characters handed over when its end is known); the
+  characters read past a batch stay buffered, so the next batch of the same search continues without a re-read.
+  The scanner skips heading text (`CollectsHeadings = false`). The old path (compact-table block ranges + a second
+  `ReadText` per block) stays as `SearchByBlockRanges`, the golden reference: `--search` checks both give the same
+  batches (hit blocks, counts, next block, end) - Hebrew plain and pointed, English, mixed, match case on/off, notes
+  on/off, batch sizes 500 / 37 / 1 and random starts - on the sample and 10 test-data files. Note bodies are still read
+  per note (`FeedSearchText`). Theoretical difference: a surrogate pair split by a 64K chunk boundary decodes as two
+  U+FFFD (ReadText decoded per piece); not seen in any file.
+- **Compound file**: `SectorChainStream.Read` reads consecutive sectors that are also adjacent in the file with one call.
+- **List tables**: LSTF / LVL / LFO records are read through a 16 KB `BufferedStream`, and a LVL in three reads
+  (LVLF; both grpprls + cch; the characters) instead of one per field.
+- **FKP page cache**: LRU (evicts the least recently used page) instead of clearing all 512 pages when full.
+
+Measured on dor-hamelaktim-shabbat.doc (40 MB, 106,442 blocks), net10 Release, idle priority on a busy machine
+(CPU time is the steadier number):
+
+| | before | after |
+|---|---|---|
+| reopen from the sidecar: bytes read | 29,949,545 | 1,186,087 |
+| reopen: read calls | 126,633 | 2,830 |
+| reopen: wall / CPU ms | 1,860-3,300 / 1,750-2,000 | 70-140 / 30-140 |
+| full search (absent word, 213 batches of 500): bytes read | 58,961,006 | 31,128,941 |
+| full search: read calls | 221,716 | 7,960 |
+| full search, warm: CPU ms | 2,940-3,125 | 1,200-1,330 |
+
+The first full search after a reopen still costs more CPU (~2.6 s) than a warm one: PAPX lookups for every paragraph
+warm their caches. Golden dumps (`--golden`) of the sample and 11 test-data .doc files are byte-identical before/after.
+
 ## Queued after the current work (user, 2026-10-29)
 
 1. **Right-to-left errors:** some items render LTR in the .doc sample in the demo. The user thinks it

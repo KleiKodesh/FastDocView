@@ -14,7 +14,7 @@ namespace FastDocView.DocBinary;
 public sealed class DocBinaryBlockIndex
 {
     private const string Magic = "KHDOCIDX";
-    private const int FormatVersion = 6;        // 5: compact per-block tables; 6: no per-block tables — span anchors + list counter state, Elias-Fano lists
+    private const int FormatVersion = 7;        // 5: compact per-block tables; 6: no per-block tables — span anchors + list counter state, Elias-Fano lists; 7: section first blocks
     /// <summary>Characters between span anchors (256 KB of UTF-16 text): a random block rescans at most this much of the piece text.</summary>
     public const int AnchorSpanCharacters = 128 << 10;
 
@@ -28,10 +28,13 @@ public sealed class DocBinaryBlockIndex
     public WordDocumentHeading[] Headings { get; }
     /// <summary>The block of every note reference, in the order of <see cref="DocBinaryNoteReferences.References"/>.</summary>
     public int[] NoteReferenceBlocks { get; }
+    /// <summary>The block every section starts in, in the order of <see cref="DocBinarySectionTable.ReadStartCps"/> - a reopen rescans no span for them.</summary>
+    public int[] SectionFirstBlocks { get; }
     private readonly WordListCounterState.DeltaChain _listStates;
 
     private DocBinaryBlockIndex(long sourceFileLength, long sourceLastWriteTicksUtc, int mainTextCharacterCount, int blockCount,
-                                WordIndexSpanAnchor[] anchors, int[] textLengthGroupTotals, WordDocumentHeading[] headings, int[] noteReferenceBlocks)
+                                WordIndexSpanAnchor[] anchors, int[] textLengthGroupTotals, WordDocumentHeading[] headings, int[] noteReferenceBlocks,
+                                int[] sectionFirstBlocks)
     {
         SourceFileLength = sourceFileLength;
         SourceLastWriteTicksUtc = sourceLastWriteTicksUtc;
@@ -41,6 +44,7 @@ public sealed class DocBinaryBlockIndex
         TextLengthGroupTotals = textLengthGroupTotals;
         Headings = headings;
         NoteReferenceBlocks = noteReferenceBlocks;
+        SectionFirstBlocks = sectionFirstBlocks;
         _listStates = new WordListCounterState.DeltaChain(anchors.Select(anchor => anchor.ListStateDelta).ToArray());
     }
 
@@ -54,8 +58,9 @@ public sealed class DocBinaryBlockIndex
 
     /// <param name="lists">The document's list tables; <see cref="DocBinaryListDefinitions.Empty"/> when it has none.</param>
     /// <param name="noteReferenceCps">The CP of every note reference (body order), so each one's block is recorded.</param>
+    /// <param name="sectionStartCps">The start CP of every section (<see cref="DocBinarySectionTable.ReadStartCps"/>), so each one's block is recorded.</param>
     public static DocBinaryBlockIndex Build(DocBinaryPieceTable pieces, DocBinaryParagraphHtmlRenderer renderer, DocBinaryStyleSheet styles,
-                                            DocBinaryListDefinitions lists, IReadOnlyList<int> noteReferenceCps,
+                                            DocBinaryListDefinitions lists, IReadOnlyList<int> noteReferenceCps, IReadOnlyList<int> sectionStartCps,
                                             int mainTextCharacterCount, long sourceLength, long sourceLastWriteTicksUtc,
                                             IProgress<WordDocumentIndexProgress>? progress = null, CancellationToken cancellation = default)
     {
@@ -92,8 +97,10 @@ public sealed class DocBinaryBlockIndex
         for (int i = 0; i < lengths.Length; i++) lengths[i] = EndOf(i) - starts[i];
         var noteBlocks = new int[noteReferenceCps.Count];
         for (int i = 0; i < noteBlocks.Length; i++) noteBlocks[i] = BlockAt(starts, noteReferenceCps[i]);
+        var sectionBlocks = new int[sectionStartCps.Count];
+        for (int i = 0; i < sectionBlocks.Length; i++) sectionBlocks[i] = BlockAt(starts, Math.Min(sectionStartCps[i], mainTextCharacterCount));
         return new DocBinaryBlockIndex(sourceLength, sourceLastWriteTicksUtc, mainTextCharacterCount, starts.Count, anchors,
-                                       WordIndexTextLengthGroups.Totals(lengths), scanner.Headings.ToArray(), noteBlocks);
+                                       WordIndexTextLengthGroups.Totals(lengths), scanner.Headings.ToArray(), noteBlocks, sectionBlocks);
     }
 
     /// <summary>The block containing a CP, among sorted block starts.</summary>
@@ -150,6 +157,8 @@ public sealed class DocBinaryBlockIndex
         Section($"headings ({Headings.Length})");
         new EliasFanoSequence(NoteReferenceBlocks).Write(writer);
         Section($"note references ({NoteReferenceBlocks.Length})");
+        new EliasFanoSequence(SectionFirstBlocks).Write(writer);
+        Section($"section first blocks ({SectionFirstBlocks.Length})");
         writer.Flush();
     }
 
@@ -174,7 +183,9 @@ public sealed class DocBinaryBlockIndex
         for (int i = 0; i < headings.Length; i++) headings[i] = new WordDocumentHeading(headingBlocks[i], levels[i], texts[i]);
         int[] noteBlocks = EliasFanoSequence.Read(reader).ToArray();
         if (noteBlocks.Any(block => block >= Math.Max(1, blockCount))) throw new InvalidDataException(".doc index: note references do not match the blocks.");
-        return new DocBinaryBlockIndex(length, ticks, mainText, blockCount, anchors, groupTotals, headings, noteBlocks);
+        int[] sectionBlocks = EliasFanoSequence.Read(reader).ToArray();
+        if (sectionBlocks.Any(block => block >= Math.Max(1, blockCount))) throw new InvalidDataException(".doc index: section starts do not match the blocks.");
+        return new DocBinaryBlockIndex(length, ticks, mainText, blockCount, anchors, groupTotals, headings, noteBlocks, sectionBlocks);
     }
 
     public void Save(string indexPath)

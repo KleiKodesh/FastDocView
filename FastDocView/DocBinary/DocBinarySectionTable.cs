@@ -18,26 +18,40 @@ internal static class DocBinarySectionTable
     private const ushort SprmSXaPage = 0xB01F, SprmSDxaLeft = 0xB021, SprmSDxaRight = 0xB022, SprmSDzaGutter = 0xB025;
     private const int SedSize = 12;
 
+    /// <summary>The start CP of every section (PlcfSed's sorted CPs, clamped to 0) - the index pass records each one's block.</summary>
+    public static int[] ReadStartCps(Stream tableStream, (uint offset, uint length) plcfSed)
+        => TryReadPlc(tableStream, plcfSed, out byte[] plc, out int count, out _)
+            ? Enumerable.Range(0, count).Select(i => Math.Max(0, BitConverter.ToInt32(plc, i * 4))).ToArray()
+            : [];
+
+    /// <param name="firstBlocks">The block each section starts in, in the order of <see cref="ReadStartCps"/> (from the index).</param>
     public static IReadOnlyList<WordDocumentSection> Read(Stream wordDocument, Stream tableStream, (uint offset, uint length) plcfSed,
-                                                         Func<int, int> blockAtCp)
+                                                         IReadOnlyList<int> firstBlocks)
     {
         var fallback = new[] { new WordDocumentSection(0, DefaultTextWidthTwips) };
-        if (plcfSed.length < 4 + 4 + SedSize) return fallback;
-        if (DocBinaryStructureReader.TryRead(tableStream, plcfSed) is not { } plc) return fallback;
-        int entries = (int)((plcfSed.length - 4) / (4 + SedSize));
-        int sedsAt = (entries + 1) * 4;                    // the Seds follow ALL CPs, sorted or not
-        // CPs out of order end the PLC (LibreOffice TruncToSortedRange, as for the other PLCs).
-        int count = DocBinaryStructureReader.SortedEntryCount(i => BitConverter.ToInt32(plc, i * 4), entries);
-        if (count == 0) return fallback;
+        if (!TryReadPlc(tableStream, plcfSed, out byte[] plc, out int count, out int sedsAt)) return fallback;
+        if (firstBlocks.Count != count) throw new InvalidDataException(".doc index: the section count does not match the document.");
 
         var starts = new List<WordDocumentSection>(count);
         for (int i = 0; i < count; i++)
         {
-            int startCp = BitConverter.ToInt32(plc, i * 4);
             uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * SedSize + 2);
-            starts.Add(new WordDocumentSection(blockAtCp(Math.Max(0, startCp)), TextWidthOf(wordDocument, fcSepx)));
+            starts.Add(new WordDocumentSection(firstBlocks[i], TextWidthOf(wordDocument, fcSepx)));
         }
         return WordDocumentPageSetup.FromSectionStarts(starts);
+    }
+
+    private static bool TryReadPlc(Stream tableStream, (uint offset, uint length) plcfSed, out byte[] plc, out int count, out int sedsAt)
+    {
+        plc = []; count = 0; sedsAt = 0;
+        if (plcfSed.length < 4 + 4 + SedSize) return false;
+        if (DocBinaryStructureReader.TryRead(tableStream, plcfSed) is not { } bytes) return false;
+        plc = bytes;
+        int entries = (int)((plcfSed.length - 4) / (4 + SedSize));
+        sedsAt = (entries + 1) * 4;                        // the Seds follow ALL CPs, sorted or not
+        // CPs out of order end the PLC (LibreOffice TruncToSortedRange, as for the other PLCs).
+        count = DocBinaryStructureReader.SortedEntryCount(i => BitConverter.ToInt32(bytes, i * 4), entries);
+        return count > 0;
     }
 
     private static int TextWidthOf(Stream wordDocument, uint fcSepx)

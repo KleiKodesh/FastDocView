@@ -234,8 +234,14 @@ public sealed class CompoundFileReader : IDisposable
             {
                 int sectorIndex = (int)(_position / _sectorSize);
                 int inSector = (int)(_position % _sectorSize);
-                int toRead = (int)Math.Min(Math.Min(count, _sectorSize - inSector), _length - _position);
-                _underlying.Position = _offsetOfSector(_chain[sectorIndex]) + inSector;
+                long sectorStart = _offsetOfSector(_chain[sectorIndex]);
+                // consecutive sectors that also lie next to each other in the file are read with one call
+                long contiguous = _sectorSize - inSector;
+                for (int next = sectorIndex + 1; contiguous < count && next < _chain.Count
+                     && _offsetOfSector(_chain[next]) == sectorStart + (long)(next - sectorIndex) * _sectorSize; next++)
+                    contiguous += _sectorSize;
+                int toRead = (int)Math.Min(Math.Min(count, contiguous), _length - _position);
+                _underlying.Position = sectorStart + inSector;
                 int read = _underlying.Read(buffer, offset, toRead);
                 if (read <= 0) break;
                 _position += read; offset += read; count -= read; total += read;
