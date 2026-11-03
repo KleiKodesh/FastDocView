@@ -469,10 +469,17 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                 if (fromBlock < end)
                 {
                     _searchText ??= new DocxSearchTextScanner(_blocks.RootOpenTag);
+                    long pieceStartOffset = -1;            // a byte piece's start in the part while it is scanned: hit block starts are recorded
+                    var pieceHitStarts = new List<long>();  // to verify the scanner's numbering if the piece fails
                     void BlockEnded(int blockIndex)
                     {
                         if (options.IncludeNotes) FeedNotes(blockIndex, matcher, mode);
-                        if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
+                        if (matcher.Count > 0)
+                        {
+                            hits.Add(blockIndex);
+                            counts.Add(matcher.Count);
+                            if (pieceStartOffset >= 0) pieceHitStarts.Add(pieceStartOffset + _searchText!.CurrentBlockStart);
+                        }
                         matcher.Reset();
                     }
                     int scanFrom = fromBlock;
@@ -486,13 +493,19 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                             (byte[] buffer, int start, int length) = compact.ReadSearchBytes(scanFrom, pieceEnd, out long startOffset, out bool isEndExact);
                             if (mode == DocxSearchTextMode.ReadSearchBytesOnly) { scanFrom = pieceEnd; continue; }
                             int hitsBefore = hits.Count;
+                            pieceHitStarts.Clear();
+                            pieceStartOffset = startOffset;
                             matcher.Reset();
                             WordSearchBlocksResult result = _searchText.FeedBlocks(buffer.AsSpan(start, length), scanFrom, pieceEnd, matcher, BlockEnded, out long stoppedAt);
+                            pieceStartOffset = -1;
                             WordSearchPieceVerdict verdict = WordSearchPiece.Judge(result, isEndExact, stoppedAt, length);
                             if (verdict == WordSearchPieceVerdict.FallBackFromFailedBlock)
                             {
-                                // the rest block by block, from the index's ranges; hits the scan reported from that block on are dropped
-                                scanFrom = (int)stoppedAt;
+                                // the rest block by block, from the index's ranges; hits the scan reported from that block on are dropped.
+                                // The hits before it stand only when the scanner's numbering agrees with the index there (the failing
+                                // block and every hit block start where the index says); a drift redoes the whole piece.
+                                scanFrom = WordSearchPiece.FallBackBlock(scanFrom, (int)stoppedAt, startOffset + _searchText.CurrentBlockStart,
+                                                                         hits, pieceHitStarts, hitsBefore, compact.BlockStartOffset);
                                 int keep = hits.FindIndex(hitsBefore, hit => hit >= scanFrom);
                                 if (keep >= 0) { hits.RemoveRange(keep, hits.Count - keep); counts.RemoveRange(keep, counts.Count - keep); }
                                 break;
@@ -525,7 +538,13 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                 }
                 return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
             }
-            finally { _releasableFile?.Release(); }
+            finally
+            {
+                // a batch that needed an oversize buffer (a huge block or note) drops back to the normal size
+                (_blocks as DocxCompactBlockTable)?.ShrinkSearchBuffer();
+                WordSearchPiece.Shrink(ref _noteSearchBuffer, 0);
+                _releasableFile?.Release();
+            }
         }
     }
     /// <summary>The bodies of the notes a block references, after its own text (a separator before each).</summary>

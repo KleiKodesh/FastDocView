@@ -43,13 +43,17 @@ internal sealed class OdtSearchTextScanner
         Skip,
     }
 
-    private enum NamespaceKind : byte { Other, Text, Office }
+    private enum NamespaceKind : byte { Other, Text, Office, Drawing }
 
     private enum Outside : byte { Other, BlockElement, List, ListItem, Container, IndexElement, IndexBody }
 
     private readonly WordXmlNamespaceScope _namespaces;
     private readonly (byte[] name, Outside kind)[] _outsideNames;
     private readonly List<Frame> _frames = new();
+    private readonly List<(int depth, WordXmlSearchText.OdfTextContext context)> _contexts = new();   // what the renderer shows inside the open elements
+
+    /// <summary>Character data here is rendered paragraph text (not white space between a frame's / text box's / note body's children).</summary>
+    private bool IsParagraphContent => _contexts.Count > 0 && _contexts[_contexts.Count - 1].context == WordXmlSearchText.OdfTextContext.Paragraph;
 
     public OdtSearchTextScanner(string rootOpenTag)
     {
@@ -57,6 +61,7 @@ internal sealed class OdtSearchTextScanner
         {
             WordXmlSearchText.OdfTextNamespace => NamespaceKind.Text,
             WordXmlSearchText.OdfOfficeNamespace => NamespaceKind.Office,
+            WordXmlSearchText.OdfDrawingNamespace => NamespaceKind.Drawing,
             _ => NamespaceKind.Other,
         }));
         // between blocks names are classified as the body scanner classifies them: by the prefixes the root declares
@@ -112,6 +117,8 @@ internal sealed class OdtSearchTextScanner
         _frames.Clear();
         if (frames is not null) _frames.AddRange(frames);
         _namespaces.ClearBlock();
+        _contexts.Clear();
+        CurrentBlockStart = 0;
         int block = firstBlock;
         bool inBlock = !segmented;      // a per-block range is the block element itself
         int position = 0, end = xml.Length;
@@ -124,7 +131,7 @@ internal sealed class OdtSearchTextScanner
         {
             int next = xml.Slice(position).IndexOfAny((byte)'<', (byte)'&');
             int stop = next < 0 ? end : position + next;
-            if (stop > position && inBlock && paragraphDepth > 0 && skipDepth < 0) FeedText(xml.Slice(position, stop - position), matcher);
+            if (stop > position && inBlock && paragraphDepth > 0 && skipDepth < 0 && IsParagraphContent) FeedText(xml.Slice(position, stop - position), matcher);
             if (next < 0) break;
             position = stop;
             if (xml[position] == (byte)'&')
@@ -132,7 +139,7 @@ internal sealed class OdtSearchTextScanner
                 int semicolon = xml.Slice(position).IndexOf((byte)';');
                 if (!inBlock) { position++; continue; }   // between blocks: no reader sees it
                 if (semicolon < 0 || !TryDecodeEntity(xml.Slice(position + 1, semicolon - 1), out int codePoint)) return Fail(segmented, block, out stoppedAt);
-                if (paragraphDepth > 0 && skipDepth < 0) FeedCodePoint(codePoint, matcher);
+                if (paragraphDepth > 0 && skipDepth < 0 && IsParagraphContent) FeedCodePoint(codePoint, matcher);
                 position += semicolon + 1;
                 continue;
             }
@@ -153,7 +160,7 @@ internal sealed class OdtSearchTextScanner
                 {
                     int close = rest.Slice(9).IndexOf("]]>"u8);
                     if (close < 0) return Fail(segmented, inBlock ? block : firstBlock, out stoppedAt);
-                    if (inBlock && paragraphDepth > 0 && skipDepth < 0) FeedText(rest.Slice(9, close), matcher);
+                    if (inBlock && paragraphDepth > 0 && skipDepth < 0 && IsParagraphContent) FeedText(rest.Slice(9, close), matcher);
                     position += 9 + close + 3;
                     continue;
                 }
@@ -185,6 +192,7 @@ internal sealed class OdtSearchTextScanner
                     if (!segmented) break;               // per-block: past the block's own end
                     return Fail(segmented, firstBlock, out stoppedAt);
                 }
+                if (_contexts.Count > 0 && _contexts[_contexts.Count - 1].depth == depth) _contexts.RemoveAt(_contexts.Count - 1);
                 if (skipDepth >= 0)
                 {
                     if (depth == skipDepth) skipDepth = -1;
@@ -243,6 +251,8 @@ internal sealed class OdtSearchTextScanner
                 }
                 if (block == stopBlock) { stoppedAt = position; return WordSearchBlocksResult.Stopped; }
                 inBlock = true;
+                CurrentBlockStart = position;
+                _contexts.Clear();
                 depth = 0;
                 skipDepth = -1;
                 paragraphDepth = 0;
@@ -258,8 +268,14 @@ internal sealed class OdtSearchTextScanner
             if (skipDepth < 0)
             {
                 ReadOnlySpan<byte> elementPrefix = PrefixOf(elementName, out ReadOnlySpan<byte> local);
-                NamespaceKind namespaceKind = local.Length is 1 or 3 or 9 or 10 or 13 or 15 ? Resolve(elementPrefix) : NamespaceKind.Other;   // the lengths of the names below
-                if (namespaceKind == NamespaceKind.Text)
+                WordXmlSearchText.OdfTextContext? context = _contexts.Count == 0 ? null : _contexts[_contexts.Count - 1].context;
+                // outside paragraph content only the names below matter (their lengths); inside it every name is resolved
+                NamespaceKind namespaceKind = context is not (null or WordXmlSearchText.OdfTextContext.NoteBody) || local.Length is 1 or 3 or 9 or 10 or 13 or 15
+                    ? Resolve(elementPrefix) : NamespaceKind.Other;
+                bool isHidden = WordXmlSearchText.IsHiddenOdf(context, namespaceKind == NamespaceKind.Text, namespaceKind == NamespaceKind.Drawing, local, out WordXmlSearchText.OdfTextContext? opens);
+                if (!isHidden && opens is { } opened && !isEmpty) _contexts.Add((elementDepth, opened));
+                if (isHidden) { if (!isEmpty) skipDepth = elementDepth; }     // the renderer shows nothing of it (svg:title, a shape, an image...)
+                else if (namespaceKind == NamespaceKind.Text)
                 {
                     if (local.Length == 1 && (local[0] is (byte)'p' or (byte)'h'))
                     {
@@ -301,6 +317,13 @@ internal sealed class OdtSearchTextScanner
     }
 
     private NamespaceKind Resolve(ReadOnlySpan<byte> prefix) => (NamespaceKind)_namespaces.Resolve(prefix);
+
+    /// <summary>
+    /// Where the scanner's current block starts in the bytes of the last <see cref="FeedBlocks"/>: inside the block-ended
+    /// callback the block just ended, after a <see cref="WordSearchBlocksResult.Failed"/> the failing block - the caller
+    /// checks it against the index's offset before it trusts the scanner's block numbering.
+    /// </summary>
+    public long CurrentBlockStart { get; private set; }
 
     private static WordSearchBlocksResult Fail(bool segmented, int block, out long stoppedAt)
     {

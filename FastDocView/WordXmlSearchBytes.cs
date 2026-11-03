@@ -27,6 +27,23 @@ internal enum WordSearchPieceVerdict
 
 internal static class WordSearchPiece
 {
+    /// <summary>A search read buffer's normal cap: one that grew past it for an oversize piece / note is dropped back after the batch.</summary>
+    public const int NormalBufferBytes = 4 << 20;
+
+    /// <summary>
+    /// <paramref name="buffer"/> back within <see cref="NormalBufferBytes"/> once it grew past it; the first
+    /// <paramref name="keep"/> bytes are kept when they fit, else nothing is (false: the caller forgets what it held).
+    /// </summary>
+    public static bool Shrink(ref byte[] buffer, int keep)
+    {
+        if (buffer.Length <= NormalBufferBytes) return true;
+        if (keep > NormalBufferBytes) { buffer = []; return false; }
+        var normal = new byte[Math.Max(keep, 4096)];
+        Buffer.BlockCopy(buffer, 0, normal, 0, keep);
+        buffer = normal;
+        return true;
+    }
+
     /// <summary>
     /// Whether a piece's scan agrees with the index. <paramref name="isEndExact"/>: the bytes end exactly at the piece's
     /// end block start (an anchor or the body end), so the scan must come out Done there - Done on bytes that run on to
@@ -40,6 +57,27 @@ internal static class WordSearchPiece
         WordSearchBlocksResult.Stopped when isEndExact && stoppedAt != length => WordSearchPieceVerdict.RedoPiece,
         _ => WordSearchPieceVerdict.Accept,
     };
+
+    /// <summary>
+    /// The block a <see cref="WordSearchPieceVerdict.FallBackFromFailedBlock"/> piece is read again from, block by block.
+    /// The hits before the failing block stand only when the scanner's numbering is verified against the index: the
+    /// failing block and every hit block before it must start where the index says that block starts (offsets in the
+    /// part). Otherwise the scanner drifted (counted a block more or fewer) and the whole piece is read again from
+    /// <paramref name="pieceFirstBlock"/>. <paramref name="indexBlockStart"/> runs only on this failure path.
+    /// </summary>
+    public static int FallBackBlock(int pieceFirstBlock, int failedBlock, long failedBlockStart,
+                                    IReadOnlyList<int> hitBlocks, IReadOnlyList<long> hitBlockStarts, int firstHitOfPiece,
+                                    Func<int, long> indexBlockStart)
+    {
+        if (failedBlock <= pieceFirstBlock) return pieceFirstBlock;
+        if (indexBlockStart(failedBlock) != failedBlockStart) return pieceFirstBlock;
+        for (int i = firstHitOfPiece; i < hitBlocks.Count; i++)
+        {
+            if (hitBlocks[i] >= failedBlock) break;
+            if (hitBlocks[i] > pieceFirstBlock && indexBlockStart(hitBlocks[i]) != hitBlockStarts[i - firstHitOfPiece]) return pieceFirstBlock;
+        }
+        return failedBlock;
+    }
 }
 
 /// <summary>Byte-level XML helpers shared by the search scanners: names, entities, attribute text.</summary>

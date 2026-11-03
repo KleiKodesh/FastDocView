@@ -940,6 +940,23 @@ or resume point reads per-block ranges up to the next anchor. `FeedOdf` stays as
 - Release, TieredCompilation=0, idle, 2 cores, best of 3 alternated, full scan of a frequent word in batches of 500:
   .odt 12.2 s -> 0.60 s, .fodt 11.2 s -> 0.42 s; first batch of 500 after a fresh open 35.6 -> 2.5 ms (.odt), 5.7 -> 1.4 ms (.fodt).
 - Not done: the on-demand (still-building) index reads per-block ranges (with the byte scanner).
+- **Search = rendered text** (review, 2026-11-03): svg:title / svg:desc of a draw:frame were found though never shown.
+  Both the byte scanner and `FeedOdf` now follow `OdtBlockHtmlRenderer` (`WordXmlSearchText.IsHiddenOdf`, one rule set):
+  inside a paragraph only the text namespace, draw:a and draw:frame render - svg:*, shapes, draw:image (and paragraphs
+  inside it), controls, objects and every other namespace (loext:...) are skipped whole, as are text:ruby-text /
+  text:hidden-text / text:hidden-paragraph; of a frame only its draw:text-box, of a text box only its text:p / text:h
+  (a list or table inside a text box is not rendered). Character data counts only directly in paragraph content (not
+  white space between a frame's / note body's children). `OdtSearchBytesTest.RenderedTextOnly` also compares with the
+  rendered HTML. Left as is: text:number (rendered only when the paragraph has no list label).
+  .docx checked the same way: wp:docPr / pic:cNvPr title, descr, name and VML alt are attributes (never text); text
+  boxes count once (mc:Fallback skipped) - covered by `DocxSearchBytesTest`. Open .docx gaps (not drawings): w:t inside
+  w:moveFrom and inside w:ruby is searched but the renderer does not show it.
+- **Drift guard on a failing piece**: a piece that fails at block k (undefined entity, unterminated markup) keeps its
+  hits before k only when the scanner's numbering is verified - block k and every hit block before it start where the
+  index says (`WordSearchPiece.FallBackBlock`, one span scan, failure path only); otherwise the whole piece is read
+  again from per-block ranges. Same for .docx.
+- **Bounded buffers**: the search read buffer (both formats) and the .docx note buffer drop back after a batch that grew
+  them past 4 MB (`WordSearchPiece.NormalBufferBytes`); growth by doubling stops at that cap.
 
 ### .docx note bodies from bytes (2026-11-03)
 

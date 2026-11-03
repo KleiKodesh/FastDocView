@@ -56,7 +56,14 @@ public static class DocxSearchBytesTest
           + "<w:p>" + "<w:r><w:t>ep<!-- note --></w:t></w:r>" + R("si") + "<w:r><w:t><![CDATA[lon]]></w:t></w:r>" + "</w:p>"                       // 8: a comment and CDATA inside a word
           + "<w:p xmlns:v=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><v:r><v:t>other</v:t></v:r>" + R("prefix") + "</w:p>"  // 9: namespace bound to another prefix
           + "<w:p>" + R("split") + "</w:p><w:p>" + R("here") + "</w:p>"                                                                           // 10, 11
-          + "<w:p>" + R("𝐀plane") + "<w:r><w:rPr><w:rFonts w:ascii=\"x&gt;y\"/></w:rPr><w:t>s</w:t></w:r></w:p>";                     // 12: supplementary character; '>' entity in an attribute
+          + "<w:p>" + R("𝐀plane") + "<w:r><w:rPr><w:rFonts w:ascii=\"x&gt;y\"/></w:rPr><w:t>s</w:t></w:r></w:p>"                      // 12: supplementary character; '>' entity in an attribute
+          // 13: a picture: its title / description are attributes (wp:docPr, pic:cNvPr), never text; the renderer shows [image]
+          + "<w:p>" + R("pic") + "<w:r><w:drawing><wp:inline xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\"><wp:docPr id=\"1\" name=\"Picture 1\" title=\"pictitle\" descr=\"picdesc\"/>"
+              + "<a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><a:graphicData uri=\"x\"><pic:pic xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:nvPicPr><pic:cNvPr id=\"0\" name=\"picname\" descr=\"picdesc2\"/></pic:nvPicPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>" + R("ture") + "</w:p>"
+          // 14: a text box (mc:Choice, rendered) with its VML copy (mc:Fallback, not rendered): the text once
+          + "<w:p><w:r><mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice Requires=\"wps\"><w:drawing><wp:anchor xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\"><wp:docPr id=\"2\" name=\"Text Box 2\" descr=\"boxdesc\"/>"
+              + "<a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><a:graphicData uri=\"y\"><wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"><wps:txbx><w:txbxContent><w:p>" + R("boxtext") + "</w:p></w:txbxContent></wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>"
+              + "<mc:Fallback><w:pict><v:shape xmlns:v=\"urn:schemas-microsoft-com:vml\" alt=\"vmlalt\"><v:textbox><w:txbxContent><w:p>" + R("boxtext") + "</w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>";
         DocxFidelityTest.RenderAll("search-bytes", body);
         string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-search-bytes.docx");
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
@@ -93,6 +100,17 @@ public static class DocxSearchBytesTest
         Expect("splithere", [], "no match across paragraphs");
         Expect("𝐀planes", [12], "a supplementary character; a '>' entity in an attribute");
         Expect("WORD", [0], "MatchCase false", new WordDocumentSearchOptions(MatchCase: false));
+        Expect("pictitle", [], "a picture's title (wp:docPr) is not text");
+        Expect("picdesc", [], "a picture's description (wp:docPr / pic:cNvPr) is not text");
+        Expect("picname", [], "a picture's name is not text");
+        Expect("boxtext", [14], "a text box's text counts once (mc:Fallback copy skipped)");
+        Expect("boxdesc", [], "a text box's description is not text");
+        Expect("vmlalt", [], "a VML shape's alt text is not text");
+        foreach ((int block, string shown, string hidden) in new[] { (13, "pic", "pictitle"), (14, "boxtext", "boxdesc") })
+        {
+            string html = document.RenderBlocks(block, 1)[0].Html;
+            TestReport.Check(html.Contains(shown) && !html.Contains(hidden), $"docx: block {block} renders \"{shown}\", not \"{hidden}\" (search = rendered text)");
+        }
     }
 
     private static readonly string[] GoldenQueries =

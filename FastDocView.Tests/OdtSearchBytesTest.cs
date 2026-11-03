@@ -39,8 +39,12 @@ public static class OdtSearchBytesTest
     {
         TestReport.Step("Search bytes: piece verdicts");
         Verdicts();
+        TestReport.Step("Search bytes: a drift before a failing block");
+        DriftThenFailure();
         TestReport.Step("Search bytes odt / fodt: words split by markup");
         Synthetic();
+        TestReport.Step("Search bytes odt / fodt: only rendered text (drawings, hidden text)");
+        RenderedTextOnly();
         foreach (string path in goldenPaths) Golden(path);
     }
 
@@ -82,6 +86,123 @@ public static class OdtSearchBytesTest
         TestReport.Check(odtFewer == WordSearchBlocksResult.Failed && odtFewerAt == 10, $"odt: one block fewer than the index fails from the piece's first block ({odtFewer} at {odtFewerAt})");
     }
 
+    /// <summary>
+    /// A piece that fails at a block (an undefined entity) keeps the hits before it only when the scanner's numbering is
+    /// verified against the index's block starts; a scanner that drifted (a block more or fewer) before the failure has
+    /// mis-numbered them, so the whole piece is read again. Checked for the .docx and the .odt scanner.
+    /// </summary>
+    private static void DriftThenFailure()
+    {
+        var matcher = new WordDocumentSearchMatcher("t");
+        // blocks 10, 11, 12, 13: hits "t" in 10 and 11, 13 fails (an undefined entity)
+        const string root = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">";
+        string[] docxBlocks = ["<w:p><w:r><w:t>one t</w:t></w:r></w:p>", "<w:p><w:r><w:t>two</w:t></w:r></w:p>", "<w:p><w:r><w:t>none</w:t></w:r></w:p>", "<w:p><w:r><w:t>bad &bogus;</w:t></w:r></w:p>"];
+        Check("docx", docxBlocks, (bytes, hits, starts) =>
+        {
+            var scanner = new DocxSearchTextScanner(root);
+            WordSearchBlocksResult result = scanner.FeedBlocks(bytes, 10, 14, matcher, block => { if (matcher.Count > 0) { hits.Add(block); starts.Add(scanner.CurrentBlockStart); } matcher.Reset(); }, out long stoppedAt);
+            return (result, stoppedAt, scanner.CurrentBlockStart);
+        });
+        const string odtRoot = "<office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\">";
+        string[] odtBlocks = ["<text:p>one t</text:p>", "<text:p>two</text:p>", "<text:p>none</text:p>", "<text:p>bad &bogus;</text:p>"];
+        OdtSearchTextScanner.Frame[] frames = [OdtSearchTextScanner.Frame.Outer, OdtSearchTextScanner.Frame.Outer, OdtSearchTextScanner.Frame.Container];
+        Check("odt", odtBlocks, (bytes, hits, starts) =>
+        {
+            var scanner = new OdtSearchTextScanner(odtRoot);
+            WordSearchBlocksResult result = scanner.FeedBlocks(bytes, 10, 14, frames, matcher, true, block => { if (matcher.Count > 0) { hits.Add(block); starts.Add(scanner.CurrentBlockStart); } matcher.Reset(); }, out long stoppedAt);
+            return (result, stoppedAt, scanner.CurrentBlockStart);
+        });
+
+        void Check(string format, string[] blocks, Func<byte[], List<int>, List<long>, (WordSearchBlocksResult result, long stoppedAt, long failedStart)> scan)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(string.Concat(blocks));
+            long[] realStarts = new long[blocks.Length];
+            for (int i = 1; i < blocks.Length; i++) realStarts[i] = realStarts[i - 1] + Encoding.UTF8.GetByteCount(blocks[i - 1]);
+            const long pieceStart = 1000;      // the piece's offset in the part
+            var hits = new List<int>();
+            var starts = new List<long>();
+            (WordSearchBlocksResult result, long stoppedAt, long failedStart) = scan(bytes, hits, starts);
+            List<long> partStarts = starts.Select(start => pieceStart + start).ToList();
+            TestReport.Check(result == WordSearchBlocksResult.Failed && stoppedAt == 13 && hits.SequenceEqual([10, 11]) && failedStart == realStarts[3],
+                             $"{format} drift: the undefined entity fails block 13 after hits 10, 11 ({result} at {stoppedAt}, hits {string.Join(",", hits)}, start {failedStart})");
+            long Agreeing(int block) => pieceStart + realStarts[block - 10];
+            TestReport.Check(WordSearchPiece.FallBackBlock(10, 13, pieceStart + failedStart, hits, partStarts, 0, Agreeing) == 13,
+                             $"{format} drift: numbering verified -> only the failing block on is read again");
+            // the index has one block fewer than the scanner before the failure: its block 13 starts later
+            long OneFewer(int block) => block == 13 ? pieceStart + bytes.Length : Agreeing(block);
+            TestReport.Check(WordSearchPiece.FallBackBlock(10, 13, pieceStart + failedStart, hits, partStarts, 0, OneFewer) == 10,
+                             $"{format} drift: one block fewer in the index -> the whole piece is read again");
+            // the index has one block more: its block 13 is the scanner's 12
+            long OneMore(int block) => block == 13 ? pieceStart + realStarts[2] : Agreeing(block);
+            TestReport.Check(WordSearchPiece.FallBackBlock(10, 13, pieceStart + failedStart, hits, partStarts, 0, OneMore) == 10,
+                             $"{format} drift: one block more in the index -> the whole piece is read again");
+            // a drift that cancels out before the failing block: it agrees, hit 11 does not -> the whole piece again
+            long Cancelled(int block) => block == 11 ? pieceStart + realStarts[2] : Agreeing(block);
+            TestReport.Check(WordSearchPiece.FallBackBlock(10, 13, pieceStart + failedStart, hits, partStarts, 0, Cancelled) == 10,
+                             $"{format} drift: a mis-numbered hit before an agreeing failing block -> the whole piece is read again");
+        }
+    }
+
+    /// <summary>
+    /// Search counts exactly the text the renderer shows (OdtBlockHtmlRenderer): a picture's svg:title / svg:desc, an
+    /// image's or a shape's paragraphs, a text box's non-paragraph children, other namespaces inside a paragraph, ruby text
+    /// and hidden text are not text; a text box's paragraphs are. The reference reads the same, and the rendered HTML agrees.
+    /// </summary>
+    private static void RenderedTextOnly()
+    {
+        const string namespaces = "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:loext=\"urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0\" office:version=\"1.3\"";
+        string body =
+            "<text:p>pic<draw:frame draw:name=\"Image1\"><draw:image xlink:href=\"Pictures/a.png\"><text:p>imagetext</text:p></draw:image><svg:title>pictitle</svg:title><svg:desc>picdesc</svg:desc></draw:frame>ture</text:p>"   // 0
+          + "<text:p>before<draw:frame draw:name=\"Box\"><draw:text-box><text:p>boxtext</text:p><text:list><text:list-item><text:p>boxlist</text:p></text:list-item></text:list></draw:text-box><svg:title>boxtitle</svg:title></draw:frame></text:p>" // 1
+          + "<text:p>shape<draw:custom-shape><text:p>shapetext</text:p></draw:custom-shape><draw:a xlink:href=\"http://x\">linked</draw:a></text:p>"   // 2
+          + "<text:p><loext:foo>unknownns</loext:foo><text:ruby><text:ruby-base>rubybase</text:ruby-base><text:ruby-text>rubytext</text:ruby-text></text:ruby><text:hidden-text text:string-value=\"x\">hiddentext</text:hidden-text></text:p>" // 3
+          + "<text:p>abc<text:note text:id=\"n1\" text:note-class=\"footnote\"><text:note-citation>1</text:note-citation><text:note-body><text:p>notetext</text:p></text:note-body></text:note>"
+              + "<draw:frame><svg:title>afternote</svg:title></draw:frame>def</text:p>";                                                // 4: a note body, then a picture
+        (string package, string flat) = WriteSamples("search-rendered-v1", namespaces, body);
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
+        var notesOff = new WordDocumentSearchOptions(IncludeNotes: false);
+        foreach (string path in new[] { package, flat })
+        {
+            string format = Path.GetExtension(path).TrimStart('.');
+            using var document = (OdtWindowedDocument)WordWindowedDocumentOpener.Open(path, policy);
+            TestReport.Check(document.BlockCount == 5, $"{format} rendered: the sample has 5 blocks ({document.BlockCount})");
+            IReadOnlyList<WordDocumentBlockHtml> rendered = document.RenderBlocks(0, document.BlockCount);
+            void Expect(string query, int[] blocks, string what, WordDocumentSearchOptions? options = null)
+            {
+                foreach (int batch in new[] { 2, 500 })
+                {
+                    (int[] hits, int[] counts) = All(document, query, SearchMode.Bytes, options, batch);
+                    (int[] referenceHits, int[] referenceCounts) = All(document, query, SearchMode.ReferenceXmlReader, options, batch);
+                    TestReport.Check(hits.SequenceEqual(blocks), $"{format} rendered (batch {batch}): {what} {Show(hits)}");
+                    TestReport.Check(hits.SequenceEqual(referenceHits) && counts.SequenceEqual(referenceCounts), $"{format} rendered bytes = reference (batch {batch}): {what}");
+                }
+                if (options is not null || query == "abcdef") return;
+                // the renderer agrees: what search finds is shown, what it skips is not
+                for (int block = 0; block < rendered.Count; block++)
+                {
+                    bool isShown = rendered[block].Html.Contains(query) || rendered[block].Notes.Any(note => note.Html.Contains(query));
+                    TestReport.Check(isShown == blocks.Contains(block), $"{format} rendered: \"{query}\" in block {block}: search {(blocks.Contains(block) ? "finds" : "skips")} it, the renderer {(isShown ? "shows" : "hides")} it");
+                }
+            }
+            Expect("pictitle", [], "svg:title of a picture");
+            Expect("picdesc", [], "svg:desc of a picture");
+            Expect("imagetext", [], "paragraphs inside draw:image");
+            Expect("boxtext", [1], "a text box's paragraph");
+            Expect("boxlist", [], "a list inside a text box (not rendered)");
+            Expect("boxtitle", [], "svg:title of a text box frame");
+            Expect("shapetext", [], "a shape's paragraph");
+            Expect("linked", [2], "draw:a's text");
+            Expect("unknownns", [], "an element of another namespace");
+            Expect("rubybase", [3], "ruby base text");
+            Expect("rubytext", [], "ruby text");
+            Expect("hiddentext", [], "hidden text");
+            Expect("notetext", [4], "the note body");
+            Expect("afternote", [], "a picture title after a skipped note body", notesOff);
+            Expect("abcdef", [4], "text around a skipped note body and a picture", notesOff);
+        }
+    }
+
+
     private const string Namespaces = "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" office:version=\"1.3\"";
 
     private static string Body()
@@ -108,10 +229,12 @@ public static class OdtSearchBytesTest
          + "<text:p xmlns:t2=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\">other<t2:span>prefix</t2:span><t2:s t2:c=\"2\"/>z</text:p>" // 17: a namespace bound to another prefix
          + "<text:h text:outline-level=\"1\">\U0001D400plane<text:span>s</text:span></text:h>";                                          // 18: supplementary character, heading
 
-    private static (string package, string flat) WriteSamples()
+    private static (string package, string flat) WriteSamples() => WriteSamples("search-bytes-v1", Namespaces, Body());
+
+    private static (string package, string flat) WriteSamples(string name, string namespaces, string body)
     {
-        string package = Path.Combine(TestReport.OutputDirectory, "search-bytes-v1.odt");
-        string flat = Path.Combine(TestReport.OutputDirectory, "search-bytes-v1.fodt");
+        string package = Path.Combine(TestReport.OutputDirectory, name + ".odt");
+        string flat = Path.Combine(TestReport.OutputDirectory, name + ".fodt");
         if (File.Exists(package)) File.Delete(package);
         using (var file = File.Create(package))
         using (var zip = new ZipArchive(file, ZipArchiveMode.Create))
@@ -123,9 +246,9 @@ public static class OdtSearchBytesTest
             }
             Add("mimetype", "application/vnd.oasis.opendocument.text", CompressionLevel.NoCompression);
             Add("META-INF/manifest.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\" manifest:version=\"1.3\"><manifest:file-entry manifest:full-path=\"/\" manifest:media-type=\"application/vnd.oasis.opendocument.text\"/><manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/></manifest:manifest>");
-            Add("content.xml", $"<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-content {Namespaces}><office:body><office:text>{Body()}</office:text></office:body></office:document-content>");
+            Add("content.xml", $"<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-content {namespaces}><office:body><office:text>{body}</office:text></office:body></office:document-content>");
         }
-        File.WriteAllText(flat, $"<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document {Namespaces} office:mimetype=\"application/vnd.oasis.opendocument.text\"><office:body><office:text>{Body()}</office:text></office:body></office:document>", new UTF8Encoding(false));
+        File.WriteAllText(flat, $"<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document {namespaces} office:mimetype=\"application/vnd.oasis.opendocument.text\"><office:body><office:text>{body}</office:text></office:body></office:document>", new UTF8Encoding(false));
         return (package, flat);
     }
 

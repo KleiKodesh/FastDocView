@@ -45,7 +45,7 @@ internal sealed partial class DocxCompactBlockTable
         }
         if (_searchBuffer.Length < length)
         {
-            var bigger = new byte[Math.Max(length, _searchBuffer.Length * 2)];
+            var bigger = new byte[Math.Max(length, Math.Min(_searchBuffer.Length * 2, WordSearchPiece.NormalBufferBytes))];
             Buffer.BlockCopy(_searchBuffer, 0, bigger, 0, kept);
             _searchBuffer = bigger;
         }
@@ -61,6 +61,12 @@ internal sealed partial class DocxCompactBlockTable
         _searchBufferStart = startOffset;
         _searchBufferLength = length;
         return (_searchBuffer, 0, length);
+    }
+
+    /// <summary>After a batch: a buffer that grew past the normal cap for an oversize piece drops back (the kept tail too when it does not fit).</summary>
+    internal void ShrinkSearchBuffer()
+    {
+        if (!WordSearchPiece.Shrink(ref _searchBuffer, _searchBufferLength)) { _searchBufferStart = -1; _searchBufferLength = 0; }
     }
 
     /// <summary>Where block <paramref name="blockIndex"/> starts, found by a search scan: the next batch starts there without a span scan.</summary>

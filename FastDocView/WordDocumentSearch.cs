@@ -221,6 +221,54 @@ internal sealed class WordXmlSearchText
     public const string OdfTextNamespace = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
     public const string MarkupCompatibilityNamespace = "http://schemas.openxmlformats.org/markup-compatibility/2006";
     public const string OdfOfficeNamespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
+    public const string OdfDrawingNamespace = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+
+    /// <summary>
+    /// Where an .odt element sits, as far as the renderer (<c>OdtBlockHtmlRenderer</c>) shows its text: paragraph content,
+    /// a draw:frame's children, a draw:text-box's children, or a note body (blocks again).
+    /// </summary>
+    internal enum OdfTextContext : byte { Paragraph, Frame, TextBox, NoteBody }
+
+    /// <summary>
+    /// Whether the renderer shows nothing of an element that opens in <paramref name="context"/> (it is skipped whole), and
+    /// the context it opens (null: none). In a paragraph: only the text namespace and draw:a / draw:frame render
+    /// (svg:title / svg:desc, shapes, images, controls and every other namespace render nothing), and text:ruby-text /
+    /// text:hidden-text / text:hidden-paragraph are hidden; of a frame only its draw:text-box, of a text box only its
+    /// text:p / text:h. Outside a paragraph (a note body, between blocks) nothing extra is skipped.
+    /// </summary>
+    /// <summary>An element's local name as bytes for <see cref="IsHiddenOdf"/>; the rules' names are short ASCII, so a longer or non-ASCII name is none of them.</summary>
+    private static ReadOnlySpan<byte> AsciiName(string name, byte[] buffer)
+    {
+        if (name.Length > buffer.Length) return "?"u8;
+        for (int i = 0; i < name.Length; i++)
+        {
+            if (name[i] > 127) return "?"u8;
+            buffer[i] = (byte)name[i];
+        }
+        return buffer.AsSpan(0, name.Length);
+    }
+
+    internal static bool IsHiddenOdf(OdfTextContext? context, bool isText, bool isDrawing, ReadOnlySpan<byte> localName, out OdfTextContext? opens)
+    {
+        opens = null;
+        if (isText && (WordXmlBytes.Is(localName, "p") || WordXmlBytes.Is(localName, "h"))) { opens = OdfTextContext.Paragraph; return context is OdfTextContext.Frame; }
+        if (isText && WordXmlBytes.Is(localName, "note-body")) opens = OdfTextContext.NoteBody;
+        switch (context)
+        {
+            case OdfTextContext.Paragraph:
+                if (isText) return WordXmlBytes.Is(localName, "ruby-text") || WordXmlBytes.Is(localName, "hidden-text") || WordXmlBytes.Is(localName, "hidden-paragraph");
+                if (isDrawing && WordXmlBytes.Is(localName, "a")) return false;
+                if (isDrawing && WordXmlBytes.Is(localName, "frame")) { opens = OdfTextContext.Frame; return false; }
+                return true;
+            case OdfTextContext.Frame:
+                if (isDrawing && WordXmlBytes.Is(localName, "text-box")) { opens = OdfTextContext.TextBox; return false; }
+                return true;
+            case OdfTextContext.TextBox:
+                return true;     // text:p / text:h returned above
+            default:
+                return false;
+        }
+    }
 
     private readonly XmlParserContext _context;
     private readonly XmlReaderSettings _settings;
@@ -312,7 +360,8 @@ internal sealed class WordXmlSearchText
     /// <summary>
     /// An .odt / .fodt body block: character data inside text:p / text:h; text:s = its text:c spaces, text:tab a space,
     /// text:line-break and paragraph ends separators. Skipped: text:note-citation (the note's label), office:annotation
-    /// (comments) and, unless <paramref name="includeNotes"/>, text:note-body.
+    /// (comments), unless <paramref name="includeNotes"/> text:note-body, and what the renderer does not show
+    /// (<see cref="IsHiddenOdf"/>: svg:title / svg:desc, shapes, images, other namespaces inside a paragraph...).
     /// </summary>
     public void FeedOdf(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher, bool includeNotes)
     {
@@ -322,12 +371,21 @@ internal sealed class WordXmlSearchText
             int paragraphDepth = 0;
             bool lastWasSpace = false;
             bool skipped = false;                  // Skip() already moved to the next node
+            var contexts = new List<(int depth, OdfTextContext context)>();   // what the renderer shows inside the open elements
+            byte[] localBytes = new byte[32];
             while (skipped ? !reader.EOF : reader.Read())
             {
                 skipped = false;
                 switch (reader.NodeType)
                 {
                     case XmlNodeType.Element:
+                    {
+                        OdfTextContext? context = contexts.Count == 0 ? null : contexts[contexts.Count - 1].context;
+                        ReadOnlySpan<byte> local = AsciiName(reader.LocalName, localBytes);
+                        if (IsHiddenOdf(context, reader.NamespaceURI == OdfTextNamespace, reader.NamespaceURI == OdfDrawingNamespace, local, out OdfTextContext? opens))
+                        { reader.Skip(); skipped = true; continue; }
+                        if (opens is { } opened && !reader.IsEmptyElement) contexts.Add((reader.Depth, opened));
+                    }
                         if (reader.NamespaceURI == OdfTextNamespace)
                         {
                             switch (reader.LocalName)
@@ -343,17 +401,21 @@ internal sealed class WordXmlSearchText
                                 case "tab": matcher.Feed(' '); break;
                                 case "line-break": matcher.Separator(); break;
                                 case "note-citation" or "tracked-changes": reader.Skip(); skipped = true; continue;
-                                case "note-body" when !includeNotes: reader.Skip(); skipped = true; continue;
+                                case "note-body" when !includeNotes:
+                                    if (contexts.Count > 0 && contexts[contexts.Count - 1].depth == reader.Depth) contexts.RemoveAt(contexts.Count - 1);   // never closes: skipped whole
+                                    reader.Skip(); skipped = true; continue;
                             }
                         }
                         else if (reader.NamespaceURI == OdfOfficeNamespace && reader.LocalName == "annotation") { reader.Skip(); skipped = true; continue; }
                         break;
                     case XmlNodeType.EndElement:
+                        if (contexts.Count > 0 && contexts[contexts.Count - 1].depth == reader.Depth) contexts.RemoveAt(contexts.Count - 1);
                         if (reader.NamespaceURI == OdfTextNamespace && reader.LocalName is "p" or "h") { paragraphDepth--; matcher.Separator(); }
                         break;
                     case XmlNodeType.Text or XmlNodeType.CDATA or XmlNodeType.SignificantWhitespace:
-                        // ODF 1.3 part 3 6.1.2: white space in paragraph text (space, tab, CR, LF) collapses to one space
-                        if (paragraphDepth > 0)
+                        // ODF 1.3 part 3 6.1.2: white space in paragraph text (space, tab, CR, LF) collapses to one space;
+                        // only paragraph content is text (not white space between a frame's / text box's / note body's children)
+                        if (paragraphDepth > 0 && contexts.Count > 0 && contexts[contexts.Count - 1].context == OdfTextContext.Paragraph)
                             foreach (char c in reader.Value)
                             {
                                 if (c is ' ' or '\t' or '\r' or '\n') { if (!lastWasSpace) matcher.Feed(' '); lastWasSpace = true; }
@@ -361,7 +423,7 @@ internal sealed class WordXmlSearchText
                             }
                         break;
                     case XmlNodeType.Whitespace:
-                        if (paragraphDepth > 0 && !lastWasSpace) { matcher.Feed(' '); lastWasSpace = true; }
+                        if (paragraphDepth > 0 && contexts.Count > 0 && contexts[contexts.Count - 1].context == OdfTextContext.Paragraph && !lastWasSpace) { matcher.Feed(' '); lastWasSpace = true; }
                         break;
                 }
             }

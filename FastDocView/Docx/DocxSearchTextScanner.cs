@@ -63,6 +63,7 @@ internal sealed class DocxSearchTextScanner
     private WordSearchBlocksResult Scan(ReadOnlySpan<byte> xml, WordDocumentSearchMatcher matcher, int firstBlock, int stopBlock, Action<int>? blockEnded, out long stoppedAt)
     {
         _namespaces.ClearBlock();
+        CurrentBlockStart = 0;
         bool segmented = blockEnded is not null;
         int block = firstBlock;
         bool blockStarted = false;
@@ -149,6 +150,7 @@ internal sealed class DocxSearchTextScanner
                     if (block == stopBlock) { stoppedAt = position; return WordSearchBlocksResult.Stopped; }
                 }
                 blockStarted = true;
+                CurrentBlockStart = position;
             }
             int elementNameStart = position + 1, elementNameEnd = elementNameStart;
             while (elementNameEnd < end && !IsNameEnd(xml[elementNameEnd])) elementNameEnd++;
@@ -210,6 +212,13 @@ internal sealed class DocxSearchTextScanner
         stoppedAt = end;
         return WordSearchBlocksResult.Done;
     }
+
+    /// <summary>
+    /// Where the scanner's current block starts in the bytes of the last <see cref="FeedBlocks"/>: inside the block-ended
+    /// callback the block just ended, after a <see cref="WordSearchBlocksResult.Failed"/> the failing block - the caller
+    /// checks it against the index's offset before it trusts the scanner's block numbering.
+    /// </summary>
+    public long CurrentBlockStart { get; private set; }
 
     private static WordSearchBlocksResult Fail(int block, out long stoppedAt) { stoppedAt = block; return WordSearchBlocksResult.Failed; }
 }
