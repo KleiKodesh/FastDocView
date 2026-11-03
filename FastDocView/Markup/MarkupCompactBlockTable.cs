@@ -13,7 +13,7 @@ internal sealed class MarkupCompactBlockTable
 
     private sealed class Span
     {
-        public required MarkupSpanRescan Rescan;
+        public MarkupSpanRescan Rescan = null!;
         public long LastUse;
     }
 

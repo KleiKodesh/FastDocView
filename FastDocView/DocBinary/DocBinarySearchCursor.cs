@@ -91,8 +91,8 @@ internal sealed class DocBinarySearchCursor
         if (count <= 0) return;
         if (_bufferLength + count > _buffer.Length) Array.Resize(ref _buffer, Math.Max(_buffer.Length * 2, _bufferLength + count));
         Array.Copy(characters, 0, _buffer, _bufferLength, count);
-        if (_runs.Count > 0 && _runs[^1] is var last && last.cp + last.length == chunkCp)
-            _runs[^1] = (last.cp, last.offset, last.length + count);
+        if (_runs.Count > 0 && _runs[_runs.Count - 1] is var last && last.cp + last.length == chunkCp)
+            _runs[_runs.Count - 1] = (last.cp, last.offset, last.length + count);
         else _runs.Add((chunkCp, _bufferLength, count));
         _bufferLength += count;
     }
