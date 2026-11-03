@@ -271,7 +271,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     {
         get
         {
-            if (_parser.IsInFootnote) return false;
+            if (_parser.IsInFootnote || _parser.IsInTextBox) return false;
             if (_parser.IsInListText) return true;
             if (_paragraphText.Length >= HeadingTextLimit) return false;
             ref readonly RtfGroupState state = ref _parser.Current;
@@ -301,6 +301,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             _search!.Text(text, _parser);
             if (!IndexWantsText) { TextLength(_parser.TextByteCount, state); return; }   // what the index pass saw
         }
+        if (_parser.IsInTextBox) return;              // text-box text: searched, not the block's own text (the shape counts as a placeholder)
         if (_parser.IsInListText) { _hasContent = true; _listText.Append(text.ToArray()); return; }
         if (_parser.IsInFootnote) return;
         _hasContent = true;
@@ -311,12 +312,17 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void TextLength(int length, in RtfGroupState state)
     {
-        if (_parser.IsInFootnote || _parser.IsInListText) return;
+        if (_parser.IsInFootnote || _parser.IsInListText || _parser.IsInTextBox) return;
         _hasContent = true;
         _textLength += length;
     }
 
-    public override void ListTextStart() { _hasListText = true; _listText.Clear(); }
+    public override void ListTextStart() { if (!_parser.IsInTextBox) { _hasListText = true; _listText.Clear(); } }
+
+    /// <summary>A drawing object counts as the placeholder it was before shapes were read (block values unchanged); its text-box text is searched only.</summary>
+    public override void ShapeStart(in RtfGroupState state) { if (IsSearching) _search!.Separator(); Embedded(RtfEmbeddedKind.Picture, state); }
+    public override void ShapeEnd(RtfShapePlacement shape, in RtfGroupState state) { if (IsSearching) _search!.Separator(); }
+    public override void TextBoxParagraphEnd(in RtfGroupState state) { if (IsSearching) _search!.Separator(); }
 
     public override void Embedded(RtfEmbeddedKind kind, in RtfGroupState state) { if (!_parser.IsInFootnote) { _hasContent = true; _textLength += 8; } }
 

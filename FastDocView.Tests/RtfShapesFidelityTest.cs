@@ -1,0 +1,116 @@
+using System.Text;
+
+namespace FastDocView.Tests;
+
+/// <summary>
+/// RTF drawing objects ({\shp} text boxes, shapes, {\shpgrp} groups): a hand-written .rtf with each object type, and the .odt
+/// shapes fixture (OdtShapesFidelityTest) saved as .rtf by LibreOffice (headless, into TestOutput, never committed) - placement,
+/// look, group offsets, text-box paragraphs that never split the block, and text-box text found by the search exactly once.
+/// </summary>
+public static class RtfShapesFidelityTest
+{
+    private static string Shape(string words, string properties, string text = "")
+        => @"{\shp{\*\shpinst" + words + properties + (text.Length > 0 ? @"{\shptxt \pard\plain " + text + "}" : "") + @"}{\shprslt {\pard RESULTCOPY\par}}}";
+
+    private static string Property(string name, string value) => @"{\sp{\sn " + name + @"}{\sv " + value + "}}";
+
+    /// <summary>Blocks in order; the test checks each by its index.</summary>
+    private static readonly string[] Body =
+    [
+        // 0 text box: 2 x 1 in, square wrap, text right of it, insets 0, green line 2 pt, yellow fill, two paragraphs
+        @"\pard " + Shape(@"\shpleft0\shptop0\shpright2880\shpbottom1440\shpwr2\shpwrk2", Property("shapeType", "202") + Property("dxTextLeft", "0") + Property("dyTextTop", "0")
+            + Property("dxTextRight", "0") + Property("dyTextBottom", "0") + Property("lineColor", "32768") + Property("lineWidth", "25400") + Property("fillColor", "65535"),
+            @"boxtext one\par second line\par") + @"outside text\par",
+        // 1 ellipse, red, no line
+        @"\pard " + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom720\shpwr1", Property("shapeType", "3") + Property("fillColor", "255") + Property("fLine", "0")) + @"\par",
+        // 2 arrow, blue line, not filled, with text
+        @"\pard " + Shape(@"\shpleft0\shptop0\shpright2880\shpbottom720\shpwr1", Property("shapeType", "13") + Property("fFilled", "0") + Property("lineColor", "16711680"), "arrowtext") + @"\par",
+        // 3 group: two text boxes side by side in a 0..200 x 0..100 coordinate space over a 4 x 1 in box
+        @"\pard {\shpgrp{\*\shpinst\shpleft0\shptop0\shpright5760\shpbottom1440\shpwr1" + Property("groupLeft", "0") + Property("groupTop", "0") + Property("groupRight", "200") + Property("groupBottom", "100")
+            + @"{\shp{\*\shpinst" + Property("relLeft", "0") + Property("relTop", "0") + Property("relRight", "100") + Property("relBottom", "100") + Property("shapeType", "202") + @"{\shptxt groupone}}}"
+            + @"{\shp{\*\shpinst" + Property("relLeft", "100") + Property("relTop", "50") + Property("relRight", "200") + Property("relBottom", "100") + Property("shapeType", "1") + Property("rotation", "5898240") + @"{\shptxt grouptwo}}}"
+            + @"}{\shprslt {\pard GROUPCOPY\par}}}\par",
+        // 4 line with an end arrow
+        @"\pard " + Shape(@"\shpleft0\shptop0\shpright2880\shpbottom720\shpwr3", Property("shapeType", "20") + Property("lineEndArrowhead", "1")) + @"\par",
+        // 5 isosceles triangle, round rectangle, diamond, unknown type (a box)
+        @"\pard " + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom1440", Property("shapeType", "5")) + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom720", Property("shapeType", "2"))
+            + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom1440", Property("shapeType", "4")) + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom1440", Property("shapeType", "96")) + @"last\par",
+        // 6 a group turned 90 degrees: its left-half child turns about the group's centre
+        @"\pard {\shpgrp{\*\shpinst\shpleft0\shptop0\shpright2880\shpbottom1440" + Property("rotation", "5898240") + Property("groupLeft", "0") + Property("groupTop", "0") + Property("groupRight", "200") + Property("groupBottom", "100")
+            + @"{\shp{\*\shpinst" + Property("relLeft", "0") + Property("relTop", "0") + Property("relRight", "100") + Property("relBottom", "100") + Property("shapeType", "1") + @"}}}}\par",
+    ];
+
+    public static void Run()
+    {
+        TestReport.Step("RTF shapes: hand-written .rtf");
+        string rtf = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-rtf-drawn-shapes.rtf");
+        string document = @"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}" + string.Concat(Body) + "}";
+        if (!File.Exists(rtf) || File.ReadAllText(rtf) != document) File.WriteAllText(rtf, document, new UTF8Encoding(false));
+        CheckHandWritten(rtf);
+
+        TestReport.Step("RTF shapes: the .odt shapes fixture saved as .rtf by LibreOffice");
+        string fodt = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-odt-shapes.fodt");
+        if (!File.Exists(fodt)) OdtShapesFidelityTest.Run();
+        if (File.Exists(fodt) && LibreOfficeConversion.Convert(fodt, ".rtf", "rtf") is { } saved) CheckLibreOfficeSaved(saved);
+    }
+
+    private static List<string> Render(string path)
+    {
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+        return document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
+    }
+
+    private static int SearchCount(string path, string query)
+    {
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+        return document.Search(query, new WordDocumentSearchOptions(), 0, document.BlockCount).HitCounts.Sum();
+    }
+
+    private static int Occurrences(string text, string part)
+    {
+        int count = 0;
+        for (int at = text.IndexOf(part, StringComparison.Ordinal); at >= 0; at = text.IndexOf(part, at + part.Length, StringComparison.Ordinal)) count++;
+        return count;
+    }
+
+    private static void CheckHandWritten(string path)
+    {
+        List<string> html = Render(path);
+        TestReport.Check(html.Count == Body.Length, $"text-box paragraphs do not split blocks: {html.Count} blocks, expected {Body.Length}");
+        if (html.Count < Body.Length) return;
+        string all = string.Concat(html);
+        TestReport.Check(!all.Contains("RESULTCOPY") && !all.Contains("GROUPCOPY"), "\\shprslt is skipped when \\shpinst is read");
+        TestReport.Check(html[0].Contains("class=\"text-box\"") && html[0].Contains("width:144pt") && html[0].Contains("height:72pt") && html[0].Contains("float:left")
+                         && html[0].Contains("border:2pt solid #008000") && html[0].Contains("background:#ffff00") && html[0].Contains("padding:0pt 0pt 0pt 0pt"),
+                         "text box: size, square wrap, line, fill, insets");
+        TestReport.Check(Occurrences(html[0], "text-box-paragraph") == 2 && html[0].Contains("boxtext one") && html[0].Contains("outside text"), "text box: two paragraphs, outside text kept");
+        TestReport.Check(html[1].Contains("<ellipse") && html[1].Contains("fill=\"#ff0000\"") && html[1].Contains("stroke=\"none\""), "ellipse: red fill, no line");
+        TestReport.Check(html[2].Contains("<path d=\"M0 9") && html[2].Contains("fill=\"none\"") && html[2].Contains("stroke=\"#0000ff\"") && html[2].Contains("arrowtext"),
+                         "arrow: MSO outline, no fill, blue line, its text");
+        TestReport.Check(html[3].Contains("left:0pt;top:0pt;width:144pt;height:72pt") && html[3].Contains("left:144pt;top:36pt;width:144pt;height:36pt")
+                         && html[3].Contains("rotate(90)") && html[3].Contains("groupone") && html[3].Contains("grouptwo"), "group: children placed by relLeft.. in groupLeft.., rotation");
+        TestReport.Check(html[4].Contains("<path d=\"M0 0L144 36\"") && Occurrences(html[4], "<path") == 2, "line with an end arrow");
+        TestReport.Check(html[5].Contains("M36 0L72 72L0 72Z") && html[5].Contains(" 0 0 1 ") && html[5].Contains("M36 0L72 36L36 72L0 36Z") && html[5].Contains("<rect"),
+                         "triangle, round rectangle, diamond, unknown type as a box");
+        TestReport.Check(html[6].Contains("translate(72 0) rotate(90)"), "a rotated group turns its child about the group's centre");
+        foreach ((string query, int expected) in new[] { ("boxtext", 1), ("second line", 1), ("outside", 1), ("arrowtext", 1), ("groupone", 1), ("grouptwo", 1), ("RESULTCOPY", 0), ("GROUPCOPY", 0) })
+        {
+            int count = SearchCount(path, query);
+            TestReport.Check(count == expected, $"search '{query}': {count}, expected {expected}");
+        }
+        TestReport.Check(SearchCount(path, "one second") == 0, "a text-box paragraph end is a separator");
+    }
+
+    private static void CheckLibreOfficeSaved(string path)
+    {
+        List<string> html = Render(path);
+        string all = string.Concat(html);
+        foreach (string word in new[] { "boxtext one", "inlinebox", "centrebox", "rtlbox", "shapetext", "gradtext" })   // LibreOffice's RTF export drops the draw:g group (no "groupone" in the file)
+        {
+            TestReport.Check(all.Contains(word), $"LibreOffice .rtf: '{word}' rendered");
+            int count = SearchCount(path, word);
+            TestReport.Check(count == 1, $"LibreOffice .rtf: search '{word}' {count}, expected 1");
+        }
+        TestReport.Check(all.Contains("<svg") && all.Contains("text-box"), "LibreOffice .rtf: shapes drawn, text boxes placed");
+    }
+}

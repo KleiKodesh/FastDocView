@@ -23,6 +23,14 @@ internal enum RtfDestination : byte
     /// <summary>{\*\fldinst ...} and {\*\bkmkstart name}: their text is captured and reported when the group closes.</summary>
     FieldInstruction,
     BookmarkStart,
+    /// <summary>{\shp} / {\shpgrp}, {\*\shpinst}, {\sp}, {\sn}, {\sv}: read for the shape's properties, no text.</summary>
+    Shape,
+    ShapeInstruction,
+    ShapeProperty,
+    ShapePropertyName,
+    ShapePropertyValue,
+    /// <summary>{\shptxt}: a text box's paragraphs.</summary>
+    TextBox,
 }
 
 /// <summary>

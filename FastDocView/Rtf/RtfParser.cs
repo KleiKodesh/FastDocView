@@ -39,6 +39,13 @@ internal sealed class RtfParser
     private readonly StringBuilder _captured = new();
     private bool _isEndnote;
 
+    // drawing objects ({\shp} / {\shpgrp}): the open shapes (outermost first), the {\sn} / {\sv} being read, the open {\shptxt}.
+    // A block never ends inside a shape (its \par are text-box paragraph ends), so none of this is in a snapshot.
+    private readonly List<RtfShapePlacement> _shapes = new();
+    private int _shapePropertyDepth = -1, _textBoxDepth = -1;
+    private string? _shapePropertyName;
+    private readonly StringBuilder _shapePropertyText = new();
+
     // table row definition (\trowd ... \cellxN), document-level as in LibreOffice
     private readonly List<int> _cellBoundaries = new();
     private readonly List<short> _cellShading = new();
@@ -87,6 +94,8 @@ internal sealed class RtfParser
     public ref readonly RtfGroupState Current => ref _stack[_depth < 0 ? 0 : _depth];
     public bool IsInFootnote => _footnoteDepth >= 0;
     public bool IsInListText => _listTextDepth >= 0;
+    /// <summary>Inside a shape's {\shptxt}: text-box text (not the block's own text: no heading text, length or list counting).</summary>
+    public bool IsInTextBox => _textBoxDepth >= 0;
     public bool IsRowRightToLeft => _isRowRightToLeft;
     public int RowLeftTwips => _rowLeft;
     /// <summary>0 left (\trql, the default), 1 centre (\trqc), 2 right (\trqr).</summary>
@@ -191,6 +200,10 @@ internal sealed class RtfParser
         _captured.Clear();
         _pendingCellShading = 0;
         _isEndnote = false;
+        _shapes.Clear();
+        _shapePropertyDepth = _textBoxDepth = -1;
+        _shapePropertyName = null;
+        _shapePropertyText.Clear();
     }
 
     private static void WriteInt(Span<byte> bytes, ref int at, int value)
@@ -348,6 +361,7 @@ internal sealed class RtfParser
             if (_stack[_depth].Destination == RtfDestination.BookmarkStart) { if (captured.Trim().Length > 0) _sink.BookmarkStart(captured.Trim()); }
             else _sink.FieldInstruction(captured);
         }
+        if (_shapes.Count > 0) CloseShapeGroup();
         if (_readsHeaderTables) CloseHeaderGroup();
         _depth--;
         _sink.GroupClosed(_depth);
@@ -457,7 +471,7 @@ internal sealed class RtfParser
     // ── text ──────────────────────────────────────────────────────────────────────────
 
     private bool IsTextDestination(in RtfGroupState state)
-        => state.Destination is RtfDestination.Body or RtfDestination.Footnote or RtfDestination.ListText && !state.Has(RtfStateFlags.DropText);
+        => state.Destination is RtfDestination.Body or RtfDestination.Footnote or RtfDestination.ListText or RtfDestination.TextBox && !state.Has(RtfStateFlags.DropText);
 
     private void AddTextBytes(ReadOnlySpan<byte> bytes)
     {
@@ -479,6 +493,15 @@ internal sealed class RtfParser
             _textByteCount += bytes.Length;
             return;
         }
+        if (state.Destination is RtfDestination.ShapePropertyName or RtfDestination.ShapePropertyValue)
+        {
+            if (_shapePropertyText.Length > 65536) return;          // a long value (vertices) is not one we read
+            if (_chars.Length < bytes.Length) _chars = new char[Math.Max(bytes.Length, _chars.Length * 2)];
+            int decoded = RtfCodePages.Decode(bytes, state.CodePage, _chars);
+            for (int i = 0; i < decoded; i++) if (_chars[i] is not ('\r' or '\n')) _shapePropertyText.Append(_chars[i]);
+            return;
+        }
+        if (state.Destination >= RtfDestination.Shape) return;
         if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart)
         {
             if (_chars.Length < bytes.Length) _chars = new char[Math.Max(bytes.Length, _chars.Length * 2)];
@@ -500,6 +523,7 @@ internal sealed class RtfParser
             else _sink.TextLength(1, state);
         }
         else if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart) _captured.Append(character);
+        else if (state.Destination is RtfDestination.ShapePropertyName or RtfDestination.ShapePropertyValue) _shapePropertyText.Append(character);
         else if (_readsHeaderTables && _headerDepth >= 0) HeaderCharacter(character);
     }
 
@@ -536,6 +560,7 @@ internal sealed class RtfParser
         switch (word)
         {
             case RtfWord.Unknown:
+                if (_shapes.Count > 0 && _textBoxDepth < 0) return;       // a shape keyword (\shpz, \shplid, \shpbxcolumn, ...) not drawn
                 if (_sink.WantsUnhandledWords) _sink.UnhandledWord(name);
                 return;
             case RtfWord.SkippedDestination: SkipGroup(name); return;
@@ -668,7 +693,7 @@ internal sealed class RtfParser
             case RtfWord.Field: if (IsTextDestination(state)) _sink.FieldStart(_depth); return;
             case RtfWord.FieldResult: if (IsTextDestination(state)) _sink.FieldResultStart(); return;
             case RtfWord.FieldInstruction: case RtfWord.BookmarkStart:
-                if (_captureDepth >= 0 || state.Destination is not (RtfDestination.Body or RtfDestination.Footnote)) { SkipGroup(name); return; }
+                if (_captureDepth >= 0 || state.Destination is not (RtfDestination.Body or RtfDestination.Footnote or RtfDestination.TextBox)) { SkipGroup(name); return; }
                 state.Destination = word == RtfWord.BookmarkStart ? RtfDestination.BookmarkStart : RtfDestination.FieldInstruction;
                 _captureDepth = _depth;
                 _captured.Clear();
@@ -685,8 +710,58 @@ internal sealed class RtfParser
             // {\nonshppict} (the copy for older readers) stays skipped (LibreOffice rtfdispatchflag.cxx NONSHPPICT: SKIP).
             case RtfWord.ShapePicture when _sink.WantsPictures && IsTextDestination(state): return;
             case RtfWord.Picture when _sink.WantsPictures && IsTextDestination(state): ReadPicture(state); return;
-            case RtfWord.Shape when _sink.WantsPictures && IsTextDestination(state): ReadShape(state); return;
-            case RtfWord.Picture: case RtfWord.ShapePicture: case RtfWord.Shape:
+            case RtfWord.Picture when state.Destination == RtfDestination.ShapePropertyValue && _sink.WantsPictures && _shapePropertyName == "pib"
+                                      && _shapes.Count > 0 && _shapes[_shapes.Count - 1].Picture is null:
+            {
+                (RtfPicture body, bool pictureClosed) = ReadPictureBody(_sink.WantsPictureData);
+                _shapes[_shapes.Count - 1].Picture = body;
+                if (pictureClosed && !Pop()) _position = _end;
+                return;
+            }
+            case RtfWord.Shape: case RtfWord.ShapeGroup: OpenShape(word, name, ref state); return;
+            case RtfWord.ShapeInstruction:
+                if (state.Destination == RtfDestination.Shape) state.Destination = RtfDestination.ShapeInstruction;
+                else SkipGroup(name);
+                return;
+            case RtfWord.ShapeResult: SkipGroup(name); return;    // the copy for readers without shapes: the {\shpinst} is read instead
+            case RtfWord.ShapeProperty:
+                if (state.Destination == RtfDestination.ShapeInstruction) state.Destination = RtfDestination.ShapeProperty;
+                else SkipGroup(name);
+                return;
+            case RtfWord.ShapePropertyName: case RtfWord.ShapePropertyValue:
+                if (state.Destination != RtfDestination.ShapeProperty || _shapePropertyDepth >= 0) { SkipGroup(name); return; }
+                state.Destination = word == RtfWord.ShapePropertyName ? RtfDestination.ShapePropertyName : RtfDestination.ShapePropertyValue;
+                _shapePropertyDepth = _depth;
+                _shapePropertyText.Clear();
+                if (word == RtfWord.ShapePropertyName) _shapePropertyName = null;
+                return;
+            case RtfWord.ShapeText:
+            {
+                if (state.Destination != RtfDestination.ShapeInstruction || _textBoxDepth >= 0 || _shapes.Count == 0) { SkipGroup(name); return; }
+                RtfShapePlacement shape = _shapes[_shapes.Count - 1];
+                state.Destination = RtfDestination.TextBox;
+                state.Set(RtfStateFlags.DropText, false);
+                _textBoxDepth = _depth;
+                shape.HasText = true;
+                _sink.TextBoxStart(shape);
+                return;
+            }
+            case RtfWord.ShapeLeft: case RtfWord.ShapeTop: case RtfWord.ShapeRight: case RtfWord.ShapeBottom: case RtfWord.ShapeWrap: case RtfWord.ShapeWrapSide:
+                if (_shapes.Count > 0 && state.Destination is RtfDestination.Shape or RtfDestination.ShapeInstruction)
+                {
+                    RtfShapePlacement shape = _shapes[_shapes.Count - 1];
+                    switch (word)
+                    {
+                        case RtfWord.ShapeLeft: shape.Left = parameter; break;
+                        case RtfWord.ShapeTop: shape.Top = parameter; break;
+                        case RtfWord.ShapeRight: shape.Right = parameter; break;
+                        case RtfWord.ShapeBottom: shape.Bottom = parameter; break;
+                        case RtfWord.ShapeWrap: shape.Wrap = parameter; break;
+                        default: shape.WrapSide = parameter; break;
+                    }
+                }
+                return;
+            case RtfWord.Picture: case RtfWord.ShapePicture:
                 if (IsTextDestination(state)) _sink.Embedded(RtfEmbeddedKind.Picture, state);
                 SkipGroup(name);
                 return;
@@ -724,12 +799,22 @@ internal sealed class RtfParser
             case RtfWord.SectionRightMargin: case RtfWord.SectionGutter:
                 if (state.Destination == RtfDestination.Body && !IsInFootnote && (hasParameter || word == RtfWord.SectionDefault)) _sink.PageSetup(word, parameter);
                 return;
-            case RtfWord.Paragraph: _sink.ParagraphEnd(state, isSectionEnd: false); return;
-            case RtfWord.Section: _sink.ParagraphEnd(state, isSectionEnd: true); return;
-            case RtfWord.Cell: _sink.CellEnd(state, isNested: false); return;
-            case RtfWord.NestedCell: _sink.CellEnd(state, isNested: true); return;
-            case RtfWord.Row: _sink.RowEnd(state, isNested: false); return;
-            case RtfWord.NestedRow: _sink.RowEnd(state, isNested: true); return;
+            case RtfWord.Paragraph: case RtfWord.Section: case RtfWord.Cell: case RtfWord.NestedCell: case RtfWord.Row: case RtfWord.NestedRow:
+                if (_shapes.Count > 0)
+                {
+                    // inside a shape: a text box's paragraph ends (its tables are drawn as paragraphs); never the block's
+                    if (_textBoxDepth >= 0 && IsTextDestination(state)) _sink.TextBoxParagraphEnd(state);
+                    return;
+                }
+                switch (word)
+                {
+                    case RtfWord.Paragraph: _sink.ParagraphEnd(state, isSectionEnd: false); return;
+                    case RtfWord.Section: _sink.ParagraphEnd(state, isSectionEnd: true); return;
+                    case RtfWord.Cell: _sink.CellEnd(state, isNested: false); return;
+                    case RtfWord.NestedCell: _sink.CellEnd(state, isNested: true); return;
+                    case RtfWord.Row: _sink.RowEnd(state, isNested: false); return;
+                    default: _sink.RowEnd(state, isNested: true); return;
+                }
             case RtfWord.Page: case RtfWord.Line: case RtfWord.Column:
                 if (IsTextDestination(state)) _sink.Break(word, state);
                 return;
@@ -941,93 +1026,75 @@ internal sealed class RtfParser
     }
 
     /// <summary>
-    /// A {\shp} group (a drawing object: {\shp {\*\shpinst \shpleft... {\sp {\sn name}{\sv value}}...} {\shprslt ...}}),
-    /// read for its picture: with a pib property ({\sp {\sn pib}{\sv {\pict ...}}}, LibreOffice rtfsdrimport.cxx "pib") it
-    /// is a floating picture, laid out - as LibreOffice reads them - from \shpleft / \shptop / \shpright / \shpbottom (twips;
-    /// rtfdispatchvalue.cxx SHPLEFT ...), \shpwr (SHPWR: 1 = NONE, 2 = PARALLEL, 3 = THROUGH + wrapNone, 4 = PARALLEL +
-    /// wrapTight, 5 = THROUGH), \shpwrk (SHPWRK: 0 both sides, 1 left, 2 right, 3 largest), posh (rtfsdrimport.cxx
-    /// applyProperty: 1 left, 2 center, 3 right, 4 inside, 5 outside) and dxWrapDistLeft / dyWrapDistTop / dxWrapDistRight /
-    /// dyWrapDistBottom (EMU: rtfsdrimport.cxx sets LeftMargin = value / 360, 1/100 mm). {\shprslt} (the copy for readers
-    /// without shapes) and {\shptxt} are skipped. A shape without a picture stays a placeholder. Closes the group.
+    /// A {\shp} or {\shpgrp} (a drawing object: {\shp {\*\shpinst \shpleft... {\sp {\sn name}{\sv value}}... {\shptxt ...}}
+    /// {\shprslt ...}}; "Word 97 RTF for Drawing Objects (Shapes)", techshelps.github.io/MSDN/SPECS/newrtf/
+    /// word97rtffordrawingobjectsshapes.htm), read by every sink in the one parse so the index, search and renderer see the
+    /// same text: the placement words and {\sp} properties go to an <see cref="RtfShapePlacement"/>, a {\shptxt} (which "must
+    /// come after all the other properties for the shape (inside the \shpinst destination)", same page) is text-box text
+    /// between <see cref="RtfSink.TextBoxStart"/> / <see cref="RtfSink.TextBoxEnd"/> whose \par never end the block, a pib's
+    /// {\pict} is read by the renderer, {\shprslt} is skipped. "A {\shpgrp ...} can be substituted for a {\shp ...} at any
+    /// place": a {\shp} / {\shpgrp} inside a group's {\shpinst} is its child. Placement words (LibreOffice rtfdispatchvalue.cxx
+    /// SHPLEFT ...): \shpwr 1 = NONE, 2 = PARALLEL, 3 = THROUGH + wrapNone, 4 = PARALLEL + wrapTight, 5 = THROUGH; \shpwrk 0
+    /// both sides, 1 left, 2 right, 3 largest; posh 1 left, 2 center, 3 right, 4 inside, 5 outside (rtfsdrimport.cxx applyProperty);
+    /// dxWrapDist* in EMU. A shape anywhere else (in a text box, a header table) is a placeholder and skipped.
     /// </summary>
-    private void ReadShape(in RtfGroupState state)
+    private void OpenShape(RtfWord word, ReadOnlySpan<byte> name, ref RtfGroupState state)
     {
-        int depth = 1;
-        bool isClosed = false;
-        RtfPicture? picture = null;
-        var shape = new RtfShapePlacement();
-        string? propertyName = null;
-        var captured = new StringBuilder();
-        int captureDepth = -1;              // inside {\sn} / {\sv} (not pib): its text is captured until it closes
-        bool isNameCapture = false;
-        bool isPictureValue = false;
-        while (true)
+        bool isChild = state.Destination == RtfDestination.ShapeInstruction && _shapes.Count > 0 && _shapes[_shapes.Count - 1].IsGroup;
+        if (!isChild && !(IsTextDestination(state) && _shapes.Count == 0))
         {
-            int b = ReadByte();
-            if (b < 0) break;
-            if (b == '{') { depth++; continue; }
-            if (b == '}')
+            if (IsTextDestination(state)) _sink.Embedded(RtfEmbeddedKind.Picture, state);
+            SkipGroup(name);
+            return;
+        }
+        var shape = new RtfShapePlacement { IsGroup = word == RtfWord.ShapeGroup, Depth = _depth };
+        if (isChild)
+        {
+            shape.Parent = _shapes[_shapes.Count - 1];
+            shape.Parent.Children.Add(shape);
+        }
+        else _sink.ShapeStart(state);
+        _shapes.Add(shape);
+        state.Destination = RtfDestination.Shape;
+    }
+
+    private void EmitShapeString(RtfShapePlacement shape, string text)
+    {
+        shape.HasText = true;
+        _textBoxDepth = _depth;
+        _sink.TextBoxStart(shape);
+        ref RtfGroupState state = ref _stack[_depth];
+        if (_sink.WantsText) { TextByteCount = text.Length; _sink.Text(text.AsSpan(), state); }
+        else _sink.TextLength(text.Length, state);
+        _textBoxDepth = -1;
+        _sink.TextBoxEnd();
+    }
+
+    /// <summary>A group inside a shape closes: a property name / value, a text box, or a shape itself.</summary>
+    private void CloseShapeGroup()
+    {
+        if (_depth == _shapePropertyDepth)
+        {
+            _shapePropertyDepth = -1;
+            string text = _shapePropertyText.ToString().Trim();
+            _shapePropertyText.Clear();
+            if (_stack[_depth].Destination == RtfDestination.ShapePropertyName) _shapePropertyName = text;
+            else if (_shapePropertyName is { } property)
             {
-                if (depth == captureDepth)
-                {
-                    if (isNameCapture) propertyName = captured.ToString().Trim();
-                    else if (propertyName is not null) shape.SetProperty(propertyName, captured.ToString().Trim());
-                    captureDepth = -1;
-                    captured.Clear();
-                }
-                if (--depth == 0) { isClosed = true; break; }
-                continue;
-            }
-            if (b != '\\')
-            {
-                if (captureDepth >= 0 && b is not ('\r' or '\n')) captured.Append((char)b);
-                continue;
-            }
-            int c = ReadByte();
-            if (c < 0) break;
-            if (!IsLetter(c)) { if (c == '\'') { ReadByte(); ReadByte(); } continue; }
-            int length = 0;
-            while (c >= 0 && IsLetter(c)) { if (length < MaxWordLength) _word[length] = (byte)c; length++; c = ReadByte(); }
-            bool negative = c == '-';
-            if (negative) c = ReadByte();
-            long parameter = 0;
-            while (c >= '0' && c <= '9') { if (parameter < int.MaxValue) parameter = parameter * 10 + (c - '0'); c = ReadByte(); }
-            if (c >= 0 && c != ' ') _position--;
-            string word = System.Text.Encoding.ASCII.GetString(_word, 0, Math.Min(length, MaxWordLength));
-            int value = (int)Math.Max(int.MinValue, Math.Min(int.MaxValue, negative ? -parameter : parameter));
-            switch (word)
-            {
-                case "bin": if (parameter > 0) SkipBytes(parameter); break;
-                case "shprslt": case "shptxt": depth = SkipToDepth(depth - 1); break;    // the rest of that group
-                case "sn": captureDepth = depth; isNameCapture = true; captured.Clear(); break;
-                case "sv":
-                    isPictureValue = propertyName == "pib";
-                    if (!isPictureValue) { captureDepth = depth; isNameCapture = false; captured.Clear(); }
-                    break;
-                case "pict" when isPictureValue && picture is null:
-                {
-                    (RtfPicture body, bool pictureClosed) = ReadPictureBody(_sink.WantsPictureData);
-                    picture = body;
-                    if (pictureClosed) depth--;
-                    break;
-                }
-                case "shpleft": shape.Left = value; break;
-                case "shptop": shape.Top = value; break;
-                case "shpright": shape.Right = value; break;
-                case "shpbottom": shape.Bottom = value; break;
-                case "shpwr": shape.Wrap = value; break;
-                case "shpwrk": shape.WrapSide = value; break;
+                RtfShapePlacement shape = _shapes[_shapes.Count - 1];
+                shape.SetProperty(property, text);
+                // gtextUNICODE: the shape's text as one string (LibreOffice rtfsdrimport.cxx:442-443, 949-957 sets it as the shape's
+                // text; LibreOffice's own RTF export writes a custom shape's text this way) - given to the sinks as a one-paragraph
+                // text box, so it renders and is searched like {\shptxt} text
+                if (property == "gtextUNICODE" && !shape.HasText && text.Length > 0) EmitShapeString(shape, text);
             }
         }
-        if (isClosed && !Pop()) _position = _end;
-        if (picture is { } found)
-            _sink.Picture(found with
-            {
-                WidthTwips = shape.Right > shape.Left ? shape.Right - shape.Left : found.WidthTwips,
-                HeightTwips = shape.Bottom > shape.Top ? shape.Bottom - shape.Top : found.HeightTwips,
-                Placement = shape,
-            }, state);
-        else _sink.Embedded(RtfEmbeddedKind.Picture, state);
+        if (_depth == _textBoxDepth) { _textBoxDepth = -1; _sink.TextBoxEnd(); }
+        RtfShapePlacement last = _shapes[_shapes.Count - 1];
+        if (_depth != last.Depth) return;
+        _shapes.RemoveAt(_shapes.Count - 1);
+        _shapePropertyName = null;
+        if (_shapes.Count == 0) _sink.ShapeEnd(last, _stack[_depth - 1 < 0 ? 0 : _depth - 1]);
     }
 
     /// <summary>Reads on until the group depth drops to <paramref name="target"/> (the closing brace consumed); returns the new depth.</summary>

@@ -38,6 +38,15 @@ internal abstract class RtfSink
     public virtual bool WantsPictureData => false;
     /// <summary>A {\pict} group, or a {\shp} holding one (then <see cref="RtfPicture.Placement"/> is set).</summary>
     public virtual void Picture(in RtfPicture picture, in RtfGroupState state) { }
+    /// <summary>A {\shp} / {\shpgrp} in the text opened (not one inside a group).</summary>
+    public virtual void ShapeStart(in RtfGroupState state) { }
+    /// <summary>That shape's group closed, with its properties and children.</summary>
+    public virtual void ShapeEnd(RtfShapePlacement shape, in RtfGroupState state) { }
+    /// <summary>A {\shptxt} of <paramref name="shape"/> opened: its paragraphs follow (their ends come as <see cref="TextBoxParagraphEnd"/>).</summary>
+    public virtual void TextBoxStart(RtfShapePlacement shape) { }
+    public virtual void TextBoxEnd() { }
+    /// <summary>\par, \sect, \cell or \row inside a text box: ends a paragraph of the box, never the block.</summary>
+    public virtual void TextBoxParagraphEnd(in RtfGroupState state) { }
     /// <summary>A group closed; <paramref name="depth"/> is the depth after the close (0 = the document group).</summary>
     public virtual void GroupClosed(int depth) { }
     public virtual void UnhandledWord(ReadOnlySpan<byte> name) { }
@@ -59,7 +68,11 @@ internal abstract class RtfSink
 /// its bytes when the sink asked for them, and for a floating shape its placement.</summary>
 internal readonly record struct RtfPicture(int WidthTwips, int HeightTwips, string Extension, byte[]? Data, RtfShapePlacement? Placement = null);
 
-/// <summary>A {\shp}'s placement words and properties, as the parser read them (meanings: RtfParser.ReadShape).</summary>
+/// <summary>
+/// A {\shp} or {\shpgrp} as the parser read it ("Word 97 RTF for Drawing Objects (Shapes)", techshelps.github.io/MSDN/SPECS/
+/// newrtf/word97rtffordrawingobjectsshapes.htm; meanings and units there unless noted): the placement words, the {\sp} properties
+/// it draws from, its picture (a pib) and, for a group, its children in z-order (bottom first).
+/// </summary>
 internal sealed class RtfShapePlacement
 {
     public int Left, Top, Right, Bottom;
@@ -72,9 +85,41 @@ internal sealed class RtfShapePlacement
     /// <summary>dxWrapDistLeft, dyWrapDistTop, dxWrapDistRight, dyWrapDistBottom in EMU.</summary>
     public long WrapLeft, WrapTop, WrapRight, WrapBottom;
 
+    /// <summary>{\shpgrp}: a group whose children are placed in its groupLeft..groupBottom coordinates.</summary>
+    public bool IsGroup;
+    /// <summary>The parser's group depth of the shape's own group.</summary>
+    public int Depth;
+    public RtfShapePlacement? Parent;
+    public readonly List<RtfShapePlacement> Children = new();
+    /// <summary>shapeType (-1 = not given: a rectangle, LibreOffice rtfsdrimport.cxx:293-300 "Word seems to implement it as a rectangle").</summary>
+    public int ShapeType = -1;
+    /// <summary>fillColor / lineColor: 24-bit BGR (LibreOffice rtfsdrimport.cxx:459, 476 BGRToRGB); null = not given.</summary>
+    public int? FillColor, LineColor;
+    /// <summary>lineWidth in EMU (null = Word's 0.75 pt, rtfsdrimport.cxx:384).</summary>
+    public long? LineWidth;
+    /// <summary>fFilled / fLine (Boolean 1 / 0); null = not given.</summary>
+    public bool? Filled, HasLine;
+    /// <summary>dxTextLeft, dyTextTop, dxTextRight, dyTextBottom in EMU (null = 91440 / 45720, rtfsdrimport.cxx:113-124).</summary>
+    public long? TextLeft, TextTop, TextRight, TextBottom;
+    /// <summary>A group's coordinate system (groupLeft..) and a child's box in it (relLeft..), rtfsdrimport.cxx:733-748, 1036-1053.</summary>
+    public int? GroupLeft, GroupTop, GroupRight, GroupBottom, RelLeft, RelTop, RelRight, RelBottom;
+    public bool FlipHorizontal, FlipVertical, FitsShapeToText;
+    /// <summary>rotation: fixed 16.16 degrees, positive = clockwise (rtfsdrimport.cxx:245-249).</summary>
+    public double RotationDegrees;
+    /// <summary>lineStartArrowhead / lineEndArrowhead other than 0 (none).</summary>
+    public bool StartArrow, EndArrow;
+    /// <summary>adjustValue / adjust2Value (the shape type's 21600 space; null = its default).</summary>
+    public int? Adjust1, Adjust2;
+    /// <summary>The pib picture, when the renderer read one.</summary>
+    public RtfPicture? Picture;
+    /// <summary>The shape has a {\shptxt}; its rendered HTML (the renderer).</summary>
+    public bool HasText;
+    public string? TextHtml;
+
     public void SetProperty(string name, string value)
     {
         if (!long.TryParse(value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out long number)) return;
+        int clamped = (int)Math.Max(int.MinValue, Math.Min(int.MaxValue, number));
         switch (name)
         {
             case "posh": HorizontalPosition = (int)Math.Max(0, Math.Min(5, number)); break;
@@ -82,6 +127,32 @@ internal sealed class RtfShapePlacement
             case "dyWrapDistTop": WrapTop = number; break;
             case "dxWrapDistRight": WrapRight = number; break;
             case "dyWrapDistBottom": WrapBottom = number; break;
+            case "shapeType": ShapeType = clamped; break;
+            case "fillColor": FillColor = clamped; break;
+            case "lineColor": LineColor = clamped; break;
+            case "lineWidth": LineWidth = number; break;
+            case "fFilled": Filled = number != 0; break;
+            case "fLine": HasLine = number != 0; break;
+            case "dxTextLeft": TextLeft = number; break;
+            case "dyTextTop": TextTop = number; break;
+            case "dxTextRight": TextRight = number; break;
+            case "dyTextBottom": TextBottom = number; break;
+            case "groupLeft": GroupLeft = clamped; break;
+            case "groupTop": GroupTop = clamped; break;
+            case "groupRight": GroupRight = clamped; break;
+            case "groupBottom": GroupBottom = clamped; break;
+            case "relLeft": RelLeft = clamped; break;
+            case "relTop": RelTop = clamped; break;
+            case "relRight": RelRight = clamped; break;
+            case "relBottom": RelBottom = clamped; break;
+            case "fFlipH": FlipHorizontal = number != 0; break;
+            case "fFlipV": FlipVertical = number != 0; break;
+            case "fFitShapeToText": FitsShapeToText = number == 1; break;
+            case "rotation": RotationDegrees = number / 65536.0; break;
+            case "lineStartArrowhead": StartArrow = number != 0; break;
+            case "lineEndArrowhead": EndArrow = number != 0; break;
+            case "adjustValue": Adjust1 = clamped; break;
+            case "adjust2Value": Adjust2 = clamped; break;
         }
     }
 }

@@ -789,7 +789,7 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
   Synthetic 23 MB / 300,016 blocks: full index 230-330 ms (parser alone ~135-200 ms), sidecar cold
   open ~410 ms, reopen ~46 ms, random 40-block windows <= 9 ms.
 - **Not done**: paragraph borders/shading, tab stops, cell merges (`\clmgf` / `\clvmgf`), row heights
-  and table borders, text boxes / shape text (`\shp` skipped whole), hyperlink targets, style
+  and table borders, hyperlink targets, style
   formatting not repeated in the paragraph (Word always repeats it), `\pn` (Word 6) numbering without
   `\pntext`, Shift-JIS lead bytes that are `\`/`{`/`}`, the Chicago note format (from memory).
 
@@ -1225,10 +1225,10 @@ others hold the files, as Word retries a save.
   mso-position-horizontal / margin-left / mso-wrap-distance-*, w10:wrap type / side, read as oox vmlshapecontext.cxx and
   vmlshape.cxx lcl_setSurround / lcl_SetAnchorType (static = inline; no wrap = through).
 - **RTF \shp** with a pib picture: \shpleft..\shpbottom size, \shpwr / \shpwrk (RTF 1.5 spec + rtfdispatchvalue.cxx), posh,
-  dxWrapDist* EMU (rtfsdrimport.cxx); \shprslt / \shptxt skipped; no \shpwr = above and below (our choice). 	rleft is now
+  dxWrapDist* EMU (rtfsdrimport.cxx); \shprslt skipped, \shptxt read (see RTF text boxes and shapes); no \shpwr = above and below (our choice). 	rleft is now
   a physical margin-left (RTF 1.5: "leftmost edge ... with respect to the left edge of its column").
 - Not done: floating .doc pictures (0x08 + FSPA + drawing group, e.g. POI PngPicture.doc), DIB / metafiles, page-relative
-  offsets, \shpgrp groups.
+  offsets.
 
 
 ### OpenDocument text boxes and shapes (2026-11-03)
@@ -1344,3 +1344,31 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
 - Search: shape text is w:txbxContent text, found once (mc:Fallback skipped by both scanner and reference).
 - Checks: `--fidelity` DocxShapesFidelityTest; live `vue-demo/playwright/docxShapesCheck.mjs TestOutput/fidelity-v1-shapes.docx`
   (SVG boxes measured in the DOM, text once, no console errors).
+
+### RTF text boxes and shapes (2026-11-03)
+
+Sources read online 2026-11-03: "Word 97 RTF for Drawing Objects (Shapes)" (the RTF spec's shapes appendix,
+techshelps.github.io/MSDN/SPECS/newrtf/word97rtffordrawingobjectsshapes.htm: \shp / \shpinst / \sp / \sn / \sv, \shptxt "must
+come after all the other properties ... inside the \shpinst destination", \shprslt = the Word 6/95 copy, \shpgrp "can be
+substituted for a {\shp} at any place", units: EMU, colours 24 bit, booleans 1 / 0, ShapeType table); LibreOffice core master
+sw/source/writerfilter/rtftok/rtfsdrimport.cxx (defaults: fFilled on :199, white fill :360-363, black 0.75 pt line :382-384,
+insets 91440 / 45720 EMU :113-124, BGR colours :459 / :476, fLine 0 = none :183-190, rotation 16.16 clockwise :245-249, group
+child = relLeft.. in groupLeft.. scaled to the group's box :1036-1053, shapeType unset = rectangle :293-300, gtextUNICODE = the
+shape's text :442 / :949-957); svx EnhancedCustomShapeGeometry.cxx (MSO outlines in a 21600 space, see `WordOfficeArtShapeTypes`).
+
+- **One parse for all sinks**: `RtfParser.OpenShape` / `CloseShapeGroup` read \shp and \shpgrp in the index pass, the search and
+  the renderer alike (no more `ReadShape` byte scan for the renderer only). Inside a shape \par / \sect / \cell / 
+ow are
+  `TextBoxParagraphEnd` - a block never ends in a shape, so block boundaries, snapshots and block values are unchanged; the
+  index counts the shape as the 8-character placeholder it was. Text-box text is not the block's text (no heading text, length,
+  list counting, \listtext label). \shprslt is skipped (the shape is read from \shpinst). Unknown words inside a shape (outside
+  its text) are shape keywords and not audited.
+- **Search**: \shptxt text (and gtextUNICODE) is fed to the matcher once, between separators (shape start / end, each box
+  paragraph end), in `RtfSearchTextSink` and the one-pass `RtfSpanSearch` alike; `--rtf-search-golden` stays equal.
+- **Renderer**: a lone pib picture keeps the old picture path (ids unchanged). A plain rectangle text box (shapeType unset / 1 /
+  202, not rotated or flipped) = `WordPictureHtml.OpenTextBox` with the line as border, the fill, insets, fFitShapeToText = grows.
+  Everything else = `WordShapeHtml` (one frame at the root placement, outlines in one SVG, each \shptxt over its shape, group
+  pictures at their box); geometry by `Html/WordOfficeArtShapeTypes` (shared with .doc), adjustValue / adjust2Value honoured.
+  Placement as RTF pictures. Text-box paragraphs = `text-box-paragraph` block spans.
+- Check: `--fidelity` RtfShapesFidelityTest (hand-written .rtf; the .odt shapes fixture saved as .rtf by LibreOffice - its RTF
+  export drops draw:g groups); live `vue-demo/playwright/rtfDocShapesCheck.mjs <file> <frames> <texts...>`.

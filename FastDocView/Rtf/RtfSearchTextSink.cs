@@ -3,7 +3,7 @@ namespace FastDocView.Rtf;
 /// <summary>
 /// The search's sink over the same <see cref="RtfParser"/> the renderer uses, so a block is read exactly as it renders:
 /// its text goes to the matcher (no HTML), paragraph / cell / row / line ends are separators, \listtext labels are
-/// skipped, and footnote groups are fed (between separators) only when the search includes notes.
+/// skipped, text-box text ({\shptxt}) is fed once between separators, and footnote groups are fed (between separators) only when the search includes notes.
 /// </summary>
 internal sealed class RtfSearchTextSink : RtfSink
 {
@@ -38,5 +38,8 @@ internal sealed class RtfSearchTextSink : RtfSink
     public override void RowEnd(in RtfGroupState state, bool isNested) => _matcher!.Separator();
     public override void Break(RtfWord word, in RtfGroupState state) => _matcher!.Separator();
     public override void FootnoteStart() => _matcher!.Separator();
+    public override void ShapeStart(in RtfGroupState state) => _matcher!.Separator();
+    public override void ShapeEnd(RtfShapePlacement shape, in RtfGroupState state) => _matcher!.Separator();
+    public override void TextBoxParagraphEnd(in RtfGroupState state) => _matcher!.Separator();
     public override void FootnoteEnd(bool isEndnote) => _matcher!.Separator();
 }

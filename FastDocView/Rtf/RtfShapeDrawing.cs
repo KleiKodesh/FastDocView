@@ -1,0 +1,92 @@
+using FastDocView.Html;
+
+namespace FastDocView.Rtf;
+
+/// <summary>An RTF shape's look as the format-neutral <see cref="WordShape"/> model (property meanings: <see cref="RtfShapePlacement"/>).</summary>
+internal static class RtfShapeDrawing
+{
+    private const double EmuPerPoint = 12700;
+
+    /// <summary>A shape's text-box insets (dxTextLeft.. in EMU; defaults 91440 / 45720, LibreOffice rtfsdrimport.cxx:113-124).</summary>
+    public static WordTextBoxStyle TextStyle(RtfShapePlacement shape)
+        => new((shape.TextLeft ?? 91440) / EmuPerPoint, (shape.TextTop ?? 45720) / EmuPerPoint, (shape.TextRight ?? 91440) / EmuPerPoint,
+               (shape.TextBottom ?? 45720) / EmuPerPoint, null, 0, false, null, 0, null, shape.FitsShapeToText);
+
+    /// <summary>The fill, or null: fFilled defaults to on (rtfsdrimport.cxx:199), fillColor to white ("White in Word", rtfsdrimport.cxx:360-363).</summary>
+    public static string? FillColorCss(RtfShapePlacement shape) => shape.Filled == false ? null : Css(shape.FillColor ?? 0xFFFFFF);
+
+    /// <summary>The line, or null: fLine 0 = no line (rtfsdrimport.cxx:183-190), lineColor defaults to black (rtfsdrimport.cxx:382).</summary>
+    public static string? LineColorCss(RtfShapePlacement shape) => shape.HasLine == false ? null : Css(shape.LineColor ?? 0);
+
+    /// <summary>lineWidth in points; Word's default 0.75 pt (rtfsdrimport.cxx:384).</summary>
+    public static double LineWidthPt(RtfShapePlacement shape) => shape.LineWidth is { } emu ? emu / EmuPerPoint : 0.75;
+
+    /// <summary>A colour value: 24-bit BGR (rtfsdrimport.cxx:459 BGRToRGB).</summary>
+    private static string Css(int bgr) => "#" + (bgr & 0xFF).ToString("x2") + ((bgr >> 8) & 0xFF).ToString("x2") + ((bgr >> 16) & 0xFF).ToString("x2");
+
+    public delegate string? PictureIdOf(in RtfPicture picture);
+
+    /// <summary>
+    /// The drawn shapes of <paramref name="shape"/> at (x, y, width, height) points in the frame, children of a group placed by
+    /// their relLeft.. in the group's groupLeft.. scaled to the group's box (rtfsdrimport.cxx:1036-1053); each text box's HTML
+    /// is added to <paramref name="texts"/>, its index on the shape.
+    /// </summary>
+    public static void Collect(RtfShapePlacement shape, double x, double y, double width, double height, List<WordShape> shapes, List<string> texts, PictureIdOf pictureId)
+    {
+        if (shape.IsGroup)
+        {
+            int first = shapes.Count;
+            foreach (RtfShapePlacement child in shape.Children)
+            {
+                if (shape.GroupLeft is { } groupLeft && shape.GroupTop is { } groupTop && shape.GroupRight is { } groupRight && shape.GroupBottom is { } groupBottom
+                    && child.RelLeft is { } left && child.RelTop is { } top && child.RelRight is { } right && child.RelBottom is { } bottom
+                    && groupRight != groupLeft && groupBottom != groupTop)
+                {
+                    double scaleX = width / (groupRight - groupLeft), scaleY = height / (groupBottom - groupTop);
+                    Collect(child, x + (left - groupLeft) * scaleX, y + (top - groupTop) * scaleY, Math.Abs(right - left) * scaleX, Math.Abs(bottom - top) * scaleY, shapes, texts, pictureId);
+                }
+                else   // without the coordinates LibreOffice places the child by its own \shpleft.. (rtfsdrimport.cxx:1036 bInShapeGroup false)
+                    Collect(child, x + (child.Left - shape.Left) / 20.0, y + (child.Top - shape.Top) / 20.0, Math.Abs(child.Right - child.Left) / 20.0,
+                            Math.Abs(child.Bottom - child.Top) / 20.0, shapes, texts, pictureId);
+            }
+            // a rotated or flipped group turns its children about the group's centre ("rotation of the shape"; flips "applied after
+            // the rotation", same spec page): each child's centre moves, its own rotation and flips compose with the group's
+            if (shape.RotationDegrees != 0 || shape.FlipHorizontal || shape.FlipVertical)
+            {
+                double centreX = x + width / 2, centreY = y + height / 2, radians = shape.RotationDegrees * Math.PI / 180;
+                for (int i = first; i < shapes.Count; i++)
+                {
+                    WordShape part = shapes[i];
+                    double dx = part.X + part.Width / 2 - centreX, dy = part.Y + part.Height / 2 - centreY;
+                    double rx = dx * Math.Cos(radians) - dy * Math.Sin(radians), ry = dx * Math.Sin(radians) + dy * Math.Cos(radians);
+                    if (shape.FlipHorizontal) rx = -rx;
+                    if (shape.FlipVertical) ry = -ry;
+                    part.X = centreX + rx - part.Width / 2;
+                    part.Y = centreY + ry - part.Height / 2;
+                    // flip after rotate: a mirror turns a rotation by a into one by -a (two mirrors = a half turn, rotations add)
+                    double rotation = part.RotationDegrees + shape.RotationDegrees;
+                    part.RotationDegrees = shape.FlipHorizontal ^ shape.FlipVertical ? -rotation : rotation;
+                    part.FlipHorizontal ^= shape.FlipHorizontal;
+                    part.FlipVertical ^= shape.FlipVertical;
+                }
+            }
+            return;
+        }
+        var drawn = new WordShape
+        {
+            X = x, Y = y, Width = width, Height = height,
+            RotationDegrees = shape.RotationDegrees, FlipHorizontal = shape.FlipHorizontal, FlipVertical = shape.FlipVertical,
+            FillColor = FillColorCss(shape), LineColor = LineColorCss(shape), LineWidthPt = LineWidthPt(shape),
+            HeadArrow = shape.StartArrow, TailArrow = shape.EndArrow,
+            TextStyle = TextStyle(shape),
+        };
+        WordOfficeArtShapeTypes.Apply(drawn, shape.ShapeType < 0 ? WordOfficeArtShapeTypes.Rectangle : shape.ShapeType, shape.Adjust1, shape.Adjust2);
+        if (shape.Picture is { } picture)
+        {
+            drawn.Geometry = WordShapeGeometry.Picture;
+            drawn.PictureId = pictureId(picture);
+        }
+        if (shape.HasText) { drawn.TextIndex = texts.Count; texts.Add(shape.TextHtml ?? ""); }
+        shapes.Add(drawn);
+    }
+}

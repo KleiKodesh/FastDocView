@@ -18,7 +18,8 @@ internal enum RtfWord : byte
     PaperWidth, LeftMargin, RightMargin, Gutter, SectionDefault, SectionPageWidth, SectionLeftMargin, SectionRightMargin, SectionGutter,
     // ── destinations rendered ──
     Footnote, FootnoteIsEndnote, Field, FieldResult, FieldInstruction, BookmarkStart, ListText, ParagraphNumberText, UnicodePair, UnicodeDestination,
-    Picture, ShapePicture, NonShapePicture, Shape, ObjectGroup, MathGroup, NestedTableProperties,
+    Picture, ShapePicture, NonShapePicture, Shape, ShapeGroup, ShapeInstruction, ShapeResult, ShapeText, ShapeProperty, ShapePropertyName, ShapePropertyValue,
+    ShapeLeft, ShapeTop, ShapeRight, ShapeBottom, ShapeWrap, ShapeWrapSide, ObjectGroup, MathGroup, NestedTableProperties,
     // ── unicode / special characters ──
     UnicodeSkipCount, UnicodeCharacter, Binary, IgnorableDestination, HexCharacter,
     Paragraph, Section, Page, Line, Tab, Cell, Row, NestedCell, NestedRow, Column,
@@ -104,6 +105,9 @@ internal static class RtfControlWords
         ("fldinst", RtfWord.FieldInstruction), ("bkmkstart", RtfWord.BookmarkStart),
         ("listtext", RtfWord.ListText), ("pntext", RtfWord.ParagraphNumberText), ("upr", RtfWord.UnicodePair), ("ud", RtfWord.UnicodeDestination),
         ("pict", RtfWord.Picture), ("shppict", RtfWord.ShapePicture), ("nonshppict", RtfWord.NonShapePicture), ("shp", RtfWord.Shape),
+        ("shpgrp", RtfWord.ShapeGroup), ("shpinst", RtfWord.ShapeInstruction), ("shprslt", RtfWord.ShapeResult), ("shptxt", RtfWord.ShapeText),
+        ("sp", RtfWord.ShapeProperty), ("sn", RtfWord.ShapePropertyName), ("sv", RtfWord.ShapePropertyValue), ("shpleft", RtfWord.ShapeLeft),
+        ("shptop", RtfWord.ShapeTop), ("shpright", RtfWord.ShapeRight), ("shpbottom", RtfWord.ShapeBottom), ("shpwr", RtfWord.ShapeWrap), ("shpwrk", RtfWord.ShapeWrapSide),
         ("object", RtfWord.ObjectGroup), ("nesttableprops", RtfWord.NestedTableProperties), ("mmath", RtfWord.MathGroup), ("moMath", RtfWord.MathGroup), ("moMathPara", RtfWord.MathGroup),
         ("uc", RtfWord.UnicodeSkipCount), ("u", RtfWord.UnicodeCharacter), ("bin", RtfWord.Binary),
         ("par", RtfWord.Paragraph), ("sect", RtfWord.Section), ("page", RtfWord.Page), ("line", RtfWord.Line), ("tab", RtfWord.Tab),

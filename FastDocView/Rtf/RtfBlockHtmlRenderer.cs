@@ -28,6 +28,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         public (int position, string html, bool hasTab)? ListText;   // a \listtext label waiting for its paragraph
         public readonly List<TableLevel> Tables = new();
         public string? OpenLink;            // the <a> tag of a link field whose result is being read in this flow
+        public bool IsTextBox;              // a {\shptxt}: its paragraphs are block spans (no <p> inside a <p>)
     }
 
     private readonly RtfParser _parser;
@@ -77,6 +78,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _indexListLabel = table.ListLabelOf(blockIndex);
         _isFirstParagraph = true;
         _fields.Clear();
+        _textBoxOuterFlow = null;
+        _textBoxShape = null;
 
         _parser.RestoreSnapshot(table.SnapshotOf(blockIndex));
         _parser.Run(file, table.BlockStartOffset(blockIndex), table.BlockEndOffset(blockIndex));
@@ -192,14 +195,14 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         bool isTopLevel = _flow == _bodyFlow && !isInTable;
         WordParagraphFormatting formatting = ParagraphFormatting(state);
         int outline = isTopLevel ? (state.OutlineLevel is >= 0 and <= 8 ? state.OutlineLevel : state.OutlineLevel == 9 ? -1 : _tables.OutlineLevelOfStyle(state.Style)) : -1;
-        string tag = outline is >= 0 and <= 5 ? "h" + (outline + 1) : "p";
+        string tag = _flow.IsTextBox ? "span" : outline is >= 0 and <= 5 ? "h" + (outline + 1) : "p";
 
         // a link field whose result spans paragraphs: closed with each paragraph and reopened in the next
         string? openLink = _flow.OpenLink;
         if (openLink is not null) _flow.Inline.Append("</a>");
         var html = new StringBuilder(_flow.Inline.Length + 64);
         if (state.Has(RtfStateFlags.PageBreakBefore) && isTopLevel) html.Append("<span class=\"page-break\"></span>");
-        WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(), null, formatting.IsRightToLeft);
+        WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss() + (_flow.IsTextBox ? "display:block;" : ""), _flow.IsTextBox ? "text-box-paragraph" : null, formatting.IsRightToLeft);
         // The label sits at the first-line position and a tab after it reaches the next stop (WordListLabelHtml): the flat
         // \listtext label Word wrote (its \tab = the tab suffix, RTF 1.5 \listtext), or the label counted at index time
         // (its \levelfollow); \leveljc places the label.
@@ -299,32 +302,128 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     /// </summary>
     public override void Picture(in RtfPicture picture, in RtfGroupState state)
     {
-        int ordinal = _pictureOrdinal++;
-        if (ordinal == _capturedPictureOrdinal) _capturedPicture = picture;
+        string? pictureId = PictureIdOf(picture);
         FlushRun();
         WordPictureLayout layout = new(picture.WidthTwips / 20.0, picture.HeightTwips / 20.0, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0);
-        if (picture.Placement is { } shape)
-        {
-            const double EmuPerPoint = 12700;
-            WordPictureWrap wrap = shape.Wrap switch { 2 or 4 => WordPictureWrap.Square, 3 or 5 => WordPictureWrap.None, _ => WordPictureWrap.TopAndBottom };
-            WordPictureSide side = shape.HorizontalPosition switch
-            {
-                1 or 4 => WordPictureSide.Left,
-                2 => WordPictureSide.Center,
-                3 or 5 => WordPictureSide.Right,
-                _ => shape.WrapSide switch { 1 => WordPictureSide.Right, _ => WordPictureSide.Left },
-            };
-            double offset = shape.HorizontalPosition == 0 ? Math.Max(0, shape.Left / 20.0) : 0;
-            layout = layout with
-            {
-                Wrap = wrap, Side = side, OffsetPt = offset,
-                TopPt = shape.WrapTop / EmuPerPoint, RightPt = shape.WrapRight / EmuPerPoint, BottomPt = shape.WrapBottom / EmuPerPoint, LeftPt = shape.WrapLeft / EmuPerPoint,
-            };
-        }
-        string? pictureId = picture.Extension.Length > 0 && WordPictureHtml.ContentTypeOf(picture.Extension) is not null
+        if (picture.Placement is { } shape) layout = ShapeLayout(shape, layout.WidthPt, layout.HeightPt);
+        WordPictureHtml.Append(_listTextTarget ?? _flow.Inline, layout, pictureId);
+        _flow.HasInline = true;
+    }
+
+    /// <summary>The next picture's id (the block and its place among the block's pictures); the one <see cref="ReadPicture"/> asked for is kept.</summary>
+    private string? PictureIdOf(in RtfPicture picture)
+    {
+        int ordinal = _pictureOrdinal++;
+        if (ordinal == _capturedPictureOrdinal) _capturedPicture = picture;
+        return picture.Extension.Length > 0 && WordPictureHtml.ContentTypeOf(picture.Extension) is not null
             ? _blockIndex.ToString(CultureInfo.InvariantCulture) + ":" + ordinal.ToString(CultureInfo.InvariantCulture)
             : null;
-        WordPictureHtml.Append(_listTextTarget ?? _flow.Inline, layout, pictureId);
+    }
+
+    /// <summary>A floating shape's placement (meanings in RtfParser.OpenShape), size in points.</summary>
+    private static WordPictureLayout ShapeLayout(RtfShapePlacement shape, double widthPt, double heightPt)
+    {
+        const double EmuPerPoint = 12700;
+        WordPictureWrap wrap = shape.Wrap switch { 2 or 4 => WordPictureWrap.Square, 3 or 5 => WordPictureWrap.None, _ => WordPictureWrap.TopAndBottom };
+        WordPictureSide side = shape.HorizontalPosition switch
+        {
+            1 or 4 => WordPictureSide.Left,
+            2 => WordPictureSide.Center,
+            3 or 5 => WordPictureSide.Right,
+            _ => shape.WrapSide switch { 1 => WordPictureSide.Right, _ => WordPictureSide.Left },
+        };
+        double offset = shape.HorizontalPosition == 0 ? Math.Max(0, shape.Left / 20.0) : 0;
+        return new WordPictureLayout(widthPt, heightPt, wrap, side, shape.WrapTop / EmuPerPoint, shape.WrapRight / EmuPerPoint,
+                                     shape.WrapBottom / EmuPerPoint, shape.WrapLeft / EmuPerPoint, offset);
+    }
+
+    // ── drawing objects ({\shp} / {\shpgrp}) ────────────────────────────────────────
+
+    private Flow? _textBoxOuterFlow;
+
+    public override void ShapeStart(in RtfGroupState state) => FlushRun();
+
+    private RtfShapePlacement? _textBoxShape;
+
+    public override void TextBoxStart(RtfShapePlacement shape)
+    {
+        FlushRun();
+        _textBoxShape = shape;
+        _textBoxOuterFlow = _flow;
+        _flow = new Flow { IsTextBox = true };
+    }
+
+    public override void TextBoxParagraphEnd(in RtfGroupState state)
+    {
+        if (_listTextTarget is not null) return;
+        FlushRun();
+        EmitParagraph(state, isSectionEnd: false);
+    }
+
+    public override void TextBoxEnd()
+    {
+        if (_textBoxOuterFlow is null) return;
+        FlushRun();
+        if (_flow.HasInline) EmitParagraph(_parser.Current, isSectionEnd: false);
+        string html = _flow.Output.ToString();
+        _flow = _textBoxOuterFlow;
+        _textBoxOuterFlow = null;
+        if (_textBoxShape is not null) _textBoxShape.TextHtml = html;
+        _textBoxShape = null;
+    }
+
+    /// <summary>
+    /// A drawing object: a lone pib picture as before (<see cref="Picture"/>); a plain rectangle text box (shapeType unset, 1 or
+    /// 202 = msosptTextBox, not rotated) as a <see cref="WordPictureHtml.OpenTextBox"/> box with the shape's line as its border
+    /// and its fill; anything else - other shapes, groups - as <see cref="WordShapeHtml"/>: one frame at the root's placement,
+    /// every outline in one SVG, each text box over its shape, group pictures at their box. A group child's box is its relLeft..
+    /// relBottom in the group's groupLeft..groupBottom, scaled to the group's own box (LibreOffice rtfsdrimport.cxx:1036-1053).
+    /// </summary>
+    public override void ShapeEnd(RtfShapePlacement root, in RtfGroupState state)
+    {
+        FlushRun();
+        double width = Math.Max(0, root.Right - root.Left) / 20.0, height = Math.Max(0, root.Bottom - root.Top) / 20.0;
+        if (!root.IsGroup && !root.HasText && root.Picture is { } picture)
+        {
+            Picture(picture with
+            {
+                WidthTwips = root.Right > root.Left ? root.Right - root.Left : picture.WidthTwips,
+                HeightTwips = root.Bottom > root.Top ? root.Bottom - root.Top : picture.HeightTwips,
+                Placement = root,
+            }, state);
+            return;
+        }
+        StringBuilder target = _listTextTarget ?? _flow.Inline;
+        WordPictureLayout layout = ShapeLayout(root, width, height);
+        if (!root.IsGroup && root.HasText && root.ShapeType is -1 or 1 or 202 && root.RotationDegrees == 0 && !root.FlipHorizontal && !root.FlipVertical)
+        {
+            WordTextBoxStyle style = RtfShapeDrawing.TextStyle(root);
+            style = style with
+            {
+                BorderColor = RtfShapeDrawing.LineColorCss(root), BorderWidthPt = RtfShapeDrawing.LineWidthPt(root),
+                FillColor = RtfShapeDrawing.FillColorCss(root), GrowsWithText = root.FitsShapeToText,
+            };
+            WordPictureHtml.OpenTextBox(target, layout, style);
+            target.Append(root.TextHtml);
+            WordPictureHtml.CloseTextBox(target);
+            _flow.HasInline = true;
+            return;
+        }
+        var shapes = new List<WordShape>();
+        var texts = new List<string>();
+        RtfShapeDrawing.Collect(root, 0, 0, width, height, shapes, texts, (in RtfPicture p) => PictureIdOf(p));
+        bool inFlow = !root.IsGroup && texts.Count == 1 && root.FitsShapeToText && root.RotationDegrees == 0;
+        WordShapeHtml.OpenFrame(target, layout, inFlow);
+        WordShapeHtml.AppendGeometry(target, shapes, width, height, stretches: inFlow);
+        foreach (WordShape shape in shapes)
+        {
+            if (shape.Geometry == WordShapeGeometry.Picture) { WordShapeHtml.AppendPicture(target, shape); continue; }
+            if (shape.TextIndex < 0) continue;
+            WordShapeHtml.OpenShapeText(target, shape, inFlow);
+            target.Append(texts[shape.TextIndex]);
+            WordShapeHtml.CloseShapeText(target);
+        }
+        WordShapeHtml.CloseFrame(target);
         _flow.HasInline = true;
     }
 
