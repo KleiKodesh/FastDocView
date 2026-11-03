@@ -43,7 +43,7 @@ public static partial class DocxFidelityTest
     internal static List<string> RenderAll(string name, string body, string styles = "", string? numbering = null,
                                            string extraDocumentRelationships = "", string? settings = null,
                                            string? footnotes = null, string footnoteRelationships = "", List<string>? noteHtml = null,
-                                           IReadOnlyDictionary<string, byte[]>? binaryParts = null)
+                                           IReadOnlyDictionary<string, byte[]>? binaryParts = null, Action<IWordWindowedDocument>? inspect = null)
     {
         string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-" + name + ".docx");
         if (File.Exists(path)) File.Delete(path);
@@ -86,6 +86,7 @@ public static partial class DocxFidelityTest
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
         IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(0, document.BlockCount);
         noteHtml?.AddRange(blocks.SelectMany(block => block.Notes).Select(note => note.Html));
+        inspect?.Invoke(document);
         return blocks.Select(block => block.Html).ToList();
     }
 

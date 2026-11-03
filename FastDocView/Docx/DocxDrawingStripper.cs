@@ -36,6 +36,7 @@ internal static class DocxDrawingStripper
             // Keep the element (so the renderer still sees "a drawing here") with only its text boxes inside.
             WriteAscii(output, "<" + name + ">");
             if (name == "w:drawing") WritePictureLayout(output, span, elementStart, elementEnd);
+            else WriteVmlPictureLayout(output, span, elementStart, elementEnd);
             CopyTextBoxes(output, bytes, start, span, elementStart, elementEnd);
             WriteAscii(output, "</" + name + ">");
             position = elementEnd;
@@ -108,7 +109,48 @@ internal static class DocxDrawingStripper
         }
         if (IndexOfOpenTag(drawing, frame, "a:blip") is var blip and >= 0) Copy("embed", OpenTagAt(drawing, blip), "r:embed");
         layout.Append("/>");
-        WriteAscii(output, layout.ToString());
+        WriteUtf8(output, layout.ToString());
+    }
+
+    /// <summary>
+    /// An old-style VML picture (w:pict / w:object, ECMA-376 Part 4 VML v:imagedata) kept as the same small element
+    /// with kind="vml": the r:id of the first v:imagedata (o:relid when that is what it carries - LibreOffice vmlshapecontext.cxx
+    /// imagedata: "shapes in docx use r:id"), the style attribute of the shape that holds it (v:shape / v:rect / v:image:
+    /// width, height, position, mso-position-horizontal, margin-left, mso-wrap-distance-*; vmlshapecontext.cxx setStyle) and
+    /// w10:wrap type / side (vmlshapecontext.cxx NMSP_vmlWord | XML_wrap). A w:pict without an image (a shape, a text box)
+    /// writes nothing - its text boxes are kept as before.
+    /// </summary>
+    private static void WriteVmlPictureLayout(MemoryStream output, ReadOnlySpan<byte> span, int from, int to)
+    {
+        ReadOnlySpan<byte> picture = span.Slice(from, to - from);
+        int imageData = IndexOfOpenTag(picture, 0, "v:imagedata");
+        if (imageData < 0) return;
+        ReadOnlySpan<byte> imageTag = OpenTagAt(picture, imageData);
+        string? embed = AttributeValue(imageTag, "r:id") ?? AttributeValue(imageTag, "o:relid");
+        if (embed is null) return;
+        // the shape holding the image: the last v:shape / v:rect / v:image opened before it
+        int shape = -1;
+        foreach (string name in new[] { "v:shape", "v:rect", "v:image" })
+        {
+            for (int at = IndexOfOpenTag(picture, 0, name); at >= 0 && at < imageData; at = IndexOfOpenTag(picture, at + 1, name))
+                if (at > shape) shape = at;
+        }
+        var layout = new StringBuilder("<" + PictureLayoutElementName + " kind=\"vml\" embed=\"" + embed + "\"");
+        if (shape >= 0 && AttributeValue(OpenTagAt(picture, shape), "style") is { } style) layout.Append(" style=\"").Append(style).Append('"');
+        if (IndexOfOpenTag(picture, 0, "w10:wrap") is var wrap and >= 0)
+        {
+            ReadOnlySpan<byte> wrapTag = OpenTagAt(picture, wrap);
+            if (AttributeValue(wrapTag, "type") is { } type) layout.Append(" wrap=\"").Append(type).Append('"');
+            if (AttributeValue(wrapTag, "side") is { } side) layout.Append(" wrapText=\"").Append(side).Append('"');
+        }
+        layout.Append("/>");
+        WriteUtf8(output, layout.ToString());
+    }
+
+    private static void WriteUtf8(MemoryStream output, string text)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(text);
+        output.Write(bytes, 0, bytes.Length);
     }
 
     /// <summary>The open tag starting at <paramref name="at"/> (up to its '&gt;').</summary>

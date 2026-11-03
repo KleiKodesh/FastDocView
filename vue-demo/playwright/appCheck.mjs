@@ -80,19 +80,39 @@ if (complete.footnoteCount + complete.endnoteCount > 0) {
   }
   check(found, 'a note reference is rendered in the text')
   if (found) {
-    await page.click('.windowed-scroller-viewport .note-reference[data-note-kind]')
-    await page.waitForTimeout(400)
-    const active = await page.$('.fast-doc-view-note--active')
-    check(!!active && (await state()).notesPaneOpen, 'clicking a reference opens the notes pane on that note, highlighted')
-    if (active) {
+    // What the page does (FastDocViewPage openNoteFromReference + FastDocViewNotesPane landNote): a click on a reference
+    // opens the notes pane and LANDS its note at the pane's top (no highlight class); the note's label / own mark jumps
+    // the text back to the reference and flashes it (.note-reference--current).
+    const reference = await page.$('.fast-doc-view-content .note-reference[data-note-kind]')
+    const referenceLabel = ((await reference.textContent()) ?? '').trim()
+    await reference.click()
+    await page.waitForTimeout(900)
+    const landed = await page.evaluate(() => {
+      const viewport = document.querySelector('.fast-doc-view-notes-pane .notes-scroller')
+      if (!viewport) return null
+      const top = viewport.getBoundingClientRect().top
+      const rows = [...viewport.querySelectorAll('.fast-doc-view-note')]
+        .map(row => ({ row, offset: row.getBoundingClientRect().top - top }))
+        .filter(entry => entry.offset > -4)
+        .sort((a, b) => a.offset - b.offset)
+      const first = rows[0]
+      if (!first) return null
+      const mark = first.row.querySelector('.note-label') ?? first.row.querySelector('.note-mark')
+      return { index: Number(first.row.dataset.noteIndex), offset: Math.round(first.offset), label: (mark?.textContent ?? '').trim() }
+    })
+    console.log(`  reference "${referenceLabel}" -> note pane top: ${JSON.stringify(landed)}`)
+    check((await state()).notesPaneOpen && !!landed, 'clicking a reference opens the notes pane')
+    check(!!landed && landed.label === referenceLabel && Math.abs(landed.offset) <= 12,
+          "the clicked reference's note lands at the notes pane's top")
+    if (landed) {
       await scrollToBlock(Math.max(0, (await state()).blockCount - 1))
       await page.waitForTimeout(400)
-      const noteLabel = await page.$('.fast-doc-view-note--active .note-label')
-      if (noteLabel) {
-        await noteLabel.click()
+      const back = await page.$(`.fast-doc-view-notes-pane .fast-doc-view-note[data-note-index="${landed.index}"] :is(.note-label, .note-mark)`)
+      if (back) {
+        await back.click()
         await page.waitForTimeout(600)
         check(!!(await page.$('.note-reference--current')), 'clicking the note label jumps back and flashes its reference')
-      }
+      } else check(false, 'the landed note keeps its label after the text scrolled away')
     }
   }
 }

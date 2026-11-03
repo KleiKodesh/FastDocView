@@ -165,8 +165,11 @@ public static class WordFormattingAudit
             try
             {
                 using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
-                document.RenderBlocks(0, 40);
-                if (document.BlockCount > 80) document.RenderBlocks(document.BlockCount / 2, 40);
+                var rendered = new List<WordDocumentBlockHtml>(document.RenderBlocks(0, 40));
+                if (document.BlockCount > 80) rendered.AddRange(document.RenderBlocks(document.BlockCount / 2, 40));
+                // every picture a rendered block names can be read back on its own (null is fine: gone / not shown)
+                foreach (string pictureId in rendered.SelectMany(block => PagePlacementFidelityTest.PictureIds(block.Html)).Distinct().Take(20))
+                    document.ReadPicture(pictureId);
             }
             catch (Exception exception)
             {

@@ -239,6 +239,21 @@ public static class DocBinaryPropertyModifiers
         return null;
     }
 
+    /// <summary>sprmCPicLocation (0x6A03, LibreOffice sprmids.hxx CPicLocation): the picture's PICF offset in the Data stream
+    /// (ww8par6.cxx Read_PicLoc: a 4-byte operand, else none); sprmCFOle2 (0x080A) / sprmCFData (0x0806) set mark the 0x01 as
+    /// an OLE object / field data instead (ww8par.cxx "case 0x1": bObj -> ImportOle).</summary>
+    public static (uint? pictureLocation, bool isObject) PictureCharacterIn(byte[] grpprl, int start, int length)
+    {
+        uint? location = null;
+        bool isObject = false;
+        foreach ((ushort opcode, int operandAt, int operandLength) in Sprms(grpprl, start, length))
+        {
+            if (opcode == 0x6A03 && operandLength >= 4) location = BitConverter.ToUInt32(grpprl, operandAt);
+            else if (opcode is 0x080A or 0x0806 && operandLength >= 1) isObject = grpprl[operandAt] != 0;
+        }
+        return (location, isObject);
+    }
+
     public static bool HasSpecialCharacterFlag(byte[] grpprl, int start, int length)
     {
         foreach ((ushort opcode, int operandAt, _) in Sprms(grpprl, start, length))

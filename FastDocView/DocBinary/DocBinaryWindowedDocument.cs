@@ -132,6 +132,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         _renderer.DefaultTabStopTwips = ReadDefaultTabStop(_tableStream, FileInformationBlock.DocumentProperties);
         Bookmarks = DocBinaryBookmarks.Read(_tableStream, FileInformationBlock);
         _renderer.Bookmarks = Bookmarks;
+        _renderer.Pictures = new DocBinaryPictures(_dataStream);
 
         int[] sectionStartCps = DocBinarySectionTable.ReadStartCps(_tableStream, FileInformationBlock.SectionDescriptors);
         bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc)
@@ -194,6 +195,20 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     private readonly object _readLock = new();
 
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
+
+    /// <inheritdoc/>
+    /// <remarks>The id is the picture's PICF offset in the Data stream (sprmCPicLocation); its PICF and OfficeArt headers and
+    /// then its blip bytes are read (<see cref="DocBinaryPictures"/>).</remarks>
+    public WordDocumentPicture? ReadPicture(string pictureId)
+    {
+        if (!uint.TryParse(pictureId, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out uint location)) return null;
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try { return _renderer.Pictures.Read(location); }
+            finally { _releasableFile?.Release(); }
+        }
+    }
 
     /// <summary>
     /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan): one pass over the piece characters gives both the block

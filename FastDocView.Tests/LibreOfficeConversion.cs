@@ -38,4 +38,27 @@ public static class LibreOfficeConversion
         }
         return converted;
     }
+
+    /// <summary>
+    /// One file converted with a local LibreOffice (headless, private profile) to <paramref name="filter"/> (e.g.
+    /// "doc:MS Word 97") into TestOutput; null when LibreOffice is not installed. Reused while newer than its source.
+    /// </summary>
+    public static string? Convert(string source, string extension, string filter)
+    {
+        if (!File.Exists(SofficePath)) return null;
+        string outputDirectory = Path.Combine(TestReport.OutputDirectory, "lo-converted");
+        Directory.CreateDirectory(outputDirectory);
+        string target = Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(source) + extension);
+        if (File.Exists(target) && File.GetLastWriteTimeUtc(target) >= File.GetLastWriteTimeUtc(source)) return target;
+        TestReport.Step($"Converting {Path.GetFileName(source)} to {extension} with LibreOffice (headless)");
+        var start = new ProcessStartInfo(SofficePath)
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            Arguments = $"-env:UserInstallation=file:///{outputDirectory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --norestore --convert-to \"{filter}\" --outdir \"{outputDirectory}\" \"{Path.GetFullPath(source)}\"",
+        };
+        using Process process = Process.Start(start)!;
+        try { process.PriorityClass = ProcessPriorityClass.Idle; } catch (InvalidOperationException) { }
+        if (!process.WaitForExit(300_000)) { process.Kill(); return null; }
+        return File.Exists(target) ? target : null;
+    }
 }

@@ -1176,3 +1176,29 @@ indexer; Defender's real-time protection is off on this box, SearchIndexer runs)
 before the replace always passes, and our process was never among the holders. Not our handle. The test now names
 the holders on a refusal, fails if our process is one of them, and retries (100 ms steps, up to 10 s) only while
 others hold the files, as Word retries a save.
+
+### Pictures by id, .doc pictures and rows, VML, RTF shapes (2026-11-03)
+
+- **No bytes in the block HTML.** `<img class="word-picture" data-word-picture="ID" width height loading="lazy"
+  decoding="async">` without src; `IWordWindowedDocument.ReadPicture(id)` reads that one picture (windowed). Ids:
+  .docx `m:|f:|e:` + r:id (only image relationships resolve); .odt `p:` + package entry (picture extensions only) or
+  `b:block:n` (office:binary-data, the block re-read); RTF `block:n` (the block re-parsed, only that picture's data
+  decoded - a normal render decodes no picture data); .doc the PICF offset in the Data stream. The host maps the id to a
+  URL: app dev = service `GET /fast-doc-view-picture/<doc>/<id>` (doc id = capability), hosted = RPC
+  `fastDocViewPicture` -> object URL, demo = dev server `/api/documents/{id}/pictures?pictureId=`.
+- **.doc**: 0x01 + sprmCFSpec + sprmCPicLocation (not sprmCFOle2 / sprmCFData) -> PICF (lcb, cbHeader, mm 0x64 / 0x66,
+  dxaGoal x mx / 1000 less crops) -> OfficeArtSpContainer -> FBSE -> blip 36 bytes in (LibreOffice ww8par.cxx case 0x1,
+  ww8par6.cxx Read_PicLoc, ww8graf2.cxx PicRead / WW8PicDesc, ww8struc.hxx WW8_PIC_SHADOW, msdffimp.cxx GetBLIPDirect /
+  ReadCommonRecordHeader). PNG / JPEG only. Rows: sprmTJc / TJc90 & 3 (0 left, 1/3 centre, 2 right, physical), width =
+  sprmTTableWidth (fts 3) else the rgdxaCenter span, indent = rgdxaCenter[0] moved by sprmTDxaLeft - dxaGapHalf, applied
+  from the left (LTR, left) or right (sprmTFBiDi, right) as ww8par2.cxx LEFT_AND_WIDTH. LibreOffice-written .doc: mx
+  overflows 16 bits for big upscales (wrtww8gr.cxx WritePICFHeader) - the test uses a small extent.
+- **VML** (w:pict / w:object): v:imagedata r:id (o:relid), shape style width / height / position /
+  mso-position-horizontal / margin-left / mso-wrap-distance-*, w10:wrap type / side, read as oox vmlshapecontext.cxx and
+  vmlshape.cxx lcl_setSurround / lcl_SetAnchorType (static = inline; no wrap = through).
+- **RTF \shp** with a pib picture: \shpleft..\shpbottom size, \shpwr / \shpwrk (RTF 1.5 spec + rtfdispatchvalue.cxx), posh,
+  dxWrapDist* EMU (rtfsdrimport.cxx); \shprslt / \shptxt skipped; no \shpwr = above and below (our choice). 	rleft is now
+  a physical margin-left (RTF 1.5: "leftmost edge ... with respect to the left edge of its column").
+- Not done: floating .doc pictures (0x08 + FSPA + drawing group, e.g. POI PngPicture.doc), DIB / metafiles, page-relative
+  offsets, \shpgrp groups.
+

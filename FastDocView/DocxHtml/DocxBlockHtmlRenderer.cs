@@ -38,12 +38,12 @@ public sealed class DocxBlockHtmlRenderer
     private readonly IReadOnlyDictionary<string, string>? _endnoteHyperlinkTargets;    // endnotes.xml.rels
     private IReadOnlyDictionary<string, string>? _currentHyperlinkTargets;      // the relationships of the part being rendered
     private string? _activeLinkOpenTag;                                         // inside a w:hyperlink or a HYPERLINK field result: its <a> tag
-    private readonly List<DocxField> _openFields = new();
+    private readonly List<DocxField> _openFields = new();                       // complex fields begun in this block (w:fldChar begin … end)
     private readonly PictureSource? _pictures;
     private WordDocumentNoteKind? _currentPicturePart;                         // null = the main part; a note kind = that notes part
 
-    /// <summary>A picture's data: URI by its r:embed in a part (null = the main part, else that notes part); null when the browser cannot show it.</summary>
-    public delegate string? PictureSource(WordDocumentNoteKind? part, string relationshipId);                       // complex fields begun in this block (w:fldChar begin … end)
+    /// <summary>A picture's id (for <see cref="IWordWindowedDocument.ReadPicture"/>) by its r:embed in a part (null = the main part, else that notes part); null when the browser cannot show it.</summary>
+    public delegate string? PictureSource(WordDocumentNoteKind? part, string relationshipId);
 
     private sealed class DocxField
     {
@@ -800,6 +800,9 @@ public sealed class DocxBlockHtmlRenderer
     /// </summary>
     private void AppendPicture(StringBuilder html, XElement picture)
     {
+        string? embed = (string?)picture.Attribute("embed");
+        string? pictureId = embed is { Length: > 0 } && _pictures is not null ? _pictures(_currentPicturePart, embed) : null;
+        if ((string?)picture.Attribute("kind") == "vml") { WordPictureHtml.Append(html, VmlPictureLayout(picture), pictureId); return; }
         double Emu(string name) => double.TryParse((string?)picture.Attribute(name), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ? value / EmuPerPoint : 0;
         string? wrap = (string?)picture.Attribute("wrap");
         WordPictureWrap pictureWrap = (string?)picture.Attribute("kind") != "anchor" ? WordPictureWrap.Inline
@@ -818,9 +821,66 @@ public sealed class DocxBlockHtmlRenderer
             _ => (string?)picture.Attribute("wrapText") switch { "left" => WordPictureSide.Right, "right" => WordPictureSide.Left, _ => WordPictureSide.Left },
         };
         double offset = align is null && picture.Attribute("posOffset") is not null ? Math.Max(0, Emu("posOffset")) : 0;
-        string? embed = (string?)picture.Attribute("embed");
-        string? dataUri = embed is { Length: > 0 } && _pictures is not null ? _pictures(_currentPicturePart, embed) : null;
-        WordPictureHtml.Append(html, new WordPictureLayout(Emu("cx"), Emu("cy"), pictureWrap, side, Emu("distT"), Emu("distR"), Emu("distB"), Emu("distL"), offset), dataUri);
+        WordPictureHtml.Append(html, new WordPictureLayout(Emu("cx"), Emu("cy"), pictureWrap, side, Emu("distT"), Emu("distR"), Emu("distB"), Emu("distL"), offset), pictureId);
+    }
+
+    /// <summary>
+    /// A VML picture's layout from its shape's style (LibreOffice oox vmlshapecontext.cxx setStyle: width, height, position,
+    /// mso-position-horizontal, margin-left, mso-wrap-distance-*) and w10:wrap, as LibreOffice reads them (oox vmlshape.cxx):
+    /// position static (the default) = in the line (lcl_SetAnchorType: "static ... means anchored inline"); absolute /
+    /// relative = anchored, and then (lcl_setSurround) w10:wrap square / tight / through = text beside it, side left / right =
+    /// text only on that side; topAndBottom = above and below; no wrap = through the text (WrapTextMode_THROUGH).
+    /// mso-position-horizontal left / right / center / inside / outside (inside = left, outside = right); without it
+    /// margin-left is the offset from the left.
+    /// </summary>
+    private static WordPictureLayout VmlPictureLayout(XElement picture)
+    {
+        var style = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string declaration in ((string?)picture.Attribute("style") ?? "").Split(';'))
+        {
+            int colon = declaration.IndexOf(':');
+            if (colon > 0) style[declaration.Substring(0, colon).Trim()] = declaration.Substring(colon + 1).Trim();
+        }
+        double Length(string name) => style.TryGetValue(name, out string? value) ? VmlLengthPoints(value) : 0;
+        string position = style.TryGetValue("position", out string? positionValue) ? positionValue : "static";
+        bool isAnchored = position is "absolute" or "relative";
+        string? wrap = (string?)picture.Attribute("wrap");
+        WordPictureWrap pictureWrap = !isAnchored ? WordPictureWrap.Inline : wrap switch
+        {
+            "square" or "tight" or "through" => WordPictureWrap.Square,
+            "topAndBottom" => WordPictureWrap.TopAndBottom,
+            _ => WordPictureWrap.None,
+        };
+        style.TryGetValue("mso-position-horizontal", out string? horizontal);
+        WordPictureSide side = horizontal switch
+        {
+            "right" or "outside" => WordPictureSide.Right,
+            "center" => WordPictureSide.Center,
+            "left" or "inside" => WordPictureSide.Left,
+            _ => (string?)picture.Attribute("wrapText") switch { "left" => WordPictureSide.Right, "right" => WordPictureSide.Left, _ => WordPictureSide.Left },
+        };
+        double offset = isAnchored && horizontal is null or "absolute" ? Math.Max(0, Length("margin-left")) : 0;
+        return new WordPictureLayout(Length("width"), Length("height"), pictureWrap, side, Length("mso-wrap-distance-top"), Length("mso-wrap-distance-right"),
+                                     Length("mso-wrap-distance-bottom"), Length("mso-wrap-distance-left"), offset);
+    }
+
+    /// <summary>A VML style length in points: CSS units pt / in / cm / mm / pc / px (96 per inch); 0 when it has another or none.</summary>
+    internal static double VmlLengthPoints(string value)
+    {
+        value = value.Trim();
+        int unitAt = value.Length;
+        while (unitAt > 0 && char.IsLetter(value[unitAt - 1])) unitAt--;
+        if (!double.TryParse(value.Substring(0, unitAt), NumberStyles.Float, CultureInfo.InvariantCulture, out double number)) return 0;
+        return value.Substring(unitAt).ToLowerInvariant() switch
+        {
+            "pt" => number,
+            "in" => number * 72,
+            "cm" => number * 72 / 2.54,
+            "mm" => number * 72 / 25.4,
+            "pc" => number * 12,
+            "px" => number * 72 / 96,
+            _ => 0,
+        };
     }
 
     /// <summary>

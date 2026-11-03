@@ -17,6 +17,9 @@ const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1300, height: 2400 } })
 const consoleErrors = []
 page.on('pageerror', error => consoleErrors.push(String(error).slice(0, 200)))
+// every picture request (one GET per picture: the bytes never ride in the block window)
+const pictureRequests = []
+page.on('request', request => { if (request.url().includes('/pictures?')) pictureRequests.push(request.url()) })
 step(`open ${DEMO_URL}`)
 await page.goto(DEMO_URL, { waitUntil: 'domcontentloaded' })
 await page.waitForFunction(() => !!window.__fastDocViewDemo, null, { timeout: 120_000 })
@@ -25,6 +28,9 @@ await page.evaluate(path => window.__fastDocViewDemo.open(path, { rebuildIndex: 
 await page.waitForFunction(() => window.__fastDocViewTest?.state().isIndexComplete, null, { timeout: 120_000 })
 await page.waitForFunction(() => document.querySelectorAll('.fast-doc-view-block').length > 0, null, { timeout: 60_000 })
 await page.waitForTimeout(800)
+// pictures load lazily, one request each; wait (bounded) for the ones on screen
+await page.waitForFunction(() => [...document.querySelectorAll('.fast-doc-view-block img.word-picture')].every(image => image.complete && image.naturalWidth > 0),
+                           null, { timeout: 15_000 }).catch(() => {})
 
 const result = await page.evaluate(() => {
   const blocks = [...document.querySelectorAll('.fast-doc-view-block')]
@@ -64,7 +70,9 @@ const result = await page.evaluate(() => {
     const block = picture.closest('.fast-doc-view-block-text').getBoundingClientRect(), rect = picture.getBoundingClientRect(), cs = getComputedStyle(picture)
     const image = picture.querySelector('img') ?? (picture.tagName === 'IMG' ? picture : null)
     out.pictures.push({ float: cs.float, display: cs.display, startGap: rect.left - block.left, endGap: block.right - rect.right, width: rect.width, height: rect.height,
-      margin: [cs.marginTop, cs.marginRight, cs.marginBottom, cs.marginLeft].join(' '), loaded: image ? image.complete && image.naturalWidth > 0 : false, position: cs.position })
+      margin: [cs.marginTop, cs.marginRight, cs.marginBottom, cs.marginLeft].join(' '), loaded: image ? image.complete && image.naturalWidth > 0 : false, position: cs.position,
+      src: image?.getAttribute('src') ?? '', id: image?.dataset.wordPicture ?? null, lazy: image?.getAttribute('loading') === 'lazy' && image?.getAttribute('decoding') === 'async',
+      widthAttribute: Number(image?.getAttribute('width') ?? 0), heightAttribute: Number(image?.getAttribute('height') ?? 0) })
   }
   return out
 })
@@ -93,6 +101,14 @@ check(ignored[0] === 'none' && ignored[1] === '12px', `max-width ${ignored[0]}, 
 await page.click('.fast-doc-view-ignore-margins')
 step('pictures and floats')
 check(result.pictures.every(picture => picture.loaded), 'every picture is drawn')
+const images = result.pictures.filter(picture => picture.id != null)
+check(images.every(picture => picture.lazy && picture.src && !picture.src.startsWith('data:')), `every picture by id, lazy + async, its src a URL - no data: URI (${images.length})`)
+check(images.every(picture => picture.widthAttribute > 0 && picture.heightAttribute > 0
+                   && Math.abs(picture.width / picture.height - picture.widthAttribute / picture.heightAttribute) < 0.03),
+      'width / height set: the box has the picture proportions whatever has loaded (no layout jump)')
+const requestedIds = pictureRequests.map(url => new URL(url).searchParams.get('pictureId'))
+check(new Set(requestedIds).size === requestedIds.length, `each picture requested once (${requestedIds.length} requests)`)
+check(!(await page.evaluate(() => [...document.querySelectorAll('.fast-doc-view-block')].some(block => block.innerHTML.includes('data:image')))), 'no block HTML carries picture bytes')
 
 check(consoleErrors.length === 0, `no page errors (${consoleErrors.join(' | ')})`)
 await browser.close()

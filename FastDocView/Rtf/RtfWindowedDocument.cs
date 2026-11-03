@@ -166,6 +166,27 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         }
     }
 
+    /// <inheritdoc/>
+    /// <remarks>Id "block:ordinal": that block is parsed again (one block's bytes) keeping only that picture's data.</remarks>
+    public WordDocumentPicture? ReadPicture(string pictureId)
+    {
+        string[] parts = (pictureId ?? "").Split(':');
+        if (parts.Length != 2 || !int.TryParse(parts[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int blockIndex)
+            || !int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int ordinal)
+            || blockIndex >= _index.BlockCount)
+            return null;
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                return _renderer.ReadPicture(_file, _index, _table, blockIndex, ordinal) is { Data: { } data } picture
+                    ? WordPictureHtml.Picture(picture.Extension, data) : null;
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
     /// <summary>Notes are inline in RTF (footnote groups): only the blocks holding the window's notes are rendered.</summary>
     public IReadOnlyList<WordDocumentNoteHtml> RenderNotes(int firstNoteIndex, int count)
         => WordDocumentNoteWindow.RenderFromBlocks(NoteReferences, firstNoteIndex, count, RenderBlocks);

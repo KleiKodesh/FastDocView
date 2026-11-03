@@ -32,10 +32,12 @@ internal abstract class RtfSink
     public virtual void ListTextStart() { }
     public virtual void ListTextEnd() { }
     public virtual void Embedded(RtfEmbeddedKind kind, in RtfGroupState state) { }
-    /// <summary>True: the parser decodes \pict groups into <see cref="Picture"/> (the HTML renderer); false: a placeholder (index, search).</summary>
+    /// <summary>True: the parser reads \pict and \shp groups into <see cref="Picture"/> (the HTML renderer); false: a placeholder (index, search).</summary>
     public virtual bool WantsPictures => false;
-    /// <summary>A decoded {\pict} group: shown size in twips (0 = unknown), its data and the blip type's file extension ("" = a type a browser cannot show).</summary>
-    public virtual void Picture(int widthTwips, int heightTwips, byte[] data, string extension, in RtfGroupState state) { }
+    /// <summary>True: <see cref="RtfPicture.Data"/> is decoded (reading one picture's bytes); false: only its size and type.</summary>
+    public virtual bool WantsPictureData => false;
+    /// <summary>A {\pict} group, or a {\shp} holding one (then <see cref="RtfPicture.Placement"/> is set).</summary>
+    public virtual void Picture(in RtfPicture picture, in RtfGroupState state) { }
     /// <summary>A group closed; <paramref name="depth"/> is the depth after the close (0 = the document group).</summary>
     public virtual void GroupClosed(int depth) { }
     public virtual void UnhandledWord(ReadOnlySpan<byte> name) { }
@@ -51,4 +53,35 @@ internal abstract class RtfSink
     public virtual void FieldResultStart() { }
     /// <summary>{\*\bkmkstart name} closed: a bookmark starts here.</summary>
     public virtual void BookmarkStart(string name) { }
+}
+
+/// <summary>A picture: shown size in twips (0 = unknown), the blip type's file extension ("" = a type a browser cannot show),
+/// its bytes when the sink asked for them, and for a floating shape its placement.</summary>
+internal readonly record struct RtfPicture(int WidthTwips, int HeightTwips, string Extension, byte[]? Data, RtfShapePlacement? Placement = null);
+
+/// <summary>A {\shp}'s placement words and properties, as the parser read them (meanings: RtfParser.ReadShape).</summary>
+internal sealed class RtfShapePlacement
+{
+    public int Left, Top, Right, Bottom;
+    /// <summary>\shpwr (0 = not given).</summary>
+    public int Wrap;
+    /// <summary>\shpwrk (0 both sides, 1 left, 2 right, 3 largest).</summary>
+    public int WrapSide;
+    /// <summary>posh (0 = not given: placed at \shpleft).</summary>
+    public int HorizontalPosition;
+    /// <summary>dxWrapDistLeft, dyWrapDistTop, dxWrapDistRight, dyWrapDistBottom in EMU.</summary>
+    public long WrapLeft, WrapTop, WrapRight, WrapBottom;
+
+    public void SetProperty(string name, string value)
+    {
+        if (!long.TryParse(value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out long number)) return;
+        switch (name)
+        {
+            case "posh": HorizontalPosition = (int)Math.Max(0, Math.Min(5, number)); break;
+            case "dxWrapDistLeft": WrapLeft = number; break;
+            case "dyWrapDistTop": WrapTop = number; break;
+            case "dxWrapDistRight": WrapRight = number; break;
+            case "dyWrapDistBottom": WrapBottom = number; break;
+        }
+    }
 }

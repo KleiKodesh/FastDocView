@@ -26,7 +26,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// column widths (twips), right-to-left column order, per-cell shading and the row's border.
     /// </summary>
     public readonly record struct TableParagraphInfo(bool IsInTable, bool IsRowEnd, int[]? CellWidthsTwips,
-                                                     bool IsRightToLeft = false, string?[]? CellShadingHex = null, string? BorderCss = null);
+                                                     bool IsRightToLeft = false, string?[]? CellShadingHex = null, string? BorderCss = null,
+                                                     int Justification = 0, int? LeftEdgeTwips = null, int? RowWidthTwips = null);
 
     public DocBinaryParagraphHtmlRenderer(DocBinaryPieceTable pieces, DocBinaryFormattedDiskPages pages, DocBinaryStyleSheet styles,
                                           DocBinaryNoteReferences? notes = null)
@@ -87,6 +88,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
         int[]? widths = null;
         string?[]? shading = null;
         string? border = null;
+        int justification = 0, gapHalf = 0;
+        int? dxaLeft = null, firstCenter = null, lastCenter = null, preferredWidth = null;
         void ReadSprms(byte[] grpprl, int start, int length)
         {
             foreach ((ushort opcode, int operandAt, int operandLength) in DocBinaryPropertyModifiers.Sprms(grpprl, start, length))
@@ -95,7 +98,20 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 {
                     case 0x2416: isInTable = grpprl[operandAt] != 0; break;                     // sprmPFInTable
                     case 0x2417: case 0x244C: isRowEnd = grpprl[operandAt] != 0; break;         // sprmPFTtp / sprmPFInnerTtp
-                    case 0xD608: widths = CellWidths(grpprl, operandAt, operandLength); break;  // sprmTDefTable
+                    case 0xD608:                                                                // sprmTDefTable
+                        widths = CellWidths(grpprl, operandAt, operandLength);
+                        if (widths is not null)
+                        {
+                            firstCenter = BitConverter.ToInt16(grpprl, operandAt + 1);
+                            lastCenter = BitConverter.ToInt16(grpprl, operandAt + 1 + widths.Length * 2);
+                        }
+                        break;
+                    case 0x548A: case 0x5400: justification = grpprl[operandAt] & 0x3; break;   // sprmTJc / sprmTJc90
+                    case 0x9601: dxaLeft = BitConverter.ToInt16(grpprl, operandAt); break;       // sprmTDxaLeft
+                    case 0x9602: gapHalf = BitConverter.ToInt16(grpprl, operandAt); break;       // sprmTDxaGapHalf
+                    case 0xF614:                                                                 // sprmTTableWidth: ftsWidth, wWidth
+                        if (operandLength >= 3 && grpprl[operandAt] == 3) preferredWidth = grpprl[operandAt + 2] * 0x100 + grpprl[operandAt + 1];
+                        break;
                     case 0x560B: isRightToLeft = BitConverter.ToUInt16(grpprl, operandAt) != 0; break;   // sprmTFBiDi
                     case 0xD612: shading = CellShading(grpprl, operandAt, operandLength); break;         // sprmTCellShd
                     case 0xD613: border = TableBorder(grpprl, operandAt, operandLength); break;          // sprmTTableBorders
@@ -108,7 +124,11 @@ public sealed class DocBinaryParagraphHtmlRenderer
             ReadSprms(grpprl, start, length);
         }
         if (PrmGrpprlOfParagraph(cpStart, cpEnd) is { } prm) ReadSprms(prm, 0, prm.Length);     // a Prm0 can carry sprmPFInTable / sprmPFTtp
-        return new TableParagraphInfo(isInTable || isRowEnd, isRowEnd, widths, isRightToLeft, shading, border);
+        // sprmTDxaLeft moves the row so its first cell boundary is dxaLeft - dxaGapHalf (LibreOffice ww8par2.cxx WW8TabDesc:
+        // "Use sprmTDxaLeft to adjust the left indent ... Use dxaGapHalf during calculation").
+        int? leftEdge = firstCenter is { } first ? (dxaLeft is { } left ? left - gapHalf : first) : null;
+        int? rowWidth = preferredWidth ?? (firstCenter is { } a && lastCenter is { } b && b > a ? b - a : null);
+        return new TableParagraphInfo(isInTable || isRowEnd, isRowEnd, widths, isRightToLeft, shading, border, justification, leftEdge, rowWidth);
     }
 
     private DocBinaryFormattedDiskPages.PropertyRun? ParagraphRunOf(int cpStart, int cpEnd)
@@ -172,8 +192,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
         if (listLabel is { Length: > 0 }) AppendListLabel(html, listLabel, formatting);
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
         var fieldState = new FieldState();
-        foreach ((WordRunFormatting runFormatting, string text, bool isSpecial, int runCp) in CharacterRuns(cpStart, cpEnd, formatting.RunFormatting, styleBase))
-            AppendRunHtml(html, runFormatting, formatting.RunFormatting, text, isSpecial, runCp, fieldState, noteLabel);
+        foreach ((WordRunFormatting runFormatting, string text, bool isSpecial, int runCp, uint? picture) in CharacterRuns(cpStart, cpEnd, formatting.RunFormatting, styleBase))
+            AppendRunHtml(html, runFormatting, formatting.RunFormatting, text, isSpecial, runCp, fieldState, noteLabel, picture);
         if (fieldState.CloseOpenLink()) html.Append("</a>");          // a link field that goes on past the paragraph
         html.Append("</").Append(tag).Append('>');
         return formatting.StyleKey;
@@ -217,7 +237,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
         (WordParagraphFormatting rowFormatting, _) = ResolveParagraph(lastStart, lastEnd);
 
         var html = new StringBuilder(1024);
-        WordHtmlText.AppendOpenTag(html, "table", "table-layout:fixed;", "table-row", rowInfo.IsRightToLeft || rowFormatting.IsRightToLeft);
+        WordHtmlText.AppendOpenTag(html, "table", "table-layout:fixed;" + RowPlacementCss(rowInfo), "table-row", rowInfo.IsRightToLeft || rowFormatting.IsRightToLeft);
         html.Append("<tr>");
         int cellIndex = 0;
         bool isCellOpen = false;
@@ -245,6 +265,27 @@ public sealed class DocBinaryParagraphHtmlRenderer
         if (isCellOpen) html.Append("</td>");
         html.Append("</tr></table>");
         return html.ToString();
+    }
+
+    /// <summary>
+    /// Where a row sits, as LibreOffice places a .doc table (ww8par2.cxx WW8TabDesc): sprmTJc & 3 = 0 left, 1 centre, 2 right,
+    /// 3 centre (aOriArr - physical sides); the row's width is sprmTTableWidth in twips (ftsWidth 3) else its cell boundaries'
+    /// span; the first boundary (after sprmTDxaLeft) is the indent from the margin, applied - as LibreOffice's LEFT_AND_WIDTH -
+    /// to a left-aligned left-to-right table from the left, and to a right-aligned right-to-left (sprmTFBiDi) table from the
+    /// right ("nLeft = text area width - table width - min left").
+    /// </summary>
+    private static string RowPlacementCss(TableParagraphInfo row)
+    {
+        var css = new StringBuilder();
+        if (row.RowWidthTwips is > 0 and var width) css.Append("width:").Append(WordParagraphFormatting.TwipsToPt(width)).Append("pt;");
+        string Indent() => row.LeftEdgeTwips is { } edge and not 0 ? WordParagraphFormatting.TwipsToPt(edge) + "pt" : "0";
+        switch (row.Justification)
+        {
+            case 1: case 3: css.Append("margin-left:auto;margin-right:auto;"); break;
+            case 2: css.Append("margin-left:auto;margin-right:").Append(row.IsRightToLeft ? Indent() : "0").Append(';'); break;
+            default: css.Append("margin-left:").Append(row.IsRightToLeft ? "0" : Indent()).Append(";margin-right:auto;"); break;
+        }
+        return css.ToString();
     }
 
     /// <summary>A footnote/endnote body: its paragraphs; the leading auto-number mark shows <paramref name="label"/>.</summary>
@@ -297,7 +338,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
         return text.ToString().Trim();
     }
 
-    private IEnumerable<(WordRunFormatting formatting, string text, bool isSpecial, int cp)> CharacterRuns(
+    private IEnumerable<(WordRunFormatting formatting, string text, bool isSpecial, int cp, uint? picture)> CharacterRuns(
         int cpStart, int cpEnd, WordRunFormatting paragraphBase, WordRunFormatting styleBase)
     {
         foreach ((DocBinaryPieceTable.Piece piece, int segmentStart, int segmentEnd) in _pieces.SegmentsOf(cpStart, cpEnd))
@@ -315,6 +356,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 WordRunFormatting formatting = paragraphBase.Clone();
                 bool isSpecial = false;
                 char? symbol = null;
+                uint? picture = null;
+                bool isObject = false;
                 if (run is { GrpprlLength: > 0 } direct)
                 {
                     int? characterStyle = DocBinaryPropertyModifiers.StyleIndexIn(direct.Page, direct.GrpprlStart, direct.GrpprlLength);
@@ -323,23 +366,27 @@ public sealed class DocBinaryParagraphHtmlRenderer
                     DocBinaryPropertyModifiers.ApplyCharacterSprms(formatting, direct.Page, direct.GrpprlStart, direct.GrpprlLength, styleBase, _styles.Fonts);
                     isSpecial = DocBinaryPropertyModifiers.HasSpecialCharacterFlag(direct.Page, direct.GrpprlStart, direct.GrpprlLength);
                     symbol = DocBinaryPropertyModifiers.SymbolCharacterIn(direct.Page, direct.GrpprlStart, direct.GrpprlLength);
+                    (picture, isObject) = DocBinaryPropertyModifiers.PictureCharacterIn(direct.Page, direct.GrpprlStart, direct.GrpprlLength);
                 }
                 if (piece.PrmGrpprl is { } prm)             // fast-saved files: the piece's Prm applies after the CHPX ([MS-DOC] §2.4.6.2)
                 {
                     DocBinaryPropertyModifiers.ApplyCharacterSprms(formatting, prm, 0, prm.Length, styleBase, _styles.Fonts);
                     isSpecial |= DocBinaryPropertyModifiers.HasSpecialCharacterFlag(prm, 0, prm.Length);
                     symbol ??= DocBinaryPropertyModifiers.SymbolCharacterIn(prm, 0, prm.Length);
+                    (uint? prmPicture, bool prmObject) = DocBinaryPropertyModifiers.PictureCharacterIn(prm, 0, prm.Length);
+                    picture = prmPicture ?? picture;
+                    isObject |= prmObject;
                 }
                 string runText = _pieces.ReadText(cp, runEndCp);
                 if (symbol is { } symbolCharacter) runText = new string(symbolCharacter, runText.Length);   // sprmCSymbol replaces the placeholder
-                yield return (formatting, runText, isSpecial, cp);
+                yield return (formatting, runText, isSpecial, cp, isObject ? null : picture);
                 cp = runEndCp;
             }
         }
     }
 
     private void AppendRunHtml(StringBuilder html, WordRunFormatting formatting, WordRunFormatting paragraphBase,
-                               string text, bool isSpecial, int runCp, FieldState fieldState, string? noteLabel)
+                               string text, bool isSpecial, int runCp, FieldState fieldState, string? noteLabel, uint? picture = null)
     {
         var visible = new StringBuilder(text.Length);
         string css = formatting.ToCss(paragraphBase) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft);
@@ -371,6 +418,10 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 case '\u000B': visible.Append("<br>"); continue;
                 case '\u001E': visible.Append('‑'); continue;
                 case '\u001F': visible.Append('­'); continue;
+                case '\u0001' when isSpecial && picture is { } location:
+                    Flush();
+                    AppendPicture(html, location);
+                    continue;
                 case '\u0001': case '\u0008': if (isSpecial) visible.Append("<span class=\"unsupported\">[image]</span>"); continue;
                 case AutoNumberedNoteMark:
                     if (isSpecial) AppendNoteMark(visible, runCp + i, noteLabel);
@@ -381,6 +432,21 @@ public sealed class DocBinaryParagraphHtmlRenderer
             visible.Append(WordHtmlText.Encode(c.ToString()));
         }
         Flush();
+    }
+
+    /// <summary>The Data stream's pictures (inline 0x01 pictures); none for a document without a Data stream.</summary>
+    internal DocBinaryPictures Pictures { get; set; } = new(null);
+
+    /// <summary>
+    /// An inline picture (a .doc 0x01 picture is always in the line: LibreOffice ww8par.cxx imports it FLY_AS_CHAR) at its PICF
+    /// size; its id is the PICF offset (<see cref="IWordWindowedDocument.ReadPicture"/>). A picture we cannot show keeps a box.
+    /// </summary>
+    private void AppendPicture(StringBuilder html, uint location)
+    {
+        if (Pictures.Locate(location) is { } picture)
+            WordPictureHtml.Append(html, new WordPictureLayout(picture.widthPt, picture.heightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0),
+                                   location.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        else html.Append("<span class=\"unsupported\">[image]</span>");
     }
 
     /// <summary>In the main text: a numbered note reference. Inside a note body: the note's own number.</summary>

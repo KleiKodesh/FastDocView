@@ -128,6 +128,11 @@ app.MapGet("/api/documents/{id}/blocks", (string id, int first, int count, HttpR
         b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())).ToList());
 }));
 
+// One picture of a rendered block, by the id its <img data-word-picture> carries (the app service's GET
+// /fast-doc-view-picture/<document>/<picture>): only that picture is read, never the block or the document.
+app.MapGet("/api/documents/{id}/pictures", (string id, string pictureId) => UseDocument(id, document =>
+    document.ReadPicture(pictureId) is { } picture ? Results.Bytes(picture.Bytes, picture.ContentType) : Results.NotFound()));
+
 // The notes pane's own windows: notes [first, first + count) of note-references (body order), each read on its own.
 app.MapGet("/api/documents/{id}/notes", (string id, int first, int count) => UseDocument(id, document =>
     Results.Ok(document.RenderNotes(first, Math.Min(count, 500))

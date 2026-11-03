@@ -14,3 +14,8 @@ export function serviceCallVoid(_op: string, _args: object = {}): void { /* noth
 export async function* serviceStream<T = unknown>(op: string, _args: object = {}, _signal?: AbortSignal): AsyncGenerator<T, void, void> {
   throw new Error(`${NOT_AVAILABLE} (stream ${op})`)
 }
+
+/** The demo has no service: its picture sources come from the dev server (fastDocViewDemoApi). */
+export async function serviceGetUrl(_path: string): Promise<string | null> {
+  return null
+}

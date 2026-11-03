@@ -205,31 +205,61 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         _sidecarPathToSave = sidecarPathToSave;
         _reader = reader;
         _styles = styles;
-        _renderer = new OdtBlockHtmlRenderer(styles, ReadPackagePart);
+        _renderer = new OdtBlockHtmlRenderer(styles);
         Decision = decision;
         CountNewNoteReferences();
         IsRightToLeft = styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(styles.DefaultParagraph.Formatting.RunFormatting, IsRightToLeft);
     }
 
-    /// <summary>
-    /// A package entry (a picture of the block being rendered), read on demand from the file by path - a short shared open,
-    /// as every read here (never blocks Word / LibreOffice). Null for a flat file (its pictures are inline), a document
-    /// opened from a stream without a path, or an entry that is not there.
-    /// </summary>
-    private byte[]? ReadPackagePart(string partName)
+    /// <inheritdoc/>
+    /// <remarks>
+    /// "p:" ids: the package entry, read from the file by path on a short shared open (never blocks Word / LibreOffice) -
+    /// only an entry with a picture extension a browser shows, so no other part of the package can be asked for. "b:" ids
+    /// (flat files): the one block is read again and its n-th office:binary-data picture decoded.
+    /// </remarks>
+    public WordDocumentPicture? ReadPicture(string pictureId)
     {
-        if (!File.Exists(FilePath)) return null;
-        using FileStream file = WordDocumentFileStream.OpenShared(FilePath);
-        if (OdtPackage.IsFlatOpenDocumentText(file)) return null;
-        file.Position = 0;
-        using var zip = new System.IO.Compression.ZipArchive(file, System.IO.Compression.ZipArchiveMode.Read, leaveOpen: true);
-        System.IO.Compression.ZipArchiveEntry? entry = zip.GetEntry(partName);
-        if (entry is null) return null;
-        using Stream data = entry.Open();
-        var bytes = new MemoryStream();
-        data.CopyTo(bytes);
-        return bytes.ToArray();
+        if (pictureId is null) return null;
+        if (pictureId.StartsWith(OdtBlockHtmlRenderer.PackagePicturePrefix, StringComparison.Ordinal))
+        {
+            string partName = pictureId.Substring(OdtBlockHtmlRenderer.PackagePicturePrefix.Length);
+            if (WordPictureHtml.ContentTypeOf(partName) is null || !File.Exists(FilePath)) return null;
+            lock (_readLock)
+            {
+                using FileStream file = WordDocumentFileStream.OpenShared(FilePath);
+                if (OdtPackage.IsFlatOpenDocumentText(file)) return null;
+                file.Position = 0;
+                using var zip = new System.IO.Compression.ZipArchive(file, System.IO.Compression.ZipArchiveMode.Read, leaveOpen: true);
+                System.IO.Compression.ZipArchiveEntry? entry = zip.GetEntry(partName);
+                if (entry is null) return null;
+                using Stream data = entry.Open();
+                var bytes = new MemoryStream();
+                data.CopyTo(bytes);
+                return WordPictureHtml.Picture(partName, bytes.ToArray());
+            }
+        }
+        if (!pictureId.StartsWith(OdtBlockHtmlRenderer.BinaryPicturePrefix, StringComparison.Ordinal)) return null;
+        string[] parts = pictureId.Substring(OdtBlockHtmlRenderer.BinaryPicturePrefix.Length).Split(':');
+        if (parts.Length != 2 || !int.TryParse(parts[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int blockIndex)
+            || !int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int ordinal))
+            return null;
+        lock (_readLock)
+        {
+            if (blockIndex >= _blocks.BlockCount) return null;
+            if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                foreach ((_, XElement element) in _reader.ReadBlocks(blockIndex, 1))
+                {
+                    XElement? image = OdtBlockHtmlRenderer.BinaryPictureImages(element).Skip(ordinal).FirstOrDefault();
+                    if (image?.Element(OdtStyleCascade.Office + "binary-data") is not { } binary || OdtBlockHtmlRenderer.BinaryPictureBytes(binary) is not { } bytes) return null;
+                    return WordPictureHtml.Picture(WordPictureHtml.ExtensionOf(bytes), bytes);
+                }
+                return null;
+            }
+            finally { _releasableFile?.Release(); }
+        }
     }
 
     private IReadOnlyList<OdtNoteReference> KnownNoteReferences => (IReadOnlyList<OdtNoteReference>?)_index?.NoteReferences ?? _builder!.KnownNoteReferences;
@@ -318,6 +348,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         var result = new List<WordDocumentBlockHtml>(Math.Max(0, count));
         foreach ((int blockIndex, XElement element) in _reader.ReadBlocks(firstBlockIndex, count))
         {
+            _renderer.CurrentBlockIndex = blockIndex;
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), _blocks.ListLevelOf(blockIndex), _blocks.ListLabelLayoutOf(blockIndex),
                                                                                        _blocks.NoteReferencesInBlocks(blockIndex, blockIndex), null);
             result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes));

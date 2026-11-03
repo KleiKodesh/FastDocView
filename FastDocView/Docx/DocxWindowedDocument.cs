@@ -184,7 +184,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _styles = parts.Styles;
         _noteFormats = parts.NoteNumberFormats;
         RecordNewNoteReferences();
-        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets, PictureDataUri);
+        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets, PictureId);
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
@@ -348,16 +348,37 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         return html;
     }
 
-    /// <summary>A picture of the block being rendered, read from the package on demand (the render holds the file open).</summary>
-    private string? PictureDataUri(WordDocumentNoteKind? part, string relationshipId)
+    /// <summary>
+    /// The id of a picture in a rendered block: its part's letter (m main, f footnotes, e endnotes) and its r:embed - only for
+    /// a picture relationship whose part a browser can show. Nothing is read here; <see cref="ReadPicture"/> reads the bytes.
+    /// </summary>
+    private string? PictureId(WordDocumentNoteKind? part, string relationshipId)
+        => PicturePartsOf(part).TryGetValue(relationshipId, out string? partName) && WordPictureHtml.ContentTypeOf(partName) is not null
+            ? (part switch { null => "m", WordDocumentNoteKind.Footnote => "f", _ => "e" }) + ":" + relationshipId
+            : null;
+
+    private IReadOnlyDictionary<string, string> PicturePartsOf(WordDocumentNoteKind? part) => part switch
     {
-        IReadOnlyDictionary<string, string> pictures = part switch
+        null => _parts.ImageParts,
+        WordDocumentNoteKind.Footnote => _parts.FootnoteImageParts,
+        _ => _parts.EndnoteImageParts,
+    };
+
+    /// <inheritdoc/>
+    /// <remarks>Only a picture relationship of the document or its notes resolves (never an arbitrary package entry); the one
+    /// entry is read from the package on a short shared open.</remarks>
+    public WordDocumentPicture? ReadPicture(string pictureId)
+    {
+        if (pictureId is not { Length: > 2 } || pictureId[1] != ':') return null;
+        WordDocumentNoteKind? part = pictureId[0] switch { 'm' => null, 'f' => WordDocumentNoteKind.Footnote, 'e' => WordDocumentNoteKind.Endnote, _ => (WordDocumentNoteKind?)255 };
+        if (part == (WordDocumentNoteKind)255) return null;
+        if (!PicturePartsOf(part).TryGetValue(pictureId.Substring(2), out string? partName)) return null;
+        lock (_readLock)
         {
-            null => _parts.ImageParts,
-            WordDocumentNoteKind.Footnote => _parts.FootnoteImageParts,
-            _ => _parts.EndnoteImageParts,
-        };
-        return pictures.TryGetValue(relationshipId, out string? partName) ? WordPictureHtml.DataUri(partName, _parts.ReadPartBytes(partName)) : null;
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try { return WordPictureHtml.Picture(partName, _parts.ReadPartBytes(partName)); }
+            finally { _releasableFile?.Release(); }
+        }
     }
 
     private (int number, string label)? ResolveNoteLabel(WordDocumentNoteKind kind, int noteId)

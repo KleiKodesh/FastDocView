@@ -35,10 +35,16 @@ public readonly record struct WordPictureLayout(double WidthPt, double HeightPt,
 ///   LN_EG_WrapType_wrapNone); text cannot run under a picture here without hiding it, so it is drawn as a block on its side
 ///   without gaps - the closest layout that keeps both readable.
 /// A picture the browser cannot show (EMF / WMF / TIFF, a missing part) keeps its box, marked as an image.
+///
+/// The bytes never travel in the block HTML: the &lt;img&gt; carries only the picture's id in
+/// <see cref="PictureIdAttribute"/> (no src), its width / height (CSS px at 96 dpi, so the row keeps its height before the
+/// picture loads) and loading="lazy" decoding="async". The host turns the id into a URL of its own (the service's picture
+/// endpoint) and the bytes are read on request by <see cref="IWordWindowedDocument.ReadPicture"/> - one picture, never the
+/// block or the document.
 /// </summary>
 public static class WordPictureHtml
 {
-    public static void Append(StringBuilder html, WordPictureLayout layout, string? dataUri)
+    public static void Append(StringBuilder html, WordPictureLayout layout, string? pictureId)
     {
         var css = new StringBuilder();
         if (layout.WidthPt > 0) css.Append("width:").Append(Points(layout.WidthPt)).Append("pt;");
@@ -67,28 +73,35 @@ public static class WordPictureHtml
                    .Append(side == WordPictureSide.Left ? Points(layout.OffsetPt) + "pt" : "auto").Append(';');
                 break;
         }
-        if (dataUri is not null)
-            html.Append("<img class=\"word-picture\" alt=\"\" src=\"").Append(dataUri).Append("\" style=\"").Append(css).Append("\">");
+        if (pictureId is not null)
+        {
+            html.Append("<img class=\"word-picture\" alt=\"\" ").Append(PictureIdAttribute).Append("=\"").Append(WordHtmlText.Encode(pictureId)).Append('"');
+            if (layout.WidthPt > 0 && layout.HeightPt > 0)
+                html.Append(" width=\"").Append(Pixels(layout.WidthPt)).Append("\" height=\"").Append(Pixels(layout.HeightPt)).Append('"');
+            html.Append(" loading=\"lazy\" decoding=\"async\" style=\"").Append(css).Append("\">");
+        }
         else
             html.Append("<span class=\"word-picture word-picture-missing\" style=\"").Append(css).Append("\">[image]</span>");
     }
 
-    /// <summary>A browser-renderable picture as a data: URI by its file extension, null for formats a browser cannot show.</summary>
-    public static string? DataUri(string partName, byte[]? bytes)
+    /// <summary>The &lt;img&gt; attribute naming the picture for <see cref="IWordWindowedDocument.ReadPicture"/>.</summary>
+    public const string PictureIdAttribute = "data-word-picture";
+
+    /// <summary>The media type of a picture a browser can show, by its file extension; null for formats it cannot show.</summary>
+    public static string? ContentTypeOf(string partNameOrExtension) => Path.GetExtension(partNameOrExtension).ToLowerInvariant() switch
     {
-        if (bytes is not { Length: > 0 }) return null;
-        string? type = Path.GetExtension(partName).ToLowerInvariant() switch
-        {
-            ".png" => "image/png",
-            ".jpg" or ".jpeg" or ".jpe" or ".jfif" => "image/jpeg",
-            ".gif" => "image/gif",
-            ".bmp" or ".dib" => "image/bmp",
-            ".webp" => "image/webp",
-            ".svg" => "image/svg+xml",   // as <img> an SVG runs no script and loads nothing
-            _ => null,
-        };
-        return type is null ? null : "data:" + type + ";base64," + Convert.ToBase64String(bytes);
-    }
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" or ".jpe" or ".jfif" => "image/jpeg",
+        ".gif" => "image/gif",
+        ".bmp" or ".dib" => "image/bmp",
+        ".webp" => "image/webp",
+        ".svg" => "image/svg+xml",   // as <img> an SVG runs no script and loads nothing
+        _ => null,
+    };
+
+    /// <summary>A picture's bytes as the host serves them, or null when the browser cannot show its format.</summary>
+    public static WordDocumentPicture? Picture(string partNameOrExtension, byte[]? bytes)
+        => bytes is { Length: > 0 } && ContentTypeOf(partNameOrExtension) is { } type ? new WordDocumentPicture(type, bytes) : null;
 
     /// <summary>A file extension for picture bytes by their signature (an embedded picture without a name), "" when unknown.</summary>
     public static string ExtensionOf(byte[] bytes)
@@ -103,6 +116,8 @@ public static class WordPictureHtml
 
     private static string Margins(double top, double right, double bottom, double left)
         => Points(top) + "pt " + Points(right) + "pt " + Points(bottom) + "pt " + Points(left) + "pt";
+
+    private static string Pixels(double points) => Math.Max(1, Math.Round(points * 96 / 72)).ToString(CultureInfo.InvariantCulture);
 
     private static string Points(double value) => Math.Max(0, value).ToString("0.##", CultureInfo.InvariantCulture);
 }

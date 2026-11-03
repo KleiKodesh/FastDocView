@@ -422,3 +422,9 @@ Every rule of `WordDocumentHtmlStylesheet` is `.word-document ...`, and the app 
 element carried that class - so list labels were inline spans (their min-width did nothing: "no space after the
 number"), tables had no collapse / borders, paragraphs browser margins. Unit checks on HTML strings could not see it;
 only a computed-style check in the live page did (`display` of `.list-marker`). Check computed styles, not markup.
+
+- 2026-11-03: the attribute `data-word-picture` contains the text "word-picture" - count `class="word-picture"` in
+  tests. LibreOffice's .doc export overflows PICF mx (16 bits) when a tiny bitmap is shown large; a PICF that looks wrong
+  may be the writer's bug, not the parser's. The vue-demo stubs serviceClient: every new export the app's fastDocViewApi
+  imports must exist in serviceClientDemoStub.ts or the demo page does not load.
+

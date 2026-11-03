@@ -661,6 +661,7 @@ internal sealed class RtfParser
             // {\nonshppict} (the copy for older readers) stays skipped (LibreOffice rtfdispatchflag.cxx NONSHPPICT: SKIP).
             case RtfWord.ShapePicture when _sink.WantsPictures && IsTextDestination(state): return;
             case RtfWord.Picture when _sink.WantsPictures && IsTextDestination(state): ReadPicture(state); return;
+            case RtfWord.Shape when _sink.WantsPictures && IsTextDestination(state): ReadShape(state); return;
             case RtfWord.Picture: case RtfWord.ShapePicture: case RtfWord.Shape:
                 if (IsTextDestination(state)) _sink.Embedded(RtfEmbeddedKind.Picture, state);
                 SkipGroup(name);
@@ -849,19 +850,29 @@ internal sealed class RtfParser
     /// LibreOffice rtfdocumentimpl.cxx resolvePict: the goal size (else \picw / \pich) times scale / 100 - and the picture
     /// data as hex digits (or \binN raw bytes) at the group's own level; nested groups ({\*\blipuid}, {\*\picprop}) are
     /// stepped over. \pngblip / \jpegblip name a type a browser shows (LibreOffice rtfdispatchflag.cxx PNGBLIP / JPEGBLIP);
-    /// any other blip (\emfblip, \wmetafile, ...) gives "". Closes the group.
+    /// any other blip (\emfblip, \wmetafile, ...) gives "". Closes the group. The data is only kept when the sink asks for
+    /// it (<see cref="RtfSink.WantsPictureData"/>: the host reading one picture) - a rendered block only needs the size.
     /// </summary>
     private void ReadPicture(in RtfGroupState state)
     {
+        (RtfPicture picture, bool isClosed) = ReadPictureBody(_sink.WantsPictureData);
+        if (isClosed && !Pop()) _position = _end;
+        _sink.Picture(picture, state);
+    }
+
+    /// <summary>A {\pict} group's body up to its closing brace (consumed; the group is not popped), and whether it closed.</summary>
+    private (RtfPicture picture, bool isClosed) ReadPictureBody(bool keepsData)
+    {
         int depth = 1, goalWidth = 0, goalHeight = 0, scaleX = 100, scaleY = 100, high = -1;
+        bool isClosed = false;
         string extension = "";
-        var data = new MemoryStream();
+        MemoryStream? data = keepsData ? new MemoryStream() : null;
         while (true)
         {
             int b = ReadByte();
             if (b < 0) break;
             if (b == '{') { depth++; continue; }
-            if (b == '}') { if (--depth == 0) { if (!Pop()) _position = _end; break; } continue; }
+            if (b == '}') { if (--depth == 0) { isClosed = true; break; } continue; }
             if (b == '\\')
             {
                 int c = ReadByte();
@@ -887,12 +898,13 @@ internal sealed class RtfParser
                     case "pngblip": extension = ".png"; break;
                     case "jpegblip": extension = ".jpg"; break;
                     case "bin":
+                        if (data is null) { SkipBytes(parameter); break; }
                         for (long i = 0; i < parameter; i++) { int raw = ReadByte(); if (raw < 0) break; data.WriteByte((byte)raw); }
                         break;
                 }
                 continue;
             }
-            if (depth != 1) continue;
+            if (depth != 1 || data is null) continue;
             int digit = HexValue(b);
             if (digit < 0) continue;                                  // white space between the digits
             if (high < 0) high = digit; else { data.WriteByte((byte)(high << 4 | digit)); high = -1; }
@@ -901,8 +913,126 @@ internal sealed class RtfParser
         // picture keeps its natural size (0 here).
         int shownWidth = goalWidth > 0 ? (int)((long)goalWidth * scaleX / 100) : 0;
         int shownHeight = goalHeight > 0 ? (int)((long)goalHeight * scaleY / 100) : 0;
-        _sink.Picture(shownWidth, shownHeight, data.ToArray(), extension, state);
+        return (new RtfPicture(shownWidth, shownHeight, extension, data?.ToArray()), isClosed);
     }
+
+    /// <summary>
+    /// A {\shp} group (a drawing object: {\shp {\*\shpinst \shpleft... {\sp {\sn name}{\sv value}}...} {\shprslt ...}}),
+    /// read for its picture: with a pib property ({\sp {\sn pib}{\sv {\pict ...}}}, LibreOffice rtfsdrimport.cxx "pib") it
+    /// is a floating picture, laid out - as LibreOffice reads them - from \shpleft / \shptop / \shpright / \shpbottom (twips;
+    /// rtfdispatchvalue.cxx SHPLEFT ...), \shpwr (SHPWR: 1 = NONE, 2 = PARALLEL, 3 = THROUGH + wrapNone, 4 = PARALLEL +
+    /// wrapTight, 5 = THROUGH), \shpwrk (SHPWRK: 0 both sides, 1 left, 2 right, 3 largest), posh (rtfsdrimport.cxx
+    /// applyProperty: 1 left, 2 center, 3 right, 4 inside, 5 outside) and dxWrapDistLeft / dyWrapDistTop / dxWrapDistRight /
+    /// dyWrapDistBottom (EMU: rtfsdrimport.cxx sets LeftMargin = value / 360, 1/100 mm). {\shprslt} (the copy for readers
+    /// without shapes) and {\shptxt} are skipped. A shape without a picture stays a placeholder. Closes the group.
+    /// </summary>
+    private void ReadShape(in RtfGroupState state)
+    {
+        int depth = 1;
+        bool isClosed = false;
+        RtfPicture? picture = null;
+        var shape = new RtfShapePlacement();
+        string? propertyName = null;
+        var captured = new StringBuilder();
+        int captureDepth = -1;              // inside {\sn} / {\sv} (not pib): its text is captured until it closes
+        bool isNameCapture = false;
+        bool isPictureValue = false;
+        while (true)
+        {
+            int b = ReadByte();
+            if (b < 0) break;
+            if (b == '{') { depth++; continue; }
+            if (b == '}')
+            {
+                if (depth == captureDepth)
+                {
+                    if (isNameCapture) propertyName = captured.ToString().Trim();
+                    else if (propertyName is not null) shape.SetProperty(propertyName, captured.ToString().Trim());
+                    captureDepth = -1;
+                    captured.Clear();
+                }
+                if (--depth == 0) { isClosed = true; break; }
+                continue;
+            }
+            if (b != '\\')
+            {
+                if (captureDepth >= 0 && b is not ('\r' or '\n')) captured.Append((char)b);
+                continue;
+            }
+            int c = ReadByte();
+            if (c < 0) break;
+            if (!IsLetter(c)) { if (c == '\'') { ReadByte(); ReadByte(); } continue; }
+            int length = 0;
+            while (c >= 0 && IsLetter(c)) { if (length < MaxWordLength) _word[length] = (byte)c; length++; c = ReadByte(); }
+            bool negative = c == '-';
+            if (negative) c = ReadByte();
+            long parameter = 0;
+            while (c >= '0' && c <= '9') { if (parameter < int.MaxValue) parameter = parameter * 10 + (c - '0'); c = ReadByte(); }
+            if (c >= 0 && c != ' ') _position--;
+            string word = System.Text.Encoding.ASCII.GetString(_word, 0, Math.Min(length, MaxWordLength));
+            int value = (int)Math.Max(int.MinValue, Math.Min(int.MaxValue, negative ? -parameter : parameter));
+            switch (word)
+            {
+                case "bin": if (parameter > 0) SkipBytes(parameter); break;
+                case "shprslt": case "shptxt": depth = SkipToDepth(depth - 1); break;    // the rest of that group
+                case "sn": captureDepth = depth; isNameCapture = true; captured.Clear(); break;
+                case "sv":
+                    isPictureValue = propertyName == "pib";
+                    if (!isPictureValue) { captureDepth = depth; isNameCapture = false; captured.Clear(); }
+                    break;
+                case "pict" when isPictureValue && picture is null:
+                {
+                    (RtfPicture body, bool pictureClosed) = ReadPictureBody(_sink.WantsPictureData);
+                    picture = body;
+                    if (pictureClosed) depth--;
+                    break;
+                }
+                case "shpleft": shape.Left = value; break;
+                case "shptop": shape.Top = value; break;
+                case "shpright": shape.Right = value; break;
+                case "shpbottom": shape.Bottom = value; break;
+                case "shpwr": shape.Wrap = value; break;
+                case "shpwrk": shape.WrapSide = value; break;
+            }
+        }
+        if (isClosed && !Pop()) _position = _end;
+        if (picture is { } found)
+            _sink.Picture(found with
+            {
+                WidthTwips = shape.Right > shape.Left ? shape.Right - shape.Left : found.WidthTwips,
+                HeightTwips = shape.Bottom > shape.Top ? shape.Bottom - shape.Top : found.HeightTwips,
+                Placement = shape,
+            }, state);
+        else _sink.Embedded(RtfEmbeddedKind.Picture, state);
+    }
+
+    /// <summary>Reads on until the group depth drops to <paramref name="target"/> (the closing brace consumed); returns the new depth.</summary>
+    private int SkipToDepth(int target)
+    {
+        int depth = target + 1;
+        while (depth > target)
+        {
+            int b = ReadByte();
+            if (b < 0) return depth;
+            if (b == '{') depth++;
+            else if (b == '}') depth--;
+            else if (b == '\\')
+            {
+                int c = ReadByte();
+                if (c != 'b') continue;
+                // \binN: N raw bytes that may hold braces
+                if (ReadByte() != 'i') { _position--; continue; }
+                if (ReadByte() != 'n') { _position--; continue; }
+                long parameter = 0;
+                int d = ReadByte();
+                while (d >= '0' && d <= '9') { parameter = parameter * 10 + (d - '0'); d = ReadByte(); }
+                if (d >= 0 && d != ' ') _position--;
+                SkipBytes(parameter);
+            }
+        }
+        return depth;
+    }
+
 
     /// <summary>Skips to the end of the current group (braces counted, escapes and \binN data stepped over) and closes it.</summary>
     private void SkipGroup(ReadOnlySpan<byte> name)

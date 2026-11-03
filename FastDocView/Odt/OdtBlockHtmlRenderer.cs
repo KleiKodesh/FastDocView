@@ -53,14 +53,23 @@ public sealed class OdtBlockHtmlRenderer
     private static readonly XNamespace XlinkNs = "http://www.w3.org/1999/xlink";
     private static readonly XNamespace OfficeNs = OdtStyleCascade.Office;
     private static readonly XNamespace SvgNs = OdtStyleCascade.Svg;
-    private readonly Func<string, byte[]?>? _readPackagePart;
+    private XElement? _currentBlock;
 
-    /// <param name="readPackagePart">Reads a package entry (a picture, "Pictures/x.png") on demand; null when the host has none.</param>
-    public OdtBlockHtmlRenderer(OdtStyleCascade styles, Func<string, byte[]?>? readPackagePart = null)
-    {
-        _styles = styles;
-        _readPackagePart = readPackagePart;
-    }
+    public OdtBlockHtmlRenderer(OdtStyleCascade styles) => _styles = styles;
+
+    /// <summary>The block being rendered (its index names the pictures stored inside it); -1 when unknown.</summary>
+    public int CurrentBlockIndex { get; set; } = -1;
+
+    /// <summary>
+    /// Picture ids (<see cref="IWordWindowedDocument.ReadPicture"/>): "p:" + the package entry a draw:image's xlink:href names,
+    /// or "b:" + block index + ":" + ordinal for office:binary-data inside the block (flat files) - the ordinal counts the
+    /// frames' first draw:image elements that carry binary data, in document order (<see cref="BinaryPictureImages"/>).
+    /// </summary>
+    public const string PackagePicturePrefix = "p:", BinaryPicturePrefix = "b:";
+
+    /// <summary>The draw:image elements of a block whose office:binary-data a "b:" picture id counts, in document order.</summary>
+    public static IEnumerable<XElement> BinaryPictureImages(XElement block)
+        => block.Descendants(DrawNs + "frame").Select(frame => frame.Element(DrawNs + "image")).Where(image => image?.Element(OfficeNs + "binary-data") is not null)!;
 
     /// <param name="listLevel">List depth (0-based) of a list paragraph, -1 otherwise.</param>
     /// <param name="notes">The note references of this block, in order (from the index).</param>
@@ -76,7 +85,9 @@ public sealed class OdtBlockHtmlRenderer
         _nextNote = 0;
         _isInsideLink = false;
         _renderedNotes = notes.Length == 0 ? null : new List<WordDocumentNoteHtml>(notes.Length);
+        _currentBlock = block;
         RenderBlock(block, html, isTopLevel: true);
+        _currentBlock = null;
         return (html.ToString(), (IReadOnlyList<WordDocumentNoteHtml>?)_renderedNotes ?? []);
     }
 
@@ -250,6 +261,22 @@ public sealed class OdtBlockHtmlRenderer
         html.Append("<span class=\"unsupported\">[image]</span>");
     }
 
+    /// <summary>The bytes of an office:binary-data picture (base64), or null when they do not decode.</summary>
+    public static byte[]? BinaryPictureBytes(XElement binary)
+    {
+        try { return Convert.FromBase64String(binary.Value); }
+        catch (FormatException) { return null; }
+    }
+
+    /// <summary>True when an office:binary-data picture is a format a browser shows (its first bytes' signature).</summary>
+    private static bool BinaryPictureFormatIsShown(XElement binary)
+    {
+        // the first 16 base64 characters are 12 bytes: enough for every signature WordPictureHtml.ExtensionOf knows
+        string head = new string(binary.Value.Where(c => !char.IsWhiteSpace(c)).Take(16).ToArray());
+        try { return WordPictureHtml.ExtensionOf(Convert.FromBase64String(head)).Length > 0; }
+        catch (FormatException) { return false; }
+    }
+
     /// <summary>
     /// A draw:frame's picture at svg:width / svg:height, placed as <see cref="WordPictureHtml"/> describes. text:anchor-type
     /// (ODF 1.3 part 3 19.759; the element attribute wins over the graphic property, default "paragraph"): as-char is in the
@@ -283,19 +310,23 @@ public sealed class OdtBlockHtmlRenderer
         double offset = position is "from-left" or "from-inside" ? Math.Max(0, Points((string?)frame.Attribute(SvgNs + "x"))) : 0;
         double all = Points(Property("fo", "margin"));
         double Gap(string side) => Property("fo", "margin-" + side) is { } value ? Points(value) : all;
-        string? dataUri = null;
+        string? pictureId = null;
         if (image.Element(OfficeNs + "binary-data") is { } binary)
         {
-            try { byte[] bytes = Convert.FromBase64String(binary.Value); dataUri = WordPictureHtml.DataUri(WordPictureHtml.ExtensionOf(bytes), bytes); }
-            catch (FormatException) { }
+            if (CurrentBlockIndex >= 0 && _currentBlock is not null && BinaryPictureFormatIsShown(binary))
+            {
+                int ordinal = 0;
+                foreach (XElement candidate in BinaryPictureImages(_currentBlock)) { if (candidate == image) break; ordinal++; }
+                pictureId = BinaryPicturePrefix + CurrentBlockIndex.ToString(CultureInfo.InvariantCulture) + ":" + ordinal.ToString(CultureInfo.InvariantCulture);
+            }
         }
-        else if ((string?)image.Attribute(XlinkNs + "href") is { Length: > 0 } href && _readPackagePart is not null && !href.Contains(':'))
+        else if ((string?)image.Attribute(XlinkNs + "href") is { Length: > 0 } href && !href.Contains(':'))
         {
             string part = href.StartsWith("./", StringComparison.Ordinal) ? href.Substring(2) : href;
-            dataUri = WordPictureHtml.DataUri(part, _readPackagePart(part));
+            if (WordPictureHtml.ContentTypeOf(part) is not null) pictureId = PackagePicturePrefix + part;
         }
         WordPictureHtml.Append(html, new WordPictureLayout(Points((string?)frame.Attribute(SvgNs + "width")), Points((string?)frame.Attribute(SvgNs + "height")),
-                                                           wrap, side, Gap("top"), Gap("right"), Gap("bottom"), Gap("left"), offset), dataUri);
+                                                           wrap, side, Gap("top"), Gap("right"), Gap("bottom"), Gap("left"), offset), pictureId);
     }
 
     private void AppendNote(XElement note, StringBuilder html)

@@ -75,6 +75,10 @@ export const fastDocViewApi: FastDocViewApi = {
     const references = await readJson<{ blockIndex: number }[]>(await fetch(`/api/documents/${documentId}/note-references`))
     return Int32Array.from(references, reference => reference.blockIndex)
   },
+  async pictureSource(documentId, pictureId) {
+    // a plain GET the <img> makes itself (lazily) - as the service's picture endpoint in the app
+    return `/api/documents/${documentId}/pictures?pictureId=${encodeURIComponent(pictureId)}`
+  },
   async headings(documentId) {
     return readJson<FastDocViewHeading[]>(await fetch(`/api/documents/${documentId}/headings`))
   },

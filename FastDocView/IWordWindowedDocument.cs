@@ -123,7 +123,18 @@ public interface IWordWindowedDocument : IDisposable
     /// <see cref="WordDocumentSearchBatch.ReachedEnd"/>. A match never spans two paragraphs, cells or blocks.
     /// </summary>
     WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan);
+
+    /// <summary>
+    /// One picture's bytes by the id a rendered block carries (<c>data-word-picture</c> on its &lt;img&gt;): a windowed read
+    /// of that picture alone (a package entry, one block re-read, or one record in the .doc Data stream) - never the block
+    /// HTML, never the document. Null for an unknown or malformed id, a picture that is gone, or a format a browser cannot
+    /// show. Ids are opaque and only valid for this open document.
+    /// </summary>
+    WordDocumentPicture? ReadPicture(string pictureId);
 }
+
+/// <summary>A picture's bytes and media type (image/png, image/jpeg ...), as the host serves them.</summary>
+public sealed record WordDocumentPicture(string ContentType, byte[] Bytes);
 
 public sealed record WordDocumentNoteReference(WordDocumentNoteKind Kind, int Number, int BlockIndex);
 

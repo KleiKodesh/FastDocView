@@ -64,6 +64,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     public (string html, IReadOnlyList<WordDocumentNoteHtml> notes) Render(Stream file, RtfRandomAccessIndex index, RtfCompactBlockTable table, int blockIndex)
     {
+        _blockIndex = blockIndex;
+        _pictureOrdinal = 0;
         _bodyFlow = new Flow();
         _flow = _bodyFlow;
         _runText.Clear();
@@ -281,15 +283,58 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     }
 
     public override bool WantsPictures => true;
+    public override bool WantsPictureData => _capturedPictureOrdinal >= 0;
 
-    /// <summary>A {\pict} in the text: an inline picture at its goal size (a floating \shp is still a placeholder).</summary>
-    public override void Picture(int widthTwips, int heightTwips, byte[] data, string extension, in RtfGroupState state)
+    private int _blockIndex;
+    private int _pictureOrdinal;                 // pictures met in this block so far (their ids count them)
+    private int _capturedPictureOrdinal = -1;    // >= 0: ReadPicture wants that picture's bytes
+    private RtfPicture? _capturedPicture;
+
+    /// <summary>
+    /// A {\pict} in the text: an inline picture at its goal size. A {\shp} with a picture floats as the shape's placement
+    /// says (meanings in RtfParser.ReadShape): \shpwr 1 = above and below, 2 / 4 = beside, 3 / 5 = through the text; \shpwr
+    /// not given is drawn above and below (a block - our choice, the shape group gives no wrap); \shpwrk 1 / 2 = text only
+    /// on that side; posh 1 / 4 left, 2 centre, 3 / 5 right, else at \shpleft from the left. Its id is the block and the
+    /// picture's place among the block's pictures.
+    /// </summary>
+    public override void Picture(in RtfPicture picture, in RtfGroupState state)
     {
+        int ordinal = _pictureOrdinal++;
+        if (ordinal == _capturedPictureOrdinal) _capturedPicture = picture;
         FlushRun();
-        WordPictureHtml.Append(_listTextTarget ?? _flow.Inline,
-                               new WordPictureLayout(widthTwips / 20.0, heightTwips / 20.0, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0),
-                               extension.Length > 0 ? WordPictureHtml.DataUri(extension, data) : null);
+        WordPictureLayout layout = new(picture.WidthTwips / 20.0, picture.HeightTwips / 20.0, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0);
+        if (picture.Placement is { } shape)
+        {
+            const double EmuPerPoint = 12700;
+            WordPictureWrap wrap = shape.Wrap switch { 2 or 4 => WordPictureWrap.Square, 3 or 5 => WordPictureWrap.None, _ => WordPictureWrap.TopAndBottom };
+            WordPictureSide side = shape.HorizontalPosition switch
+            {
+                1 or 4 => WordPictureSide.Left,
+                2 => WordPictureSide.Center,
+                3 or 5 => WordPictureSide.Right,
+                _ => shape.WrapSide switch { 1 => WordPictureSide.Right, _ => WordPictureSide.Left },
+            };
+            double offset = shape.HorizontalPosition == 0 ? Math.Max(0, shape.Left / 20.0) : 0;
+            layout = layout with
+            {
+                Wrap = wrap, Side = side, OffsetPt = offset,
+                TopPt = shape.WrapTop / EmuPerPoint, RightPt = shape.WrapRight / EmuPerPoint, BottomPt = shape.WrapBottom / EmuPerPoint, LeftPt = shape.WrapLeft / EmuPerPoint,
+            };
+        }
+        string? pictureId = picture.Extension.Length > 0 && WordPictureHtml.ContentTypeOf(picture.Extension) is not null
+            ? _blockIndex.ToString(CultureInfo.InvariantCulture) + ":" + ordinal.ToString(CultureInfo.InvariantCulture)
+            : null;
+        WordPictureHtml.Append(_listTextTarget ?? _flow.Inline, layout, pictureId);
         _flow.HasInline = true;
+    }
+
+    /// <summary>The bytes of picture <paramref name="ordinal"/> of block <paramref name="blockIndex"/>: the block parsed again, that picture kept.</summary>
+    public RtfPicture? ReadPicture(Stream file, RtfRandomAccessIndex index, RtfCompactBlockTable table, int blockIndex, int ordinal)
+    {
+        _capturedPictureOrdinal = ordinal;
+        _capturedPicture = null;
+        try { Render(file, index, table, blockIndex); return _capturedPicture; }
+        finally { _capturedPictureOrdinal = -1; _capturedPicture = null; }
     }
 
     // ── list text (Word's flat label for readers without list support) ───────────────
@@ -418,7 +463,9 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
                    {
                        1 => "margin-left:auto;margin-right:auto;",
                        2 => "margin-left:auto;margin-right:0;",
-                       _ => (rowLeft != 0 ? "margin-inline-start:" + WordParagraphFormatting.TwipsToPt(rowLeft) + "pt;" : "") + "margin-inline-end:auto;",
+                       // 	rleft: "the leftmost edge of the table with respect to the left edge of its column" (RTF 1.5 spec,
+                       // Row Formatting) - a physical left, also in a right-to-left row
+                       _ => "margin-left:" + (rowLeft != 0 ? WordParagraphFormatting.TwipsToPt(rowLeft) + "pt" : "0") + ";margin-right:auto;",
                    });
         }
         WordHtmlText.AppendOpenTag(html, "table", rowCss, isOuter ? "table-row" : null, _parser.IsRowRightToLeft ? true : null);

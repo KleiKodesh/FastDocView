@@ -52,7 +52,7 @@ public sealed class DocxDocumentParts
         return parts;
     }
 
-    /// <summary>A picture part's bytes, read on demand when a block that shows it is rendered (never kept); null when absent.</summary>
+    /// <summary>A picture part's bytes, read on demand when the host asks for that picture (never kept); null when absent.</summary>
     public byte[]? ReadPartBytes(string partName)
     {
         using var zip = new ZipArchive(_package, ZipArchiveMode.Read, leaveOpen: true);

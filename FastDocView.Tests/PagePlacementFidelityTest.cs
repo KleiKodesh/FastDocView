@@ -21,7 +21,19 @@ public static class PagePlacementFidelityTest
         DocxPictures();
         OdtTablesAndFrames();
         RtfRowsAndPictures();
+        DocxVmlPictures();
+        RtfFloatingShapes();
+        DocBinaryPicturesAndRows();
     }
+
+    /// <summary>The picture ids of a block's &lt;img&gt; elements (data-word-picture), in order.</summary>
+    internal static List<string> PictureIds(string html)
+        => System.Text.RegularExpressions.Regex.Matches(html, WordPictureHtml.PictureIdAttribute + "=\"([^\"]*)\"")
+               .Select(match => System.Net.WebUtility.HtmlDecode(match.Groups[1].Value)).ToList();
+
+    /// <summary>No picture bytes in the block HTML: no data: URI, an id, lazy loading and its size.</summary>
+    private static bool IsLazyPicture(string html)
+        => !html.Contains("data:image") && html.Contains(WordPictureHtml.PictureIdAttribute + "=") && html.Contains("loading=\"lazy\" decoding=\"async\"");
 
     /// <summary>A tab suffix reaches its stop (min-width) and keeps a quarter em after a label that fills the gap; space and nothing do not.</summary>
     private static void ListLabelGap()
@@ -85,9 +97,17 @@ public static class PagePlacementFidelityTest
                     + Anchored("<wp:wrapSquare wrapText=\"bothSides\"/>", "<wp:align>center</wp:align>");
         List<string> html = DocxFidelityTest.RenderAll("placement-pictures", body,
             extraDocumentRelationships: "<Relationship Id=\"rIdP\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/p.png\"/>",
-            binaryParts: new Dictionary<string, byte[]> { ["word/media/p.png"] = Png });
-        TestReport.Check(html[0].Contains("<img class=\"word-picture\" alt=\"\" src=\"data:image/png;base64," + Convert.ToBase64String(Png) + "\" style=\"width:72pt;aspect-ratio:72/36;\">"),
-                         "inline: the picture from its relationship at its extent, in the line (" + html[0] + ")");
+            binaryParts: new Dictionary<string, byte[]> { ["word/media/p.png"] = Png },
+            inspect: document =>
+            {
+                WordDocumentPicture? read = document.ReadPicture("m:rIdP");
+                TestReport.Check(read is { ContentType: "image/png" } && read.Bytes.SequenceEqual(Png), "ReadPicture(m:rIdP): the part's bytes, image/png");
+                TestReport.Check(document.ReadPicture("m:rIdS") is null && document.ReadPicture("x:rIdP") is null && document.ReadPicture("m:nothing") is null,
+                                 "ReadPicture: only picture relationships resolve (not the styles part, not a bad prefix)");
+            });
+        TestReport.Check(html[0].Contains("<img class=\"word-picture\" alt=\"\" data-word-picture=\"m:rIdP\" width=\"96\" height=\"48\" loading=\"lazy\" decoding=\"async\" style=\"width:72pt;aspect-ratio:72/36;\">"),
+                         "inline: the picture by id (no bytes) at its extent, in the line, px size for layout (" + html[0] + ")");
+        TestReport.Check(html.Take(6).All(IsLazyPicture), "every picture is lazy, by id, without a data: URI");
         TestReport.Check(html[1].Contains("float:right;margin:10pt 0pt 10pt 20pt;"), "wrapSquare right: floats right, the gap only on the text side (" + html[1] + ")");
         TestReport.Check(html[2].Contains("float:left;margin:10pt 20pt 10pt 0pt;"), "wrapTight left: floats left");
         TestReport.Check(html[3].Contains("display:block;margin:10pt auto 10pt auto;"), "wrapTopAndBottom center: a centred block with the top / bottom gap");
@@ -139,10 +159,13 @@ public static class PagePlacementFidelityTest
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
         List<string> html = document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
+        TestReport.Check(PictureIds(html[3]).SequenceEqual(["p:Pictures/p.png"]) && IsLazyPicture(html[3]), "frame: the picture by its package entry id (" + html[3] + ")");
+        TestReport.Check(document.ReadPicture("p:Pictures/p.png") is { ContentType: "image/png" } read && read.Bytes.SequenceEqual(Png), "ReadPicture(p:...): the package entry");
+        TestReport.Check(document.ReadPicture("p:content.xml") is null && document.ReadPicture("p:Pictures/none.png") is null, "ReadPicture: no non-picture entry, nothing missing");
         TestReport.Check(html[0].Contains("margin-left:auto;margin-right:36pt;"), "table:align right: at the right margin, fo:margin-right kept (" + html[0] + ")");
         TestReport.Check(html[1].Contains("margin-left:72pt;margin-right:auto;"), "table:align left: fo:margin-left from the left");
         TestReport.Check(html[2].Contains("margin-left:auto;margin-right:auto;"), "table:align center");
-        TestReport.Check(html[3].Contains("src=\"data:image/png;base64,") && html[3].Contains("float:right;margin:7.2pt 0pt 7.2pt 18pt;"),
+        TestReport.Check(html[3].Contains("float:right;margin:7.2pt 0pt 7.2pt 18pt;"),
                          "frame, wrap parallel, right: floats right with its fo:margin gap, the picture from the package (" + html[3] + ")");
         TestReport.Check(html[4].Contains("display:block;margin:0pt auto 0pt auto;"), "frame, wrap none, center: a centred block");
         TestReport.Check(html[5].Contains("style=\"width:72pt;aspect-ratio:72/36;margin:7.2pt 18pt 7.2pt 18pt;\"") && !html[5].Contains("float"), "anchor-type as-char: in the line, with its fo:margin spacing (" + html[5] + ")");
@@ -163,11 +186,116 @@ public static class PagePlacementFidelityTest
         File.WriteAllText(path, rtf);
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
         List<string> html = document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
-        TestReport.Check(html[0].Contains("width:144pt;margin-inline-start:36pt;margin-inline-end:auto;") && html[0].Contains("<td style=\"width:72pt;"),
-                         "\\trleft: the row's indent, the first cell from it (" + html[0] + ")");
+        TestReport.Check(html[0].Contains("width:144pt;margin-left:36pt;margin-right:auto;") && html[0].Contains("<td style=\"width:72pt;"),
+                         "\\trleft: the row's indent from the physical left (RTF spec), the first cell from it (" + html[0] + ")");
         TestReport.Check(html[1].Contains("margin-left:auto;margin-right:auto;"), "\\trqc: a centred row (" + html[1] + ")");
-        TestReport.Check(html[2].Contains("src=\"data:image/png;base64," + Convert.ToBase64String(Png) + "\" style=\"width:36pt;aspect-ratio:36/18;\"")
-                         && html[2].Split("word-picture").Length == 2, "\\pict \\pngblip in \\shppict: drawn once, at goal x scale (" + html[2] + ")");
+        TestReport.Check(html[2].Contains("data-word-picture=\"2:0\" width=\"48\" height=\"24\" loading=\"lazy\" decoding=\"async\" style=\"width:36pt;aspect-ratio:36/18;\"")
+                         && html[2].Split("class=\"word-picture").Length == 2 && IsLazyPicture(html[2]), "\\pict \\pngblip in \\shppict: drawn once, at goal x scale, by id (" + html[2] + ")");
+        TestReport.Check(document.ReadPicture("2:0") is { ContentType: "image/png" } read && read.Bytes.SequenceEqual(Png), "ReadPicture(2:0): the block parsed again, the \\pict's bytes");
+        TestReport.Check(document.ReadPicture("2:1") is null && document.ReadPicture("99:0") is null && document.ReadPicture("3:0") is null,
+                         "ReadPicture: no second picture, no block 99, an EMF is not served");
         TestReport.Check(html[3].Contains("word-picture-missing") && html[3].Contains("width:36pt;"), "an EMF keeps its box (" + html[3] + ")");
+    }
+
+    private const string VmlNamespaces = "xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:w10=\"urn:schemas-microsoft-com:office:word\"";
+
+    private static string VmlPicture(string style, string wrap = "")
+        => $"<w:p><w:r><w:pict {VmlNamespaces}><v:shapetype id=\"_x0000_t75\" coordsize=\"21600,21600\" o:spt=\"75\"/>"
+         + $"<v:shape id=\"s1\" type=\"#_x0000_t75\" style=\"{style}\"><v:imagedata r:id=\"rIdP\" o:title=\"\"/>{wrap}</v:shape></w:pict></w:r><w:r><w:t>text</w:t></w:r></w:p>";
+
+    /// <summary>Old-style VML pictures (w:pict / v:shape / v:imagedata): size from the style, inline when static, wrap and side as LibreOffice's oox vml import.</summary>
+    private static void DocxVmlPictures()
+    {
+        TestReport.Step("Placement: .docx VML pictures");
+        string body = VmlPicture("width:72pt;height:36pt")
+                    + VmlPicture("position:absolute;margin-left:0;margin-top:0;width:1in;height:0.5in;mso-position-horizontal:right;mso-wrap-distance-left:9pt", "<w10:wrap type=\"square\"/>")
+                    + VmlPicture("position:absolute;width:96px;height:48px;mso-position-horizontal:center", "<w10:wrap type=\"topAndBottom\"/>")
+                    + VmlPicture("position:absolute;margin-left:18pt;width:72pt;height:36pt")
+                    + "<w:p><w:r><w:pict " + VmlNamespaces + "><v:rect style=\"width:72pt;height:36pt\"/></w:pict></w:r></w:p>";
+        List<string> html = DocxFidelityTest.RenderAll("placement-vml", body,
+            extraDocumentRelationships: "<Relationship Id=\"rIdP\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/p.png\"/>",
+            binaryParts: new Dictionary<string, byte[]> { ["word/media/p.png"] = Png },
+            inspect: document => TestReport.Check(document.ReadPicture("m:rIdP") is { ContentType: "image/png" }, "VML: ReadPicture by the imagedata's r:id"));
+        TestReport.Check(PictureIds(html[0]).SequenceEqual(["m:rIdP"]) && html[0].Contains("style=\"width:72pt;aspect-ratio:72/36;\"") && !html[0].Contains("float"),
+                         "static (no position): in the line at the style's size (" + html[0] + ")");
+        TestReport.Check(html[1].Contains("width:72pt;aspect-ratio:72/36;float:right;margin:0pt 0pt 0pt 9pt;"), "absolute, wrap square, right: floats right, mso-wrap-distance-left kept (" + html[1] + ")");
+        TestReport.Check(html[2].Contains("display:block;margin:0pt auto 0pt auto;") && html[2].Contains("width:72pt;"), "wrap topAndBottom, centre: a centred block; 96px = 72pt (" + html[2] + ")");
+        TestReport.Check(html[3].Contains("display:block;margin:0pt auto 0pt 18pt;"), "absolute, no w10:wrap: through the text (a block without gaps) at margin-left (" + html[3] + ")");
+        TestReport.Check(!html[4].Contains("word-picture") && html[4].Contains("[image]"), "a VML shape without an image: the placeholder, as before (" + html[4] + ")");
+    }
+
+    /// <summary>{\shp} with a pib picture: floating at \shpleft..\shpbottom, \shpwr / \shpwrk / posh as LibreOffice reads them; the \shprslt copy not drawn.</summary>
+    private static void RtfFloatingShapes()
+    {
+        TestReport.Step("Placement: .rtf floating shapes");
+        string hex = Convert.ToHexString(Png);
+        string Shape(string words, string properties)
+            => @"{\shp{\*\shpinst\shpleft720\shptop0\shpright2160\shpbottom720" + words + properties
+             + @"{\sp{\sn pib}{\sv {\pict\pngblip\picw2\pich1\picwgoal1440\pichgoal720 " + hex + @"}}}}{\shprslt{\pict\pngblip\picwgoal100\pichgoal100 " + hex + "}}}";
+        string rtf = @"{\rtf1\ansi{\fonttbl{\f0 Arial;}}" + "\n"
+                   + @"\pard " + Shape(@"\shpwr2\shpwrk0", @"{\sp{\sn posh}{\sv 3}}{\sp{\sn dxWrapDistLeft}{\sv 114300}}") + @" beside\par" + "\n"
+                   + @"\pard " + Shape(@"\shpwr1", @"{\sp{\sn posh}{\sv 2}}") + @" above\par" + "\n"
+                   + @"\pard " + Shape(@"\shpwr3", "") + @" through\par" + "\n"
+                   + @"\pard {\shp{\*\shpinst\shpleft0\shpright720{\sp{\sn shapeType}{\sv 1}}}} no picture\par" + "\n}";
+        string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-rtf-shapes.rtf");
+        File.WriteAllText(path, rtf);
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+        List<string> html = document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
+        TestReport.Check(html[0].Split("class=\"word-picture").Length == 2 && PictureIds(html[0]).SequenceEqual(["0:0"])
+                         && html[0].Contains("width:72pt;aspect-ratio:72/36;float:right;margin:0pt 0pt 0pt 9pt;") && html[0].Contains("beside"),
+                         "\\shpwr2 + posh 3: floats right at the shape's size, dxWrapDistLeft as the gap, \\shprslt not drawn (" + html[0] + ")");
+        TestReport.Check(html[1].Contains("display:block;margin:0pt auto 0pt auto;"), "\\shpwr1 + posh 2: a centred block above and below (" + html[1] + ")");
+        TestReport.Check(html[2].Contains("display:block;margin:0pt auto 0pt 36pt;"), "\\shpwr3, no posh: through the text, at \\shpleft (" + html[2] + ")");
+        TestReport.Check(html[3].Contains("[image]") && html[3].Contains("no picture"), "a shape without a picture stays a placeholder (" + html[3] + ")");
+        TestReport.Check(document.ReadPicture("0:0") is { ContentType: "image/png" } read && read.Bytes.SequenceEqual(Png), "ReadPicture of a shape's pib picture");
+        TestReport.Check(document.ReadPicture("0:1") is null, "the \\shprslt copy is not a second picture");
+    }
+
+    /// <summary>
+    /// .doc: inline PICF / OfficeArt pictures (sprmCPicLocation) and row placement (sprmTJc, sprmTDxaLeft) - the .doc is the
+    /// placement .docx converted by a local LibreOffice (skipped without it), plus Apache POI's PngPicture.doc / testPictures.doc.
+    /// </summary>
+    private static void DocBinaryPicturesAndRows()
+    {
+        TestReport.Step("Placement: .doc pictures and rows");
+        // a quarter inch: LibreOffice writes mx = shown / natural size x 1000 into 16 bits (wrtww8gr.cxx WritePICFHeader), which
+        // overflows for this 2 x 1 pixel picture shown an inch wide
+        string body = $"<w:p><w:r><w:t>pic </w:t></w:r><w:r><w:drawing><wp:inline {DrawingNamespaces}><wp:extent cx=\"228600\" cy=\"114300\"/><wp:docPr id=\"1\" name=\"p\"/>{Graphic}</wp:inline></w:drawing></w:r></w:p>"
+                    + Table("<w:jc w:val=\"center\"/>") + "<w:p/>" + Table("<w:tblInd w:w=\"1440\" w:type=\"dxa\"/>") + "<w:p/>" + Table("<w:jc w:val=\"right\"/>");
+        DocxFidelityTest.RenderAll("placement-for-doc", body,
+            extraDocumentRelationships: "<Relationship Id=\"rIdP\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/p.png\"/>",
+            binaryParts: new Dictionary<string, byte[]> { ["word/media/p.png"] = Png });
+        string? doc = LibreOfficeConversion.Convert(Path.Combine(TestReport.OutputDirectory, "fidelity-v1-placement-for-doc.docx"), ".doc", "doc:MS Word 97");
+        if (doc is null) TestReport.Step("LibreOffice not installed - .doc conversion skipped");
+        else
+        {
+            var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(doc, policy);
+            List<string> html = document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
+            string picture = html.FirstOrDefault(block => block.Contains("pic")) ?? html[0];
+            List<string> ids = PictureIds(picture);
+            TestReport.Check(ids.Count == 1 && IsLazyPicture(picture) && picture.Contains("width:18pt;aspect-ratio:18/9;"), "inline PICF picture: by id at dxaGoal x mx (" + picture + ")");
+            TestReport.Check(ids.Count == 1 && document.ReadPicture(ids[0]) is { ContentType: "image/png" } read && read.Bytes.AsSpan(0, 4).SequenceEqual(Png.AsSpan(0, 4)), "ReadPicture: the OfficeArt PNG blip's bytes (LibreOffice re-encodes them)");
+            TestReport.Check(document.ReadPicture("12345678") is null && document.ReadPicture("x") is null, "ReadPicture: a wrong offset or id gives nothing");
+            List<string> rows = html.Where(block => block.Contains("table-row")).ToList();
+            TestReport.Check(rows.Count == 3, "three one-row tables (" + rows.Count + ")");
+            if (rows.Count == 3)
+            {
+                TestReport.Check(rows[0].Contains("width:144pt;margin-left:auto;margin-right:auto;"), "sprmTJc 1: a centred row at its width (" + rows[0] + ")");
+                TestReport.Check(System.Text.RegularExpressions.Regex.IsMatch(rows[1], "margin-left:[1-9][0-9.]*pt;margin-right:auto;"), "the indented row: from the left (" + rows[1] + ")");
+                TestReport.Check(rows[2].Contains("margin-left:auto;margin-right:0;"), "sprmTJc 2: at the right (" + rows[2] + ")");
+            }
+        }
+        // (Apache POI's PngPicture.doc holds a floating picture - a 0x08 character, FSPA + the drawing group - not read yet)
+        foreach (string name in new[] { "testPictures.doc", "two_images.doc", "testCroppedPictures.doc" })
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "apache-poi", name);
+            if (!File.Exists(path)) { TestReport.Step(name + " not found - skipped"); continue; }
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(Path.GetFullPath(path));
+            List<string> blocks = document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
+            List<string> ids = blocks.SelectMany(PictureIds).ToList();
+            int shown = ids.Count(id => document.ReadPicture(id) is { Bytes.Length: > 0 });
+            TestReport.Check(ids.Count > 0 && shown == ids.Count, $"{name}: {ids.Count} picture(s) by id, {shown} read back");
+        }
     }
 }
