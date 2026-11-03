@@ -800,6 +800,10 @@ internal sealed class RtfParser
                 if (state.Destination == RtfDestination.Body && !IsInFootnote && (hasParameter || word == RtfWord.SectionDefault)) _sink.PageSetup(word, parameter);
                 return;
             case RtfWord.Paragraph: case RtfWord.Section: case RtfWord.Cell: case RtfWord.NestedCell: case RtfWord.Row: case RtfWord.NestedRow:
+                // inside a header table (read by the index pass, skipped whole by a window): never a block end, or the two
+                // passes would segment differently - e.g. a Shift-JIS trail byte '{' in a style name leaves the \par after it
+                // inside the style sheet (LibreOffice's tokenizer opens a group there too, rtftokenizer.cxx:2005)
+                if (state.Destination is >= RtfDestination.FontTable and <= RtfDestination.ListOverrideLevel) return;
                 if (_shapes.Count > 0)
                 {
                     // inside a shape: a text box's paragraph ends (its tables are drawn as paragraphs); never the block's

@@ -48,6 +48,18 @@ public static class RtfShapesFidelityTest
         if (!File.Exists(rtf) || File.ReadAllText(rtf) != document) File.WriteAllText(rtf, document, new UTF8Encoding(false));
         CheckHandWritten(rtf);
 
+        TestReport.Step(@"RTF: a \par inside a header table (a Shift-JIS trail byte '{' in a style name, as LibreOffice fdo79384.rtf)");
+        string trail = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-rtf-header-par.rtf");
+        File.WriteAllBytes(trail, [.. Encoding.ASCII.GetBytes(@"{\rtf1{\fonttbl{\f5\fcharset128 X;}}{\stylesheet{\*\cs35 \f5 A"), 0x84, (byte)'{', .. Encoding.ASCII.GetBytes(";}\r\n}\r\n\\par text}")]);
+        try
+        {
+            var policy = new WordIndexPolicy { ForcedMode = WordIndexMode.Sidecar, CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
+            using IWordWindowedDocument opened = WordWindowedDocumentOpener.Open(trail, policy);
+            int rendered = opened.RenderBlocks(0, opened.BlockCount).Count;
+            TestReport.Check(rendered == opened.BlockCount, $"the index and a window segment alike ({opened.BlockCount} blocks)");
+        }
+        catch (Exception exception) { TestReport.Check(false, "the index and a window segment alike: " + exception.Message); }
+
         TestReport.Step("RTF shapes: the .odt shapes fixture saved as .rtf by LibreOffice");
         string fodt = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-odt-shapes.fodt");
         if (!File.Exists(fodt)) OdtShapesFidelityTest.Run();
