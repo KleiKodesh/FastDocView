@@ -1083,3 +1083,14 @@ the label's END), core/text/txtfld.cxx (a bullet portion is the bullet character
 - Checks: `--fidelity` PagePlacementFidelityTest (all formats); live `playwright/layoutCheck.mjs <file>` (label gaps, the
   column, tables, pictures, ignore-margins) and `playwright/notesLayoutCheck.mjs <file-with-notes>` (pane 25 %, notes
   column = text column).
+
+## Word save while we read: intermittent refusals are the environment (2026-11-03)
+
+`--real`'s "file can be replaced (Word's save)" failed 2-5 times per run. `--coexistence-probe <file> <rounds>`
+repeats copy + `File.Replace` with **nothing of ours open** (control) and with our document open: 4 of 60 and 3 of 60
+refused, both with 0x80070497 (ERROR_UNABLE_TO_REMOVE_REPLACED), and the Restart Manager (RmGetList) found no holder
+by the time it was asked — a transient handle on the freshly written 40 MB files from another process (a scanner or
+indexer; Defender's real-time protection is off on this box, SearchIndexer runs). The exclusive-open check just
+before the replace always passes, and our process was never among the holders. Not our handle. The test now names
+the holders on a refusal, fails if our process is one of them, and retries (100 ms steps, up to 10 s) only while
+others hold the files, as Word retries a save.

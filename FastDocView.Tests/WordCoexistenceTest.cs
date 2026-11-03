@@ -37,9 +37,25 @@ public static class WordCoexistenceTest
                 string temporary = copy + ".save.tmp";
                 File.Copy(sample, temporary, overwrite: true);
                 using (var append = new FileStream(temporary, FileMode.Append)) append.WriteByte(0);   // a different version
-                bool canReplace;
-                try { File.Replace(temporary, copy, null); canReplace = true; }
-                catch (IOException) { canReplace = false; }
+                // Another process may hold the freshly written files for a moment (an antivirus scanning them): a failed
+                // replace names the holders (Restart Manager). Ours must never be one of them — then the replace is
+                // retried while only others hold the files, as Word itself retries a save.
+                bool canReplace = false, isHeldByUs = false;
+                var waited = System.Diagnostics.Stopwatch.StartNew();
+                for (int attempt = 1; ; attempt++)
+                {
+                    try { File.Replace(temporary, copy, null); canReplace = true; break; }
+                    catch (IOException error)
+                    {
+                        List<(int processId, string name)> holders = FileLockHolders.Of(copy, temporary);
+                        isHeldByUs |= holders.Any(holder => holder.processId == Environment.ProcessId);
+                        Console.WriteLine($"   replace attempt {attempt} refused after {waited.ElapsedMilliseconds} ms (0x{error.HResult:X8} {error.Message.Trim()}); "
+                            + $"held by: {(holders.Count == 0 ? "nobody now" : string.Join(", ", holders.Select(holder => $"{holder.name} pid {holder.processId}")))}");
+                        if (isHeldByUs || waited.ElapsedMilliseconds > 10_000) break;
+                        Thread.Sleep(100);
+                    }
+                }
+                TestReport.Check(!isHeldByUs, $"{mode}: our process holds no handle that blocks Word's save");
                 TestReport.Check(canReplace, $"{mode}: the file can be replaced (Word's save) while our document is open");
                 TestReport.Check(document.HasSourceChanged || mode == WordIndexMode.InMemory, $"{mode}: the document reports that the file changed");
 
@@ -56,5 +72,52 @@ public static class WordCoexistenceTest
             }
             File.Delete(copy);
         }
+    }
+
+    /// <summary>
+    /// The environment check behind the retry above: the same copy + save-by-replace <paramref name="rounds"/> times with
+    /// no document of ours open (control) and with one open, counting refusals and naming who held the files.
+    /// </summary>
+    public static void Probe(string sample, int rounds)
+    {
+        string copy = Path.Combine(TestReport.OutputDirectory, "coexistence-probe" + Path.GetExtension(sample));
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-coexistence"), ForcedMode = WordIndexMode.Sidecar };
+        foreach (bool withDocument in new[] { false, true })
+        {
+            TestReport.Step($"Replace probe, {rounds} rounds, {(withDocument ? "our document open" : "control: nothing of ours open")}: {Path.GetFileName(sample)}");
+            int refused = 0, refusedByUs = 0;
+            var holderNames = new Dictionary<string, int>();
+            var errorKinds = new Dictionary<string, int>();
+            for (int round = 0; round < rounds; round++)
+            {
+                File.Copy(sample, copy, overwrite: true);
+                IWordWindowedDocument? document = withDocument ? WordWindowedDocumentOpener.Open(copy, policy) : null;
+                try
+                {
+                    document?.RenderBlocks(0, 40);
+                    string temporary = copy + ".save.tmp";
+                    File.Copy(sample, temporary, overwrite: true);
+                    using (var append = new FileStream(temporary, FileMode.Append)) append.WriteByte(0);
+                    try { File.Replace(temporary, copy, null); }
+                    catch (IOException error)
+                    {
+                        refused++;
+                        string kind = $"0x{error.HResult:X8} {error.Message.Trim()}";
+                        errorKinds[kind] = errorKinds.GetValueOrDefault(kind) + 1;
+                        List<(int processId, string name)> holders = FileLockHolders.Of(copy, temporary);
+                        if (holders.Any(holder => holder.processId == Environment.ProcessId)) refusedByUs++;
+                        foreach ((int _, string name) in holders) holderNames[name] = holderNames.GetValueOrDefault(name) + 1;
+                        if (holders.Count == 0) holderNames["(released before the query)"] = holderNames.GetValueOrDefault("(released before the query)") + 1;
+                        File.Delete(temporary);
+                    }
+                }
+                finally { document?.Dispose(); }
+                if ((round + 1) % 10 == 0) Console.WriteLine($"   {round + 1}/{rounds}: {refused} refused so far");
+            }
+            Console.WriteLine($"   refused {refused} of {rounds}, with our process among the holders {refusedByUs}; holders: {(holderNames.Count == 0 ? "-" : string.Join(", ", holderNames.Select(pair => $"{pair.Key} x{pair.Value}")))}"
+                + (errorKinds.Count == 0 ? "" : $"; errors: {string.Join(" | ", errorKinds.Select(pair => $"{pair.Key} x{pair.Value}"))}"));
+            TestReport.Check(refusedByUs == 0, $"{(withDocument ? "document open" : "control")}: our process never held the files when a replace was refused");
+        }
+        File.Delete(copy);
     }
 }

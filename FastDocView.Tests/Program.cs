@@ -99,6 +99,7 @@ for (int i = 0; i < args.Length; i++)
         case "--rtf-audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfAuditPaths.Add(args[++i]); break;
         case "--golden": goldenDirectory = args[++i]; while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) goldenPaths.Add(args[++i]); break;   // <out-dir> <files...>: observable-output dump per file (index-change proof)
         case "--doc-search-golden": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) docSearchGoldenPaths.Add(args[++i]); break;   // .doc one-pass search = the old block-range path, on these files only
+        case "--coexistence-probe": WordCoexistenceTest.Probe(args[++i], int.Parse(args[++i])); return TestReport.FailureCount == 0 ? 0 : 1;   // <file> <rounds>: save-by-replace refusals with / without our document open, and who held the file
         case "--doc-reads": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) docReadPaths.Add(args[++i]); break;   // .doc reopen / full-search bytes read, read calls, ms
         case "--compact-report": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) compactReportPaths.Add(args[++i]); break;   // sidecar size breakdown + reopen / window / random-block timings
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
