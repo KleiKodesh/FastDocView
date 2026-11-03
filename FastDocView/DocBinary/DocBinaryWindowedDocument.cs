@@ -15,6 +15,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     private readonly Stream _tableStream;
     private readonly Stream? _dataStream;
     private readonly DocBinaryBlockIndex _index;
+    private readonly DocBinaryCompactBlockTable _table;
     private readonly DocBinaryParagraphHtmlRenderer _renderer;
     private readonly DocBinaryStyleSheet _styles;
     private readonly DocBinaryNoteReferences _notes;
@@ -27,7 +28,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     /// block index maps it - nothing stored in the index, no text read. Bookmarks outside the main text (notes, headers) are null.
     /// </summary>
     public int? FindBookmark(string name)
-        => Bookmarks.StartOf(name) is { } cp && cp < FileInformationBlock.MainTextCharacterCount && _index.BlockCount > 0 ? _index.BlockAt(cp) : null;
+        => Bookmarks.StartOf(name) is { } cp && cp < FileInformationBlock.MainTextCharacterCount && _index.BlockCount > 0 ? WithTable(() => _table.BlockAt(cp)) : null;
 
     public DocBinaryBookmarks Bookmarks { get; }
 
@@ -45,6 +46,24 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     public DocBinaryStyleSheet StyleSheet => _styles;
     public DocBinaryListDefinitions ListDefinitions { get; }
     public DocBinaryBlockIndex BlockIndex => _index;
+    internal DocBinaryParagraphHtmlRenderer Renderer => _renderer;
+    /// <summary>The block containing a main-text CP.</summary>
+    public int BlockAtCp(int cp) => WithTable(() => _table.BlockAt(cp));
+    /// <summary>The block's list label ("3.", a bullet) as the index pass counted it, or null - recovered by rescanning the block's span.</summary>
+    public string? ListLabelOf(int blockIndex) => WithTable(() => _table.ListLabelOf(blockIndex));
+    public WordDocumentBlockKind BlockKindOf(int blockIndex) => WithTable(() => _table.BlockKindOf(blockIndex));
+    /// <summary>The block's main-text CP range.</summary>
+    public (int startCp, int endCp) BlockRange(int blockIndex) => WithTable(() => (_table.BlockStartCp(blockIndex), _table.BlockEndCp(blockIndex)));
+
+    /// <summary>A table lookup that may rescan a span (reads the file): under the read lock, the file released afterwards like a window.</summary>
+    private T WithTable<T>(Func<T> lookup)
+    {
+        lock (_readLock)
+        {
+            try { return lookup(); }
+            finally { _releasableFile?.Release(); }
+        }
+    }
 
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
     {
@@ -114,13 +133,15 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         Bookmarks = DocBinaryBookmarks.Read(_tableStream, FileInformationBlock);
         _renderer.Bookmarks = Bookmarks;
 
-        bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc);
+        bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc)
+                            && cachedIndex.NoteReferenceBlocks.Length == _notes.References.Length;
         Decision = policy.Decide(displayPath, (long)FileInformationBlock.MainTextCharacterCount * 2, isCacheValid);
         _index = isCacheValid ? cachedIndex!
-               : DocBinaryBlockIndex.Build(PieceTable, _renderer, _styles, ListDefinitions, FileInformationBlock.MainTextCharacterCount,
+               : DocBinaryBlockIndex.Build(PieceTable, _renderer, _styles, ListDefinitions, _notes.References.Select(r => r.ReferenceCp).ToArray(), FileInformationBlock.MainTextCharacterCount,
                                            sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
 
-        Sections = DocBinarySectionTable.Read(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, _index.BlockAt);
+        _table = new DocBinaryCompactBlockTable(_index, PieceTable, _renderer, _styles, ListDefinitions);
+        Sections = DocBinarySectionTable.Read(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, _table.BlockAt);
         IsRightToLeft = DetectRightToLeft();
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(0).RunFormatting, IsRightToLeft);
     }
@@ -160,7 +181,11 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         return letters > 0 && rightToLeft * 5 > letters;
     }
 
-    public int EstimatedTextLength(int blockIndex) => _index.BlockTextLengths[blockIndex];
+    /// <summary>Exact once the block's span has been rescanned (a window near it was read), else its 64-block group's average.</summary>
+    public int EstimatedTextLength(int blockIndex)
+    {
+        lock (_readLock) return _table.KnownTextLength(blockIndex) ?? _index.EstimatedTextLength(blockIndex);
+    }
 
     private WordDocumentFileStream? _releasableFile;   // set by Open(path): released after every window
     private bool _isReadingFromFile;                    // false when the whole text was inflated in memory (small .docx)
@@ -189,7 +214,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
                 var counts = new List<int>();
                 for (int blockIndex = fromBlock; blockIndex < end; blockIndex++)
                 {
-                    int start = _index.BlockStartCps[blockIndex], blockEnd = _index.BlockEndCp(blockIndex);
+                    int start = _table.BlockStartCp(blockIndex), blockEnd = _table.BlockEndCp(blockIndex);
                     matcher.Reset();
                     _renderer.FeedSearchText(start, blockEnd, matcher);
                     if (options.IncludeNotes)
@@ -224,11 +249,11 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         int last = Math.Min(BlockCount, firstBlockIndex + count);
         for (int blockIndex = Math.Max(0, firstBlockIndex); blockIndex < last; blockIndex++)
         {
-            int start = _index.BlockStartCps[blockIndex], end = _index.BlockEndCp(blockIndex);
-            WordDocumentBlockKind kind = _index.BlockKinds[blockIndex];
+            int start = _table.BlockStartCp(blockIndex), end = _table.BlockEndCp(blockIndex);
+            WordDocumentBlockKind kind = _table.BlockKindOf(blockIndex);
             string html = kind == WordDocumentBlockKind.TableRow
                 ? _renderer.RenderRow(start, end)
-                : _renderer.Render(start, end, PreviousStyleKey(blockIndex), listLabel: _index.ListLabelOf(blockIndex));
+                : _renderer.Render(start, end, PreviousStyleKey(blockIndex), listLabel: _table.ListLabelOf(blockIndex));
             result.Add(new WordDocumentBlockHtml(blockIndex, kind, html, RenderNotesIn(start, end)));
         }
         return result;
@@ -237,8 +262,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     /// <summary>The style of the paragraph before a block, for contextual spacing (one cached PAPX lookup).</summary>
     private string? PreviousStyleKey(int blockIndex)
     {
-        if (blockIndex == 0 || _index.BlockKinds[blockIndex - 1] != WordDocumentBlockKind.Paragraph) return null;
-        return _renderer.ResolveParagraph(_index.BlockStartCps[blockIndex - 1], _index.BlockEndCp(blockIndex - 1)).formatting.StyleKey;
+        if (blockIndex == 0 || _table.BlockKindOf(blockIndex - 1) != WordDocumentBlockKind.Paragraph) return null;
+        return _renderer.ResolveParagraph(_table.BlockStartCp(blockIndex - 1), _table.BlockEndCp(blockIndex - 1)).formatting.StyleKey;
     }
 
     private IReadOnlyList<WordDocumentNoteHtml> RenderNotesIn(int cpStart, int cpEnd)
@@ -285,7 +310,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     public (int footnotes, int endnotes) NoteCounts => (_notes.FootnoteCount, _notes.EndnoteCount);
 
     public IReadOnlyList<WordDocumentNoteReference> NoteReferences
-        => _noteReferences ??= _notes.References.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, _index.BlockAt(r.ReferenceCp))).ToArray();
+        => _noteReferences ??= _notes.References.Select((r, i) => new WordDocumentNoteReference(r.Kind, r.Number, _index.NoteReferenceBlocks[i])).ToArray();
     private WordDocumentNoteReference[]? _noteReferences;
 
     public void Dispose()

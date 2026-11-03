@@ -77,7 +77,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         return new RtfWindowedDocument(displayPath, file, index, decision);
     }
 
-    internal RtfRandomAccessIndex Index => _index;
+    public RtfRandomAccessIndex Index => _index;
 
     private RtfWindowedDocument(string filePath, Stream file, RtfRandomAccessIndex index, WordIndexDecision decision)
     {

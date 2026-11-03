@@ -43,6 +43,8 @@ string? textCorpus = null, mimeScan = null;
 var markupProfilePaths = new List<string>();
 var rtfAuditPaths = new List<string>();
 var rtfProfilePaths = new List<string>();
+string? goldenDirectory = null;
+var goldenPaths = new List<string>();
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -92,6 +94,7 @@ for (int i = 0; i < args.Length; i++)
             break;
         case "--rtf-profile": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfProfilePaths.Add(args[++i]); break;
         case "--rtf-audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfAuditPaths.Add(args[++i]); break;
+        case "--golden": goldenDirectory = args[++i]; while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) goldenPaths.Add(args[++i]); break;   // <out-dir> <files...>: observable-output dump per file (index-change proof)
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
         case "--corpus-sample": corpusSample = int.Parse(args[++i]); break;   // a fixed-seed random sample of N corpus files (quick regression pass)
         case "--word-compare-page": WordComparisonPage.Run(args[++i], args[++i], args[++i]); return 0;   // <document> <word.json> <out.html>: blocks matching Word's sampled paragraphs
@@ -99,6 +102,7 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
+if (goldenDirectory is not null) { GoldenDumpTest.Run(goldenDirectory, goldenPaths.Where(File.Exists)); skipSynthetic = true; }
 if (searchOnly) { DocumentSearchTest.Run(searchPaths); skipSynthetic = true; }
 if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); OdtFirstOpenTiming.RunSynthetic(); skipSynthetic = true; }
 if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
@@ -124,6 +128,7 @@ if (odtIncrementalBlocks > 0) OdtIncrementalOpenTest.Run(odtIncrementalBlocks);
 if (notesStreamingBlocks > 0) DocxNotesStreamingTest.Run(notesStreamingBlocks, noteFillerCharacters: 60_000);
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Count > 0) CompactIndexTest.RunRecovery(realPaths.Where(path => File.Exists(path) && path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)));
+if (realPaths.Count > 0) CompactDocIndexTest.Run(realPaths.Where(path => File.Exists(path) && path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)));
 if (fidelityOnly || realPaths.Count > 0) NotesWindowTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Count > 0) WordCoexistenceTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Any(path => path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)))

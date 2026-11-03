@@ -47,21 +47,21 @@ public static class DocBinaryListLabelsTest
         DocBinaryBlockIndex index = document.BlockIndex;
         int labelled = 0;
         var firstLabelled = new List<int>();
+        var frequency = new Dictionary<string, int>(StringComparer.Ordinal);
         for (int block = 0; block < index.BlockCount; block++)
         {
-            if (index.BlockListLabelIds[block] < 0) continue;
+            if (document.ListLabelOf(block) is not { } label) continue;
             labelled++;
+            frequency[label] = frequency.TryGetValue(label, out int n) ? n + 1 : 1;
             if (firstLabelled.Count < 8) firstLabelled.Add(block);
         }
         if (verbose)
         {
             Console.WriteLine($"   list tables: {document.ListDefinitions.Lists.Count} LSTF, {document.ListDefinitions.Overrides.Count} LFO; " +
-                              $"{labelled:N0} of {index.BlockCount:N0} blocks labelled, {index.ListLabels.Length} distinct labels");
+                              $"{labelled:N0} of {index.BlockCount:N0} blocks labelled, {frequency.Count} distinct labels");
             int pieces = document.PieceTable.Pieces.Count, piecesWithPrm = document.PieceTable.Pieces.Count(p => p.PrmGrpprl is not null);
             Console.WriteLine($"   pieces: {pieces:N0}, with Prm: {piecesWithPrm:N0}, Prc grpprls in Clx: {document.PieceTable.PrcGrpprls.Count}");
-            var frequency = new Dictionary<int, int>();
-            foreach (int id in index.BlockListLabelIds) if (id >= 0) frequency[id] = frequency.TryGetValue(id, out int n) ? n + 1 : 1;
-            IEnumerable<string> top = frequency.OrderByDescending(f => f.Value).Take(8).Select(f => $"{Escape(index.ListLabels[f.Key])} x{f.Value}");
+            IEnumerable<string> top = frequency.OrderByDescending(f => f.Value).Take(8).Select(f => $"{Escape(f.Key)} x{f.Value}");
             Console.WriteLine($"   most frequent labels: {string.Join(", ", top)}");
             string twinPath = Path.ChangeExtension(path, ".docx");
             if (File.Exists(twinPath))

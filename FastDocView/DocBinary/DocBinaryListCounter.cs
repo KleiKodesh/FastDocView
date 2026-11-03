@@ -21,6 +21,23 @@ public sealed class DocBinaryListCounter
         _definitions = definitions;
     }
 
+    /// <summary>The complete numbering state (every list's counters, the start overrides applied), as the compact index stores it per span anchor.</summary>
+    public byte[] ExportState() => WordListCounterState.Serialize(_countersByListId, _appliedStartOverrides);
+
+    /// <summary>Replaces the numbering state by one <see cref="ExportState"/> wrote.</summary>
+    public void ImportState(byte[] state)
+    {
+        _countersByListId.Clear();
+        _appliedStartOverrides.Clear();
+        (Dictionary<int, int[]> lists, HashSet<(int, int)> overrides) = WordListCounterState.Parse(state);
+        foreach (KeyValuePair<int, int[]> list in lists)
+        {
+            if (list.Value.Length != DocBinaryListDefinitions.MaxLevels) throw new InvalidDataException(".doc index: list state has the wrong level count.");
+            _countersByListId[list.Key] = list.Value;
+        }
+        _appliedStartOverrides.UnionWith(overrides);
+    }
+
     /// <summary>Advances the counters for a paragraph and returns its label; null when it is not a list item.</summary>
     /// <param name="rawListFormatOverride">sprmPIlfo as stored (unsigned 16-bit): 1..0x07FE an index, 0xF801 none, 0xF802.. a negated index.</param>
     public string? Next(int rawListFormatOverride, int level)

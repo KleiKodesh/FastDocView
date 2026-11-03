@@ -48,7 +48,7 @@ public static class DocBinaryListLayoutTest
         string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "apache-poi", "Lists.doc");
         if (!File.Exists(path)) { TestReport.Check(false, "test-data/apache-poi/Lists.doc present"); return; }
         using var document = DocBinaryWindowedDocument.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
-        int block = Enumerable.Range(0, document.BlockIndex.BlockCount).First(b => document.BlockIndex.BlockListLabelIds[b] >= 0);
+        int block = Enumerable.Range(0, document.BlockIndex.BlockCount).First(b => document.ListLabelOf(b) is not null);
         string rendered = document.RenderBlocks(block, 1)[0].Html;
         TestReport.Check(rendered.Contains("margin-inline-start:36pt;") && rendered.Contains("text-indent:-18pt;") && rendered.Contains("min-width:18pt;"),
                          "Lists.doc: the LVL indents reach the paragraph, the label reaches the hanging indent");
