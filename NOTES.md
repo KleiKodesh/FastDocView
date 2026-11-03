@@ -1193,6 +1193,17 @@ others hold the files, as Word retries a save.
   sprmTTableWidth (fts 3) else the rgdxaCenter span, indent = rgdxaCenter[0] moved by sprmTDxaLeft - dxaGapHalf, applied
   from the left (LTR, left) or right (sprmTFBiDi, right) as ww8par2.cxx LEFT_AND_WIDTH. LibreOffice-written .doc: mx
   overflows 16 bits for big upscales (wrtww8gr.cxx WritePICFHeader) - the test uses a small extent.
+- **.doc floating pictures** (DocBinaryFloatingPictures, 2026-11-03): 0x08 + fSpec in the main text -> PlcSpaMom
+  (FibRgFcLcb97 40) FSPA at that CP (26 bytes: spid, xaLeft..yaBottom, flags bx / by / wr / wrk / fRcaSimple) ->
+  OfficeArtContent at fcDggInfo (index 50): BStore FBSEs (foDelay) and each DgContainer's SpContainer FSP spid + FOPT
+  pib (260) -> blip in the Data stream, else WordDocument. Read from LibreOffice master: ww8par.cxx:3656 (case 0x8),
+  ww8par.cxx:501 (streams), ww8graf.cxx:2605-2662 (Read_GrafLayer) and 2700-2745 (wr / wrk), ww8struc.hxx:903-964
+  (WW8_FSPA), ww8scan.cxx:1808-1811 / 6117 / 6138, msdffimp.cxx:5967-6095 (GetCtrlData, BStore), 6215-6245 (FSP, FOPT),
+  6414-6475 (GetBLIP), dffpropset.cxx:1128 (id & 0x3FFF). Id = "s" + spid. Wrap 1 = above and below, 3 = through,
+  else square (wrk 1 = picture right); size from the FSPA; xaLeft kept as the offset when bx is column / margin.
+  Not drawn: yaTop / page origin, wrap gaps (FOPT dxWrapDist*), header shapes (PlcSpaHdr), groups, shapes without a pib
+  (WordArt, text boxes keep "[image]"). Check: `--fidelity` DocBinaryFloatingPicturesTest (POI PngPicture.doc,
+  FloatingPictures.doc, pictures_escher.doc). Golden dumps change only on those three files.
 - **VML** (w:pict / w:object): v:imagedata r:id (o:relid), shape style width / height / position /
   mso-position-horizontal / margin-left / mso-wrap-distance-*, w10:wrap type / side, read as oox vmlshapecontext.cxx and
   vmlshape.cxx lcl_setSurround / lcl_SetAnchorType (static = inline; no wrap = through).

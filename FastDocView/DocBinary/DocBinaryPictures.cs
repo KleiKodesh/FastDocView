@@ -59,19 +59,26 @@ internal sealed class DocBinaryPictures
             if (RecordHeader(data, position) is not { } record) return null;
             if (record.Type == 0xF007 && record.Length >= FbseBlipOffset + 8)
             {
-                long blipAt = position + 8 + FbseBlipOffset;
-                if (RecordHeader(data, blipAt) is not { } blip || blip.Type is < 0xF018 or > 0xF117) return null;
-                string? extension = (blip.Instance & 0xFFFE) switch { 0x6E0 => ".png", 0x46A or 0x6E2 => ".jpg", _ => null };
-                if (extension is null) return null;
-                int skip = ((blip.Instance & 1) != 0 ? 32 : 16) + 1;
-                long dataAt = blipAt + 8 + skip;
-                long dataLength = blip.Length - skip;
-                if (dataLength <= 0 || dataAt + dataLength > data.Length || dataLength > int.MaxValue) return null;
-                return (widthPt, heightPt, dataAt, (int)dataLength, extension);
+                if (Blip(data, position + 8 + FbseBlipOffset) is not { } blip) return null;
+                return (widthPt, heightPt, blip.dataAt, blip.dataLength, blip.extension);
             }
             position += 8 + record.Length;
         }
         return null;
+    }
+
+    /// <summary>The PNG / JPEG data of the blip record at <paramref name="blipAt"/> in <paramref name="data"/>; null for
+    /// another record, another blip type or data past the stream's end.</summary>
+    internal static (long dataAt, int dataLength, string extension)? Blip(Stream data, long blipAt)
+    {
+        if (RecordHeader(data, blipAt) is not { } blip || blip.Type is < 0xF018 or > 0xF117) return null;
+        string? extension = (blip.Instance & 0xFFFE) switch { 0x6E0 => ".png", 0x46A or 0x6E2 => ".jpg", _ => null };
+        if (extension is null) return null;
+        int skip = ((blip.Instance & 1) != 0 ? 32 : 16) + 1;
+        long dataAt = blipAt + 8 + skip;
+        long dataLength = blip.Length - skip;
+        if (dataLength <= 0 || dataAt + dataLength > data.Length || dataLength > int.MaxValue) return null;
+        return (dataAt, (int)dataLength, extension);
     }
 
     /// <summary>The picture's bytes, or null (see <see cref="Locate"/>).</summary>
@@ -82,9 +89,9 @@ internal sealed class DocBinaryPictures
         return bytes.Length == picture.dataLength ? WordPictureHtml.Picture(picture.extension, bytes) : null;
     }
 
-    private readonly record struct OfficeArtRecordHeader(int Instance, int Type, long Length);
+    internal readonly record struct OfficeArtRecordHeader(int Instance, int Type, long Length);
 
-    private static OfficeArtRecordHeader? RecordHeader(Stream data, long at)
+    internal static OfficeArtRecordHeader? RecordHeader(Stream data, long at)
     {
         byte[] header = Read(data, at, 8);
         if (header.Length < 8) return null;
@@ -92,7 +99,7 @@ internal sealed class DocBinaryPictures
         return new OfficeArtRecordHeader(versionAndInstance >> 4, BitConverter.ToUInt16(header, 2), BitConverter.ToUInt32(header, 4));
     }
 
-    private static byte[] Read(Stream data, long at, int length)
+    internal static byte[] Read(Stream data, long at, int length)
     {
         if (at < 0 || at >= data.Length) return [];
         data.Position = at;

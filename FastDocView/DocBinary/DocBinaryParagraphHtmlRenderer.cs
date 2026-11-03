@@ -422,6 +422,10 @@ public sealed class DocBinaryParagraphHtmlRenderer
                     Flush();
                     AppendPicture(html, location);
                     continue;
+                case '\u0008' when isSpecial && FloatingPictures?.At(runCp + i) is { } floating:
+                    Flush();
+                    WordPictureHtml.Append(html, floating.layout, floating.pictureId);
+                    continue;
                 case '\u0001': case '\u0008': if (isSpecial) visible.Append("<span class=\"unsupported\">[image]</span>"); continue;
                 case AutoNumberedNoteMark:
                     if (isSpecial) AppendNoteMark(visible, runCp + i, noteLabel);
@@ -436,6 +440,9 @@ public sealed class DocBinaryParagraphHtmlRenderer
 
     /// <summary>The Data stream's pictures (inline 0x01 pictures); none for a document without a Data stream.</summary>
     internal DocBinaryPictures Pictures { get; set; } = new(null);
+
+    /// <summary>The main text's floating (0x08) pictures; null when not set.</summary>
+    internal DocBinaryFloatingPictures? FloatingPictures { get; set; }
 
     /// <summary>
     /// An inline picture (a .doc 0x01 picture is always in the line: LibreOffice ww8par.cxx imports it FLY_AS_CHAR) at its PICF

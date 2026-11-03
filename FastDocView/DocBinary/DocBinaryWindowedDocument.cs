@@ -133,6 +133,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         Bookmarks = DocBinaryBookmarks.Read(_tableStream, FileInformationBlock);
         _renderer.Bookmarks = Bookmarks;
         _renderer.Pictures = new DocBinaryPictures(_dataStream);
+        _renderer.FloatingPictures = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock);
 
         int[] sectionStartCps = DocBinarySectionTable.ReadStartCps(_tableStream, FileInformationBlock.SectionDescriptors);
         bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc)
@@ -197,15 +198,18 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
 
     /// <inheritdoc/>
-    /// <remarks>The id is the picture's PICF offset in the Data stream (sprmCPicLocation); its PICF and OfficeArt headers and
-    /// then its blip bytes are read (<see cref="DocBinaryPictures"/>).</remarks>
+    /// <remarks>An inline picture's id is its PICF offset in the Data stream (sprmCPicLocation); its PICF and OfficeArt headers
+    /// and then its blip bytes are read (<see cref="DocBinaryPictures"/>). A floating picture's id is "s" + its shape id
+    /// (<see cref="DocBinaryFloatingPictures"/>).</remarks>
     public WordDocumentPicture? ReadPicture(string pictureId)
     {
-        if (!uint.TryParse(pictureId, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out uint location)) return null;
+        bool isFloating = pictureId.StartsWith(DocBinaryFloatingPictures.IdPrefix, StringComparison.Ordinal);
+        uint location = 0;
+        if (!isFloating && !uint.TryParse(pictureId, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out location)) return null;
         lock (_readLock)
         {
             if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
-            try { return _renderer.Pictures.Read(location); }
+            try { return isFloating ? _renderer.FloatingPictures?.Read(pictureId) : _renderer.Pictures.Read(location); }
             finally { _releasableFile?.Release(); }
         }
     }

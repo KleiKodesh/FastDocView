@@ -1,0 +1,204 @@
+using FastDocView.Html;
+
+namespace FastDocView.DocBinary;
+
+/// <summary>
+/// Floating pictures of a .doc: a 0x08 character (fSpec) in the main text anchors a shape (LibreOffice ww8par.cxx:3656
+/// "case 0x8: Read_GrafLayer"). Read as LibreOffice reads it (ww8graf.cxx:2605-2662 SwWW8ImplReader::Read_GrafLayer):
+/// - PlcSpaMom (Table stream, FibRgFcLcb97 index 40; ww8scan.cxx:6117-6118 read order): a PLCF of CPs and 26-byte FSPAs
+///   (ww8scan.cxx:1808-1811 "WW8PLCFspecial( pTableSt, fcPlcfspaMom, lcbPlcfspaMom, 26 )"), the entry at the anchor CP.
+///   FSPA (ww8struc.hxx:903-964 WW8_FSPA / WW8_FSPA_SHADOW): spid, xaLeft, yaTop, xaRight, yaBottom (Int32 twips), then
+///   flags u16: bHdr 0x0001, bx 0x0006, by 0x0018, wr 0x01E0, wrk 0x1E00, fRcaSimple 0x2000, fBelowText 0x4000.
+/// - The drawing (Table stream at fcDggInfo, FibRgFcLcb97 index 50; ww8par.cxx:501 passes it to SvxMSDffManager with the
+///   Data stream as the blip stream and the WordDocument stream as the second one): a DggContainer 0xF000 whose
+///   BStoreContainer 0xF001 lists FBSEs 0xF007 (msdffimp.cxx:6020-6095: blip size 20 bytes into the FBSE body, foDelay 4
+///   after it; foDelay 0 and a size smaller than the record = the blip is inside the FBSE), then DgContainers 0xF002, each
+///   behind a one-byte label LibreOffice steps over (msdffimp.cxx:5990-6006 "nPos++"). A shape's SpContainer 0xF004 holds
+///   its FSP 0xF00A (spid = first u32, msdffimp.cxx:6221-6226) and its FOPT 0xF00B: 6-byte entries u16 id / u32 value
+///   (msdffimp.cxx:6238-6243), the property number being id &amp; 0x3FFF (dffpropset.cxx:1128); pib = 260
+///   (msdffdef.hxx DFF_Prop_pib), the 1-based FBSE index (msdffimp.cxx:3843 / 6439-6455).
+/// - The blip at foDelay: the Data stream first, then the WordDocument stream (msdffimp.cxx:6455-6473 GetBLIP).
+/// Wrap from FSPA wr / wrk as ww8graf.cxx:2700-2745 maps them: 1 = text above and below, 3 = no wrap (through),
+/// 0 / 2 / 4 / 5 = text on the sides; wrk 1 = text only on the left (the picture on the right). Size = xaRight - xaLeft by
+/// yaBottom - yaTop. The browser has no page, so yaTop and the page / margin origin (bx, by) are not drawn; a picture
+/// relative to the column (bx 2) or margin (bx 0) keeps xaLeft as its offset from the start of the line.
+/// Only the main text's shapes (headers are not rendered here); a group or a shape without a picture keeps a box.
+/// The tables are read on the first floating picture: CPs (4 bytes a shape), spid -> pib, pib -> blip offset; no bytes.
+/// </summary>
+internal sealed class DocBinaryFloatingPictures
+{
+    private const int FspaSize = 26;
+    private const int PropertyPib = 260;
+    /// <summary>The id prefix that tells a floating picture from an inline one (whose id is a PICF offset, digits only).</summary>
+    public const string IdPrefix = "s";
+
+    private readonly Stream _tableStream;
+    private readonly Stream _wordDocument;
+    private readonly Stream? _dataStream;
+    private readonly (uint offset, uint length) _plcSpa;
+    private readonly (uint offset, uint length) _drawing;
+
+    private int[]? _anchorCps;
+    private Dictionary<uint, int>? _pibBySpid;
+    private List<(uint offset, bool insideTable)>? _blips;
+
+    public DocBinaryFloatingPictures(Stream tableStream, Stream wordDocument, Stream? dataStream, DocBinaryFileInformationBlock fib)
+    {
+        _tableStream = tableStream;
+        _wordDocument = wordDocument;
+        _dataStream = dataStream;
+        _plcSpa = fib.MainShapeAnchors;
+        _drawing = fib.DrawingGroup;
+    }
+
+    /// <summary>The layout and id of the picture anchored at <paramref name="cp"/>; null when there is none we can show.</summary>
+    public (WordPictureLayout layout, string pictureId)? At(int cp)
+    {
+        if (Fspa(cp) is not { } fspa) return null;
+        if (Locate(fspa.spid) is null) return null;
+        double widthPt = Math.Max(1, fspa.xaRight - (double)fspa.xaLeft) / 20, heightPt = Math.Max(1, fspa.yaBottom - (double)fspa.yaTop) / 20;
+        int bx = (fspa.flags >> 1) & 3, wr = (fspa.flags >> 5) & 0xF, wrk = (fspa.flags >> 9) & 0xF;
+        bool pageRelative = bx == 1 || (fspa.flags & 0x2000) != 0;
+        WordPictureWrap wrap = wr switch { 1 => WordPictureWrap.TopAndBottom, 3 => WordPictureWrap.None, _ => WordPictureWrap.Square };
+        WordPictureSide side = (wr is 2 or 4 && wrk == 1) ? WordPictureSide.Right : WordPictureSide.Left;
+        double offsetPt = side == WordPictureSide.Left && !pageRelative ? Math.Max(0, fspa.xaLeft / 20.0) : 0;
+        var layout = new WordPictureLayout(widthPt, heightPt, wrap, side, 0, 0, 0, 0, offsetPt);
+        return (layout, IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>The bytes of floating picture <paramref name="pictureId"/> (see <see cref="At"/>), or null.</summary>
+    public WordDocumentPicture? Read(string pictureId)
+    {
+        if (!pictureId.StartsWith(IdPrefix, StringComparison.Ordinal)
+            || !uint.TryParse(pictureId.AsSpan(IdPrefix.Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out uint spid))
+            return null;
+        if (Locate(spid) is not { } blip) return null;
+        byte[] bytes = DocBinaryPictures.Read(blip.stream, blip.dataAt, blip.dataLength);
+        return bytes.Length == blip.dataLength ? WordPictureHtml.Picture(blip.extension, bytes) : null;
+    }
+
+    private (uint spid, int xaLeft, int yaTop, int xaRight, int yaBottom, int flags)? Fspa(int cp)
+    {
+        int[] cps = _anchorCps ??= ReadAnchorCps();
+        int index = Array.BinarySearch(cps, 0, Math.Max(0, cps.Length - 1), cp);
+        if (index < 0) return null;
+        long at = _plcSpa.offset + (long)cps.Length * 4 + (long)index * FspaSize;
+        byte[] fspa = DocBinaryPictures.Read(_tableStream, at, FspaSize);
+        if (fspa.Length < FspaSize) return null;
+        uint spid = BitConverter.ToUInt32(fspa, 0);
+        if (spid == 0) return null;                    // ww8graf.cxx:2649 "Where is the graphic (3)"
+        return (spid, BitConverter.ToInt32(fspa, 4), BitConverter.ToInt32(fspa, 8), BitConverter.ToInt32(fspa, 12),
+                BitConverter.ToInt32(fspa, 16), BitConverter.ToUInt16(fspa, 20));
+    }
+
+    private int[] ReadAnchorCps()
+    {
+        (uint offset, uint length) = _plcSpa;
+        if (length < 4 + 4 + FspaSize || offset + (long)length > _tableStream.Length) return [];
+        int count = (int)((length - 4) / (4 + FspaSize));
+        byte[] bytes = DocBinaryPictures.Read(_tableStream, offset, (count + 1) * 4);
+        if (bytes.Length < (count + 1) * 4) return [];
+        var cps = new int[count + 1];
+        for (int index = 0; index <= count; index++) cps[index] = BitConverter.ToInt32(bytes, index * 4);
+        return cps;
+    }
+
+    private (Stream stream, long dataAt, int dataLength, string extension)? Locate(uint spid)
+    {
+        if (_pibBySpid is null) ReadDrawing();
+        if (!_pibBySpid!.TryGetValue(spid, out int pib) || pib < 1 || pib > _blips!.Count) return null;
+        (uint offset, bool insideTable) = _blips[pib - 1];
+        IEnumerable<Stream?> streams = insideTable ? [_tableStream] : [_dataStream, _wordDocument];
+        foreach (Stream? stream in streams)
+            if (stream is not null && DocBinaryPictures.Blip(stream, offset) is { } blip)
+                return (stream, blip.dataAt, blip.dataLength, blip.extension);
+        return null;
+    }
+
+    /// <summary>One walk over the record headers of the drawing: the FBSEs' blip offsets and each shape's pib.</summary>
+    private void ReadDrawing()
+    {
+        _pibBySpid = [];
+        _blips = [];
+        (uint offset, uint length) = _drawing;
+        Stream table = _tableStream;
+        long end = Math.Min(table.Length, offset + (long)length);
+        if (length < 8 || DocBinaryPictures.RecordHeader(table, offset) is not { Type: 0xF000 } dgg) return;
+        long dggEnd = Math.Min(end, offset + 8 + dgg.Length);
+        for (long position = offset + 8; position + 8 <= dggEnd;)
+        {
+            if (DocBinaryPictures.RecordHeader(table, position) is not { } record) break;
+            if (record.Type == 0xF001) ReadBStore(position + 8, Math.Min(dggEnd, position + 8 + record.Length));
+            position += 8 + record.Length;
+        }
+        for (long position = dggEnd; position + 8 <= end;)
+        {
+            if (DocBinaryPictures.RecordHeader(table, position) is not { Type: 0xF002 } drawing)
+            {
+                position++;                             // the drawing's one-byte label (msdffimp.cxx:6001 "nPos++")
+                if (DocBinaryPictures.RecordHeader(table, position) is not { Type: 0xF002 } labelled) break;
+                drawing = labelled;
+            }
+            ReadShapes(position + 8, Math.Min(end, position + 8 + drawing.Length), depth: 0);
+            position += 8 + drawing.Length;
+        }
+    }
+
+    private void ReadBStore(long position, long end)
+    {
+        while (position + 8 <= end)
+        {
+            if (DocBinaryPictures.RecordHeader(_tableStream, position) is not { } record) return;
+            uint blipAt = 0;
+            bool insideTable = false;
+            if (record.Type == 0xF007 && record.Length >= 32)
+            {
+                byte[] body = DocBinaryPictures.Read(_tableStream, position + 8, 32);
+                if (body.Length == 32)
+                {
+                    uint size = BitConverter.ToUInt32(body, 20), foDelay = BitConverter.ToUInt32(body, 28);
+                    if (foDelay == 0 && size < record.Length) { blipAt = (uint)(position + 8 + 36); insideTable = true; }
+                    else blipAt = foDelay;
+                }
+            }
+            _blips!.Add((blipAt, insideTable));     // one entry per BStore record keeps pib numbering
+            position += 8 + record.Length;
+        }
+    }
+
+    /// <summary>Shapes of a DgContainer / SpgrContainer: each SpContainer's spid and pib; groups are walked for their members.</summary>
+    private void ReadShapes(long position, long end, int depth)
+    {
+        while (position + 8 <= end)
+        {
+            if (DocBinaryPictures.RecordHeader(_tableStream, position) is not { } record) return;
+            long body = position + 8, bodyEnd = Math.Min(end, body + record.Length);
+            if (record.Type == 0xF003 && depth < 8) ReadShapes(body, bodyEnd, depth + 1);
+            else if (record.Type == 0xF004) ReadShape(body, bodyEnd);
+            position = body + record.Length;
+        }
+    }
+
+    private void ReadShape(long position, long end)
+    {
+        uint? spid = null;
+        int? pib = null;
+        while (position + 8 <= end)
+        {
+            if (DocBinaryPictures.RecordHeader(_tableStream, position) is not { } record) return;
+            long body = position + 8;
+            if (record.Type == 0xF00A && record.Length >= 4)
+                spid = BitConverter.ToUInt32(DocBinaryPictures.Read(_tableStream, body, 4) is { Length: 4 } id ? id : new byte[4], 0);
+            else if (record.Type == 0xF00B)
+            {
+                int count = record.Instance;            // recInstance = the property count (msdffdef.hxx:45 DFF_msofbtOPT)
+                byte[] entries = DocBinaryPictures.Read(_tableStream, body, (int)Math.Min(record.Length, (long)count * 6));
+                for (int index = 0; index + 6 <= entries.Length; index += 6)
+                    if ((BitConverter.ToUInt16(entries, index) & 0x3FFF) == PropertyPib)
+                        pib = (int)BitConverter.ToUInt32(entries, index + 2);
+            }
+            position = body + record.Length;
+        }
+        if (spid is { } shapeId && pib is { } blipIndex) _pibBySpid![shapeId] = blipIndex;
+    }
+}
