@@ -19,10 +19,10 @@ public enum WordPictureWrap : byte
 /// <summary>Where a floating picture sits across the column - physical sides, as DrawingML wp:align and ODF style:horizontal-pos.</summary>
 public enum WordPictureSide : byte { Left, Center, Right }
 
-/// <summary>A text box's own look: inner margins (points), border / fill as CSS colours (null = none), rotation, vertical text, auto-grow height.</summary>
+/// <summary>A text box's own look: inner margins (points), border / fill as CSS colours (null = none), rotation, writing-mode CSS (null = horizontal), auto-grow height.</summary>
 public readonly record struct WordTextBoxStyle(double LeftInsetPt, double TopInsetPt, double RightInsetPt, double BottomInsetPt,
                                                string? BorderColor, double BorderWidthPt, bool BorderDash, string? FillColor,
-                                               double RotationDegrees, bool VerticalText, bool GrowsWithText);
+                                               double RotationDegrees, string? WritingMode, bool GrowsWithText);
 
 /// <summary>A picture's box: size and the gap kept to the text around it (points), wrap and side.</summary>
 public readonly record struct WordPictureLayout(double WidthPt, double HeightPt, WordPictureWrap Wrap, WordPictureSide Side,
@@ -113,7 +113,7 @@ public static class WordPictureHtml
         else css.Append("border:0;");   // over the stylesheet's frame for boxes without a placement
         if (style.FillColor is { } fill) css.Append("background:").Append(fill).Append(';');
         if (style.RotationDegrees != 0) css.Append("transform:rotate(").Append(style.RotationDegrees.ToString("0.##", CultureInfo.InvariantCulture)).Append("deg);");
-        if (style.VerticalText) css.Append("writing-mode:vertical-rl;");
+        if (style.WritingMode is { } writingMode) css.Append(writingMode);
         html.Append("<span class=\"text-box\" style=\"").Append(css).Append("\">");
     }
 

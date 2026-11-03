@@ -778,8 +778,8 @@ public sealed class DocxBlockHtmlRenderer
         XElement? boxLayout = drawing.Elements().FirstOrDefault(e => e.Name.LocalName == Docx.DocxDrawingStripper.PictureLayoutElementName && e.Attribute("textBox") is not null);
         foreach (XElement textBox in textBoxes)
         {
-            // a chain of linked boxes (wps:linkedTxbx) keeps its whole text in the first box's w:txbxContent (ECMA-376 Part 1
-            // 20.4: only the first box of the chain holds txbxContent), so each box renders the text it holds.
+            // a chain of linked boxes: the box with wps:txbx id holds the w:txbxContent, the others carry wps:linkedTxbx id + seq
+            // and no content (LibreOffice oox/source/shape/WpsContext.cxx:892-926), so each box renders only the text it holds.
             if (boxLayout is not null) WordPictureHtml.OpenTextBox(html, DrawingLayout(boxLayout), TextBoxStyle(boxLayout));
             else html.Append("<span class=\"text-box\">");
             _previousStyleKey = null;
@@ -836,10 +836,14 @@ public sealed class DocxBlockHtmlRenderer
     }
 
     /// <summary>
-    /// A wps text box's look from the layout element. Unset insets take the ECMA-376 Part 1 21.1.2.1.1 bodyPr defaults
-    /// (lIns / rIns 91440 EMU, tIns / bIns 45720 EMU); a line without a colour is drawn black, a line with a:noFill not at all;
-    /// a:ln w defaults to 0 = the thinnest line (20.1.2.2.24). rot is in 60000ths of a degree (ST_Angle 20.1.10.3). vert
-    /// vert / eaVert / vert270 / wordArtVert / mongolianVert = text runs top to bottom (21.1.10.83 ST_TextVerticalType).
+    /// A wps text box's look from the layout element. Sources checked online 2026-11-03 against LibreOffice core master:
+    /// unset insets = lIns / rIns 91440 EMU, tIns / bIns 45720 EMU ("Defaults from the spec", oox/source/shape/WpsContext.cxx:700-702,
+    /// 254 / 127 hundredths of a mm). a:ln without w: LibreOffice keeps no width (oox/source/drawingml/linepropertiescontext.cxx:46)
+    /// and converts that to 0 (lineproperties.cxx:562) = the thinnest line; drawn here as 0.25pt. rot is in 60000ths of a degree
+    /// clockwise (include/oox/drawingml/drawingmltypes.hxx:53 PER_DEGREE, :184). vert (textbodypropertiescontext.cxx:133-158):
+    /// eaVert = TB_RL, vert = TB_RL90 (vertical-rl), vert270 = BT_LR (bottom to top), mongolianVert = TB_LR (vertical-lr),
+    /// wordArtVert = STACKED (upright letters); wordArtVertRtl is not handled by LibreOffice either, so it stays horizontal.
+    /// The ECMA-376 text itself was not consulted; these facts are LibreOffice's reading of it.
     /// </summary>
     private static WordTextBoxStyle TextBoxStyle(XElement layout)
     {
@@ -853,7 +857,14 @@ public sealed class DocxBlockHtmlRenderer
         string? dash = (string?)layout.Attribute("dash");
         return new WordTextBoxStyle(Inset("lIns", 91440), Inset("tIns", 45720), Inset("rIns", 91440), Inset("bIns", 45720),
                                     border, Inset("lineW", 0), dash is not null && dash != "solid", Color((string?)layout.Attribute("fill")),
-                                    rotation / 60000, vert is "vert" or "eaVert" or "vert270" or "wordArtVert" or "mongolianVert",
+                                    rotation / 60000, vert switch
+                                    {
+                                        "eaVert" or "vert" => "writing-mode:vertical-rl;",
+                                        "vert270" => "writing-mode:sideways-lr;",
+                                        "mongolianVert" => "writing-mode:vertical-lr;",
+                                        "wordArtVert" => "writing-mode:vertical-rl;text-orientation:upright;",
+                                        _ => null,
+                                    },
                                     layout.Attribute("autoFit") is not null);
     }
 
