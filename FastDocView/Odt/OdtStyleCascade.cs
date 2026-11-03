@@ -21,6 +21,7 @@ public sealed class OdtStyleCascade
     public static readonly XNamespace Table = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
     public static readonly XNamespace Fo = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
     public static readonly XNamespace Svg = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
+    public static readonly XNamespace Draw = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
     public static readonly XNamespace Xml = XNamespace.Xml;
 
     /// <summary>Attributes of style:text-properties this cascade maps (the audit counts the rest).</summary>
@@ -54,11 +55,17 @@ public sealed class OdtStyleCascade
     public static readonly HashSet<string> HandledGraphicProperties =
     [
         "style:wrap", "style:horizontal-pos", "style:horizontal-rel", "fo:margin", "fo:margin-left", "fo:margin-right", "fo:margin-top",
-        "fo:margin-bottom", "text:anchor-type",
+        "fo:margin-bottom", "text:anchor-type", "style:vertical-pos", "style:vertical-rel",
+        // text boxes and shapes (ODF 1.3 part 3 20.118 draw:fill, 20.119 draw:fill-color, 20.120 draw:fill-gradient-name,
+        // 20.167 draw:stroke, 20.408 svg:stroke-color, 20.410 svg:stroke-width; fo:padding / fo:border / fo:background-color)
+        "draw:fill", "draw:fill-color", "draw:fill-gradient-name", "draw:stroke", "svg:stroke-color", "svg:stroke-width",
+        "fo:padding", "fo:padding-left", "fo:padding-right", "fo:padding-top", "fo:padding-bottom", "fo:border", "fo:border-left",
+        "fo:border-right", "fo:border-top", "fo:border-bottom", "fo:background-color", "fo:min-height", "fo:min-width",
     ];
 
     private readonly Dictionary<(string family, string name), XElement> _styles = new();
     private readonly Dictionary<string, XElement> _defaultStyles = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, XElement> _gradients = new(StringComparer.Ordinal);
     private readonly Dictionary<string, OdtListStyle> _listStyles = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _fontFamilies = new(StringComparer.Ordinal);
     private readonly Dictionary<string, OdtParagraphStyle> _resolvedParagraphs = new(StringComparer.Ordinal);
@@ -104,6 +111,10 @@ public sealed class OdtStyleCascade
             else if (element.Name == Style + "default-style")
             {
                 if ((string?)element.Attribute(Style + "family") is { } family) _defaultStyles[family] = element;
+            }
+            else if (element.Name == Draw + "gradient")
+            {
+                if ((string?)element.Attribute(Draw + "name") is { } name) _gradients[name] = element;
             }
             else if (element.Name == Text + "list-style")
             {
@@ -166,6 +177,9 @@ public sealed class OdtStyleCascade
                     }
                     copy.Add(style);
                 }
+                else if (element.Name == Draw + "gradient")
+                    copy.Add(new XElement(element.Name, element.Attribute(Draw + "name"), element.Attribute(Draw + "start-color"),
+                                          element.Attribute(Draw + "end-color"), element.Attribute(Draw + "angle")));
             }
             return copy;
         }).ToArray();
@@ -173,7 +187,7 @@ public sealed class OdtStyleCascade
     private static string QualifiedName(XName name)
     {
         string prefix = name.Namespace == Fo ? "fo" : name.Namespace == Style ? "style" : name.Namespace == Text ? "text"
-                      : name.Namespace == Table ? "table" : name.Namespace == Svg ? "svg" : "?";
+                      : name.Namespace == Table ? "table" : name.Namespace == Svg ? "svg" : name.Namespace == Draw ? "draw" : "?";
         return prefix + ":" + name.LocalName;
     }
 
@@ -428,6 +442,9 @@ public sealed class OdtStyleCascade
         XElement? properties = StyleElement("table-column", columnStyleName)?.Element(Style + "table-column-properties");
         return Twips(properties?.Attribute(Style + "column-width")) is { } width ? WordParagraphFormatting.TwipsToPt(width) + "pt" : null;
     }
+
+    /// <summary>A draw:gradient by its draw:name (office:styles), null when unknown.</summary>
+    public XElement? Gradient(string? name) => name is not null && _gradients.TryGetValue(name, out XElement? gradient) ? gradient : null;
 
     /// <summary>A graphic style's property through its parent chain (style:parent-style-name), then the graphic default style.</summary>
     public string? GraphicProperty(string? styleName, XName attribute)

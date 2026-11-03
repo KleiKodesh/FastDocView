@@ -30,6 +30,10 @@ public static class WordDocumentHtmlStylesheet
             .word-document table.table-row { width: 100%; margin: 0; }
             .word-document table.table-row + table.table-row td { border-top: 0; }
             .word-document .word-picture { max-width: 100%; height: auto; box-sizing: border-box; }
+            .word-document .word-shape { position: relative; }
+            .word-document .word-shape-geometry { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; }
+            .word-document .word-shape-part { position: absolute; display: block; }
+            .word-document .word-shape-text { position: relative; display: block; }
             .word-document .word-picture-missing { display: inline-block; border: 1px dashed #bbb; color: #999; font-size: 9pt; text-align: center; overflow: hidden; }
             .word-document .unsupported { color: #999; font-style: italic; }
             .word-document a.link { color: inherit; text-decoration: none; cursor: pointer; }

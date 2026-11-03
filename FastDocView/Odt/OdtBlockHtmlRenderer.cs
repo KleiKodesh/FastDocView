@@ -49,6 +49,8 @@ public sealed class OdtBlockHtmlRenderer
     private int _noteBodyDepth;
     private List<WordDocumentNoteHtml>? _renderedNotes;
     private bool _isInsideLink;      // HTML forbids a link inside a link: an inner one renders its text only
+    private int _textBoxDepth;       // inside a text box / shape: paragraphs are block spans (no <p> inside a <p>)
+    private bool _isParagraphRightToLeft;
 
     private static readonly XNamespace XlinkNs = "http://www.w3.org/1999/xlink";
     private static readonly XNamespace OfficeNs = OdtStyleCascade.Office;
@@ -115,7 +117,7 @@ public sealed class OdtBlockHtmlRenderer
         bool isHeading = paragraph.Name == TextNs + "h";
         int level = 1;
         if (isHeading && int.TryParse((string?)paragraph.Attribute(TextNs + "outline-level"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed >= 1) level = parsed;
-        string tag = isHeading && level <= 6 ? "h" + level : "p";
+        string tag = _textBoxDepth > 0 ? "span" : isHeading && level <= 6 ? "h" + level : "p";
 
         // label-alignment mode: the level's fo:margin-left / fo:text-indent indent the paragraph (ODF 1.2 19.881), its tab
         // stop is where the text after a listtab starts. Older label-width-and-position lists keep the per-level step below.
@@ -128,14 +130,16 @@ public sealed class OdtBlockHtmlRenderer
             formatting.FirstLineIndentTwips = layout[1];
             if (layout[2] >= 0) formatting.TabStops = [new WordTabStop(layout[2], "left", "none")];
         }
-        string css = formatting.ToCss(isTopLevel ? _previousStyleKey : null);
+        string css = formatting.ToCss(isTopLevel ? _previousStyleKey : null) + (_textBoxDepth > 0 ? "display:block;" : "");
         if (isTopLevel && _listLevel >= 0 && layout is null)
         {
             // list indentation: list-level positions are not read; one step of 0.25in per level plus the label
             css += "margin-inline-start:" + ((formatting.LeftIndentTwips + 360 * (_listLevel + 1)) / 20.0).ToString("0.#", CultureInfo.InvariantCulture) + "pt;";
         }
-        if (style.IsPageBreakBefore && isTopLevel) html.Append("<span class=\"page-break\"></span>");
-        WordHtmlText.AppendOpenTag(html, tag, css, null, formatting.IsRightToLeft);
+        if (style.IsPageBreakBefore && isTopLevel && _textBoxDepth == 0) html.Append("<span class=\"page-break\"></span>");
+        WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
+        bool outerIsRightToLeft = _isParagraphRightToLeft;
+        _isParagraphRightToLeft = formatting.IsRightToLeft;
         bool hasLabel = false;
         if (isTopLevel && _listLabel is { Length: > 0 } label)
         {
@@ -146,6 +150,7 @@ public sealed class OdtBlockHtmlRenderer
             hasLabel = true;
         }
         RenderInline(paragraph, html, styleName, formatting.RunFormatting, formatting.RunFormatting, hasLabel);
+        _isParagraphRightToLeft = outerIsRightToLeft;
         html.Append("</").Append(tag).Append('>');
     }
 
@@ -234,29 +239,18 @@ public sealed class OdtBlockHtmlRenderer
             if (name.Namespace == DrawNs)
             {
                 if (name.LocalName == "a") { RenderInline(element, html, paragraphStyle, paragraphBase, current, hasLabel); continue; }
-                if (name.LocalName == "frame") { AppendFrame(element, html, paragraphStyle, paragraphBase, current); continue; }
-                continue;                                                   // shapes: not rendered
+                if (name.LocalName == "frame") { AppendFrame(element, html); continue; }
+                if (IsDrawnShape(element)) { AppendShape(element, html); continue; }
+                continue;                                                   // other shapes (polygon, path, connector...), controls, objects: not rendered
             }
             // office:annotation (comments) and unknown namespaces render nothing
         }
     }
 
-    /// <summary>A text box's paragraphs inline; an image or object as a placeholder.</summary>
-    private void AppendFrame(XElement frame, StringBuilder html, string? paragraphStyle, WordRunFormatting paragraphBase, WordRunFormatting current)
+    /// <summary>A text box as a placed box (<see cref="AppendTextBox"/>); an image as a picture; an object as a placeholder.</summary>
+    private void AppendFrame(XElement frame, StringBuilder html)
     {
-        if (frame.Element(DrawNs + "text-box") is { } textBox)
-        {
-            html.Append("<span class=\"text-box\">");
-            foreach (XElement child in textBox.Elements())
-                if (child.Name == TextNs + "p" || child.Name == TextNs + "h")
-                {
-                    html.Append("<span style=\"display:block\">");
-                    RenderInline(child, html, paragraphStyle, paragraphBase, current, hasLabel: true);
-                    html.Append("</span>");
-                }
-            html.Append("</span>");
-            return;
-        }
+        if (frame.Element(DrawNs + "text-box") is { } textBox) { AppendTextBox(frame, textBox, html); return; }
         if (frame.Element(DrawNs + "image") is { } image) { AppendPicture(frame, image, html); return; }
         html.Append("<span class=\"unsupported\">[image]</span>");
     }
@@ -288,28 +282,6 @@ public sealed class OdtBlockHtmlRenderer
     /// </summary>
     private void AppendPicture(XElement frame, XElement image, StringBuilder html)
     {
-        string? style = (string?)frame.Attribute(DrawNs + "style-name");
-        string? Property(string prefix, string name)
-            => _styles.GraphicProperty(style, (prefix == "fo" ? OdtStyleCascade.Fo : prefix == "text" ? TextNs : OdtStyleCascade.Style) + name);
-        double Points(string? length) => length is not null && OdtStyleCascade.Twips(length) is { } twips ? twips / 20.0 : 0;
-        string anchor = (string?)frame.Attribute(TextNs + "anchor-type") ?? Property("text", "anchor-type") ?? "paragraph";
-        WordPictureWrap wrap = anchor == "as-char" ? WordPictureWrap.Inline : Property("style", "wrap") switch
-        {
-            "parallel" or "dynamic" or "biggest" or "left" or "right" => WordPictureWrap.Square,
-            "run-through" => WordPictureWrap.None,
-            _ => WordPictureWrap.TopAndBottom,
-        };
-        string? position = Property("style", "horizontal-pos");
-        WordPictureSide side = position switch
-        {
-            "right" or "outside" => WordPictureSide.Right,
-            "center" => WordPictureSide.Center,
-            "left" or "inside" or "from-left" or "from-inside" => WordPictureSide.Left,
-            _ => Property("style", "wrap") == "left" ? WordPictureSide.Right : WordPictureSide.Left,
-        };
-        double offset = position is "from-left" or "from-inside" ? Math.Max(0, Points((string?)frame.Attribute(SvgNs + "x"))) : 0;
-        double all = Points(Property("fo", "margin"));
-        double Gap(string side) => Property("fo", "margin-" + side) is { } value ? Points(value) : all;
         string? pictureId = null;
         if (image.Element(OfficeNs + "binary-data") is { } binary)
         {
@@ -325,9 +297,304 @@ public sealed class OdtBlockHtmlRenderer
             string part = href.StartsWith("./", StringComparison.Ordinal) ? href.Substring(2) : href;
             if (WordPictureHtml.ContentTypeOf(part) is not null) pictureId = PackagePicturePrefix + part;
         }
-        WordPictureHtml.Append(html, new WordPictureLayout(Points((string?)frame.Attribute(SvgNs + "width")), Points((string?)frame.Attribute(SvgNs + "height")),
-                                                           wrap, side, Gap("top"), Gap("right"), Gap("bottom"), Gap("left"), offset), pictureId);
+        WordPictureHtml.Append(html, Placement(frame, Points((string?)frame.Attribute(SvgNs + "width")), Points((string?)frame.Attribute(SvgNs + "height"))), pictureId);
     }
+
+    private static double Points(string? length) => length is not null && OdtStyleCascade.Twips(length) is { } twips ? twips / 20.0 : 0;
+
+    /// <summary>A graphic property of a frame / shape through its draw:style-name (parent chain, then the default graphic style).</summary>
+    private string? GraphicProperty(XElement element, XName attribute) => _styles.GraphicProperty((string?)element.Attribute(DrawNs + "style-name"), attribute);
+
+    /// <summary>
+    /// Where a frame or shape sits, for <see cref="WordPictureHtml.AppendPlacement"/> (pictures, text boxes, shapes share it).
+    /// text:anchor-type (ODF 1.3 part 3 19.759; the element attribute wins over the graphic property, default "paragraph"):
+    /// as-char is in the line. Otherwise the graphic style: 20.400 style:wrap (parallel / dynamic / biggest / left / right = text
+    /// beside, none = above and below, run-through = through the text; "left: text wraps around the left side of the shape",
+    /// so the object goes right); 20.298 style:horizontal-pos (left / center / right, from-left with svg:x - physical sides;
+    /// inside / outside / from-inside follow page parity, taken as an odd page) and fo:margin-* (the gap to the text).
+    /// Text on both sides (parallel / dynamic of a centred object) cannot be laid out in CSS (see NOTES.md): it falls back to
+    /// text above and below (<see cref="WordPictureHtml.AppendPlacement"/>). Without a horizontal position or a one-sided wrap
+    /// the object goes to the paragraph's start side (right in a right-to-left paragraph) - our choice, the spec gives no
+    /// default. style:vertical-pos from-top with svg:y below a paragraph / character anchor (20.397 / 20.398) is added to the
+    /// top gap (a float cannot move up; page / frame relations are ignored - the flow view has no page).
+    /// </summary>
+    private WordPictureLayout Placement(XElement element, double width, double height)
+    {
+        string? Property(XNamespace ns, string name) => GraphicProperty(element, ns + name);
+        string anchor = (string?)element.Attribute(TextNs + "anchor-type") ?? Property(TextNs, "anchor-type") ?? "paragraph";
+        string? wrapValue = Property(OdtStyleCascade.Style, "wrap");
+        WordPictureWrap wrap = anchor == "as-char" ? WordPictureWrap.Inline : wrapValue switch
+        {
+            "parallel" or "dynamic" or "biggest" or "left" or "right" => WordPictureWrap.Square,
+            "run-through" => WordPictureWrap.None,
+            _ => WordPictureWrap.TopAndBottom,
+        };
+        string? position = Property(OdtStyleCascade.Style, "horizontal-pos");
+        WordPictureSide start = _isParagraphRightToLeft ? WordPictureSide.Right : WordPictureSide.Left;
+        WordPictureSide side = position switch
+        {
+            "right" or "outside" => WordPictureSide.Right,
+            "center" => WordPictureSide.Center,
+            "left" or "inside" or "from-left" or "from-inside" => WordPictureSide.Left,
+            _ => wrapValue switch { "left" => WordPictureSide.Right, "right" => WordPictureSide.Left, _ => start },
+        };
+        double offset = position is "from-left" or "from-inside" ? Math.Max(0, Points((string?)element.Attribute(SvgNs + "x"))) : 0;
+        double all = Points(Property(OdtStyleCascade.Fo, "margin"));
+        double Gap(string name) => Property(OdtStyleCascade.Fo, "margin-" + name) is { } value ? Points(value) : all;
+        double top = Gap("top");
+        if (wrap != WordPictureWrap.Inline && Property(OdtStyleCascade.Style, "vertical-pos") == "from-top"
+            && Property(OdtStyleCascade.Style, "vertical-rel") is null or "paragraph" or "paragraph-content" or "char" or "line")
+            top += Math.Max(0, Points((string?)element.Attribute(SvgNs + "y")));
+        return new WordPictureLayout(width, height, wrap, side, top, Gap("right"), Gap("bottom"), Gap("left"), offset);
+    }
+
+    // -- text boxes and shapes -------------------------------------------------------------
+
+    /// <summary>
+    /// A draw:frame with a draw:text-box as a box where it is anchored (<see cref="Placement"/>), through the shared
+    /// <see cref="WordPictureHtml.OpenTextBox"/>. Size: the frame's svg:width / svg:height; fo:min-height of the text box
+    /// "overrides the height of a text box specified by the svg:height" (ODF 1.3 part 3 19.240) and the box grows with its
+    /// text - LibreOffice xmloff XMLTextFrameContext.cxx:950-1010 reads fo:min-width / fo:min-height as the size with
+    /// bMinWidth / bMinHeight, :637-661 sets SizeType::MIN only for text boxes. Percentages are not resolved (no page here).
+    /// Look from the graphic style: fo:padding(-*), fo:border (first side found), fill (<see cref="FillCss"/>). The box's own
+    /// paragraphs go through <see cref="RenderParagraph"/>; lists and tables in a text box are not drawn (search skips them too).
+    /// </summary>
+    private void AppendTextBox(XElement frame, XElement textBox, StringBuilder html)
+    {
+        double width = Points((string?)frame.Attribute(SvgNs + "width")), height = Points((string?)frame.Attribute(SvgNs + "height"));
+        bool grows = false;
+        // on the text box (19.240 / 19.241), else in the frame's graphic style (20.212 / 20.213 - LibreOffice 25.x writes it there)
+        string? minWidth = (string?)textBox.Attribute(OdtStyleCascade.Fo + "min-width") ?? GraphicProperty(frame, OdtStyleCascade.Fo + "min-width");
+        string? minHeight = (string?)textBox.Attribute(OdtStyleCascade.Fo + "min-height") ?? GraphicProperty(frame, OdtStyleCascade.Fo + "min-height");
+        if (minWidth is not null && !minWidth.Contains('%') && Points(minWidth) > width) width = Points(minWidth);
+        if (minHeight is not null && !minHeight.Contains('%')) { height = Points(minHeight); grows = true; }
+        (string? borderColor, double borderWidth, bool borderDash) = Border(frame);
+        WordPictureHtml.OpenTextBox(html, Placement(frame, width, height),
+                                    new WordTextBoxStyle(Padding(frame, "left"), Padding(frame, "top"), Padding(frame, "right"), Padding(frame, "bottom"),
+                                                         borderColor, borderWidth, borderDash, FillCss(frame, isTextBox: true), 0, null, grows));
+        AppendOwnParagraphs(textBox, html);
+        WordPictureHtml.CloseTextBox(html);
+    }
+
+    /// <summary>The text:p / text:h children of a text box or shape, rendered as block spans by the normal paragraph renderer.</summary>
+    private void AppendOwnParagraphs(XElement container, StringBuilder html)
+    {
+        // _isInsideLink is kept: a box inside a text:a is inside that <a> in the HTML too (no link inside a link)
+        string? savedLabel = _listLabel; int savedLevel = _listLevel; string? savedPrevious = _previousStyleKey; bool savedLink = _isInsideLink;
+        _listLabel = null; _listLevel = -1; _previousStyleKey = null;
+        _textBoxDepth++;
+        foreach (XElement child in container.Elements())
+            if (child.Name == TextNs + "p" || child.Name == TextNs + "h") RenderParagraph(child, html, isTopLevel: false);
+        _textBoxDepth--;
+        _listLabel = savedLabel; _listLevel = savedLevel; _previousStyleKey = savedPrevious; _isInsideLink = savedLink;
+    }
+
+    private double Padding(XElement element, string side)
+        => GraphicProperty(element, OdtStyleCascade.Fo + ("padding-" + side)) is { } value ? Points(value) : Points(GraphicProperty(element, OdtStyleCascade.Fo + "padding"));
+
+    /// <summary>fo:border (else the first of its sides) as colour / width / dashed; "none" or unset = no border.</summary>
+    private (string? color, double width, bool dash) Border(XElement element)
+    {
+        string? value = GraphicProperty(element, OdtStyleCascade.Fo + "border");
+        foreach (string side in new[] { "top", "left", "bottom", "right" })
+            value ??= GraphicProperty(element, OdtStyleCascade.Fo + ("border-" + side));
+        if (value is null) return (null, 0, false);
+        string? color = null; double width = 0; bool dash = false;
+        foreach (string part in value.Split(' '))
+        {
+            if (part.Length == 0) continue;
+            if (part[0] == '#') color = Color(part);
+            else if (part is "dashed" or "dotted") dash = true;
+            else if (part is "none" or "hidden") return (null, 0, false);
+            else if (OdtStyleCascade.Twips(part) is { } twips) width = twips / 20.0;
+        }
+        return (color ?? "#000000", width, dash);
+    }
+
+    private static string? Color(string? value) => value is { Length: 7 } && value[0] == '#' && value.Skip(1).All(Uri.IsHexDigit) ? value : null;
+
+    /// <summary>
+    /// The fill as a CSS background: draw:fill (ODF 1.3 part 3 20.118; LibreOffice sdpropls.cxx:115-119 maps draw:fill,
+    /// draw:fill-color, draw:fill-gradient-name) solid = draw:fill-color (20.119), gradient = the named draw:gradient's
+    /// draw:start-color to draw:end-color (GradientStyle.cxx:101-104) as a linear gradient at draw:angle (axial / radial /
+    /// square styles, border and steps are approximated as linear); none / hatch / bitmap = no fill. A text box without
+    /// draw:fill keeps fo:background-color (Writer frames). Null = transparent.
+    /// </summary>
+    private string? FillCss(XElement element, bool isTextBox)
+    {
+        string? fill = GraphicProperty(element, OdtStyleCascade.Draw + "fill");
+        if (fill is null) return isTextBox ? Color(GraphicProperty(element, OdtStyleCascade.Fo + "background-color")) : null;
+        if (fill == "solid") return Color(GraphicProperty(element, OdtStyleCascade.Draw + "fill-color"));
+        if (fill != "gradient" || _styles.Gradient(GraphicProperty(element, OdtStyleCascade.Draw + "fill-gradient-name")) is not { } gradient) return null;
+        string from = Color((string?)gradient.Attribute(OdtStyleCascade.Draw + "start-color")) ?? "#000000";
+        string to = Color((string?)gradient.Attribute(OdtStyleCascade.Draw + "end-color")) ?? "#ffffff";
+        return "linear-gradient(" + Css(GradientAngle((string?)gradient.Attribute(OdtStyleCascade.Draw + "angle"))) + "deg," + from + "," + to + ")";
+    }
+
+    /// <summary>
+    /// draw:angle as a CSS angle. ODF 0 = the start colour on top, angles counter-clockwise; CSS 180deg runs top to bottom,
+    /// clockwise. NOT verified in source: the unit of a plain number (read as degrees; "deg" accepted) and the exact
+    /// orientation - a gradient is an approximation anyway.
+    /// </summary>
+    private static double GradientAngle(string? angle)
+    {
+        double degrees = 0;
+        if (angle is { Length: > 0 })
+            double.TryParse(angle.EndsWith("deg", StringComparison.Ordinal) ? angle.Substring(0, angle.Length - 3) : angle, NumberStyles.Float, CultureInfo.InvariantCulture, out degrees);
+        return ((180 - degrees) % 360 + 360) % 360;
+    }
+
+    private static bool IsDrawnShape(XElement element)
+        => element.Name.Namespace == DrawNs && element.Name.LocalName is "custom-shape" or "rect" or "ellipse" or "line" or "g";
+
+    /// <summary>
+    /// A drawing shape (draw:custom-shape / draw:rect / draw:ellipse / draw:line / draw:g) as inline SVG in a box placed like a
+    /// picture (<see cref="Placement"/>, through <see cref="WordPictureHtml.OpenTextBox"/>): the box is the shape's bounding
+    /// box (svg:width / svg:height; a line's svg:x1..y2; a group around its drawn children, each child at its svg:x / svg:y
+    /// in it), the SVG fills it, the shape's own paragraphs sit on top from the box's top with its fo:padding
+    /// (draw:textarea-vertical-align is not read). The box grows with text that does not fit. Only the shape's XML in the
+    /// block being rendered is read (windowed).
+    /// </summary>
+    private void AppendShape(XElement shape, StringBuilder html)
+    {
+        (double x, double y, double width, double height) = Bounds(shape);
+        WordPictureHtml.OpenTextBox(html, Placement(shape, width, height), new WordTextBoxStyle(0, 0, 0, 0, null, 0, false, null, 0, null, GrowsWithText: true), "text-box word-shape");
+        AppendShapeContent(shape, html, x, y, width, height);
+        WordPictureHtml.CloseTextBox(html);
+    }
+
+    private void AppendShapeContent(XElement shape, StringBuilder html, double x, double y, double width, double height)
+    {
+        if (shape.Name.LocalName == "g")
+        {
+            foreach (XElement child in shape.Elements())
+            {
+                if (!IsDrawnShape(child)) continue;
+                (double childX, double childY, double childWidth, double childHeight) = Bounds(child);
+                html.Append("<span class=\"word-shape-part\" style=\"left:").Append(Css(childX - x)).Append("pt;top:").Append(Css(childY - y))
+                    .Append("pt;width:").Append(Css(childWidth)).Append("pt;height:").Append(Css(childHeight)).Append("pt\">");
+                AppendShapeContent(child, html, childX, childY, childWidth, childHeight);
+                html.Append("</span>");
+            }
+            return;
+        }
+        AppendShapeSvg(shape, html, x, y, width, height);
+        if (shape.Elements().Any(child => child.Name == TextNs + "p" || child.Name == TextNs + "h"))
+        {
+            html.Append("<span class=\"word-shape-text\" style=\"padding:").Append(Css(Padding(shape, "top"))).Append("pt ").Append(Css(Padding(shape, "right")))
+                .Append("pt ").Append(Css(Padding(shape, "bottom"))).Append("pt ").Append(Css(Padding(shape, "left"))).Append("pt\">");
+            AppendOwnParagraphs(shape, html);
+            html.Append("</span>");
+        }
+    }
+
+    /// <summary>
+    /// The shape's geometry in points from its box's corner. Stroke (LibreOffice sdpropls.cxx:99-102): draw:stroke (ODF 1.3
+    /// part 3 20.167: none / solid / dash - a dash is one fixed pattern, the draw:stroke-dash style is not read),
+    /// svg:stroke-color (20.408), svg:stroke-width (20.410; 0 = the thinnest line, drawn 0.5 pt). Unset stroke = solid
+    /// black, unset fill = none (our choice; the document's default graphic style normally sets both). Geometry: draw:rect
+    /// (svg:rx, else draw:corner-radius - 19.127), draw:ellipse, draw:line (svg:x1..y2), draw:custom-shape by its
+    /// draw:enhanced-geometry draw:type. The spec says draw:type "shall not influence the geometry" (19.229.3) - the shape is
+    /// draw:enhanced-path - but enhanced paths (formulas, modifiers) are not evaluated; the type names LibreOffice writes for
+    /// its presets (svx EnhancedCustomShapeTypeNames.cxx:36-38, 48, 101-104) are drawn from its preset tables at their
+    /// default adjustments (svx EnhancedCustomShapeGeometry.cxx: round-rectangle 174-216, corner mso_sptDefault3600 =
+    /// 3600 / 21600; right-arrow 684-724 at 16200 / 5400; left-arrow 726-753 and up-arrow 792-819 at 5400 / 5400; down-arrow
+    /// 761-784 at 16200 / 5400; left-right-arrow 827-868 at 4300 / 5400 - the calculation slots are read in mso_sptArrowCalc
+    /// 693-703 and assumed alike for the other arrows, NOT verified). draw:modifiers are not applied. Any other type gets its
+    /// box with a dashed outline.
+    /// </summary>
+    private void AppendShapeSvg(XElement shape, StringBuilder html, double x, double y, double width, double height)
+    {
+        string? strokeKind = GraphicProperty(shape, OdtStyleCascade.Draw + "stroke");
+        string stroke = strokeKind == "none" ? "none" : Color(GraphicProperty(shape, OdtStyleCascade.Svg + "stroke-color")) ?? "#000000";
+        double strokeWidth = Math.Max(0.5, Points(GraphicProperty(shape, OdtStyleCascade.Svg + "stroke-width")));
+        string? fillCss = shape.Name.LocalName == "line" ? null : FillCss(shape, isTextBox: false);
+        string fill = "none", defs = "";
+        if (fillCss is not null && fillCss.StartsWith("linear-gradient(", StringComparison.Ordinal))
+        {
+            // the CSS gradient as an SVG linearGradient along the same angle (x1..y2 on the unit box)
+            string[] parts = fillCss.Substring(16, fillCss.Length - 17).Split(',');
+            double radians = double.Parse(parts[0].Substring(0, parts[0].Length - 3), CultureInfo.InvariantCulture) * Math.PI / 180;
+            double dx = Math.Sin(radians) / 2, dy = -Math.Cos(radians) / 2;
+            string id = "fdv-gradient-" + CurrentBlockIndex.ToString(CultureInfo.InvariantCulture) + "-" + html.Length.ToString(CultureInfo.InvariantCulture);
+            defs = "<defs><linearGradient id=\"" + id + "\" x1=\"" + Css(0.5 - dx) + "\" y1=\"" + Css(0.5 - dy) + "\" x2=\"" + Css(0.5 + dx) + "\" y2=\"" + Css(0.5 + dy)
+                 + "\"><stop offset=\"0\" stop-color=\"" + parts[1] + "\"/><stop offset=\"1\" stop-color=\"" + parts[2] + "\"/></linearGradient></defs>";
+            fill = "url(#" + id + ")";
+        }
+        else if (fillCss is not null) fill = fillCss;
+        string paint = " fill=\"" + fill + "\" stroke=\"" + stroke + "\" stroke-width=\"" + Css(strokeWidth) + "\""
+                     + (strokeKind == "dash" ? " stroke-dasharray=\"" + Css(strokeWidth * 4) + " " + Css(strokeWidth * 2) + "\"" : "");
+        html.Append("<svg class=\"word-shape-geometry\" viewBox=\"0 0 ").Append(Css(Math.Max(width, 0.01))).Append(' ').Append(Css(Math.Max(height, 0.01)))
+            .Append("\" preserveAspectRatio=\"none\" aria-hidden=\"true\">").Append(defs);
+        string local = shape.Name.LocalName;
+        string? type = local == "custom-shape" ? (string?)shape.Element(DrawNs + "enhanced-geometry")?.Attribute(DrawNs + "type") : null;
+        if (local == "rect" || type == "rectangle")
+        {
+            double radius = Points((string?)shape.Attribute(SvgNs + "rx")) is > 0 and var rx ? rx : Points((string?)shape.Attribute(DrawNs + "corner-radius"));
+            html.Append("<rect width=\"").Append(Css(width)).Append("\" height=\"").Append(Css(height)).Append('"');
+            if (radius > 0) html.Append(" rx=\"").Append(Css(radius)).Append('"');
+            html.Append(paint).Append("/>");
+        }
+        else if (type == "round-rectangle")
+            html.Append("<rect width=\"").Append(Css(width)).Append("\" height=\"").Append(Css(height)).Append("\" rx=\"").Append(Css(Math.Min(width, height) * 3600 / 21600))
+                .Append('"').Append(paint).Append("/>");
+        else if (local == "ellipse" || type == "ellipse")
+            html.Append("<ellipse cx=\"").Append(Css(width / 2)).Append("\" cy=\"").Append(Css(height / 2)).Append("\" rx=\"").Append(Css(width / 2)).Append("\" ry=\"")
+                .Append(Css(height / 2)).Append('"').Append(paint).Append("/>");
+        else if (local == "line")
+            html.Append("<line x1=\"").Append(Css(Points((string?)shape.Attribute(SvgNs + "x1")) - x)).Append("\" y1=\"").Append(Css(Points((string?)shape.Attribute(SvgNs + "y1")) - y))
+                .Append("\" x2=\"").Append(Css(Points((string?)shape.Attribute(SvgNs + "x2")) - x)).Append("\" y2=\"").Append(Css(Points((string?)shape.Attribute(SvgNs + "y2")) - y))
+                .Append('"').Append(paint).Append("/>");
+        else if (ArrowPoints(type) is { } points)
+        {
+            html.Append("<polygon points=\"");
+            for (int i = 0; i < points.Length; i += 2)
+                html.Append(i == 0 ? "" : " ").Append(Css(points[i] * width / 21600)).Append(',').Append(Css(points[i + 1] * height / 21600));
+            html.Append('"').Append(paint).Append("/>");
+        }
+        else
+            html.Append("<rect class=\"word-shape-unknown\" width=\"").Append(Css(width)).Append("\" height=\"").Append(Css(height))
+                .Append("\" fill=\"none\" stroke=\"#bbbbbb\" stroke-dasharray=\"3 2\"/>");
+        html.Append("</svg>");
+    }
+
+    /// <summary>LibreOffice's arrow presets at their default adjustments, in the 21600 x 21600 preset frame (see <see cref="AppendShapeSvg"/>).</summary>
+    private static int[]? ArrowPoints(string? type) => type switch
+    {
+        "right-arrow" => [0, 5400, 16200, 5400, 16200, 0, 21600, 10800, 16200, 21600, 16200, 16200, 0, 16200],
+        "left-arrow" => [21600, 5400, 5400, 5400, 5400, 0, 0, 10800, 5400, 21600, 5400, 16200, 21600, 16200],
+        "up-arrow" => [5400, 21600, 5400, 5400, 0, 5400, 10800, 0, 21600, 5400, 16200, 5400, 16200, 21600],
+        "down-arrow" => [5400, 0, 5400, 16200, 0, 16200, 10800, 21600, 21600, 16200, 16200, 16200, 16200, 0],
+        "left-right-arrow" => [0, 10800, 4300, 0, 4300, 5400, 17300, 5400, 17300, 0, 21600, 10800, 17300, 21600, 17300, 16200, 4300, 16200, 4300, 21600],
+        _ => null,
+    };
+
+    /// <summary>A shape's bounding box in points: svg:x / svg:y / svg:width / svg:height; a line from svg:x1..y2; a group around its drawn children.</summary>
+    private static (double x, double y, double width, double height) Bounds(XElement shape)
+    {
+        if (shape.Name.LocalName == "line")
+        {
+            double x1 = Points((string?)shape.Attribute(SvgNs + "x1")), y1 = Points((string?)shape.Attribute(SvgNs + "y1"));
+            double x2 = Points((string?)shape.Attribute(SvgNs + "x2")), y2 = Points((string?)shape.Attribute(SvgNs + "y2"));
+            return (Math.Min(x1, x2), Math.Min(y1, y2), Math.Abs(x2 - x1), Math.Abs(y2 - y1));
+        }
+        if (shape.Name.LocalName == "g")
+        {
+            double left = double.MaxValue, top = double.MaxValue, right = double.MinValue, bottom = double.MinValue;
+            foreach (XElement child in shape.Elements())
+            {
+                if (!IsDrawnShape(child)) continue;
+                (double x, double y, double width, double height) = Bounds(child);
+                left = Math.Min(left, x); top = Math.Min(top, y); right = Math.Max(right, x + width); bottom = Math.Max(bottom, y + height);
+            }
+            return left == double.MaxValue ? (0, 0, 0, 0) : (left, top, right - left, bottom - top);
+        }
+        return (Points((string?)shape.Attribute(SvgNs + "x")), Points((string?)shape.Attribute(SvgNs + "y")),
+                Points((string?)shape.Attribute(SvgNs + "width")), Points((string?)shape.Attribute(SvgNs + "height")));
+    }
+
+    private static string Css(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
 
     private void AppendNote(XElement note, StringBuilder html)
     {

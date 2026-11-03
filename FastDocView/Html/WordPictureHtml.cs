@@ -100,7 +100,8 @@ public static class WordPictureHtml
     /// with its text - DrawingML a:spAutoFit, LibreOffice textbodypropertiescontext.cxx:255-259 PROP_TextAutoGrowHeight), the inner
     /// margins, border, fill and rotation. The caller renders the box's own paragraphs and then <see cref="CloseTextBox"/>.
     /// </summary>
-    public static void OpenTextBox(StringBuilder html, WordPictureLayout layout, WordTextBoxStyle style)
+    /// <param name="className">The box's class ("text-box"; drawn shapes add "word-shape": a positioned box their SVG fills).</param>
+    public static void OpenTextBox(StringBuilder html, WordPictureLayout layout, WordTextBoxStyle style, string className = "text-box")
     {
         var css = new StringBuilder("box-sizing:border-box;overflow-wrap:break-word;");
         if (layout.Wrap == WordPictureWrap.Inline) css.Append("display:inline-block;vertical-align:bottom;");
@@ -114,7 +115,7 @@ public static class WordPictureHtml
         if (style.FillColor is { } fill) css.Append("background:").Append(fill).Append(';');
         if (style.RotationDegrees != 0) css.Append("transform:rotate(").Append(style.RotationDegrees.ToString("0.##", CultureInfo.InvariantCulture)).Append("deg);");
         if (style.WritingMode is { } writingMode) css.Append(writingMode);
-        html.Append("<span class=\"text-box\" style=\"").Append(css).Append("\">");
+        html.Append("<span class=\"").Append(className).Append("\" style=\"").Append(css).Append("\">");
     }
 
     public static void CloseTextBox(StringBuilder html) => html.Append("</span>");

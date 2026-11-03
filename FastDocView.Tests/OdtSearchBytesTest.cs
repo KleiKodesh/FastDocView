@@ -145,7 +145,7 @@ public static class OdtSearchBytesTest
 
     /// <summary>
     /// Search counts exactly the text the renderer shows (OdtBlockHtmlRenderer): a picture's svg:title / svg:desc, an
-    /// image's or a shape's paragraphs, a text box's non-paragraph children, other namespaces inside a paragraph, ruby text
+    /// image's paragraphs, a text box's non-paragraph children, other namespaces inside a paragraph, ruby text
     /// and hidden text are not text; a text box's paragraphs are. The reference reads the same, and the rendered HTML agrees.
     /// </summary>
     private static void RenderedTextOnly()
@@ -190,7 +190,7 @@ public static class OdtSearchBytesTest
             Expect("boxtext", [1], "a text box's paragraph");
             Expect("boxlist", [], "a list inside a text box (not rendered)");
             Expect("boxtitle", [], "svg:title of a text box frame");
-            Expect("shapetext", [], "a shape's paragraph");
+            Expect("shapetext", [2], "a shape's paragraph (drawn in the shape box since 2026-11-03: searched once)");
             Expect("linked", [2], "draw:a's text");
             Expect("unknownns", [], "an element of another namespace");
             Expect("rubybase", [3], "ruby base text");

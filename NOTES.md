@@ -236,7 +236,8 @@ Ordered by value for text-heavy Hebrew documents:
    oox/source/drawingml/textbodypropertiescontext.cxx:255-259), bodyPr insets (:75-80; unset = ECMA-376 Part 1 21.1.2.1.1
    defaults 0.1in / 0.05in), vert (:132), a:xfrm rot, srgbClr solid fill / noFill, a:ln width / colour / prstDash. Theme
    colours: see "Drawn shapes" below. Linked boxes: the first box holds the chain's whole txbxContent, so it shows all the
-   text (no split). .docx shapes, groups and VML shapes: drawn as SVG ("Drawn shapes" below).
+   text (no split). rtf / .doc boxes: still the old inline frame; .docx shapes, groups and VML shapes: drawn as SVG ("Drawn shapes" below) (.odt / .fodt boxes and shapes: see
+   "OpenDocument text boxes and shapes" below).
    Wrap on both sides of a centred object is not possible in CSS: CSS Shapes 1 section 2 ("does not allow content to wrap
    on both sides of a float"); a centred square wrap stays top-and-bottom.
 6. Paragraph borders/shading, tab stops (`w:tabs` positions), character spacing/scale, caps/small caps, underline styles, `w:lvlRestart`, legal numbering.
@@ -1228,6 +1229,58 @@ others hold the files, as Word retries a save.
 - Not done: floating .doc pictures (0x08 + FSPA + drawing group, e.g. POI PngPicture.doc), DIB / metafiles, page-relative
   offsets, \shpgrp groups.
 
+
+### OpenDocument text boxes and shapes (2026-11-03)
+
+Sources read online 2026-11-03: ODF 1.3 part 3 (OASIS HTML): 19.759 text:anchor-type, 20.400 style:wrap, 20.298
+style:horizontal-pos, 20.397 / 20.398 style:vertical-pos / -rel, 19.240 fo:min-height ("overrides the height of a text box
+specified by the svg:height"), 20.118 draw:fill, 20.119 draw:fill-color, 20.167 draw:stroke, 20.408 svg:stroke-color,
+20.410 svg:stroke-width, 19.127 draw:corner-radius, 19.229.3 draw:type ("shall not influence the geometry of the shape").
+LibreOffice core master: xmloff XMLTextFrameContext.cxx:637-661 (SizeType::MIN only for text boxes), :950-1010 (fo:min-width
+/ fo:min-height read as the size); xmloff sdpropls.cxx:99-119 (draw:stroke, stroke-dash, svg:stroke-width / -color,
+draw:fill, fill-color, fill-gradient-name); xmloff GradientStyle.cxx:101-104 (start / end colour); svx
+EnhancedCustomShapeTypeNames.cxx:36-38, 48, 101-104 (preset names) and EnhancedCustomShapeGeometry.cxx (round-rectangle
+174-216, right-arrow 684-724, left 726-753, down 761-784, up 792-819, left-right 827-868, default adjustments 46-89).
+
+- **Text boxes** (draw:frame + draw:text-box) are placed boxes through the shared `WordPictureHtml.OpenTextBox` /
+  `AppendPlacement` (one placement model with pictures and .docx boxes; `OdtBlockHtmlRenderer.Placement`). Size = svg:width /
+  svg:height; fo:min-height / fo:min-width on the text box, else in the graphic style (LibreOffice 25.x writes it there) =
+  a minimum, the box grows with its text. fo:padding(-*), fo:border (first side), fill: draw:fill solid / gradient, else
+  fo:background-color. Its paragraphs go through the normal paragraph renderer as block spans (`text-box-paragraph`; no
+  `<p>` inside a `<p>`); lists / tables in a box are still not drawn (search skips them alike).
+- **Placement**: as-char = in the line (inline-block); otherwise wrap left / right / parallel / dynamic / biggest = float,
+  none = above and below, run-through = block without gaps (as pictures). horizontal-pos is physical (left / right / center /
+  from-left + svg:x); without one (and no one-sided wrap) the box goes to the paragraph's start side, right in a
+  right-to-left paragraph - our choice, the spec gives no default. LibreOffice writes an explicit from-left for every box it
+  saves, so its files are physical. vertical-pos from-top with svg:y (relation paragraph / char / line) is added to the top
+  gap; page / frame relations and other vertical positions are ignored (no page in the flow view).
+- **Both-sides wrap is not possible in CSS.** CSS Shapes 1, section 2 "Relation to the box model and float behavior"
+  (drafts.csswg.org/css-shapes, read 2026-11-03): "this does not allow content to wrap on both sides of a float"; "Left floats
+  with a shape-outside still only allow content wrapping on the right side". Fallback: a centred object with text on both
+  sides (style:wrap parallel / dynamic / biggest, horizontal-pos center; .docx wrapSquare centred) becomes a centred block
+  with the text above and below it (`AppendPlacement`: Square + Center = TopAndBottom); a left / right object with
+  parallel / dynamic floats to its side and the text runs on the other side only.
+- **Shapes** (draw:custom-shape, draw:rect, draw:ellipse, draw:line, draw:g) are inline SVG in a placed box
+  (`text-box word-shape`, positioned; the SVG fills it): bounding box from svg:x / y / width / height, a line's svg:x1..y2,
+  a group around its drawn children (each child an absolutely placed part at its offset). Fill: none / solid / gradient
+  (draw:gradient start -> end colour at draw:angle as one linear gradient: axial / radial / border / steps approximated; the
+  angle's orientation is NOT source-verified); hatch / bitmap = none. Stroke: draw:stroke none / solid / dash (one fixed
+  dash pattern; draw:stroke-dash styles not read), svg:stroke-color, svg:stroke-width (min 0.5 pt). Unset stroke = solid
+  black and unset fill = none: our choice. Geometry: draw:rect (svg:rx / draw:corner-radius), draw:ellipse, draw:line, and
+  custom shapes by draw:type - LibreOffice's presets rectangle, round-rectangle, ellipse, right / left / up / down /
+  left-right-arrow at their default adjustments (the calculation slots of the arrows other than right-arrow are assumed like
+  mso_sptArrowCalc, NOT verified; draw:modifiers and draw:enhanced-path are not evaluated). Any other type = a dashed box of
+  the right size. A shape's text:p / text:h sit on top from the box's top with its padding (draw:textarea-vertical-align not
+  read); the box grows when the text does not fit. Polygon, path, connector, control, object: still not drawn.
+- **Search** = rendered text (`WordXmlSearchText.IsHiddenOdf`, shared by the byte scanner and the `FeedOdf` reference): new
+  contexts Shape (custom-shape / rect / ellipse / line: only its text:p / text:h) and ShapeGroup (draw:g: only drawn shapes),
+  so shape text is searched exactly once; text-box text as before; hidden text (text:hidden-text, ruby text) never.
+  LibreOffice 25.x saves a source text:hidden-text as plain text (shown and found there).
+- Index format 8 (odt): the reduced graphic styles keep the fill / stroke / padding / border / min-size / vertical-position
+  properties, and office:styles keep draw:gradient (name, colours, angle). Windowed: a shape is read from its block's XML
+  only when that block renders.
+- Check: `--fidelity` OdtShapesFidelityTest - a hand-written .fodt with each object type and the same document saved by
+  LibreOffice headless (converted into TestOutput, never committed): placement, sizes, look, group offsets, search counts.
 
 ## RTF / ODT / FODT: no needless re-reads (2026-11-03)
 

@@ -227,14 +227,16 @@ internal sealed class WordXmlSearchText
     /// Where an .odt element sits, as far as the renderer (<c>OdtBlockHtmlRenderer</c>) shows its text: paragraph content,
     /// a draw:frame's children, a draw:text-box's children, or a note body (blocks again).
     /// </summary>
-    internal enum OdfTextContext : byte { Paragraph, Frame, TextBox, NoteBody }
+    internal enum OdfTextContext : byte { Paragraph, Frame, TextBox, NoteBody, Shape, ShapeGroup }
 
     /// <summary>
     /// Whether the renderer shows nothing of an element that opens in <paramref name="context"/> (it is skipped whole), and
     /// the context it opens (null: none). In a paragraph: only the text namespace and draw:a / draw:frame render
     /// (svg:title / svg:desc, shapes, images, controls and every other namespace render nothing), and text:ruby-text /
     /// text:hidden-text / text:hidden-paragraph are hidden; of a frame only its draw:text-box, of a text box only its
-    /// text:p / text:h. Outside a paragraph (a note body, between blocks) nothing extra is skipped.
+    /// text:p / text:h; of a drawn shape (draw:custom-shape / draw:rect / draw:ellipse / draw:line) only its text:p / text:h;
+    /// of a draw:g only the shapes the renderer draws. Outside a paragraph (a note body, between
+    /// blocks) nothing extra is skipped.
     /// </summary>
     /// <summary>An element's local name as bytes for <see cref="IsHiddenOdf"/>; the rules' names are short ASCII, so a longer or non-ASCII name is none of them.</summary>
     private static ReadOnlySpan<byte> AsciiName(string name, byte[] buffer)
@@ -251,7 +253,7 @@ internal sealed class WordXmlSearchText
     internal static bool IsHiddenOdf(OdfTextContext? context, bool isText, bool isDrawing, ReadOnlySpan<byte> localName, out OdfTextContext? opens)
     {
         opens = null;
-        if (isText && (WordXmlBytes.Is(localName, "p") || WordXmlBytes.Is(localName, "h"))) { opens = OdfTextContext.Paragraph; return context is OdfTextContext.Frame; }
+        if (isText && (WordXmlBytes.Is(localName, "p") || WordXmlBytes.Is(localName, "h"))) { opens = OdfTextContext.Paragraph; return context is OdfTextContext.Frame or OdfTextContext.ShapeGroup; }
         if (isText && WordXmlBytes.Is(localName, "note-body")) opens = OdfTextContext.NoteBody;
         switch (context)
         {
@@ -259,7 +261,11 @@ internal sealed class WordXmlSearchText
                 if (isText) return WordXmlBytes.Is(localName, "ruby-text") || WordXmlBytes.Is(localName, "hidden-text") || WordXmlBytes.Is(localName, "hidden-paragraph");
                 if (isDrawing && WordXmlBytes.Is(localName, "a")) return false;
                 if (isDrawing && WordXmlBytes.Is(localName, "frame")) { opens = OdfTextContext.Frame; return false; }
-                return true;
+                return !IsDrawnShapeOdf(isDrawing, localName, out opens);
+            case OdfTextContext.ShapeGroup:
+                return !IsDrawnShapeOdf(isDrawing, localName, out opens);
+            case OdfTextContext.Shape:
+                return true;     // text:p / text:h returned above; draw:enhanced-geometry, svg:title / svg:desc ... hidden
             case OdfTextContext.Frame:
                 if (isDrawing && WordXmlBytes.Is(localName, "text-box")) { opens = OdfTextContext.TextBox; return false; }
                 return true;
@@ -268,6 +274,17 @@ internal sealed class WordXmlSearchText
             default:
                 return false;
         }
+    }
+
+    /// <summary>A shape <see cref="Odt.OdtBlockHtmlRenderer"/> draws, and the context its children are read in (null: none of its text shows).</summary>
+    private static bool IsDrawnShapeOdf(bool isDrawing, ReadOnlySpan<byte> localName, out OdfTextContext? opens)
+    {
+        opens = null;
+        if (!isDrawing) return false;
+        if (WordXmlBytes.Is(localName, "custom-shape") || WordXmlBytes.Is(localName, "rect") || WordXmlBytes.Is(localName, "ellipse")
+            || WordXmlBytes.Is(localName, "line")) { opens = OdfTextContext.Shape; return true; }
+        if (WordXmlBytes.Is(localName, "g")) { opens = OdfTextContext.ShapeGroup; return true; }
+        return false;
     }
 
     private readonly XmlParserContext _context;
