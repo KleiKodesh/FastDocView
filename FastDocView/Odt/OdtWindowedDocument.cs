@@ -312,6 +312,15 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     /// index is extended as far as asked, as <see cref="RenderBlocks"/> does.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
+        => Search(query, options, fromBlock, maxBlocksToScan, OdtSearchTextMode.Bytes);
+
+    /// <summary>How a search batch reads block text: the byte scanner (the product) or the XmlReader reference over the index ranges (golden checks).</summary>
+    internal enum OdtSearchTextMode { Bytes, ReferenceXmlReader }
+
+    /// <summary>Blocks per raw search read: bounds the bytes one read holds whatever the batch size.</summary>
+    private const int SearchPieceBlocks = 1000;
+
+    internal WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan, OdtSearchTextMode mode)
     {
         var matcher = new WordDocumentSearchMatcher(query, options);
         if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
@@ -334,21 +343,76 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                 var counts = new List<int>();
                 if (fromBlock < end)
                 {
-                    _searchText ??= new WordXmlSearchText(_blocks.RootOpenTag);
-                    (byte[] bytes, List<(int blockIndex, int start, int length)> blocks) = _reader.ReadBlockBytes(fromBlock, end - fromBlock);
-                    foreach ((int blockIndex, int start, int length) in blocks)
+                    _searchText ??= new OdtSearchTextScanner(_blocks.RootOpenTag);
+                    void BlockEnded(int blockIndex)
                     {
-                        matcher.Reset();
-                        _searchText.FeedOdf(bytes, start, length, matcher, options.IncludeNotes);
                         if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
+                        matcher.Reset();
                     }
+                    void FeedRanges(int first, int stop)
+                    {
+                        (byte[] bytes, List<(int blockIndex, int start, int length)> blocks) = _reader.ReadBlockBytes(first, stop - first);
+                        if (mode == OdtSearchTextMode.ReferenceXmlReader) _referenceSearchText ??= new WordXmlSearchText(_blocks.RootOpenTag);
+                        foreach ((int blockIndex, int start, int length) in blocks)
+                        {
+                            matcher.Reset();
+                            if (mode == OdtSearchTextMode.ReferenceXmlReader) _referenceSearchText!.FeedOdf(bytes, start, length, matcher, options.IncludeNotes);
+                            else _searchText.Feed(bytes, start, length, matcher, options.IncludeNotes);
+                            BlockEnded(blockIndex);
+                        }
+                    }
+                    int scanFrom = fromBlock;
+                    // the finished index: the scanner finds the block boundaries in raw reads (no span scan), a bounded
+                    // piece at a time so a huge batch never holds more than a piece's bytes
+                    if (_blocks is OdtCompactBlockTable compact && mode == OdtSearchTextMode.Bytes)
+                    {
+                        while (scanFrom < end)
+                        {
+                            if (compact.SearchStart(scanFrom, out long startOffset) is not { } frames)
+                            {
+                                // not where a byte run can start (a batch begun out of order): per-block ranges up to the next anchor
+                                int anchorBlock = Math.Min(end, compact.NextSearchStart(scanFrom));
+                                FeedRanges(scanFrom, anchorBlock);
+                                scanFrom = anchorBlock;
+                                continue;
+                            }
+                            int pieceEnd = Math.Min(end, scanFrom + SearchPieceBlocks);
+                            (byte[] buffer, int start, int length) = compact.ReadSearchBytes(startOffset, pieceEnd, out bool isEndExact);
+                            int hitsBefore = hits.Count;
+                            matcher.Reset();
+                            WordSearchBlocksResult result = _searchText.FeedBlocks(buffer.AsSpan(start, length), scanFrom, pieceEnd, frames, matcher, options.IncludeNotes, BlockEnded, out long stoppedAt);
+                            WordSearchPieceVerdict verdict = WordSearchPiece.Judge(result, isEndExact, stoppedAt, length);
+                            if (verdict == WordSearchPieceVerdict.FallBackFromFailedBlock)
+                            {
+                                // the rest block by block, from the index's ranges; hits the scan reported from that block on are dropped
+                                scanFrom = (int)stoppedAt;
+                                int keep = hits.FindIndex(hitsBefore, hit => hit >= scanFrom);
+                                if (keep >= 0) { hits.RemoveRange(keep, hits.Count - keep); counts.RemoveRange(keep, counts.Count - keep); }
+                                break;
+                            }
+                            if (verdict == WordSearchPieceVerdict.RedoPiece)
+                            {
+                                // the scanner's blocks are not the index's: redo the piece the slow way, so no hit is mis-numbered
+                                hits.RemoveRange(hitsBefore, hits.Count - hitsBefore);
+                                counts.RemoveRange(hitsBefore, counts.Count - hitsBefore);
+                                break;
+                            }
+                            if (result == WordSearchBlocksResult.Stopped) compact.RememberSearchResume(pieceEnd, startOffset + stoppedAt, _searchText.StoppedFrames());
+                            BlocksSearchedFromRawBytes += pieceEnd - scanFrom;
+                            scanFrom = pieceEnd;
+                        }
+                    }
+                    if (scanFrom < end) FeedRanges(scanFrom, end);
                 }
                 return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
             }
             finally { _releasableFile?.Release(); }
         }
     }
-    private WordXmlSearchText? _searchText;
+    private OdtSearchTextScanner? _searchText;
+    /// <summary>Blocks the byte scanner read from raw runs (not per-block ranges) - the tests check the fast path ran.</summary>
+    internal long BlocksSearchedFromRawBytes { get; private set; }
+    private WordXmlSearchText? _referenceSearchText;
 
     /// <summary>Headings of the known blocks while an on-demand index is scanning; all of them once complete.</summary>
     public IReadOnlyList<WordDocumentHeading> Headings

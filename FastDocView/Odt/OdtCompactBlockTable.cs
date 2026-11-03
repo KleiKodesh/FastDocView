@@ -8,7 +8,7 @@ namespace FastDocView.Odt;
 /// for later requests; a handful of spans stay cached (LRU). The bytes read while scanning stay in a bounded ring, so
 /// the window just located is parsed from them without a second read; sequential windows cost one inflate pass.
 /// </summary>
-internal sealed class OdtCompactBlockTable : IOdtBlockTable
+internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
 {
     private const int MaxCachedSpans = 8;
     private const int ChunkSize = 1 << 16;

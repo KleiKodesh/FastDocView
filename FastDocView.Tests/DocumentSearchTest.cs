@@ -18,11 +18,15 @@ public static class DocumentSearchTest
 
     public static void Run(IReadOnlyList<string> timingPaths)
     {
+        bool notesHeavy = timingPaths.Contains("notes-heavy");     // "--search notes-heavy": the 100,000-footnote golden + timing
+        timingPaths = timingPaths.Where(path => path != "notes-heavy").ToList();
         TestReport.Step("Search: docx");
         Docx();
         DocxSearchBytesTest.Run(timingPaths);
+        DocxNoteSearchBytesTest.Run(notesHeavy);
         TestReport.Step("Search: odt / fodt");
         Odt();
+        OdtSearchBytesTest.Run(timingPaths);
         TestReport.Step("Search: rtf");
         Rtf();
         TestReport.Step("Search: txt");

@@ -673,12 +673,7 @@ internal sealed class OdtBodyBlockScanner
 
     private Dictionary<string, string>? _prefixMap;     // canonical prefix → the document's prefix
 
-    private string MapPrefix(string canonicalName)
-    {
-        int colon = canonicalName.IndexOf(':');
-        string prefix = canonicalName.Substring(0, colon);
-        return _prefixMap!.TryGetValue(prefix, out string? actual) ? actual + canonicalName.Substring(colon) : canonicalName;
-    }
+    private string MapPrefix(string canonicalName) => MapPrefix(_prefixMap!, canonicalName);
 
     private static readonly Dictionary<string, string> CanonicalNamespaces = new(StringComparer.Ordinal)
     {
@@ -686,22 +681,75 @@ internal sealed class OdtBodyBlockScanner
         ["table"] = OdtStyleCascade.Table.NamespaceName, ["style"] = OdtStyleCascade.Style.NamespaceName,
     };
 
+    /// <summary>
+    /// The document's spelling of a canonical-prefix name ("text:p"): the prefix the root declares for that namespace
+    /// (LibreOffice uses the canonical ones); before the root is known, the canonical name.
+    /// </summary>
+    internal static Func<string, string> QualifiedNameFunction(string? rootOpenTag)
+    {
+        if (rootOpenTag is null) return canonicalName => canonicalName;
+        Dictionary<string, string> prefixMap = PrefixMapOf(rootOpenTag);
+        return canonicalName => MapPrefix(prefixMap, canonicalName);
+    }
+
+    private static Dictionary<string, string> PrefixMapOf(string rootOpenTag)
+    {
+        var prefixMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (KeyValuePair<string, string> canonical in CanonicalNamespaces)
+        {
+            // the declaration must be "xmlns:prefix=\"uri\"" directly (a default xmlns=\"uri\" keeps the canonical prefix)
+            int uri = rootOpenTag.IndexOf("=\"" + canonical.Value + "\"", StringComparison.Ordinal);
+            if (uri < 0) continue;
+            int nameStart = uri;
+            while (nameStart > 0 && !char.IsWhiteSpace(rootOpenTag[nameStart - 1])) nameStart--;
+            string attribute = rootOpenTag.Substring(nameStart, uri - nameStart);
+            if (attribute.StartsWith("xmlns:", StringComparison.Ordinal)) prefixMap[canonical.Key] = attribute.Substring(6);
+        }
+        return prefixMap;
+    }
+
+    private static string MapPrefix(Dictionary<string, string> prefixMap, string canonicalName)
+    {
+        int colon = canonicalName.IndexOf(':');
+        string prefix = canonicalName.Substring(0, colon);
+        return prefixMap.TryGetValue(prefix, out string? actual) ? actual + canonicalName.Substring(colon) : canonicalName;
+    }
+
+    /// <summary>The index elements (ODF 1.3 part 3 8): only their text:index-body holds blocks.</summary>
+    internal static readonly string[] IndexElementNames = ["text:table-of-content", "text:alphabetical-index", "text:illustration-index", "text:table-index",
+                                                           "text:object-index", "text:user-index", "text:bibliography"];
+
+    /// <summary>
+    /// The frames of a scan state (an anchor's, captured at a block start tag) as the search scanner needs them, bottom
+    /// first; null when one is inside a block (not a block start - the search reads per-block ranges then).
+    /// </summary>
+    internal static OdtSearchTextScanner.Frame[]? SearchFramesOf(byte[] scanState)
+    {
+        (byte[] frames, _) = SplitScanState(scanState);
+        int position = 0;
+        int count = frames.Length == 0 ? 0 : (int)IndexBinaryArrays.ReadVarint(frames, ref position);
+        var result = new OdtSearchTextScanner.Frame[count];
+        for (int i = 0; i < count; i++)
+        {
+            switch ((Frame)frames[position++])
+            {
+                case Frame.Root or Frame.Body or Frame.Capture: result[i] = OdtSearchTextScanner.Frame.Outer; break;
+                case Frame.Text or Frame.Transparent: result[i] = OdtSearchTextScanner.Frame.Container; break;
+                case Frame.Index: result[i] = OdtSearchTextScanner.Frame.Index; break;
+                case Frame.List: result[i] = OdtSearchTextScanner.Frame.List; break;
+                case Frame.ListItem: result[i] = OdtSearchTextScanner.Frame.ListItem; break;
+                case Frame.Skip: result[i] = OdtSearchTextScanner.Frame.Skip; break;
+                default: return null;
+            }
+        }
+        return result;
+    }
+
     /// <summary>The element names of interest, spelled with the prefixes the root declares (LibreOffice uses the canonical ones).</summary>
     private (byte[] name, Name kind)[][] BuildNames(string? rootOpenTag)
     {
-        _prefixMap = rootOpenTag is null ? null : new Dictionary<string, string>(StringComparer.Ordinal);
-        if (rootOpenTag is not null)
-            foreach (KeyValuePair<string, string> canonical in CanonicalNamespaces)
-            {
-                // the declaration must be "xmlns:prefix=\"uri\"" directly (a default xmlns=\"uri\" keeps the canonical prefix)
-                int uri = rootOpenTag.IndexOf("=\"" + canonical.Value + "\"", StringComparison.Ordinal);
-                if (uri < 0) continue;
-                int nameStart = uri;
-                while (nameStart > 0 && !char.IsWhiteSpace(rootOpenTag[nameStart - 1])) nameStart--;
-                string attribute = rootOpenTag.Substring(nameStart, uri - nameStart);
-                if (attribute.StartsWith("xmlns:", StringComparison.Ordinal)) _prefixMap![canonical.Key] = attribute.Substring(6);
-            }
-        string P(string canonicalName) => _prefixMap is null ? canonicalName : MapPrefix(canonicalName);
+        _prefixMap = rootOpenTag is null ? null : PrefixMapOf(rootOpenTag);
+        string P(string canonicalName) => _prefixMap is null ? canonicalName : MapPrefix(_prefixMap, canonicalName);
         var names = new Dictionary<string, Name>(StringComparer.Ordinal)
         {
             [P("text:p")] = Name.Paragraph, [P("text:h")] = Name.Heading, [P("table:table")] = Name.Table,
@@ -717,9 +765,7 @@ internal sealed class OdtBodyBlockScanner
             [P("text:bookmark")] = Name.Bookmark, [P("text:bookmark-start")] = Name.Bookmark,
             [P("text:reference-mark")] = Name.Bookmark, [P("text:reference-mark-start")] = Name.Bookmark,
         };
-        foreach (string index in new[] { "text:table-of-content", "text:alphabetical-index", "text:illustration-index", "text:table-index",
-                                         "text:object-index", "text:user-index", "text:bibliography" })
-            names[P(index)] = Name.IndexElement;
+        foreach (string index in IndexElementNames) names[P(index)] = Name.IndexElement;
         int longest = names.Keys.Max(key => key.Length);
         var buckets = new List<(byte[], Name)>[longest + 1];
         for (int i = 0; i < buckets.Length; i++) buckets[i] = new List<(byte[], Name)>();

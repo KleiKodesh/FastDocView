@@ -74,6 +74,11 @@ public sealed class WordDocumentSearchMatcher
 
     public void Reset() { _state = 0; Count = 0; }
 
+    /// <summary>The partial match and count, to undo a feed that turned out to need another reader (<see cref="RestoreState"/>).</summary>
+    internal (int state, int count) SaveState() => (_state, Count);
+
+    internal void RestoreState((int state, int count) saved) { _state = saved.state; Count = saved.count; }
+
     /// <summary>A paragraph / cell / line boundary: the partial match is dropped.</summary>
     public void Separator() => _state = 0;
 

@@ -438,8 +438,8 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
         => Search(query, options, fromBlock, maxBlocksToScan, DocxSearchTextMode.Bytes);
 
-    /// <summary>How a search batch reads block text: the byte scanner (the product), the XmlReader reference over the index ranges (golden checks), or not at all (profiling the index-range read / the raw search read alone).</summary>
-    internal enum DocxSearchTextMode { Bytes, ReferenceXmlReader, ReadBytesOnly, ReadSearchBytesOnly }
+    /// <summary>How a search batch reads block text: the byte scanner (the product), the XmlReader reference over the index ranges (golden checks), not at all (profiling the index-range read / the raw search read alone), or the byte scanner with notes parsed as before (profiling the note read).</summary>
+    internal enum DocxSearchTextMode { Bytes, ReferenceXmlReader, ReadBytesOnly, ReadSearchBytesOnly, BytesWithParsedNotes }
 
     /// <summary>Blocks per raw search read: bounds the bytes one read holds (~1 MB on the sample) whatever the batch size.</summary>
     private const int SearchPieceBlocks = 1000;
@@ -471,14 +471,14 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                     _searchText ??= new DocxSearchTextScanner(_blocks.RootOpenTag);
                     void BlockEnded(int blockIndex)
                     {
-                        if (options.IncludeNotes) FeedNotes(blockIndex, matcher);
+                        if (options.IncludeNotes) FeedNotes(blockIndex, matcher, mode);
                         if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                         matcher.Reset();
                     }
                     int scanFrom = fromBlock;
                     // the finished index: the scanner finds the block boundaries in raw reads (no span scan), a bounded
                     // piece at a time so a huge batch never holds more than a piece's bytes
-                    if (_blocks is DocxCompactBlockTable compact && mode is DocxSearchTextMode.Bytes or DocxSearchTextMode.ReadSearchBytesOnly)
+                    if (_blocks is DocxCompactBlockTable compact && mode is DocxSearchTextMode.Bytes or DocxSearchTextMode.ReadSearchBytesOnly or DocxSearchTextMode.BytesWithParsedNotes)
                     {
                         while (scanFrom < end)
                         {
@@ -487,16 +487,25 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                             if (mode == DocxSearchTextMode.ReadSearchBytesOnly) { scanFrom = pieceEnd; continue; }
                             int hitsBefore = hits.Count;
                             matcher.Reset();
-                            DocxSearchTextScanner.BlocksResult result = _searchText.FeedBlocks(buffer.AsSpan(start, length), scanFrom, pieceEnd, matcher, BlockEnded, out long stoppedAt);
-                            if (result == DocxSearchTextScanner.BlocksResult.Failed) { scanFrom = (int)stoppedAt; break; }   // the rest block by block, from the index's ranges
-                            if (result == DocxSearchTextScanner.BlocksResult.Done && !isEndExact)
+                            WordSearchBlocksResult result = _searchText.FeedBlocks(buffer.AsSpan(start, length), scanFrom, pieceEnd, matcher, BlockEnded, out long stoppedAt);
+                            WordSearchPieceVerdict verdict = WordSearchPiece.Judge(result, isEndExact, stoppedAt, length);
+                            if (verdict == WordSearchPieceVerdict.FallBackFromFailedBlock)
                             {
-                                // the bytes ended at the next anchor yet the count came out right: not the index's layout - redo the piece the slow way
+                                // the rest block by block, from the index's ranges; hits the scan reported from that block on are dropped
+                                scanFrom = (int)stoppedAt;
+                                int keep = hits.FindIndex(hitsBefore, hit => hit >= scanFrom);
+                                if (keep >= 0) { hits.RemoveRange(keep, hits.Count - keep); counts.RemoveRange(keep, counts.Count - keep); }
+                                break;
+                            }
+                            if (verdict == WordSearchPieceVerdict.RedoPiece)
+                            {
+                                // the scanner's blocks are not the index's (Done on bytes that run on to the next anchor, Stopped
+                                // inside bytes that end exactly at the piece's end): redo the piece the slow way, so no hit is mis-numbered
                                 hits.RemoveRange(hitsBefore, hits.Count - hitsBefore);
                                 counts.RemoveRange(hitsBefore, counts.Count - hitsBefore);
                                 break;
                             }
-                            if (result == DocxSearchTextScanner.BlocksResult.Stopped) compact.RememberSearchResume(pieceEnd, startOffset + stoppedAt);
+                            if (result == WordSearchBlocksResult.Stopped) compact.RememberSearchResume(pieceEnd, startOffset + stoppedAt);
                             scanFrom = pieceEnd;
                         }
                     }
@@ -520,15 +529,37 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         }
     }
     /// <summary>The bodies of the notes a block references, after its own text (a separator before each).</summary>
-    private void FeedNotes(int blockIndex, WordDocumentSearchMatcher matcher)
+    /// <summary>
+    /// The byte scanner reads each note's raw bytes (its range from the notes index); a note it declines (a text box, a
+    /// drawing, malformed XML) is parsed and read as the reference reads it - the matcher rolled back first.
+    /// </summary>
+    private void FeedNotes(int blockIndex, WordDocumentSearchMatcher matcher, DocxSearchTextMode mode)
     {
         foreach (DocxNoteReference reference in _blocks.NoteReferencesInBlocks(blockIndex, blockIndex))
         {
+            if (mode is not (DocxSearchTextMode.ReferenceXmlReader or DocxSearchTextMode.BytesWithParsedNotes))
+            {
+                if (!_noteReader.ReadBytes(reference.Kind, reference.NoteId, ref _noteSearchBuffer, out int length, out string rootOpenTag)) continue;
+                matcher.Separator();
+                (int, int) before = matcher.SaveState();
+                DocxNoteSearchTextScanner scanner = reference.Kind == WordDocumentNoteKind.Footnote
+                    ? _footnoteSearchText ??= new DocxNoteSearchTextScanner(rootOpenTag)
+                    : _endnoteSearchText ??= new DocxNoteSearchTextScanner(rootOpenTag);
+                if (scanner.TryFeed(_noteSearchBuffer.AsSpan(0, length), matcher)) { NotesSearchedFromBytes++; continue; }
+                matcher.RestoreState(before);
+                if (_noteReader.Read(reference.Kind, reference.NoteId) is { } declined) WordXmlSearchText.FeedOoxml(declined, matcher);
+                continue;
+            }
             if (_noteReader.Read(reference.Kind, reference.NoteId) is not { } note) continue;
             matcher.Separator();
             WordXmlSearchText.FeedOoxml(note, matcher);
         }
     }
+
+    private byte[] _noteSearchBuffer = new byte[4096];
+    private DocxNoteSearchTextScanner? _footnoteSearchText, _endnoteSearchText;
+    /// <summary>Notes the byte scanner read itself (not declined to the parser) - the tests check the fast path ran.</summary>
+    internal long NotesSearchedFromBytes { get; private set; }
 
     private DocxSearchTextScanner? _searchText;
     private WordXmlSearchText? _referenceSearchText;

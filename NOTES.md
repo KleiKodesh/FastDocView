@@ -905,7 +905,39 @@ Now (`DocxSearchTextScanner`, `DocxCompactBlockTable.ReadSearchBytes`):
 - Same conditions as the profile: full scan 4.0-5.3 s (reference) -> 0.67-0.98 s; first batch of 500 3 ms;
   `--search` timing: frequent 981 ms (31,718 hit blocks), absent 672 ms; cold on-demand open + full scan 2.0 s (was 3.8).
   While the on-demand index is building the batches still read per-block ranges (now with the byte scanner).
-- Not done: .odt / .fodt still use the XmlReader pass (`FeedOdf`).
+- Piece verdict (`WordSearchPiece.Judge`, shared with .odt): bytes that end exactly at an anchor / the body end must come
+  out Done; Stopped inside them (an extra block) or Done on bytes that run on means the scanner's blocks are not the
+  index's - the piece is redone from per-block ranges, never kept. A count mismatch / stray close tag now fails from the
+  piece's FIRST block and drops the piece's hits from there (before, hits of earlier blocks of the piece were kept).
+
+### .odt / .fodt byte-level search (2026-11-03)
+
+`OdtSearchTextScanner` + `OdtCompactBlockTable.ReadSearchBytes`, same model as .docx: a batch reads raw bytes from an
+anchor (its scan state gives the frames open there - `OdtBodyBlockScanner.SearchFramesOf`) or from where the previous
+batch stopped (offset + frames kept), in pieces of 1000 blocks. Block boundaries follow the body scanner's rule (text:p /
+text:h / table:table at block level: office:text, section, numbered-paragraph, index-body, list item; lists, sections,
+tracked changes, sequence decls, index templates are not blocks), names between blocks classified by the root's prefixes
+like the body scanner, inside blocks by namespace like the reader. Text rules = `FeedOdf` exactly: paragraph text only,
+white space collapsed with the block-wide "last was a space" state, text:s c, text:tab, text:line-break, p / h
+separators, note-citation / tracked-changes / office:annotation / (notes off) note-body skipped. A start not at an anchor
+or resume point reads per-block ranges up to the next anchor. `FeedOdf` stays as the reference (`OdtSearchTextMode`).
+- Golden (`--search <odt|fodt>`, `OdtSearchBytesTest`): 10 queries x match case on / off on the LibreOffice conversions of
+  the sample (.odt 121,650 blocks, .fodt): identical blocks and counts; batches of 37 = 5000; a start mid-document.
+- Release, TieredCompilation=0, idle, 2 cores, best of 3 alternated, full scan of a frequent word in batches of 500:
+  .odt 12.2 s -> 0.60 s, .fodt 11.2 s -> 0.42 s; first batch of 500 after a fresh open 35.6 -> 2.5 ms (.odt), 5.7 -> 1.4 ms (.fodt).
+- Not done: the on-demand (still-building) index reads per-block ranges (with the byte scanner).
+
+### .docx note bodies from bytes (2026-11-03)
+
+Notes were read per search as XElement (range from the notes index, parsed whole). Now `DocxNoteSearchTextScanner`
+reads the same range's raw bytes into one reused buffer (`DocxNoteXmlReader.ReadBytes`) with the reference's rules
+(`FeedOoxml(XElement)`): per w:p its w:t text, whitespace-only text nodes dropped unless xml:space="preserve" (the parser
+ignores whitespace), w:tab inside a run a space, w:br / w:cr / paragraph end separators. It declines - matcher rolled
+back, the note parsed as before - a paragraph inside a paragraph (text box: the reference reads it twice), w:drawing /
+w:pict / w:object (stripped before parsing), whitespace written only as references, malformed XML. .odt notes are inline
+and already go through the body scan.
+- Synthetic 100,000-footnote docx (`--search notes-heavy`): 8 queries x match case identical to the parsed path
+  (blocks + counts); full scan with notes 8.5 s -> 1.0 s (body alone 0.1 s), same conditions as above.
 ## Bookmarks and in-document links in every format (branch work/bookmarks-all, 2026-10-29)
 
 `IWordWindowedDocument.FindBookmark(name)` returns the block a bookmark marks; links render as
