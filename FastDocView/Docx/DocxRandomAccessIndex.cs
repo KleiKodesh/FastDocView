@@ -23,7 +23,6 @@ public sealed class DocxRandomAccessIndex
     public const int TextLengthGroupSize = 64;
     /// <summary>Output bytes between span anchors: a random block rescans at most this much (~1-2 ms) on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
-    private const int KeyStateEvery = 8;            // full list states kept in memory for every 8th anchor; the others apply their deltas from there
 
     public long SourceFileLength { get; }
     public long SourceLastWriteTicksUtc { get; }
@@ -128,20 +127,20 @@ public sealed class DocxRandomAccessIndex
         return _bookmarkLookup.TryGetValue(name, out int block) ? block : null;
     }
 
-    private byte[]?[]? _keyStates;
+    private byte[]?[]? _anchorStates;
 
-    /// <summary>The list-numbering state at anchor <paramref name="anchorIndex"/> (what the span's scan starts counting from).</summary>
+    /// <summary>
+    /// The list-numbering state at anchor <paramref name="anchorIndex"/> (what the span's scan starts counting from): the
+    /// deltas applied from the start, each anchor's full state kept once computed (a few hundred bytes per anchor).
+    /// </summary>
     public byte[] ListStateOf(int anchorIndex)
     {
-        _keyStates ??= new byte[]?[(Anchors.Length + KeyStateEvery - 1) / KeyStateEvery];
-        int key = anchorIndex / KeyStateEvery;
-        if (_keyStates[key] is null)
-        {
-            byte[] state = key > 0 ? ListStateOf(key * KeyStateEvery - 1) : [];
-            _keyStates[key] = DocxHtml.DocxListCounter.ApplyDelta(state, Anchors[key * KeyStateEvery].ListStateDelta);
-        }
-        byte[] current = _keyStates[key]!;
-        for (int i = key * KeyStateEvery + 1; i <= anchorIndex; i++) current = DocxHtml.DocxListCounter.ApplyDelta(current, Anchors[i].ListStateDelta);
+        _anchorStates ??= new byte[]?[Anchors.Length];
+        if (_anchorStates[anchorIndex] is { } known) return known;
+        int from = anchorIndex;
+        while (from > 0 && _anchorStates[from - 1] is null) from--;
+        byte[] current = from > 0 ? _anchorStates[from - 1]! : [];
+        for (int i = from; i <= anchorIndex; i++) _anchorStates[i] = current = DocxHtml.DocxListCounter.ApplyDelta(current, Anchors[i].ListStateDelta);
         return current;
     }
 

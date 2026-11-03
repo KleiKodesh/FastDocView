@@ -187,7 +187,8 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
         return end > start ? references.GetRange(start, end - start).ToArray() : ReadOnlySpan<DocxNoteReference>.Empty;
     }
 
-    public byte[] ReadRange(Stream view, long start, long end) => DocxXmlFragment.ReadRange(view, start, end);
+    public byte[] ReadBlockBytes(Stream view, int firstBlockIndex, int lastBlockIndex)
+        => DocxXmlFragment.ReadRange(view, BlockStartOffset(firstBlockIndex), BlockEndOffset(lastBlockIndex));
 
     private static int LowerBound(List<DocxNoteReference> references, int blockIndex)
     {

@@ -8,14 +8,15 @@ namespace FastDocView.Docx;
 /// the one the pass found. A span is scanned only as far as asked and kept scanning on later requests;
 /// a handful of spans stay cached (the ones around the window). The bytes inflated while scanning are kept
 /// in a bounded ring (<see cref="RetainedBytes"/>), so a window that was just located is rendered from them
-/// without inflating again; sequential windows therefore cost one inflate pass, like before.
+/// without inflating again, and a longer read (<see cref="ReadBlockBytes"/>: a window, a search batch of
+/// thousands of blocks) collects the bytes as the scan passes them, whatever its length — one inflate pass,
+/// never a seek back to a checkpoint for bytes that were just inflated.
 /// </summary>
 internal sealed class DocxCompactBlockTable : IDocxBlockTable
 {
     private const int MaxCachedSpans = 8;
     private const int ChunkSize = 1 << 16;
-    private const int RetainedBytes = 1 << 19;          // holds a whole anchor span + a chunk, so a located window is always still in the ring; grows for a search batch up to MaxRetainedBytes
-    private const int MaxRetainedBytes = 4 << 20;
+    private const int RetainedBytes = 1 << 19;          // holds a whole anchor span + a chunk, so a located window is always still in the ring
 
     private sealed class Span
     {
@@ -33,10 +34,18 @@ internal sealed class DocxCompactBlockTable : IDocxBlockTable
     private readonly byte[] _chunk = new byte[ChunkSize];
     private long _useCounter;
 
-    // the last bytes read from the view, contiguous: [_ringStart, _ringStart + _ringLength)
-    private byte[] _ring = new byte[RetainedBytes];
+    // the last bytes the scan read from the view, contiguous: [_ringStart, _ringStart + _ringLength)
+    private readonly byte[] _ring = new byte[RetainedBytes];
     private long _ringStart = -1;
     private int _ringLength;
+
+    // a read in progress (ReadBlockBytes): every scanned chunk that continues it is appended as it passes. The buffer is
+    // reused across reads, bounded by the largest read so far (a search batch's few MB): growing a fresh one per batch
+    // was a large-object allocation per chunk
+    private byte[] _collected = new byte[ChunkSize];
+    private int _collectedLength;
+    private bool _isCollecting;
+    private long _collectorEnd;
 
     public DocxCompactBlockTable(DocxRandomAccessIndex index, Stream view, Func<DocxDocumentParts.DocxListLabeller> labellerFactory)
     {
@@ -128,26 +137,12 @@ internal sealed class DocxCompactBlockTable : IDocxBlockTable
         if (span.ScannedTo >= end) span.IsComplete = true;
     }
 
-    /// <summary>Appends bytes read from the view to the ring when they continue it, else restarts the ring with them.</summary>
-    private void Retain(long offset, byte[] bytes, int count) => Retain(offset, bytes, 0, count);
-
-    private void Retain(long offset, byte[] bytes, int from, int count)
+    /// <summary>Keeps a scanned chunk: appended to the ring (restarted when the chunk does not continue it) and to the read in progress when it continues that.</summary>
+    private void Retain(long offset, byte[] bytes, int count)
     {
-        if (count > _ring.Length)
-        {
-            if (count > MaxRetainedBytes) { _ringStart = -1; _ringLength = 0; return; }
-            var bigger = new byte[Math.Min(MaxRetainedBytes, Math.Max(count, _ring.Length * 2))];
-            Buffer.BlockCopy(_ring, 0, bigger, 0, _ringLength);
-            _ring = bigger;
-        }
+        if (_isCollecting && offset == _collectorEnd) Collect(bytes, 0, count);
+        if (count > _ring.Length) { _ringStart = -1; _ringLength = 0; return; }
         if (_ringStart < 0 || _ringStart + _ringLength != offset) { _ringStart = offset; _ringLength = 0; }
-        if (_ringLength + count > _ring.Length && _ring.Length < MaxRetainedBytes)
-        {
-            // a long contiguous run (a search batch locating thousands of blocks): keep it whole up to the cap, so the batch's bytes are read once
-            var bigger = new byte[Math.Min(MaxRetainedBytes, Math.Max(_ringLength + count, _ring.Length * 2))];
-            Buffer.BlockCopy(_ring, 0, bigger, 0, _ringLength);
-            _ring = bigger;
-        }
         if (_ringLength + count > _ring.Length)
         {
             int drop = Math.Max(count, _ring.Length / 2);
@@ -156,38 +151,47 @@ internal sealed class DocxCompactBlockTable : IDocxBlockTable
             _ringStart += drop;
             _ringLength -= drop;
         }
-        Buffer.BlockCopy(bytes, from, _ring, _ringLength, count);
+        Buffer.BlockCopy(bytes, 0, _ring, _ringLength, count);
         _ringLength += count;
     }
 
-    public byte[] ReadRange(Stream view, long start, long end)
+    private void Collect(byte[] bytes, int from, int count)
     {
-        var bytes = new byte[end - start];
-        int filled = 0;
-        if (_ringStart >= 0 && start >= _ringStart && start < _ringStart + _ringLength)
+        if (_collectedLength + count > _collected.Length)
         {
-            // the head (often all of it) is in the ring; the rest continues from the ring's end, where the view already is
-            filled = (int)Math.Min(bytes.Length, _ringStart + _ringLength - start);
-            Buffer.BlockCopy(_ring, (int)(start - _ringStart), bytes, 0, filled);
-            if (filled == bytes.Length) return bytes;
-            if (view.Position != start + filled) view.Position = start + filled;
-            while (filled < bytes.Length)
-            {
-                int read = view.Read(bytes, filled, bytes.Length - filled);
-                if (read <= 0) throw new EndOfStreamException("Part ended inside an element.");
-                Retain(start + filled, bytes, filled, read);
-                filled += read;
-            }
-            return bytes;
+            var bigger = new byte[Math.Max(_collectedLength + count, _collected.Length * 2)];
+            Buffer.BlockCopy(_collected, 0, bigger, 0, _collectedLength);
+            _collected = bigger;
         }
-        view.Position = start;
+        Buffer.BlockCopy(bytes, from, _collected, _collectedLength, count);
+        _collectedLength += count;
+        _collectorEnd += count;
+    }
+
+    public byte[] ReadBlockBytes(Stream view, int firstBlockIndex, int lastBlockIndex)
+    {
+        long start = BlockStartOffset(firstBlockIndex);
+        // what the scan already passed: the ring's bytes from the start on; then every chunk the scan reads while locating the end
+        _collectedLength = 0;
+        _collectorEnd = start;
+        _isCollecting = true;
+        if (_ringStart >= 0 && start >= _ringStart && start < _ringStart + _ringLength)
+            Collect(_ring, (int)(start - _ringStart), (int)(_ringStart + _ringLength - start));
+        long end;
+        try { end = BlockEndOffset(lastBlockIndex); }
+        finally { _isCollecting = false; }
+        var bytes = new byte[end - start];
+        int filled = (int)Math.Min(bytes.Length, _collectorEnd - start);
+        Buffer.BlockCopy(_collected, 0, bytes, 0, filled);
+        if (filled == bytes.Length) return bytes;
+        // the rest (a block before an anchor answered without a scan, the body's tail, bytes the ring let go): straight from the view
+        view.Position = start + filled;
         while (filled < bytes.Length)
         {
             int read = view.Read(bytes, filled, bytes.Length - filled);
             if (read <= 0) throw new EndOfStreamException("Part ended inside an element.");
             filled += read;
         }
-        Retain(start, bytes, 0, bytes.Length);
         return bytes;
     }
 

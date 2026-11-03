@@ -70,9 +70,8 @@ public sealed class DocxBlockXmlReader : IDisposable
             _rootElementName = DocxXmlFragment.RootElementName(table.RootOpenTag);
         }
 
+        byte[] bytes = table.ReadBlockBytes(_documentXml, firstBlockIndex, last);
         long rangeStart = table.BlockStartOffset(firstBlockIndex);
-        long rangeEnd = table.BlockEndOffset(last);
-        byte[] bytes = table.ReadRange(_documentXml, rangeStart, rangeEnd);
 
         for (int blockIndex = firstBlockIndex; blockIndex <= last; blockIndex++)
         {
@@ -93,9 +92,8 @@ public sealed class DocxBlockXmlReader : IDisposable
         IDocxBlockTable table = Table;
         int last = Math.Min(table.BlockCount, firstBlockIndex + count) - 1;
         if (firstBlockIndex < 0 || firstBlockIndex > last) return ([], blocks);
+        byte[] bytes = table.ReadBlockBytes(_documentXml, firstBlockIndex, last);
         long rangeStart = table.BlockStartOffset(firstBlockIndex);
-        long rangeEnd = table.BlockEndOffset(last);
-        byte[] bytes = table.ReadRange(_documentXml, rangeStart, rangeEnd);
         for (int blockIndex = firstBlockIndex; blockIndex <= last; blockIndex++)
         {
             int start = (int)(table.BlockStartOffset(blockIndex) - rangeStart);

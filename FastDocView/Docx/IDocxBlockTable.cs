@@ -21,8 +21,8 @@ internal interface IDocxBlockTable
     string? OpenFieldsAt(int blockIndex);
     ReadOnlySpan<DocxNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex);
     /// <summary>
-    /// The part's bytes [start, end) — from the table's own recently scanned bytes when it has them (the compact table
-    /// inflates a window's bytes while locating its blocks), else from <paramref name="view"/>.
+    /// The bytes of blocks [first, last] (from the first's start to the last's end) — the compact table collects them
+    /// while its scan locates the blocks (one inflate pass), the builder reads them from <paramref name="view"/>.
     /// </summary>
-    byte[] ReadRange(Stream view, long start, long end);
+    byte[] ReadBlockBytes(Stream view, int firstBlockIndex, int lastBlockIndex);
 }
