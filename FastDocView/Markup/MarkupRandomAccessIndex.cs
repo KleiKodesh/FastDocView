@@ -297,14 +297,8 @@ public sealed class MarkupRandomAccessIndex
         return values;
     }
 
-    public void Save(string indexPath)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
-        string temporaryPath = indexPath + ".tmp";
-        using (var file = File.Create(temporaryPath)) Write(file);
-        if (File.Exists(indexPath)) File.Delete(indexPath);
-        File.Move(temporaryPath, indexPath);
-    }
+    /// <summary>Saves the sidecar atomically with its record (<see cref="WordDocumentIndexCache.Save"/>); a failure leaves the old one or none - it is a cache.</summary>
+    public void Save(string indexPath, string? documentPath = null) => WordDocumentIndexCache.Save(indexPath, Write, documentPath);
 
     public static MarkupRandomAccessIndex? TryLoad(string indexPath, string documentPath, MarkupSourceKind kind)
     {
@@ -313,7 +307,7 @@ public sealed class MarkupRandomAccessIndex
         {
             using BinaryReader reader = IndexBinaryArrays.OpenInMemory(indexPath);
             MarkupRandomAccessIndex index = Read(reader.BaseStream);
-            return index.Kind == kind && index.MatchesSource(documentPath) ? index : null;
+            return index.Kind == kind && index.MatchesSource(documentPath) ? WordDocumentIndexCache.MarkUsed(indexPath, index) : null;
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or EndOfStreamException
                                            or OverflowException or ArgumentException or OutOfMemoryException)   // a damaged sidecar is rebuilt

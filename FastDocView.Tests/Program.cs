@@ -59,6 +59,7 @@ for (int i = 0; i < args.Length; i++)
         case "--deflate-mb": deflateMegabytes = int.Parse(args[++i]); break;
         case "--skip-synthetic": skipSynthetic = true; break;
         case "--search": searchOnly = true; while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) searchPaths.Add(args[++i]); break;   // in-document search checks (+ timings on the given files)
+        case "--index-cache": WordDocumentIndexCacheTest.Run(); skipSynthetic = true; break;   // sidecar cache LRU: eviction, caps, stale / orphan cleanup, concurrency (seconds)
         case "--fidelity": fidelityOnly = true; break;                                  // only the small Word-fidelity checks (seconds)
         case "--page-width": pageWidthOnly = true; break;                               // only the page-text-width checks (+ --real files)                                  // only the small Word-fidelity checks (seconds)
         case "--incremental-open":                                                     // optional block count, default 1000000
@@ -122,6 +123,7 @@ if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPat
 if (!skipSynthetic)
 {
     DocxNumberingAndPolicyTest.Run();
+    WordDocumentIndexCacheTest.Run();
     DocxThemeAndUnderlineTest.Run();
     DocxFidelityTest.Run();
     DocumentSearchTest.Run([]);

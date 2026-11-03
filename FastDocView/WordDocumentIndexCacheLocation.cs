@@ -6,7 +6,8 @@ namespace FastDocView;
 /// <summary>
 /// Where a document's sidecar index lives. Never next to the document (read-only folders, network
 /// shares): under %LOCALAPPDATA% keyed by the full path. The index itself also records the file's
-/// size and last-write time, so a changed document is detected and re-indexed.
+/// size and last-write time, so a changed document is detected and re-indexed. The folder is kept bounded by
+/// <see cref="WordDocumentIndexCache"/> (LRU, caps in <see cref="WordDocumentIndexCache.Limits"/>).
 /// </summary>
 public static class WordDocumentIndexCacheLocation
 {
@@ -28,6 +29,8 @@ public static class WordDocumentIndexCacheLocation
         string fileName = Path.GetFileNameWithoutExtension(fullPath);
         if (fileName.Length > 40) fileName = fileName.Substring(0, 40);
         foreach (char invalid in Path.GetInvalidFileNameChars()) fileName = fileName.Replace(invalid, '_');
-        return Path.Combine(cacheDirectory ?? DefaultCacheDirectory, $"{fileName}.{hash}.wordindex");
+        string indexPath = Path.Combine(cacheDirectory ?? DefaultCacheDirectory, $"{fileName}.{hash}{WordDocumentIndexCache.SidecarExtension}");
+        WordDocumentIndexCache.RememberDocument(indexPath, fullPath);     // its record names the document (stale-sidecar cleanup)
+        return indexPath;
     }
 }

@@ -150,6 +150,38 @@ reason (`WordIndexDecision`). `WordWindowedDocumentOpener.DecideFolder` lists ev
 under a folder with its decision for a picker; `BuildSidecarIndexes` builds the chosen ones with
 per-file progress. The demo viewer shows this under File → Open folder.
 
+### Sidecar cache folder: LRU (2026-11-03)
+
+`WordDocumentIndexCache` keeps `%LOCALAPPDATA%\KitveiHakodesh\FastDocView` (or the policy's `CacheDirectory`) bounded;
+it used to grow without end.
+- **Record**: next to `X.wordindex` a tiny `X.wordindex.source` (document full path, length, last-write ticks at save
+  time). The document comes from `IndexPathFor` (it remembers the last 64 index paths it computed), so no caller changed.
+- **Last use** = the sidecar's last-write time: set on every save and on every open whose `TryLoad` validates it (one
+  file-time write; the sidecar's content does not depend on it). NTFS last-access is often off, so not used.
+- **Atomic writes**: every format's `Save` now goes through `WordDocumentIndexCache.Save`: a temp file unique to the
+  writer (`X.wordindex.<pid>-<random>.tmp`, `FileShare.None`), then one rename over the old file (net10
+  `File.Move(overwrite)`, net48 `File.Replace`). Before, all writers shared `X.wordindex.tmp` and did delete + move
+  (two instances could clobber each other's temp; a reader could see no file). A failed save (disk full, old file held)
+  leaves no temp file and is a cache miss, not an error (.docx / .doc callers no longer see the exception).
+- **Trim** (`Trim(directory, limits)`, also callable by the host): temp files and records with no sidecar older than an
+  hour; sidecars whose document is gone (only when its folder still exists: an unplugged drive or share keeps its
+  sidecars) or whose length / time differ from the record; then least recently used first until both caps hold.
+  Record-less (older) sidecars take part in the LRU only.
+- **Caps** (`WordDocumentIndexCache.Limits`, a `WordIndexCacheLimits`; the host or Core sets it): 256 MB and 4,000
+  sidecars. Measured sidecars: compact formats 3-60 KB (the .docx sample 59 KB, the 40 MB .doc sample 16-17 KB), older
+  layouts on this machine up to 1.4 MB (median 59 KB of 11). 256 MB = ~4,000 of the largest compact ones, so the count
+  cap binds first in practice; the folder listing a trim walks stays a few thousand entries (ms).
+- **When**: never on the caller's thread. Once per process per folder on the first use of the cache (a validated
+  open or a save), and again after a save at least 10 minutes after the last trim; on a background thread at lowest
+  priority. `TrimsAutomatically = false` turns it off (the browser build has no threads: it catches that and skips).
+- **Concurrency** (the service, a second app instance): a delete of a file another process holds open (readers
+  `File.ReadAllBytes`, writers' temp files) fails on the sharing violation and is skipped (`SkippedInUseCount`); a
+  sidecar whose last-write time moved since the listing (used again) is kept; files that vanish mid-trim are ignored.
+  A reader that loses the race to a delete sees a missing file = a cache miss, rebuilt.
+- Tests: `--index-cache` (also in the default run): eviction order, count cap, size cap, stale (changed, deleted,
+  folder missing, no record), orphan temps / records, a sidecar held open, 3 s of saves + reads racing ~5,600 trims
+  (0 exceptions, 0 torn reads), the real open path (record written, reopen marks use, change -> stale).
+
 ## Multiplatform / WASM
 
 The core takes `Stream`s (`DocxWindowedDocument.OpenFromStream`, `DocBinaryWindowedDocument.

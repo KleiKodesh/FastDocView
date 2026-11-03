@@ -210,14 +210,8 @@ public sealed class RtfRandomAccessIndex
         };
     }
 
-    public void Save(string indexPath)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
-        string temporaryPath = indexPath + ".tmp";
-        using (var file = File.Create(temporaryPath)) Write(file);
-        if (File.Exists(indexPath)) File.Delete(indexPath);
-        File.Move(temporaryPath, indexPath);
-    }
+    /// <summary>Saves the sidecar atomically with its record (<see cref="WordDocumentIndexCache.Save"/>); a failure leaves the old one or none - it is a cache.</summary>
+    public void Save(string indexPath, string? documentPath = null) => WordDocumentIndexCache.Save(indexPath, Write, documentPath);
 
     public static RtfRandomAccessIndex? TryLoad(string indexPath, string documentPath)
     {
@@ -226,7 +220,7 @@ public sealed class RtfRandomAccessIndex
         {
             using BinaryReader reader = IndexBinaryArrays.OpenInMemory(indexPath);
             RtfRandomAccessIndex index = Read(reader.BaseStream);
-            return index.MatchesSource(documentPath) ? index : null;
+            return index.MatchesSource(documentPath) ? WordDocumentIndexCache.MarkUsed(indexPath, index) : null;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
