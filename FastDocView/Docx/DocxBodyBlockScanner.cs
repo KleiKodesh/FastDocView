@@ -422,9 +422,9 @@ internal sealed class DocxBodyBlockScanner
         {
             OnBodyChildStarted();
             // a bookmark between paragraphs is a body child: its block exists now, its name is read the same way
-            if (_isCapturingAttributes && _tag == KnownTag.BookmarkStart) OnCapturedAttribute(Encoding.ASCII.GetString(_tagAttributes.GetBuffer(), 0, (int)_tagAttributes.Length));
+            if (_isCapturingAttributes && _tag == KnownTag.BookmarkStart) OnCapturedAttributes();
         }
-        else if (_isCapturingAttributes) OnCapturedAttribute(Encoding.ASCII.GetString(_tagAttributes.GetBuffer(), 0, (int)_tagAttributes.Length));
+        else if (_isCapturingAttributes) OnCapturedAttributes();
 
         // A document with several w:body elements (Apache POI's MultipleBodyBug.docx; POI's
         // TestXWPFWordExtractor.testMultipleBodyBug reads all of them): every body's children are
@@ -474,6 +474,102 @@ internal sealed class DocxBodyBlockScanner
         BlockStarted?.Invoke(BlockStartOffsets.Count - 1, _tagStartOffset);
     }
 
+    /// <summary>
+    /// The captured tag's attributes, as bytes: the frequent ones (a paragraph's style, numId and ilvl — every paragraph of
+    /// the body) are read without a string per tag; the style id is interned from its bytes. The rarer ones go through a
+    /// string as before.
+    /// </summary>
+    private void OnCapturedAttributes()
+    {
+        var attributes = new ReadOnlySpan<byte>(_tagAttributes.GetBuffer(), 0, (int)_tagAttributes.Length);
+        switch (_tag)
+        {
+            case KnownTag.ParagraphStyle:
+            {
+                if (BlockStyleIds.Count == 0 || !TryAttributeValue(attributes, "w:val="u8, out ReadOnlySpan<byte> value)) return;
+                short tableIndex = InternStyleId(value);
+                _currentStyleId = StyleIdTable[tableIndex];
+                _currentHeadingLevel = _headingLevelOfStyle?.Invoke(_currentStyleId) ?? 0;
+                BlockStyleIds[BlockStyleIds.Count - 1] = tableIndex;
+                return;
+            }
+            case KnownTag.NumberingId:
+                if (BlockStyleIds.Count > 0 && TryAttributeValue(attributes, "w:val="u8, out ReadOnlySpan<byte> numIdText) && TryParseInteger(numIdText, out int numId)) _currentNumId = numId;
+                return;
+            case KnownTag.NumberingLevel:
+                if (BlockStyleIds.Count > 0 && TryAttributeValue(attributes, "w:val="u8, out ReadOnlySpan<byte> levelText) && TryParseInteger(levelText, out int level)) _currentLevel = level;
+                return;
+            default:
+                OnCapturedAttribute(Encoding.ASCII.GetString(_tagAttributes.GetBuffer(), 0, (int)_tagAttributes.Length));
+                return;
+        }
+    }
+
+    /// <summary>The value bytes of an attribute (up to the closing quote); false when absent or unterminated.</summary>
+    private static bool TryAttributeValue(ReadOnlySpan<byte> attributes, ReadOnlySpan<byte> attributeWithEquals, out ReadOnlySpan<byte> value)
+    {
+        value = default;
+        int valueStart = attributes.IndexOf(attributeWithEquals);
+        if (valueStart < 0) return false;
+        valueStart += attributeWithEquals.Length + 1;                                  // past the opening quote
+        if (valueStart > attributes.Length) return false;
+        int valueEnd = attributes.Slice(valueStart).IndexOfAny((byte)'"', (byte)0x27);
+        if (valueEnd < 0) return false;
+        value = attributes.Slice(valueStart, valueEnd);
+        return true;
+    }
+
+    /// <summary>int.TryParse (NumberStyles.Integer) over ASCII bytes: surrounding white space and a leading sign allowed, nothing else.</summary>
+    private static bool TryParseInteger(ReadOnlySpan<byte> text, out int value)
+    {
+        value = 0;
+        int start = 0, end = text.Length;
+        while (start < end && IsWhiteSpace(text[start])) start++;
+        while (end > start && IsWhiteSpace(text[end - 1])) end--;
+        if (start == end) return false;
+        bool negative = false;
+        if (text[start] == (byte)'-') { negative = true; start++; }
+        else if (text[start] == (byte)'+') start++;
+        if (start == end) return false;
+        long result = 0;
+        for (int i = start; i < end; i++)
+        {
+            int digit = text[i] - '0';
+            if ((uint)digit > 9) return false;
+            result = result * 10 + digit;
+            if (result > (long)int.MaxValue + 1) return false;
+        }
+        if (negative) result = -result;
+        if (result > int.MaxValue || result < int.MinValue) return false;
+        value = (int)result;
+        return true;
+    }
+
+    private static bool IsWhiteSpace(byte b) => b is (byte)' ' or (byte)0x09 or (byte)0x0A or (byte)0x0D;
+
+    // style ids interned from their bytes: a lookup by the bytes' hash, the string made once per distinct id (ASCII-decoded, as before)
+    private readonly Dictionary<int, List<(byte[] bytes, short index)>> _styleIdByBytes = new();
+
+    private short InternStyleId(ReadOnlySpan<byte> bytes)
+    {
+        int hash = 17;
+        foreach (byte b in bytes) hash = unchecked(hash * 31 + b);
+        if (_styleIdByBytes.TryGetValue(hash, out List<(byte[] bytes, short index)>? candidates))
+        {
+            foreach ((byte[] known, short index) in candidates) if (bytes.SequenceEqual(known)) return index;
+        }
+        else _styleIdByBytes[hash] = candidates = new List<(byte[], short)>(1);
+        string value = Encoding.ASCII.GetString(bytes.ToArray());
+        if (!_styleIdLookup.TryGetValue(value, out short tableIndex))
+        {
+            tableIndex = (short)StyleIdTable.Count;
+            StyleIdTable.Add(value);
+            _styleIdLookup[value] = tableIndex;
+        }
+        candidates.Add((bytes.ToArray(), tableIndex));
+        return tableIndex;
+    }
+
     private void OnCapturedAttribute(string attributes)
     {
         if (_tag == KnownTag.BookmarkStart)
@@ -513,28 +609,7 @@ internal sealed class DocxBodyBlockScanner
             return;
         }
         if (_tag is KnownTag.FootnoteReference or KnownTag.EndnoteReference)
-        {
             OnNoteReference(_tag == KnownTag.FootnoteReference ? WordDocumentNoteKind.Footnote : WordDocumentNoteKind.Endnote, attributes);
-            return;
-        }
-        string? value = AttributeValue(attributes, "w:val=");
-        if (value is null) return;
-        switch (_tag)
-        {
-            case KnownTag.ParagraphStyle:
-                _currentStyleId = value;
-                _currentHeadingLevel = _headingLevelOfStyle?.Invoke(value) ?? 0;
-                if (!_styleIdLookup.TryGetValue(value, out short tableIndex))
-                {
-                    tableIndex = (short)StyleIdTable.Count;
-                    StyleIdTable.Add(value);
-                    _styleIdLookup[value] = tableIndex;
-                }
-                BlockStyleIds[BlockStyleIds.Count - 1] = tableIndex;
-                break;
-            case KnownTag.NumberingId: if (int.TryParse(value, out int numId)) _currentNumId = numId; break;
-            case KnownTag.NumberingLevel: if (int.TryParse(value, out int level)) _currentLevel = level; break;
-        }
     }
 
     /// <summary>

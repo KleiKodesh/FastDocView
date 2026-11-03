@@ -141,6 +141,7 @@ public sealed class DocxNumberingDefinitions
             _overrideLevels.Clear();
             _levels.Clear();
             _numStyleLinkByAbstractId.Clear();
+            _levelsByList.Clear();
             ReadWholeBytes(slices.Bytes);
             return null;
         }
@@ -194,6 +195,18 @@ public sealed class DocxNumberingDefinitions
              : _levels.TryGetValue((abstractId, level), out LevelDefinition? definition) ? definition : null;
     }
 
+    private readonly Dictionary<(int numId, int abstractId), LevelDefinition?[]> _levelsByList = new();
+
+    /// <summary>All nine levels a num uses (<see cref="LevelOf"/> per level), resolved once per list: the counter asks for them on every list paragraph.</summary>
+    public LevelDefinition?[] LevelsOf(int numId, int abstractId)
+    {
+        if (_levelsByList.TryGetValue((numId, abstractId), out LevelDefinition?[]? levels)) return levels;
+        levels = new LevelDefinition?[DocxListCounter.MaxLevels];
+        for (int level = 0; level < levels.Length; level++) levels[level] = LevelOf(numId, abstractId, level);
+        _levelsByList[(numId, abstractId)] = levels;
+        return levels;
+    }
+
     public int? StartOverrideOf(int numId, int level)
     {
         EnsureNum(numId);
@@ -203,7 +216,8 @@ public sealed class DocxNumberingDefinitions
     /// <summary>Fills the "%1.%2" pattern of a level with the current counters of all levels; with isLgl every number is decimal.</summary>
     public string FormatLabel(int numId, int abstractId, int level, int[] counters)
     {
-        if (LevelOf(numId, abstractId, level) is not { } definition) return "•";
+        LevelDefinition?[] levels = LevelsOf(numId, abstractId);
+        if (levels[level] is not { } definition) return "•";
         if (definition.Format == "bullet") return BulletCharacter(definition.Text);
         if (definition.Format == "none") return "";
         var label = new StringBuilder(definition.Text.Length + 8);
@@ -214,7 +228,7 @@ public sealed class DocxNumberingDefinitions
             {
                 int placeholderLevel = definition.Text[i + 1] - '1';
                 string format = definition.IsLegal ? "decimal"
-                              : placeholderLevel == level ? definition.Format : LevelOf(numId, abstractId, placeholderLevel)?.Format ?? "decimal";
+                              : placeholderLevel == level ? definition.Format : levels[placeholderLevel]?.Format ?? "decimal";
                 label.Append(FormatNumber(counters[placeholderLevel], format));
                 i++;
             }

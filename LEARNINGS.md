@@ -375,3 +375,17 @@ Append-only. Date, what we learned, what it changed.
   LibreOffice's Read_Tab reads both alike.
 - **Word's auto line spacing counts single lines, not ems**: 12 pt text at line=240 is 13.8 pt apart.
 - The file-writing path through a bash heredoc eats one level of backslashes: write edit scripts with the Write tool.
+
+## 2026-11-03 - compact-sidecar speed work: measure with the tiered JIT off
+
+- **A throughput number from a fresh process is a tier-0 number.** The "managed inflater at 95 MB/s"
+  of 2026-11-02 was the same loop that runs at ~400 MB/s once promoted; with
+  `DOTNET_TieredCompilation=0` old and new inflaters are on par. Hot loops that must be fast in a
+  short-lived process (a reopen's first windows) get `[MethodImpl(AggressiveOptimization)]`;
+  before/after claims are taken with tiering off, best of N, A/B alternated in the same minute.
+- **A ring that restarts on a miss misses forever.** After one non-contiguous read the ring never
+  covered the next window's start again, and every window re-inflated from a checkpoint. Count
+  the misses (one `Console.Error` line per miss) before optimising the hit path.
+- A shared worktree with another agent's half-written files breaks the build at random moments;
+  measurements of "base" need their own worktree pinned to the base commit (and the sibling
+  SeekableDeflate pinned too - the symlinked one follows master).

@@ -95,8 +95,16 @@ public sealed class DocxDocumentParts
         private readonly DocxNumberingDefinitions _numbering;
         private readonly DocxStyleCascade _styles;
         private readonly DocxListCounter? _counter;
-        private readonly Dictionary<DocxNumberingDefinitions.LevelDefinition, string> _levelCss = new();
-        private readonly Dictionary<DocxNumberingDefinitions.LevelDefinition, string> _levelParagraphXml = new();   // serialising the level pPr per paragraph cost more than the scan
+        // keyed by the definition object (one per level, never rebuilt): a record's value hash would hash its strings per paragraph
+        private readonly Dictionary<DocxNumberingDefinitions.LevelDefinition, string> _levelCss = new(LevelDefinitionReference.Instance);
+        private readonly Dictionary<DocxNumberingDefinitions.LevelDefinition, string> _levelParagraphXml = new(LevelDefinitionReference.Instance);   // serialising the level pPr per paragraph cost more than the scan
+
+        private sealed class LevelDefinitionReference : IEqualityComparer<DocxNumberingDefinitions.LevelDefinition>
+        {
+            public static readonly LevelDefinitionReference Instance = new();
+            public bool Equals(DocxNumberingDefinitions.LevelDefinition? x, DocxNumberingDefinitions.LevelDefinition? y) => ReferenceEquals(x, y);
+            public int GetHashCode(DocxNumberingDefinitions.LevelDefinition definition) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(definition);
+        }
 
         internal DocxListLabeller(DocxNumberingDefinitions numbering, DocxStyleCascade styles)
         {

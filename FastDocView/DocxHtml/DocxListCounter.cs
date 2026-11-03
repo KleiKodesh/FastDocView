@@ -9,7 +9,7 @@ namespace FastDocView.DocxHtml;
 /// </summary>
 public sealed class DocxListCounter
 {
-    private const int MaxLevels = 9;
+    internal const int MaxLevels = 9;
 
     private readonly DocxNumberingDefinitions _definitions;
     private readonly Dictionary<int, int[]> _countersByAbstractId = new();
@@ -117,10 +117,11 @@ public sealed class DocxListCounter
     {
         if (numId <= 0 || _definitions.AbstractIdOf(numId) is not { } abstractId) return null;
         level = Math.Max(0, Math.Min(MaxLevels - 1, level));
+        DocxNumberingDefinitions.LevelDefinition?[] levels = _definitions.LevelsOf(numId, abstractId);
         if (!_countersByAbstractId.TryGetValue(abstractId, out int[]? counters))
         {
             counters = new int[MaxLevels];
-            for (int i = 0; i < MaxLevels; i++) counters[i] = (_definitions.LevelOf(numId, abstractId, i)?.Start ?? 1) - 1;
+            for (int i = 0; i < MaxLevels; i++) counters[i] = (levels[i]?.Start ?? 1) - 1;
             _countersByAbstractId[abstractId] = counters;
         }
         if (_definitions.StartOverrideOf(numId, level) is { } start && _appliedStartOverrides.Add((numId, level)))
@@ -129,11 +130,11 @@ public sealed class DocxListCounter
         counters[level]++;
         for (int deeper = level + 1; deeper < MaxLevels; deeper++)
         {
-            DocxNumberingDefinitions.LevelDefinition? deeperDefinition = _definitions.LevelOf(numId, abstractId, deeper);
+            DocxNumberingDefinitions.LevelDefinition? deeperDefinition = levels[deeper];
             int? restart = deeperDefinition?.Restart;
             bool restarts = restart is null || (restart > 0 && level <= restart.Value - 1);
             if (restarts) counters[deeper] = (deeperDefinition?.Start ?? 1) - 1;
         }
-        return (_definitions.FormatLabel(numId, abstractId, level, counters), _definitions.LevelOf(numId, abstractId, level));
+        return (_definitions.FormatLabel(numId, abstractId, level, counters), levels[level]);
     }
 }

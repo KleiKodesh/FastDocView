@@ -87,20 +87,45 @@ inflate; sequential windows stay one inflate pass.
 
 Measured, dor-hamelaktim-shabbat.docx (91.6 MB document.xml, 123 007 blocks), Release net10:
 
-| | per-block layout (v12) | compact (v13) |
-|---|---|---|
-| sidecar | 1 173 069 B | 59 326 B (24 KB windows, 14 KB anchors, 5 KB bookmarks, 4.4 KB weights, 3.5 KB headings, 3 KB sections, 3 KB rest) |
-| reopen from sidecar | 138 ms | 146 ms |
-| first window after reopen | 82 ms | 194 ms (numbering.xml now loads on the first window: labels are counted at render) |
-| random single block, 200 probes | median 3.3 ms, p90 5.7 | median 7.9 ms, p90 14.7 — inflate from the checkpoint (~1 MB at ~95 MB/s) + ≤ 256 KB rescan + span setup |
-| sequential window of 40 | — | ~+2 ms over the render itself |
-| full sequential render, 123k blocks | 13.0 s | 18.4 s (the body is scanned again while reading: ~40 MB/s with list labels) |
-| search, 2 queries over all blocks | 2.6 / 2.7 s | 3.4 / 2.7 s |
+| | per-block layout (v12) | compact (v13), 2026-11-02 | compact after the speed work, 2026-11-03 |
+|---|---|---|---|
+| sidecar | 1 173 069 B | 59 326 B (24 KB windows, 14 KB anchors, 5 KB bookmarks, 4.4 KB weights, 3.5 KB headings, 3 KB sections, 3 KB rest) | 59 326 B (unchanged) |
+| reopen from sidecar | 138 ms | 146 ms | ~145 ms |
+| first window after reopen | 82 ms | 194 ms (numbering.xml parsed whole on the first window) | 60–70 ms (only the lists the window uses are parsed) |
+| random single block, 200 probes | median 3.3 ms, p90 5.7 | median 7.9 ms, p90 14.7 | median 5.4 ms, p90 9.2 (same-moment base: 6.8 / 10.6) |
+| sequential window of 40 | — | ~+2 ms over the render itself | ~+1 ms |
+| full sequential render, 123k blocks | 13.0 s | 18.4 s | ~16.4 s (within this box's noise of the 2026-11-02 base) |
+| search, 2 queries over all blocks | 2.6 / 2.7 s | 3.4 / 2.7 s | 2.4 / 2.8 s |
 
-Tried and not taken: 1 MB checkpoint spacing — 99 KB sidecar, random median 8.4 ms (the rescan and
-the per-span setup, not the inflate, are now the larger share). Next lever: the scanner's label path
-(attribute strings, `FormatLabel`, interning) — the tag classifier alone went from 29 to 105 MB/s
-when its linear table became a length switch.
+What the 2026-11-03 work found and fixed (golden dump of every block byte-identical throughout; the
+machine was shared with another agent's builds, so the table's wall times are ± 20 %):
+
+- **The retained-bytes ring restarted on every read that did not continue it**, so after the first
+  miss every window and every search batch seeked back to a checkpoint and inflated its bytes a
+  second time: 608 of 615 windows of a full render, 25 of 25 search batches (instrumented). Now
+  `ReadBlockBytes` collects the bytes while the span scan locates the window's last block, whatever
+  the length (a 5000-block search batch included) — one inflate pass — and the ring only holds the
+  scan's own chunks. Every anchor's full list state is kept once computed (was: up to seven deltas
+  replayed per span).
+- **numbering.xml parsed whole on the first window** (1.15 MB, 464 lists; ~75 ms quiet, 150+ loaded):
+  `DocxNumberingPartSlices` cuts the part into its top-level elements by bytes, and a num /
+  abstractNum is parsed the first time a list asks for it.
+- **The "95 MB/s inflater" was the tiered JIT's tier-0 code**: with tiering off the old loop ran
+  at ~350–450 MB/s, the same as the rewritten one (SeekableDeflate: inflate_fast / libdeflate
+  design, one linear output buffer, word copies). The rewrite is kept because it runs at that
+  speed from its first call (`AggressiveOptimization`), where the old loop spent a process's
+  first tens of MB — a reopen's first windows — four times slower. .NET's zlib does ~770 MB/s;
+  the remaining lever is to feed the span after a checkpoint to it as a synthetic stream (a
+  stored block holding the window + the compressed bytes re-packed by the leftover-bit shift).
+- Scanner label path: the nine level definitions of a list resolved once per list (was nine
+  dictionary walks per list paragraph), the labeller's CSS / pPr caches keyed by reference (a
+  record's value hash hashed its strings per paragraph), style / numId / ilvl read from the
+  attribute bytes (no string per tag). Scan of 24 MB with labels: 244 → ~200 ms; the scan is
+  ~1 s of a full render, so this is small.
+
+A random block now costs: inflate from the checkpoint (~1.2 MB at ~400 MB/s ≈ 3 ms) + rescan
+from the anchor (≤ 256 KB at ~120 MB/s ≈ 1 ms) + render. Only a faster inflater (native zlib via
+the synthetic stream, or a yet faster managed loop) moves the median much further.
 
 The `.doc`, `.odt`, `.rtf` and markup indexes still use their per-block layouts (the .doc sample's
 sidecar is 465 KB); the same principle (anchors every N blocks + rescanning) is the follow-up.
