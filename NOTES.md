@@ -573,7 +573,9 @@ resources that a static windowed reader does not run, so they would render broke
 and its test were removed. Word web archives (MHTML) stay: they are self-contained static documents.
 
 **MHTML** (.mht/.mhtml, and .doc files beginning with "MIME"): `WebArchiveContainer` reads headers only
-(RFC 2045 §5.1 parameters, RFC 2046 §5.1.1 boundaries) and takes the first text/html part; its body is
+(RFC 2045 §5.1 parameters, RFC 2046 §5.1.1 boundaries; a part may itself be multipart with its own boundary, e.g.
+Internet Explorer's multipart/related > multipart/alternative > text/plain + text/html) and takes the first text/html part, depth
+first; its body is
 decoded streaming (`MimeTransferDecoder`, RFC 2045 §6.7 quoted-printable leniently, §6.8 base64) and
 scanned in Elements mode: a block per p / h1-6 / table / div / list element outside tables. Per block
 the index keeps a **resume point** = encoded offset × 4 + skip: quoted-printable restarts at the token
@@ -614,6 +616,18 @@ Measured 2026-11-03 (Release net10, idle priority, 2 cores; shared box, +-20 %):
 | same text UTF-16 38.7 MB | 724,504 B | 51,578 B | 0.13 % | 6 / 14 ms | 0.6 / 2.0 ms | 0.3 / 0.4 -> 0.9 / 1.4 ms |
 | synthetic MHTML base64 18.7 MB, 300k blocks | 1,513,976 B | 3,197 B | 0.017 % | 8 / 2 ms | 4.7 / 22 ms | 0.8 / 1.5 -> 3.6 / 5.5 ms |
 | synthetic MHTML QP 17.3 MB, 300k blocks | 1,513,976 B | 2,875 B | 0.017 % | 13 / 11 ms | 3.1 / 2.9 ms | 1.5 / 1.8 -> 2.8 / 5.2 ms |
+
+**Span rescans run lazily, MHTML anchors every 16 KB (2026-11-03, same format 6).** The v6 table above measured the
+first window once per process (JIT included: the base build showed 22 ms on the same first call too). Best-of-15
+reopens with TieredCompilation=0, A/B in the same minute against a worktree at b20507f, synthetic MHTML base64 300k:
+first window 0.85 ms (v5) / 3.5 ms (v6) / 0.94 ms (now); random block median 0.81 / 4.06 / 1.27 ms (QP: 0.71 / 3.55 /
+1.05 ms). Cause: every first touch of a span rescanned the whole 64 KB span (~2.5 ms of decode + tag-heavy scan at
+~25 MB/s) even when the window needed its first 40 blocks; the 0.8 ms common to all three is the reopen of the file
+handle + render. Fix: `MarkupSpanRescan` keeps the span's scanner (and MHTML decoder) alive and feeds the pass's own
+pieces only until the asked-for block is complete (its next block started), resuming there on the next ask; MHTML
+anchors every 16 KB (`WebArchiveAnchorSpanBytes`; .txt stays at its 64 KB piece boundaries). Sidecar 3,197 -> 3,359 B
+(base64) and 2,875 -> 3,045 B (QP): the anchors compress to ~0.8 B per KB of text. Golden dumps byte-identical for
+the 11 files. Older v6 sidecars still read (anchors are stored), with 64 KB spans.
 
 On the real books **the headings are ~90 % of the sidecar** (14,525 headings = 46.7 KB; 6,521 long ones = 53.7 KB):
 the outline's own text, deflated. Anchors are 2-4 KB, the weights 1-2 KB. At 256 KB spacing the anchors were 4x

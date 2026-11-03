@@ -3,14 +3,14 @@ using System.Text;
 namespace FastDocView.Markup;
 
 /// <summary>
-/// The one streaming pass for .txt and MHTML, and the span rescans that serve a compact index. .txt: the encoding from
+/// The one streaming pass for .txt and MHTML. .txt: the encoding from
 /// the first 128 KB (<see cref="MarkupTextEncoding.DetectPlainText"/>), then the file is fed raw to the scanner in
 /// <see cref="MarkupBlockMode.Lines"/>. MHTML: the HTML part is located from the MIME headers, its body is decoded
 /// (<see cref="MimeTransferDecoder"/>) and fed to the scanner in <see cref="MarkupBlockMode.Elements"/>; block starts
 /// are mapped to their decoder resume points. Reading stops at the end of the HTML part (or at &lt;/body&gt;).
 /// The pass keeps no per-block table: finished blocks are handed off into the text-length groups, and at the first
-/// span point past every <see cref="MarkupRandomAccessIndex.AnchorSpanBytes"/> of text a scanner snapshot is kept
-/// (<see cref="MarkupSpanAnchor"/>). A rescan feeds the scanner exactly the pieces the pass fed (.txt: the same
+/// span point past every <see cref="MarkupRandomAccessIndex.AnchorSpanBytes"/> (MHTML: <see cref="MarkupRandomAccessIndex.WebArchiveAnchorSpanBytes"/>) of text a scanner snapshot is kept
+/// (<see cref="MarkupSpanAnchor"/>). A rescan (<see cref="MarkupSpanRescan"/>) feeds the scanner exactly the pieces the pass fed (.txt: the same
 /// piece boundaries - a long line's split point depends on them), so it finds the same blocks.
 /// </summary>
 public static class MarkupRandomAccessIndexBuilder
@@ -66,7 +66,7 @@ public static class MarkupRandomAccessIndexBuilder
 
     // -- plain text -----------------------------------------------------------------------
 
-    private static (int codePage, int unitSize, Encoding encoding) PlainTextEncoding(int codePage)
+    internal static (int codePage, int unitSize, Encoding encoding) PlainTextEncoding(int codePage)
     {
         int unitSize = codePage is MarkupTextEncoding.Utf16LittleEndian or MarkupTextEncoding.Utf16BigEndian ? 2 : 1;
         return (codePage, unitSize, MarkupTextEncoding.FromCodePage(codePage));
@@ -116,40 +116,7 @@ public static class MarkupRandomAccessIndexBuilder
                                            FinishGroups(handOff, blockCount), scanner.Stacks, scanner.Headings.ToArray());
     }
 
-    /// <summary>Rescans a .txt span: blocks [anchor's first block, next anchor's) come out complete (the last span: to the end).</summary>
-    internal static MarkupBlockScanner ScanPlainTextSpan(Stream file, MarkupRandomAccessIndex index, int anchorIndex)
-    {
-        (int codePage, int unitSize, Encoding encoding) = PlainTextEncoding(index.CodePage);
-        bool bigEndian = codePage == MarkupTextEncoding.Utf16BigEndian;
-        MarkupSpanAnchor anchor = index.Anchors[anchorIndex];
-        bool isLast = anchorIndex + 1 >= index.Anchors.Length;
-        long limit = isLast ? index.TextEnd : index.Anchors[anchorIndex + 1].ScanPosition;
-        MarkupBlockScanner scanner;
-        if (anchor.State is null)
-        {
-            scanner = MarkupBlockScanner.FromStart(MarkupBlockMode.Lines, unitSize, bigEndian, encoding, index.Stacks, index.StackIds);
-            scanner.Begin(index.TextStart);
-        }
-        else scanner = MarkupBlockScanner.ResumeSpan(MarkupBlockMode.Lines, unitSize, bigEndian, encoding, index.Stacks, index.StackIds, anchor.State);
-        var chunk = new byte[Math.Max(ChunkSize, MarkupTextEncoding.DetectionSampleBytes)];   // span 0 starts with the detection sample piece
-        long position = anchor.ScanPosition;
-        file.Position = position;
-        while (position < limit)
-        {
-            long pieceEnd = position < index.FirstFeedEnd ? index.FirstFeedEnd : position + ChunkSize;
-            int want = (int)(Math.Min(pieceEnd, index.TextEnd) - position);
-            if (want <= 0) break;
-            int read = ReadFully(file, chunk, want);
-            if (read <= 0) break;
-            scanner.Feed(chunk, 0, read, position);
-            position += read;
-            if (read < want) break;
-        }
-        if (isLast) scanner.Finish(index.TextEnd);
-        return scanner;
-    }
-
-    private static int ReadFully(Stream stream, byte[] buffer, int count)
+    internal static int ReadFully(Stream stream, byte[] buffer, int count)
     {
         int total = 0;
         while (total < count)
@@ -163,8 +130,8 @@ public static class MarkupRandomAccessIndexBuilder
 
     // -- web archive ----------------------------------------------------------------------
 
-    private const int ResumeRingSize = 1 << 14;             // > MarkupBlockScanner.MaximumTagBytes + one fed piece
-    private const int FeedPieceBytes = 4096;
+    internal const int ResumeRingSize = 1 << 14;             // > MarkupBlockScanner.MaximumTagBytes + one fed piece
+    internal const int FeedPieceBytes = 4096;
 
     private static (int codePage, string reason, int unitSize, Encoding encoding) WebArchiveEncoding(string? charset)
     {
@@ -224,7 +191,7 @@ public static class MarkupRandomAccessIndexBuilder
                 MapResumePoints(scanner, resumes, resumeRing, decodedTotal);
                 FinishPending();
                 MarkupSpanAnchor last = anchors[anchors.Count - 1];
-                if (pending is null && decodedTotal - last.ScanPosition >= MarkupRandomAccessIndex.AnchorSpanBytes && scanner.IsAtSpanPoint
+                if (pending is null && decodedTotal - last.ScanPosition >= MarkupRandomAccessIndex.WebArchiveAnchorSpanBytes && scanner.IsAtSpanPoint
                     && CurrentBlock(scanner) > last.FirstBlock)
                     pending = (scanner.ExportSpanState(), decodedTotal);
                 if (pending is null && resumes.Count > HandOffBlocks) handOff.HandOff(scanner, Math.Min(resumes.Count, scanner.BlockStartOffsets.Count - 1), resumes);
@@ -251,59 +218,8 @@ public static class MarkupRandomAccessIndexBuilder
                                            scanner.Headings.ToArray());
     }
 
-    /// <summary>
-    /// Rescans an MHTML span: decodes from the anchor's resume point and feeds the scanner until the next anchor's
-    /// position (the last span: to &lt;/body&gt; or the part's end). <paramref name="resumes"/> gets each block's
-    /// decoder resume point, aligned with the scanner's blocks.
-    /// </summary>
-    internal static MarkupBlockScanner ScanWebArchiveSpan(Stream file, MarkupRandomAccessIndex index, int anchorIndex, out List<long> resumes)
-    {
-        (int codePage, int unitSize, Encoding encoding) = PlainTextEncoding(index.CodePage);      // the same unit rules as .txt
-        bool bigEndian = codePage == MarkupTextEncoding.Utf16BigEndian;
-        MarkupSpanAnchor anchor = index.Anchors[anchorIndex];
-        bool isLast = anchorIndex + 1 >= index.Anchors.Length;
-        long limit = isLast ? long.MaxValue : index.Anchors[anchorIndex + 1].ScanPosition;
-        MarkupBlockScanner scanner = anchor.State is null
-            ? MarkupBlockScanner.FromStart(MarkupBlockMode.Elements, unitSize, bigEndian, encoding, index.Stacks, index.StackIds)
-            : MarkupBlockScanner.ResumeSpan(MarkupBlockMode.Elements, unitSize, bigEndian, encoding, index.Stacks, index.StackIds, anchor.State);
-        resumes = anchor.State is null ? [] : [anchor.BlockResume];
-
-        var decoder = new MimeTransferDecoder(index.TransferEncoding);
-        var resumeRing = new long[ResumeRingSize];
-        var encoded = new byte[FeedPieceBytes];
-        var decoded = new byte[FeedPieceBytes + 4];
-        var resumePiece = new long[FeedPieceBytes + 4];
-        int skip = MimeTransferDecoder.SkipOf(anchor.ScanResume);
-        long encodedAt = MimeTransferDecoder.EncodedOffsetOf(anchor.ScanResume);
-        long decodedTotal = anchor.ScanPosition;
-        file.Position = encodedAt;
-        while (decodedTotal < limit && !scanner.IsBodyEnded && encodedAt < index.EncodedEnd)
-        {
-            int want = (int)Math.Min(encoded.Length, index.EncodedEnd - encodedAt);
-            int read = file.Read(encoded, 0, want);
-            if (read <= 0) break;
-            int produced = 0;
-            decoder.Feed(encoded, 0, read, encodedAt, decoded, resumePiece, ref produced);
-            encodedAt += read;
-            int from = Math.Min(skip, produced);
-            skip -= from;
-            int usable = produced - from;
-            if (usable <= 0) continue;
-            for (int k = 0; k < usable; k++) resumeRing[(decodedTotal + k) & (ResumeRingSize - 1)] = resumePiece[from + k];
-            scanner.Feed(decoded, from, usable, decodedTotal);
-            decodedTotal += usable;
-            MapResumePoints(scanner, resumes, resumeRing, decodedTotal);
-        }
-        if (isLast)
-        {
-            scanner.Finish(index.TextEnd);
-            while (resumes.Count > scanner.BlockStartOffsets.Count) resumes.RemoveAt(resumes.Count - 1);
-        }
-        return scanner;
-    }
-
     /// <summary>Block starts whose first decoded byte now exists get its resume point (block starts lie at most one tag back).</summary>
-    private static void MapResumePoints(MarkupBlockScanner scanner, List<long> resumes, long[] ring, long decodedTotal)
+    internal static void MapResumePoints(MarkupBlockScanner scanner, List<long> resumes, long[] ring, long decodedTotal)
     {
         while (resumes.Count < scanner.BlockStartOffsets.Count)
         {

@@ -399,3 +399,19 @@ fixed pieces (detection sample, then 64 KB), and anchors sit only at piece bound
 such rule and is fed in any pieces. (Also: a shared scratchpad helper script was overwritten by a concurrent session
 mid-run, so a "byte-identical" compare once ran the old binary - name helpers per task and check the sizes printed.)
 
+
+## 2026-11-03 - Markup compact index: a single first-window timing is mostly JIT
+
+The v6 report's "first window" (one call per process) read 4.7 ms before and 22 ms after on MHTML base64, but the base
+build itself showed 22.5 ms on that first call in another run: with TieredCompilation=0 the first call pays the JIT of
+the whole decode + scan path. Best of N fresh reopens in one process showed the real change (0.85 -> 3.5 ms): a span
+rescan scanned all 64 KB on first touch. Rescans now stop at the asked-for block. Measure first windows as best of N
+reopens, never one call.
+
+## 2026-11-03 - MHTML: Internet Explorer nests multipart/alternative in multipart/related
+
+IE 8 "Web Archive, single file" can write `multipart/related; type="multipart/alternative"` whose first part is a
+multipart/alternative (own boundary) holding text/plain and text/html (RFC 2046 §5.1.1 allows nesting; §5.1.4 orders
+alternatives plainest first). Taking only top-level parts found no text/html. The container now follows nested
+boundaries. Tika's testUserDefinedCharset.mhtml has that structure but is cut off after the html part's headers
+(621 bytes, empty body, no close delimiters): it now fails with "no <body>", which is right - there is no document.

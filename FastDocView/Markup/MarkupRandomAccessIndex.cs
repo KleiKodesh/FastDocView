@@ -20,7 +20,7 @@ public sealed record MarkupSpanAnchor(MarkupScanState? State, long ScanPosition,
 /// <summary>
 /// The index of a plain-text (.txt read as HTML) or web-archive (MHTML) document - compact (format 6): no per-block
 /// table. Text offsets are "text coordinates": file offsets for .txt, decoded offsets of the HTML part for MHTML.
-/// It keeps one <see cref="MarkupSpanAnchor"/> per ~256 KB of text, text-length totals per 64 blocks (scroll weights),
+/// It keeps one <see cref="MarkupSpanAnchor"/> per ~64 KB of text (MHTML: ~16 KB), text-length totals per 64 blocks (scroll weights),
 /// the interned element stacks, the headings and the head's CSS. A block's start, end, text length, open-element stack
 /// (and MHTML decoder resume point) are recovered by rescanning its span (<see cref="MarkupCompactBlockTable"/>) with
 /// the same scanner the index pass ran, so every value equals the one the pass found.
@@ -30,6 +30,12 @@ public sealed class MarkupRandomAccessIndex
     private const string Magic = "KHMKPIDX";
     private const int FormatVersion = 6; // 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
     public const int AnchorSpanBytes = 64 * 1024;
+    /// <summary>
+    /// MHTML anchors are 4x denser: decoding plus tag-heavy HTML rescans at ~25 MB/s, so a 64 KB span cost a random block
+    /// ~2.5 ms; at 16 KB the anchors of a 300k-block archive are still under 2 KB. (A .txt anchor stays at a 64 KB piece
+    /// boundary; its rescan is a vectorised run search.) An index with other spacing still reads: the anchors are stored.
+    /// </summary>
+    public const int WebArchiveAnchorSpanBytes = 16 * 1024;
 
     public MarkupSourceKind Kind { get; }
     public long SourceFileLength { get; }

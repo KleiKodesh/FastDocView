@@ -10,8 +10,9 @@ public sealed record WebArchiveHtmlPart(long BodyStart, MimeTransferEncoding Tra
 /// Page") — headers only, never a whole part. RFC 2045/2046/2557: top-level headers (folded lines
 /// unfolded), multipart/related with a boundary parameter (token or quoted-string), parts separated by
 /// "--boundary" lines (optional trailing whitespace; "--boundary--" closes), each part headers + blank
-/// line + body. The first text/html part is the document (Word writes it first); a single-part archive
-/// whose own Content-Type is text/html is the document itself.
+/// line + body; a part may itself be multipart (nested, its own boundary). The first text/html part, depth
+/// first, is the document (Word writes it first); a single-part archive whose own Content-Type is text/html is
+/// the document itself.
 /// </summary>
 public static class WebArchiveContainer
 {
@@ -26,14 +27,25 @@ public static class WebArchiveContainer
         string? boundary = Parameter(topType, "boundary");
         if (!MediaType(topType).StartsWith("multipart/", StringComparison.Ordinal) || string.IsNullOrEmpty(boundary))
             throw new InvalidDataException("Web archive: no multipart boundary and no text/html content.");
-        while (lines.ReadLine(out ReadOnlySpan<byte> line, out _))
+        // RFC 2046 §5.1.1: a body part may itself be multipart with its own boundary (Internet Explorer saves
+        // multipart/related whose first part is a multipart/alternative holding text/plain + text/html). The open
+        // multiparts' boundaries are a stack; a delimiter of an outer one also ends every inner one.
+        var boundaries = new List<string> { boundary! };
+        while (boundaries.Count > 0 && lines.ReadLine(out ReadOnlySpan<byte> line, out _))
         {
-            if (!IsBoundaryLine(line, boundary!, out bool isClose)) continue;
-            if (isClose) break;
+            int level = boundaries.Count - 1;
+            bool isClose = false;
+            while (level >= 0 && !IsBoundaryLine(line, boundaries[level], out isClose)) level--;
+            if (level < 0) continue;
+            boundaries.RemoveRange(level + 1, boundaries.Count - level - 1);
+            if (isClose) { boundaries.RemoveAt(level); continue; }
             Dictionary<string, string> part = ReadHeaders(lines);
             string type = part.TryGetValue("content-type", out string? pt) ? pt : "text/plain";
-            if (MediaType(type) == "text/html")
-                return new WebArchiveHtmlPart(lines.Position, TransferEncodingOf(part), Parameter(type, "charset"), boundary);
+            string mediaType = MediaType(type);
+            if (mediaType == "text/html")
+                return new WebArchiveHtmlPart(lines.Position, TransferEncodingOf(part), Parameter(type, "charset"), boundaries[level]);
+            string? inner = Parameter(type, "boundary");
+            if (mediaType.StartsWith("multipart/", StringComparison.Ordinal) && !string.IsNullOrEmpty(inner)) boundaries.Add(inner!);
         }
         throw new InvalidDataException("Web archive: no text/html part.");
     }

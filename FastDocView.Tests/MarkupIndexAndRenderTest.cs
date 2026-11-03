@@ -157,6 +157,33 @@ public static class MarkupIndexAndRenderTest
         }
     }
 
+    /// <summary>
+    /// RFC 2046 §5.1.1 nesting as Internet Explorer saves it: multipart/related whose first part is a
+    /// multipart/alternative (text/plain, then text/html), then an image part of the outer multipart.
+    /// </summary>
+    public static void RunNestedMultipart()
+    {
+        TestReport.Step("MHTML: text/html inside a nested multipart/alternative");
+        string path = Path.Combine(TestReport.OutputDirectory, "mhtml-nested-alternative-v1.mht");
+        const string outer = "----=_NextPart_000_0000_01CD8502.F991E790", inner = "----=_NextPart_001_0023_01CD8502.F99DCE70";
+        string archive = "From: <Saved by Windows Internet Explorer 8>\r\nMIME-Version: 1.0\r\n"
+            + "Content-Type: multipart/related;\r\n\ttype=\"multipart/alternative\";\r\n\tboundary=\"" + outer + "\"\r\n\r\n"
+            + "This is a multi-part message in MIME format.\r\n\r\n"
+            + "--" + outer + "\r\nContent-Type: multipart/alternative;\r\n\tboundary=\"" + inner + "\"\r\n\r\n\r\n"
+            + "--" + inner + "\r\nContent-Type: text/plain;\r\n\tcharset=\"us-ascii\"\r\nContent-Transfer-Encoding: 7bit\r\n\r\nPlain alternative <p>not this</p>\r\n\r\n"
+            + "--" + inner + "\r\nContent-Type: text/html;\r\n\tcharset=\"us-ascii\"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n"
+            + "<html><body><p>First</p><p>Sec=\r\nond</p></body></html>\r\n\r\n"
+            + "--" + inner + "--\r\n\r\n"
+            + "--" + outer + "\r\nContent-Type: image/gif\r\nContent-Transfer-Encoding: base64\r\n\r\nR0lGODlhAQABAAAAACw=\r\n\r\n"
+            + "--" + outer + "--\r\n";
+        File.WriteAllText(path, archive, System.Text.Encoding.ASCII);
+        using MarkupWindowedDocument document = MarkupWindowedDocument.OpenFromStream(new MemoryStream(File.ReadAllBytes(path)), path, MarkupSourceKind.WebArchive,
+            new WordIndexDecision(path, WordIndexMode.InMemory, false, archive.Length, 0, "test"), null, 0, 0);
+        IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(0, 10);
+        TestReport.Check(document.BlockCount == 2 && blocks[0].Html.Contains("First") && blocks[1].Html.Contains("Second") && !blocks.Any(b => b.Html.Contains("not this")),
+            $"the text/html alternative is read ({document.BlockCount} blocks: {string.Join(" | ", blocks.Select(b => b.Html))})");
+    }
+
     private static void VerifyMhtml(MarkupWindowedDocument document, int count, string what)
     {
         TestReport.Check(document.Index.CodePage == 1255, $"{what}: charset windows-1255 from the part header");
