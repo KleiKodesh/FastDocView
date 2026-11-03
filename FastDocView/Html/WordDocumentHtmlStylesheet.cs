@@ -18,7 +18,7 @@ public static class WordDocumentHtmlStylesheet
             .word-document { font-family: '{{font.Replace("'", "")}}', 'Times New Roman', serif; font-size: {{sizePt.ToString("0.#", CultureInfo.InvariantCulture)}}pt; line-height: 1.15; color: #000; }
             .word-document p { margin: 0; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1em; }
             .word-document h1, .word-document h2, .word-document h3, .word-document h4, .word-document h5, .word-document h6 { margin: 0; font-size: inherit; font-weight: inherit; white-space: pre-wrap; }
-            .word-document table { border-collapse: collapse; margin: 2pt 0; }
+            .word-document table { border-collapse: collapse; margin: 0; }
             .word-document td { border: 1px solid #999; padding: 1pt 4pt; vertical-align: top; }
             .word-document .list-marker { display: inline-block; text-indent: 0; }
             .word-document p, .word-document h1, .word-document h2, .word-document h3, .word-document h4, .word-document h5, .word-document h6 { tab-size: 36pt; }
@@ -29,6 +29,8 @@ public static class WordDocumentHtmlStylesheet
             .word-document .section-break { border: 0; border-top: 3px double #bbb; margin: 8pt 0; }
             .word-document table.table-row { width: 100%; margin: 0; }
             .word-document table.table-row + table.table-row td { border-top: 0; }
+            .word-document .word-picture { max-width: 100%; height: auto; box-sizing: border-box; }
+            .word-document .word-picture-missing { display: inline-block; border: 1px dashed #bbb; color: #999; font-size: 9pt; text-align: center; overflow: hidden; }
             .word-document .unsupported { color: #999; font-style: italic; }
             .word-document a.link { color: inherit; text-decoration: none; cursor: pointer; }
             """;

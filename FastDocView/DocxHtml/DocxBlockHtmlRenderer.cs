@@ -38,7 +38,12 @@ public sealed class DocxBlockHtmlRenderer
     private readonly IReadOnlyDictionary<string, string>? _endnoteHyperlinkTargets;    // endnotes.xml.rels
     private IReadOnlyDictionary<string, string>? _currentHyperlinkTargets;      // the relationships of the part being rendered
     private string? _activeLinkOpenTag;                                         // inside a w:hyperlink or a HYPERLINK field result: its <a> tag
-    private readonly List<DocxField> _openFields = new();                       // complex fields begun in this block (w:fldChar begin … end)
+    private readonly List<DocxField> _openFields = new();
+    private readonly PictureSource? _pictures;
+    private WordDocumentNoteKind? _currentPicturePart;                         // null = the main part; a note kind = that notes part
+
+    /// <summary>A picture's data: URI by its r:embed in a part (null = the main part, else that notes part); null when the browser cannot show it.</summary>
+    public delegate string? PictureSource(WordDocumentNoteKind? part, string relationshipId);                       // complex fields begun in this block (w:fldChar begin … end)
 
     private sealed class DocxField
     {
@@ -48,8 +53,10 @@ public sealed class DocxBlockHtmlRenderer
     }
 
     public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null, IReadOnlyDictionary<string, string>? hyperlinkTargets = null,
-                                 IReadOnlyDictionary<string, string>? footnoteHyperlinkTargets = null, IReadOnlyDictionary<string, string>? endnoteHyperlinkTargets = null)
+                                 IReadOnlyDictionary<string, string>? footnoteHyperlinkTargets = null, IReadOnlyDictionary<string, string>? endnoteHyperlinkTargets = null,
+                                 PictureSource? pictures = null)
     {
+        _pictures = pictures;
         _styles = styles;
         _noteLabels = noteLabels;
         _hyperlinkTargets = hyperlinkTargets;
@@ -71,6 +78,7 @@ public sealed class DocxBlockHtmlRenderer
         _listLabel = listLabel;
         _previousStyleKey = previousStyleKey;
         _currentHyperlinkTargets = _hyperlinkTargets;
+        _currentPicturePart = null;
         _openFields.Clear();
         // Fields begun in an earlier block (recorded at index time): a HYPERLINK result that runs on into this block stays a link.
         if (neighbours.OpenFields is { } openFields)
@@ -99,6 +107,7 @@ public sealed class DocxBlockHtmlRenderer
         _previousStyleKey = null;
         // a note's r:ids point into its own part's relationships (footnotes.xml.rels / endnotes.xml.rels)
         _currentHyperlinkTargets = kind == WordDocumentNoteKind.Footnote ? _footnoteHyperlinkTargets : _endnoteHyperlinkTargets;
+        _currentPicturePart = kind;
         _openFields.Clear();
         Run(RenderBlocks(note.Elements(), html));
         _activeLinkOpenTag = null;
@@ -751,7 +760,13 @@ public sealed class DocxBlockHtmlRenderer
     private IEnumerable<RenderStep> AppendDrawing(StringBuilder html, XElement drawing)
     {
         List<XElement> textBoxes = OutermostTextBoxes(drawing);
-        if (textBoxes.Count == 0) { html.Append("<span class=\"unsupported\">[image]</span>"); yield break; }
+        if (textBoxes.Count == 0)
+        {
+            if (drawing.Elements().FirstOrDefault(e => e.Name.LocalName == Docx.DocxDrawingStripper.PictureLayoutElementName) is { } picture)
+                AppendPicture(html, picture);
+            else html.Append("<span class=\"unsupported\">[image]</span>");
+            yield break;
+        }
         string? previous = _previousStyleKey;
         // A text box inside a link is not part of the link (no <a> inside <a>, no blocks inside <a>); its own fields start fresh.
         string? outerLink = _activeLinkOpenTag;
@@ -773,6 +788,39 @@ public sealed class DocxBlockHtmlRenderer
         _textBoxDepth--;
         _isParagraphRightToLeft = outerIsRightToLeft;
         _previousStyleKey = previous;
+    }
+
+    private const double EmuPerPoint = 12700;   // ECMA-376 20.1.2.1 (ST_Coordinate): 914400 EMU per inch, 72 pt per inch
+
+    /// <summary>
+    /// A DrawingML picture (the layout <see cref="Docx.DocxDrawingStripper"/> kept) at its wp:extent, wrapped and placed as
+    /// <see cref="WordPictureHtml"/> describes. wrapText left / right (ECMA-376 20.4.3.7: text only on that side) floats it to
+    /// the other side; without wp:align a posOffset from the column (relativeFrom column / margin) places it from the left -
+    /// left of the column's middle is not known here, so an offset picture floats left at that offset.
+    /// </summary>
+    private void AppendPicture(StringBuilder html, XElement picture)
+    {
+        double Emu(string name) => double.TryParse((string?)picture.Attribute(name), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ? value / EmuPerPoint : 0;
+        string? wrap = (string?)picture.Attribute("wrap");
+        WordPictureWrap pictureWrap = (string?)picture.Attribute("kind") != "anchor" ? WordPictureWrap.Inline
+            : wrap switch
+            {
+                "wrapSquare" or "wrapTight" or "wrapThrough" => WordPictureWrap.Square,
+                "wrapTopAndBottom" => WordPictureWrap.TopAndBottom,
+                _ => WordPictureWrap.None,
+            };
+        string? align = (string?)picture.Attribute("align");
+        WordPictureSide side = align switch
+        {
+            "right" or "outside" => WordPictureSide.Right,
+            "center" => WordPictureSide.Center,
+            "left" or "inside" => WordPictureSide.Left,
+            _ => (string?)picture.Attribute("wrapText") switch { "left" => WordPictureSide.Right, "right" => WordPictureSide.Left, _ => WordPictureSide.Left },
+        };
+        double offset = align is null && picture.Attribute("posOffset") is not null ? Math.Max(0, Emu("posOffset")) : 0;
+        string? embed = (string?)picture.Attribute("embed");
+        string? dataUri = embed is { Length: > 0 } && _pictures is not null ? _pictures(_currentPicturePart, embed) : null;
+        WordPictureHtml.Append(html, new WordPictureLayout(Emu("cx"), Emu("cy"), pictureWrap, side, Emu("distT"), Emu("distR"), Emu("distB"), Emu("distL"), offset), dataUri);
     }
 
     /// <summary>
@@ -846,8 +894,7 @@ public sealed class DocxBlockHtmlRenderer
         bool isRightToLeft = Last("bidiVisual") is { } bidi && DocxStyleCascade.IsOn(bidi.Attribute(W + "val"));
         var tableCss = new StringBuilder();
         if (DocxTableFormatting.WidthCss(Last("tblW")) is { } width) tableCss.Append("width:").Append(width).Append(';');
-        if (DocxStyleCascade.TwipsAttribute(Last("tblInd"), "w") is { } indent and not 0)
-            tableCss.Append("margin-inline-start:").Append(WordParagraphFormatting.TwipsToPt(indent)).Append("pt;");
+        tableCss.Append(TablePlacementCss(Last("jc"), Last("tblInd"), Last("tblCellMar"), table));
         if (DocxStyleCascade.TwipsAttribute(Last("tblCellSpacing"), "w") is { } spacing and > 0)
             tableCss.Append("border-collapse:separate;border-spacing:").Append(WordParagraphFormatting.TwipsToPt(spacing * 2)).Append("pt;");
         if ((string?)Last("tblLayout")?.Attribute(W + "type") == "fixed") tableCss.Append("table-layout:fixed;");
@@ -972,6 +1019,32 @@ public sealed class DocxBlockHtmlRenderer
         html.Append(" style=\"border:none;padding:0;");
         if (DocxTableFormatting.WidthCss(width) is { } css) html.Append("width:").Append(css).Append(';');
         html.Append("\"></td>");
+    }
+
+    /// <summary>
+    /// Where the table sits across the column. w:jc (ECMA-376 17.4.28): center / right / end move it, as LibreOffice maps them
+    /// (ConversionHelper.cxx convertTableJustification: center = CENTER, right and end = RIGHT, anything else = left with the
+    /// indent); like the indent it is read in the table's own direction (bidiVisual tables run from the right, LibreOffice
+    /// DomainMapperTableManager.cxx: bidiVisual = WritingMode RL_TB). w:tblInd (17.4.51) only for a start-aligned table.
+    /// Before Word 2013 (compatibilityMode below 15) the indent places the first cell's TEXT, so the table's edge is the
+    /// indent less the first cell's start margin (LibreOffice DomainMapperTableHandler.cxx, "nMode &lt; 15": nLeftMargin -
+    /// nLeftBorderDistance, the first row's first cell's margin winning over the table's; no indent given = no shift).
+    /// </summary>
+    private string TablePlacementCss(XElement? justification, XElement? indentElement, XElement? tableCellMargins, XElement table)
+    {
+        string? value = (string?)justification?.Attribute(W + "val");
+        if (value == "center") return "margin-inline:auto;";
+        if (value is "right" or "end") return "margin-inline-start:auto;";
+        // start-aligned: from the table's own start edge, whatever the direction of the paragraphs around it (a bidiVisual
+        // table in a left-to-right document starts at the right, a plain one in a right-to-left document at the left)
+        if (DocxStyleCascade.TwipsAttribute(indentElement, "w") is not { } indent) return "margin-inline-end:auto;";
+        if (_styles.Compatibility.CompatibilityMode < 15)
+        {
+            XElement? firstCellMargins = table.Element(W + "tr")?.Element(W + "tc")?.Element(W + "tcPr")?.Element(W + "tcMar");
+            static int? StartMargin(XElement? margins) => DocxStyleCascade.TwipsAttribute(margins?.Element(W + "start") ?? margins?.Element(W + "left"), "w");
+            indent -= Math.Max(0, StartMargin(firstCellMargins) ?? StartMargin(tableCellMargins) ?? 0);
+        }
+        return (indent == 0 ? "" : "margin-inline-start:" + WordParagraphFormatting.TwipsToPt(indent) + "pt;") + "margin-inline-end:auto;";
     }
 
     private static XElement? LastTableProperty(List<XElement> layers, string name)

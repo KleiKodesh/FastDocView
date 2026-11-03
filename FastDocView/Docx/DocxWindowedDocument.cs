@@ -184,7 +184,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _styles = parts.Styles;
         _noteFormats = parts.NoteNumberFormats;
         RecordNewNoteReferences();
-        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets);
+        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets, PictureDataUri);
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
@@ -346,6 +346,18 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _noteHtmlCache[(reference.Kind, reference.NoteId)] = html;
         _noteHtmlCacheCharacters += html.Length;
         return html;
+    }
+
+    /// <summary>A picture of the block being rendered, read from the package on demand (the render holds the file open).</summary>
+    private string? PictureDataUri(WordDocumentNoteKind? part, string relationshipId)
+    {
+        IReadOnlyDictionary<string, string> pictures = part switch
+        {
+            null => _parts.ImageParts,
+            WordDocumentNoteKind.Footnote => _parts.FootnoteImageParts,
+            _ => _parts.EndnoteImageParts,
+        };
+        return pictures.TryGetValue(relationshipId, out string? partName) ? WordPictureHtml.DataUri(partName, _parts.ReadPartBytes(partName)) : null;
     }
 
     private (int number, string label)? ResolveNoteLabel(WordDocumentNoteKind kind, int noteId)

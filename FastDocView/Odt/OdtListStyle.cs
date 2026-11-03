@@ -394,7 +394,10 @@ public sealed class OdtListStyle
     public string FormatLabel(int level, int[] counters)
     {
         Level current = LevelAt(level);
-        if (current.IsBullet) return current.Prefix + current.BulletCharacter + current.Suffix;
+        // A bullet is drawn alone: LibreOffice's SwBulletPortion gets only the bullet character (sw/source/core/text/txtfld.cxx,
+        // SVX_NUM_CHAR_SPECIAL); style:num-prefix / num-suffix on a bullet level (LibreOffice writes the bullet as num-suffix
+        // too) are not shown.
+        if (current.IsBullet) return current.BulletCharacter;
         var label = new StringBuilder(current.Prefix);
         int first = Math.Max(0, level - current.DisplayLevels + 1);
         for (int i = first; i <= level; i++)

@@ -5,11 +5,15 @@ public static partial class DocxFidelityTest
     private static string ListParagraph(int numId, int level, string text)
         => $"<w:p><w:pPr><w:numPr><w:ilvl w:val=\"{level}\"/><w:numId w:val=\"{numId}\"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>";
 
+    /// <summary>The span a label with a tab suffix is wrapped in (WordListLabelHtml: the least room after a label that fills its gap).</summary>
+    internal const string TabGapOpenTag = "<span style=\"padding-inline-end:0.25em\">";
+
     private static string Marker(string html)
     {
         int start = html.IndexOf("list-marker", StringComparison.Ordinal);
         if (start < 0) return "";
         start = html.IndexOf('>', start) + 1;
+        if (html.AsSpan(start).StartsWith(TabGapOpenTag.AsSpan(), StringComparison.Ordinal)) start += TabGapOpenTag.Length;   // a tab suffix's least gap
         return html.Substring(start, html.IndexOf("</span>", start, StringComparison.Ordinal) - start);
     }
 
@@ -64,7 +68,7 @@ public static partial class DocxFidelityTest
                     + "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"1\"/><w:numId w:val=\"1\"/></w:numPr><w:rPr><w:i/></w:rPr></w:pPr><w:r><w:t>e</w:t></w:r></w:p>"
                     + "<w:p><w:pPr><w:rPr><w:sz w:val=\"48\"/></w:rPr></w:pPr></w:p>";
         List<string> html = RenderAll("list-labels", body, "", numbering);
-        TestReport.Check(html[0].Contains("<span class=\"list-marker\" style=\"font-weight:bold;color:#FF0000;min-width:36pt;\">1.</span>"), "level rPr formats the label; default suffix is a tab");
+        TestReport.Check(html[0].Contains("<span class=\"list-marker\" style=\"font-weight:bold;color:#FF0000;min-width:36pt;\">" + TabGapOpenTag + "1.</span></span>"), "level rPr formats the label; default suffix is a tab");
         TestReport.Check(html[1].Contains(">1)</span> a") == false && html[1].Contains(">1)</span> b"), "suff space");
         TestReport.Check(html[2].Contains(">1]</span>c"), "suff nothing");
         TestReport.Check(html[3].Contains(">•</span>") && !html[3].Contains("Symbol"), "a Symbol-font bullet is mapped to a bullet and drops the symbol font");

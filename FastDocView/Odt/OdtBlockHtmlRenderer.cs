@@ -19,7 +19,6 @@ public sealed class OdtBlockHtmlRenderer
     private static readonly XNamespace TableNs = OdtStyleCascade.Table;
     private static readonly XNamespace DrawNs = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
     private static readonly XNamespace XLinkNs = "http://www.w3.org/1999/xlink";
-    private static readonly XNamespace OfficeNs = OdtStyleCascade.Office;
 
     /// <summary>Inline elements the renderer handles; anything else renders its text content (fields) — the audit counts the rest.</summary>
     public static readonly HashSet<string> HandledInlineElements =
@@ -51,7 +50,17 @@ public sealed class OdtBlockHtmlRenderer
     private List<WordDocumentNoteHtml>? _renderedNotes;
     private bool _isInsideLink;      // HTML forbids a link inside a link: an inner one renders its text only
 
-    public OdtBlockHtmlRenderer(OdtStyleCascade styles) => _styles = styles;
+    private static readonly XNamespace XlinkNs = "http://www.w3.org/1999/xlink";
+    private static readonly XNamespace OfficeNs = OdtStyleCascade.Office;
+    private static readonly XNamespace SvgNs = OdtStyleCascade.Svg;
+    private readonly Func<string, byte[]?>? _readPackagePart;
+
+    /// <param name="readPackagePart">Reads a package entry (a picture, "Pictures/x.png") on demand; null when the host has none.</param>
+    public OdtBlockHtmlRenderer(OdtStyleCascade styles, Func<string, byte[]?>? readPackagePart = null)
+    {
+        _styles = styles;
+        _readPackagePart = readPackagePart;
+    }
 
     /// <param name="listLevel">List depth (0-based) of a list paragraph, -1 otherwise.</param>
     /// <param name="notes">The note references of this block, in order (from the index).</param>
@@ -237,7 +246,56 @@ public sealed class OdtBlockHtmlRenderer
             html.Append("</span>");
             return;
         }
+        if (frame.Element(DrawNs + "image") is { } image) { AppendPicture(frame, image, html); return; }
         html.Append("<span class=\"unsupported\">[image]</span>");
+    }
+
+    /// <summary>
+    /// A draw:frame's picture at svg:width / svg:height, placed as <see cref="WordPictureHtml"/> describes. text:anchor-type
+    /// (ODF 1.3 part 3 19.759; the element attribute wins over the graphic property, default "paragraph"): as-char is in the
+    /// line. Otherwise the graphic style (20.400 style:wrap: parallel / dynamic / biggest / left / right = text beside,
+    /// none = above and below, run-through = through the text; 20.298 style:horizontal-pos: left / center / right, from-left
+    /// with svg:x) and its fo:margin-* (the gap to the text). The bytes: office:binary-data inside draw:image (flat files),
+    /// else the package entry xlink:href names (read on demand). The first draw:image is used (LibreOffice writes an SVG
+    /// with its PNG fallback as two images of one frame; the first is the preferred one).
+    /// </summary>
+    private void AppendPicture(XElement frame, XElement image, StringBuilder html)
+    {
+        string? style = (string?)frame.Attribute(DrawNs + "style-name");
+        string? Property(string prefix, string name)
+            => _styles.GraphicProperty(style, (prefix == "fo" ? OdtStyleCascade.Fo : prefix == "text" ? TextNs : OdtStyleCascade.Style) + name);
+        double Points(string? length) => length is not null && OdtStyleCascade.Twips(length) is { } twips ? twips / 20.0 : 0;
+        string anchor = (string?)frame.Attribute(TextNs + "anchor-type") ?? Property("text", "anchor-type") ?? "paragraph";
+        WordPictureWrap wrap = anchor == "as-char" ? WordPictureWrap.Inline : Property("style", "wrap") switch
+        {
+            "parallel" or "dynamic" or "biggest" or "left" or "right" => WordPictureWrap.Square,
+            "run-through" => WordPictureWrap.None,
+            _ => WordPictureWrap.TopAndBottom,
+        };
+        string? position = Property("style", "horizontal-pos");
+        WordPictureSide side = position switch
+        {
+            "right" or "outside" => WordPictureSide.Right,
+            "center" => WordPictureSide.Center,
+            "left" or "inside" or "from-left" or "from-inside" => WordPictureSide.Left,
+            _ => Property("style", "wrap") == "left" ? WordPictureSide.Right : WordPictureSide.Left,
+        };
+        double offset = position is "from-left" or "from-inside" ? Math.Max(0, Points((string?)frame.Attribute(SvgNs + "x"))) : 0;
+        double all = Points(Property("fo", "margin"));
+        double Gap(string side) => Property("fo", "margin-" + side) is { } value ? Points(value) : all;
+        string? dataUri = null;
+        if (image.Element(OfficeNs + "binary-data") is { } binary)
+        {
+            try { byte[] bytes = Convert.FromBase64String(binary.Value); dataUri = WordPictureHtml.DataUri(WordPictureHtml.ExtensionOf(bytes), bytes); }
+            catch (FormatException) { }
+        }
+        else if ((string?)image.Attribute(XlinkNs + "href") is { Length: > 0 } href && _readPackagePart is not null && !href.Contains(':'))
+        {
+            string part = href.StartsWith("./", StringComparison.Ordinal) ? href.Substring(2) : href;
+            dataUri = WordPictureHtml.DataUri(part, _readPackagePart(part));
+        }
+        WordPictureHtml.Append(html, new WordPictureLayout(Points((string?)frame.Attribute(SvgNs + "width")), Points((string?)frame.Attribute(SvgNs + "height")),
+                                                           wrap, side, Gap("top"), Gap("right"), Gap("bottom"), Gap("left"), offset), dataUri);
     }
 
     private void AppendNote(XElement note, StringBuilder html)

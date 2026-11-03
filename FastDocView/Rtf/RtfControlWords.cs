@@ -30,7 +30,7 @@ internal enum RtfWord : byte
     LeftIndent, RightIndent, StartIndent, EndIndent, FirstLineIndent, SpaceBefore, SpaceAfter, LineSpacing, LineSpacingMultiple,
     RightToLeftParagraph, LeftToRightParagraph, InTable, NestingLevel, PageBreakBefore,
     // ── table row ──
-    RowDefault, CellBoundary, CellShading, RightToLeftRow, LeftToRightRow,
+    RowDefault, CellBoundary, CellShading, RightToLeftRow, LeftToRightRow, RowLeft, RowAlignLeft, RowAlignCenter, RowAlignRight,
     // ── character ──
     Plain, Bold, Italic, AssociatedBold, AssociatedItalic, Underline, UnderlineDouble, UnderlineDotted, UnderlineDashed, UnderlineWave,
     UnderlineThick, UnderlineWords, UnderlineNone, Strike, StrikeDouble, FontSize, AssociatedFontSize, ForegroundColor, BackgroundColor,
@@ -118,6 +118,7 @@ internal static class RtfControlWords
         ("rtlpar", RtfWord.RightToLeftParagraph), ("ltrpar", RtfWord.LeftToRightParagraph), ("intbl", RtfWord.InTable), ("itap", RtfWord.NestingLevel),
         ("pagebb", RtfWord.PageBreakBefore),
         ("trowd", RtfWord.RowDefault), ("cellx", RtfWord.CellBoundary), ("clcbpat", RtfWord.CellShading), ("rtlrow", RtfWord.RightToLeftRow), ("ltrrow", RtfWord.LeftToRightRow),
+        ("trleft", RtfWord.RowLeft), ("trql", RtfWord.RowAlignLeft), ("trqc", RtfWord.RowAlignCenter), ("trqr", RtfWord.RowAlignRight),
         ("plain", RtfWord.Plain), ("b", RtfWord.Bold), ("i", RtfWord.Italic), ("ab", RtfWord.AssociatedBold), ("ai", RtfWord.AssociatedItalic),
         ("ul", RtfWord.Underline), ("uldb", RtfWord.UnderlineDouble), ("uld", RtfWord.UnderlineDotted), ("ulthd", RtfWord.UnderlineDotted),
         ("uldash", RtfWord.UnderlineDashed), ("uldashd", RtfWord.UnderlineDashed), ("uldashdd", RtfWord.UnderlineDashed), ("ulldash", RtfWord.UnderlineDashed),

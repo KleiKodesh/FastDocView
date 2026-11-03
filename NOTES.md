@@ -178,7 +178,7 @@ roman, hebrew1 (gematria with geresh/gershayim), hebrew2, bullets, `%1.%2` patte
 
 Deliberately not done yet:
 
-- **Images** — `[image]` placeholder. Needs the rels part + a blob endpoint.
+- **Images** — drawn since 2026-11-03 (see "Pictures, tables, list gaps" below); .doc pictures and floating RTF \shp are still `[image]`.
 - **Fields** — `w:fldSimple`/`instrText` show their result text only.
 - **Word 6/95, encrypted, MHTML-as-.doc** — rejected with a clear message (RTF, also when saved as .doc, opens as RTF).
 
@@ -1046,3 +1046,40 @@ to the first 40 blocks; `--fidelity` checks a synthetic 3,000-list-style file un
 and `--odt-first-open <path>` measures any file. All 30,580 list levels of the sample read the same
 as the tree-based reading. Not done: a .fodt keeps its styles inside the body file and still captures
 office:styles as a tree.
+
+## Pictures, tables, list gaps (2026-11-03)
+
+Sources: ECMA-376 Part 1 (DrawingML wp:inline / wp:anchor 20.4.2.x, tables 17.4.28 / 17.4.51), ODF 1.3 part 3 (20.414
+table:align, 20.400 style:wrap, 20.298 style:horizontal-pos, 19.759 text:anchor-type - read in the OASIS HTML),
+LibreOffice core master: writerfilter GraphicImport.cxx (wrapNone = THROUGH with every gap dropped; "when impossible to
+wrap text on a side, remove the margin gap"), GraphicHelpers.cxx (wp:align left / right / center are physical),
+ConversionHelper.cxx convertTableJustification (center, right = end = RIGHT), DomainMapperTableHandler.cxx (compatibilityMode
+< 15: table edge = tblInd - first cell's left margin), DomainMapperTableManager.cxx (bidiVisual = RL_TB), rtftok
+rtfdispatchvalue.cxx TRLEFT / PICWGOAL, rtfdispatchflag.cxx TRQ* / PNGBLIP / NONSHPPICT, rtfdocumentimpl.cxx (first cell
+= cellx - trleft, goal size x scale), core/text/txttab.cxx NewTabPortion (a tab after a label goes to the next stop after
+the label's END), core/text/txtfld.cxx (a bullet portion is the bullet character only).
+
+- **The host must wrap the block HTML in `.word-document`.** Every rule of the stylesheet is scoped to it; the app page
+  never had the class, so none of it applied (list labels were plain inline spans: min-width ignored = no gap; table
+  borders / collapse, paragraph margins). The page now puts it on each block's text and each note body.
+- **List labels**: a tab suffix keeps at least 0.25 em after a label wider than its gap (Word jumps to the next stop; the
+  label's width is unknown server-side). ODF bullets drop num-prefix / num-suffix (LibreOffice writes the bullet as
+  num-suffix too: labels came out doubled).
+- **Pictures** (`WordPictureHtml`, shared): an `<img class="word-picture">` with a data: URI read on demand from the package
+  when the block renders (never kept; .png / .jpeg / .gif / .bmp / .webp / .svg - EMF / WMF / TIFF keep a dashed box of
+  the right size). Inline = in the line; square / tight / through = CSS float to wp:align's side with dist* as margins
+  (none on the side without text); centred square and topAndBottom = block; wrapNone (in front / behind) = block without
+  gaps. The page makes each block a formatting context (`display: flow-root`): a float never runs into other rows.
+  .docx: `DocxDrawingStripper` keeps the layout as one `<fastDocViewPicture>` element (wp: / a: / r: prefixes as Word
+  writes them); relationships of document / footnotes / endnotes. .odt: draw:frame + draw:image (package entry by path,
+  or office:binary-data in .fodt), graphic styles now kept in the index (format 7). RTF: {\pict} / {\*\shppict} inline
+  at \picwgoal x \picscalex (renderer sink only; index / search keep skipping). Not done: floating RTF \shp, VML
+  w:pict images, .doc PICF pictures, posOffset relative to the page / margin (treated as from the column's left).
+- **Tables**: .docx w:jc center / end, tblInd from the table's own start edge (a bidiVisual table starts at the right;
+  `margin-inline-end:auto` so a table never takes the paragraphs' side), minus the cell margin before Word 2013. .odt
+  table:align left / right / center / margins with fo:margin-left / -right (physical). RTF rows: 	rleft indent, 	rqc /
+  	rqr, row width = last \cellx - 	rleft (index format 6: the snapshot carries them). The stylesheet's 2 pt table margin
+  is gone (Word has none). .doc rows unchanged (full width).
+- Checks: `--fidelity` PagePlacementFidelityTest (all formats); live `playwright/layoutCheck.mjs <file>` (label gaps, the
+  column, tables, pictures, ignore-margins) and `playwright/notesLayoutCheck.mjs <file-with-notes>` (pane 25 %, notes
+  column = text column).

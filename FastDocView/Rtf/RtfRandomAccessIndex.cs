@@ -18,7 +18,7 @@ public readonly record struct RtfNoteReference(int BlockIndex, WordDocumentNoteK
 public sealed class RtfRandomAccessIndex
 {
     private const string Magic = "KHRTFIDX";
-    private const int FormatVersion = 5;     // 4: compact block tables; 5: no per-block tables - span anchors + parser snapshot + list state, Elias-Fano lists
+    private const int FormatVersion = 6;     // 4: compact block tables; 5: no per-block tables - span anchors + parser snapshot + list state, Elias-Fano lists; 6: row indent + alignment in the snapshot
     /// <summary>File bytes between span anchors: a random block rescans at most this much.</summary>
     public const long AnchorSpanBytes = 256 << 10;
 

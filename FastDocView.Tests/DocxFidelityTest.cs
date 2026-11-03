@@ -42,7 +42,8 @@ public static partial class DocxFidelityTest
     /// <summary>Writes a minimal package and returns every block's HTML.</summary>
     internal static List<string> RenderAll(string name, string body, string styles = "", string? numbering = null,
                                            string extraDocumentRelationships = "", string? settings = null,
-                                           string? footnotes = null, string footnoteRelationships = "", List<string>? noteHtml = null)
+                                           string? footnotes = null, string footnoteRelationships = "", List<string>? noteHtml = null,
+                                           IReadOnlyDictionary<string, byte[]>? binaryParts = null)
     {
         string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-" + name + ".docx");
         if (File.Exists(path)) File.Delete(path);
@@ -73,6 +74,11 @@ public static partial class DocxFidelityTest
                 Add("word/footnotes.xml", $"<?xml version=\"1.0\"?><w:footnotes {WordNamespaces}>{footnotes}</w:footnotes>");
                 Add("word/_rels/footnotes.xml.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
                     + footnoteRelationships + "</Relationships>");
+            }
+            foreach ((string entry, byte[] bytes) in binaryParts ?? new Dictionary<string, byte[]>())
+            {
+                using Stream stream = zip.CreateEntry(entry).Open();
+                stream.Write(bytes, 0, bytes.Length);
             }
             Add("word/document.xml", $"<?xml version=\"1.0\"?><w:document {WordNamespaces}><w:body>{body}</w:body></w:document>");
         }

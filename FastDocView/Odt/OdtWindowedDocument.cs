@@ -205,11 +205,31 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         _sidecarPathToSave = sidecarPathToSave;
         _reader = reader;
         _styles = styles;
-        _renderer = new OdtBlockHtmlRenderer(styles);
+        _renderer = new OdtBlockHtmlRenderer(styles, ReadPackagePart);
         Decision = decision;
         CountNewNoteReferences();
         IsRightToLeft = styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(styles.DefaultParagraph.Formatting.RunFormatting, IsRightToLeft);
+    }
+
+    /// <summary>
+    /// A package entry (a picture of the block being rendered), read on demand from the file by path - a short shared open,
+    /// as every read here (never blocks Word / LibreOffice). Null for a flat file (its pictures are inline), a document
+    /// opened from a stream without a path, or an entry that is not there.
+    /// </summary>
+    private byte[]? ReadPackagePart(string partName)
+    {
+        if (!File.Exists(FilePath)) return null;
+        using FileStream file = WordDocumentFileStream.OpenShared(FilePath);
+        if (OdtPackage.IsFlatOpenDocumentText(file)) return null;
+        file.Position = 0;
+        using var zip = new System.IO.Compression.ZipArchive(file, System.IO.Compression.ZipArchiveMode.Read, leaveOpen: true);
+        System.IO.Compression.ZipArchiveEntry? entry = zip.GetEntry(partName);
+        if (entry is null) return null;
+        using Stream data = entry.Open();
+        var bytes = new MemoryStream();
+        data.CopyTo(bytes);
+        return bytes.ToArray();
     }
 
     private IReadOnlyList<OdtNoteReference> KnownNoteReferences => (IReadOnlyList<OdtNoteReference>?)_index?.NoteReferences ?? _builder!.KnownNoteReferences;

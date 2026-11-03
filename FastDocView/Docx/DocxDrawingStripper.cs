@@ -35,6 +35,7 @@ internal static class DocxDrawingStripper
 
             // Keep the element (so the renderer still sees "a drawing here") with only its text boxes inside.
             WriteAscii(output, "<" + name + ">");
+            if (name == "w:drawing") WritePictureLayout(output, span, elementStart, elementEnd);
             CopyTextBoxes(output, bytes, start, span, elementStart, elementEnd);
             WriteAscii(output, "</" + name + ">");
             position = elementEnd;
@@ -52,6 +53,93 @@ internal static class DocxDrawingStripper
             if (found >= 0 && (best < 0 || found < best)) { best = found; bestName = name; }
         }
         return (best, bestName);
+    }
+
+    /// <summary>The element the renderer reads a picture's layout from (no namespace: it is ours, not WordprocessingML).</summary>
+    public const string PictureLayoutElementName = "fastDocViewPicture";
+
+    /// <summary>
+    /// A DrawingML picture's layout, kept as one small element: wp:inline / wp:anchor (ECMA-376 20.4.2.8 / 20.4.2.3) with
+    /// its dist*, behindDoc, wp:extent (20.4.2.7), the wrap type (20.4.2.15-20.4.2.18: wrapSquare / wrapTight / wrapThrough /
+    /// wrapTopAndBottom / wrapNone) and its wrapText, wp:positionH (20.4.2.10: relativeFrom, align or posOffset) and the
+    /// first a:blip r:embed (20.1.8.13). Only the drawing's first wp:inline / wp:anchor is read; the prefixes are the ones
+    /// Word writes (wp:, a:, r:), as w: is for the drawing itself. The picture bytes are not here: the renderer reads them
+    /// from the package by the relationship.
+    /// </summary>
+    private static void WritePictureLayout(MemoryStream output, ReadOnlySpan<byte> span, int from, int to)
+    {
+        ReadOnlySpan<byte> drawing = span.Slice(from, to - from);
+        int frame = IndexOfOpenTag(drawing, 0, "wp:anchor");
+        string kind = "anchor";
+        int inline = IndexOfOpenTag(drawing, 0, "wp:inline");
+        if (frame < 0 || (inline >= 0 && inline < frame)) { frame = inline; kind = "inline"; }
+        if (frame < 0) return;
+        var layout = new StringBuilder("<" + PictureLayoutElementName + " kind=\"" + kind + "\"");
+        void Copy(string attribute, ReadOnlySpan<byte> tag, string name)
+        {
+            if (AttributeValue(tag, name) is { } value) layout.Append(' ').Append(attribute).Append("=\"").Append(value).Append('"');
+        }
+        ReadOnlySpan<byte> frameTag = OpenTagAt(drawing, frame);
+        foreach (string name in new[] { "distT", "distB", "distL", "distR", "behindDoc" }) Copy(name, frameTag, name);
+        if (IndexOfOpenTag(drawing, frame, "wp:extent") is var extent and >= 0)
+        {
+            Copy("cx", OpenTagAt(drawing, extent), "cx");
+            Copy("cy", OpenTagAt(drawing, extent), "cy");
+        }
+        if (kind == "anchor")
+        {
+            foreach (string wrap in new[] { "wrapSquare", "wrapTight", "wrapThrough", "wrapTopAndBottom", "wrapNone" })
+                if (IndexOfOpenTag(drawing, frame, "wp:" + wrap) is var at and >= 0)
+                {
+                    layout.Append(" wrap=\"").Append(wrap).Append('"');
+                    Copy("wrapText", OpenTagAt(drawing, at), "wrapText");
+                    break;
+                }
+            if (IndexOfOpenTag(drawing, frame, "wp:positionH") is var horizontal and >= 0)
+            {
+                Copy("relativeFrom", OpenTagAt(drawing, horizontal), "relativeFrom");
+                int end = drawing.Slice(horizontal).IndexOf("</wp:positionH>"u8);
+                ReadOnlySpan<byte> position = end < 0 ? default : drawing.Slice(horizontal, end);
+                foreach ((string element, string attribute) in new[] { ("wp:align", "align"), ("wp:posOffset", "posOffset") })
+                    if (IndexOfOpenTag(position, 0, element) is var at and >= 0 && position.Slice(at).IndexOf((byte)'>') is var open and >= 0
+                        && position.Slice(at + open + 1).IndexOf((byte)'<') is var length and >= 0)
+                        layout.Append(' ').Append(attribute).Append("=\"").Append(Encoding.UTF8.GetString(position.Slice(at + open + 1, length).ToArray()).Trim().Replace("\"", "&quot;")).Append('"');
+            }
+        }
+        if (IndexOfOpenTag(drawing, frame, "a:blip") is var blip and >= 0) Copy("embed", OpenTagAt(drawing, blip), "r:embed");
+        layout.Append("/>");
+        WriteAscii(output, layout.ToString());
+    }
+
+    /// <summary>The open tag starting at <paramref name="at"/> (up to its '&gt;').</summary>
+    private static ReadOnlySpan<byte> OpenTagAt(ReadOnlySpan<byte> span, int at)
+    {
+        int end = span.Slice(at).IndexOf((byte)'>');
+        return end < 0 ? default : span.Slice(at, end);
+    }
+
+    /// <summary>An attribute's raw value (still XML-escaped, so it can be written back as is), null when absent.</summary>
+    private static string? AttributeValue(ReadOnlySpan<byte> tag, string name)
+    {
+        byte[] key = Encoding.ASCII.GetBytes(name + "=");
+        int offset = 0;
+        while (offset < tag.Length)
+        {
+            int found = tag.Slice(offset).IndexOf(key);
+            if (found < 0) return null;
+            int at = offset + found;
+            int valueAt = at + key.Length;
+            if (at > 0 && tag[at - 1] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n' && valueAt < tag.Length && tag[valueAt] is (byte)'"' or (byte)'\'')
+            {
+                byte quote = tag[valueAt];
+                int length = tag.Slice(valueAt + 1).IndexOf(quote);
+                if (length < 0) return null;
+                string value = Encoding.UTF8.GetString(tag.Slice(valueAt + 1, length).ToArray());
+                return quote == (byte)'"' ? value : value.Replace("\"", "&quot;");
+            }
+            offset = valueAt;
+        }
+        return null;
     }
 
     /// <summary>Copies every outermost &lt;w:txbxContent&gt;…&lt;/w:txbxContent&gt; inside [from, to).</summary>

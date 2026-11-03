@@ -18,7 +18,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 6;     // 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists
+    private const int FormatVersion = 7;     // 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position)
     /// <summary>Body bytes between span anchors: a random block rescans at most this much on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
 

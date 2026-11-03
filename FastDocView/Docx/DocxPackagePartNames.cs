@@ -77,7 +77,7 @@ public sealed record DocxPackagePartNames(string Document, string? Footnotes, st
         return relationships;
     }
 
-    private static string ResolveTarget(string sourcePartName, string target)
+    internal static string ResolveTarget(string sourcePartName, string target)
     {
         target = Uri.UnescapeDataString(target);
         if (target[0] == '/') return target.Substring(1);

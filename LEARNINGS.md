@@ -415,3 +415,10 @@ multipart/alternative (own boundary) holding text/plain and text/html (RFC 2046 
 alternatives plainest first). Taking only top-level parts found no text/html. The container now follows nested
 boundaries. Tika's testUserDefinedCharset.mhtml has that structure but is cut off after the html part's headers
 (621 bytes, empty body, no close delimiters): it now fails with "no <body>", which is right - there is no document.
+
+## 2026-11-03: the stylesheet never reached the app
+
+Every rule of `WordDocumentHtmlStylesheet` is `.word-document ...`, and the app page injected it inside `@scope` but no
+element carried that class - so list labels were inline spans (their min-width did nothing: "no space after the
+number"), tables had no collapse / borders, paragraphs browser margins. Unit checks on HTML strings could not see it;
+only a computed-style check in the live page did (`display` of `.list-marker`). Check computed styles, not markup.

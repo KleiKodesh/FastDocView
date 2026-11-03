@@ -50,6 +50,13 @@ public sealed class OdtStyleCascade
         "fo:padding", "fo:padding-top", "fo:padding-bottom", "fo:padding-left", "fo:padding-right", "style:vertical-align",
     ];
 
+    /// <summary>Attributes of style:graphic-properties (frames: pictures, text boxes) the frame renderer maps.</summary>
+    public static readonly HashSet<string> HandledGraphicProperties =
+    [
+        "style:wrap", "style:horizontal-pos", "style:horizontal-rel", "fo:margin", "fo:margin-left", "fo:margin-right", "fo:margin-top",
+        "fo:margin-bottom", "text:anchor-type",
+    ];
+
     private readonly Dictionary<(string family, string name), XElement> _styles = new();
     private readonly Dictionary<string, XElement> _defaultStyles = new(StringComparer.Ordinal);
     private readonly Dictionary<string, OdtListStyle> _listStyles = new(StringComparer.Ordinal);
@@ -150,6 +157,7 @@ public sealed class OdtStyleCascade
                             "text-properties" => HandledTextProperties,
                             "paragraph-properties" => HandledParagraphProperties,
                             "table-properties" or "table-cell-properties" or "table-column-properties" => HandledTableProperties,
+                            "graphic-properties" => HandledGraphicProperties,
                             _ => null,
                         };
                         if (handled is null) continue;
@@ -421,6 +429,19 @@ public sealed class OdtStyleCascade
         return Twips(properties?.Attribute(Style + "column-width")) is { } width ? WordParagraphFormatting.TwipsToPt(width) + "pt" : null;
     }
 
+    /// <summary>A graphic style's property through its parent chain (style:parent-style-name), then the graphic default style.</summary>
+    public string? GraphicProperty(string? styleName, XName attribute)
+    {
+        for (int depth = 0; styleName is not null && depth < 64; depth++)
+        {
+            XElement? style = StyleElement("graphic", styleName);
+            if (style is null) break;
+            if ((string?)style.Element(Style + "graphic-properties")?.Attribute(attribute) is { } value) return value;
+            styleName = (string?)style.Attribute(Style + "parent-style-name");
+        }
+        return _defaultStyles.TryGetValue("graphic", out XElement? defaults) ? (string?)defaults.Element(Style + "graphic-properties")?.Attribute(attribute) : null;
+    }
+
     /// <summary>A table's CSS (width, alignment, background) and direction (style:writing-mode).</summary>
     public (string css, bool? isRightToLeft) TableCss(string? tableStyleName)
     {
@@ -429,7 +450,16 @@ public sealed class OdtStyleCascade
         var css = new StringBuilder();
         if ((string?)properties.Attribute(Style + "rel-width") is { } relative && Percent(relative) is { } percent) css.Append("width:").Append(percent.ToString("0.#", CultureInfo.InvariantCulture)).Append("%;");
         else if (Twips(properties.Attribute(Style + "width")) is { } width) css.Append("width:").Append(WordParagraphFormatting.TwipsToPt(width)).Append("pt;");
-        if ((string?)properties.Attribute(Table + "align") == "center") css.Append("margin-left:auto;margin-right:auto;");
+        // table:align (ODF 1.3 part 3 20.414): left / right / center against the margins, "margins" fills the space between
+        // them (fo:margin-left / fo:margin-right, 20.237 / 20.239); physical sides. Absent = left (LibreOffice writes it always).
+        string? Margin(string side) => Twips(properties.Attribute(Fo + "margin-" + side)) is { } twips and not 0 ? WordParagraphFormatting.TwipsToPt(twips) + "pt" : null;
+        switch ((string?)properties.Attribute(Table + "align"))
+        {
+            case "center": css.Append("margin-left:auto;margin-right:auto;"); break;
+            case "right": css.Append("margin-left:auto;margin-right:").Append(Margin("right") ?? "0").Append(';'); break;
+            case "margins": css.Append("margin-left:").Append(Margin("left") ?? "0").Append(";margin-right:").Append(Margin("right") ?? "0").Append(';'); break;
+            default: css.Append("margin-left:").Append(Margin("left") ?? "0").Append(";margin-right:auto;"); break;
+        }
         if ((string?)properties.Attribute(Fo + "background-color") is { } background && ColorHex(background) is { } hex) css.Append("background-color:#").Append(hex).Append(';');
         bool? rtl = (string?)properties.Attribute(Style + "writing-mode") switch { "rl-tb" or "rl" => true, "lr-tb" or "lr" => false, _ => null };
         return (css.ToString(), rtl);

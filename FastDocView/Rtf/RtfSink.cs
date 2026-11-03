@@ -32,6 +32,10 @@ internal abstract class RtfSink
     public virtual void ListTextStart() { }
     public virtual void ListTextEnd() { }
     public virtual void Embedded(RtfEmbeddedKind kind, in RtfGroupState state) { }
+    /// <summary>True: the parser decodes \pict groups into <see cref="Picture"/> (the HTML renderer); false: a placeholder (index, search).</summary>
+    public virtual bool WantsPictures => false;
+    /// <summary>A decoded {\pict} group: shown size in twips (0 = unknown), its data and the blip type's file extension ("" = a type a browser cannot show).</summary>
+    public virtual void Picture(int widthTwips, int heightTwips, byte[] data, string extension, in RtfGroupState state) { }
     /// <summary>A group closed; <paramref name="depth"/> is the depth after the close (0 = the document group).</summary>
     public virtual void GroupClosed(int depth) { }
     public virtual void UnhandledWord(ReadOnlySpan<byte> name) { }

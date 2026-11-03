@@ -68,7 +68,7 @@ public static class RtfFormattingAudit
             "chbgfdiag", "chbghoriz", "chbgvert", "brdrdashdotstr", "brdrthtnlg", "brdrtnthlg", "brdrtnthtnlg", "brdrthtnmg", "brdrtnthmg", "brdrtnthtnmg",
             "brdrdashdot", "brdrdashdotdot", "brdrart"]),
         ("table geometry beyond cell widths (gaps, heights, merges, cell borders, autofit, banding, preferred widths)", [
-            "trgaph", "trleft", "trrh", "trqc", "trql", "trqr", "trhdr", "trkeep", "trkeepfollow", "trbrdrt", "trbrdrb", "trbrdrl", "trbrdrr", "trbrdrh", "trbrdrv",
+            "trgaph", "trrh", "trhdr", "trkeep", "trkeepfollow", "trbrdrt", "trbrdrb", "trbrdrl", "trbrdrr", "trbrdrh", "trbrdrv",
             "trautofit", "trftsWidth", "trwWidth", "trftsWidthB", "trwWidthB", "trftsWidthA", "trwWidthA", "trpaddl", "trpaddr", "trpaddt", "trpaddb",
             "trpaddfl", "trpaddfr", "trpaddft", "trpaddfb", "trspdl", "trspdr", "trspdt", "trspdb", "trspdfl", "trspdfr", "trspdft", "trspdfb", "trcbpat",
             "trcfpat", "trpat", "trshdng", "tblrsid", "tbllkhdrrows", "tbllklastrow", "tbllkhdrcols", "tbllklastcol", "tbllknorowband", "tbllknocolband",

@@ -280,6 +280,18 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _flow.HasInline = true;
     }
 
+    public override bool WantsPictures => true;
+
+    /// <summary>A {\pict} in the text: an inline picture at its goal size (a floating \shp is still a placeholder).</summary>
+    public override void Picture(int widthTwips, int heightTwips, byte[] data, string extension, in RtfGroupState state)
+    {
+        FlushRun();
+        WordPictureHtml.Append(_listTextTarget ?? _flow.Inline,
+                               new WordPictureLayout(widthTwips / 20.0, heightTwips / 20.0, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0),
+                               extension.Length > 0 ? WordPictureHtml.DataUri(extension, data) : null);
+        _flow.HasInline = true;
+    }
+
     // ── list text (Word's flat label for readers without list support) ───────────────
 
     // fields and bookmarks
@@ -392,7 +404,24 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (table.Cell.Length > 0) { table.Cells.Add(table.Cell.ToString()); table.Cell.Clear(); }
         var html = new StringBuilder(256);
         bool isOuter = level == 1;
-        WordHtmlText.AppendOpenTag(html, "table", isOuter ? "table-layout:fixed;" : null, isOuter ? "table-row" : null, _parser.IsRowRightToLeft ? true : null);
+        // An outer row is as wide as its cells (\cellx are right edges from the column's left, the first cell starts at \trleft -
+        // LibreOffice rtfdocumentimpl.cxx: cell width = cellx - previous, first = cellx - trleft; trleft = the table indent);
+        // \trqc / \trqr centre it / put it at the right.
+        string? rowCss = null;
+        if (isOuter)
+        {
+            IReadOnlyList<int> edges = _parser.CellBoundaries;
+            int rowLeft = _parser.RowLeftTwips;
+            int rowWidth = edges.Count > 0 ? edges[edges.Count - 1] - rowLeft : 0;
+            rowCss = "table-layout:fixed;" + (rowWidth > 0 ? "width:" + WordParagraphFormatting.TwipsToPt(rowWidth) + "pt;" : "")
+                   + (_parser.RowAlignment switch
+                   {
+                       1 => "margin-left:auto;margin-right:auto;",
+                       2 => "margin-left:auto;margin-right:0;",
+                       _ => (rowLeft != 0 ? "margin-inline-start:" + WordParagraphFormatting.TwipsToPt(rowLeft) + "pt;" : "") + "margin-inline-end:auto;",
+                   });
+        }
+        WordHtmlText.AppendOpenTag(html, "table", rowCss, isOuter ? "table-row" : null, _parser.IsRowRightToLeft ? true : null);
         html.Append("<tr>");
         IReadOnlyList<int> boundaries = _parser.CellBoundaries;
         IReadOnlyList<short> shading = _parser.CellShading;
@@ -401,7 +430,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             var css = new StringBuilder();
             if (isOuter && i < boundaries.Count)
             {
-                int width = boundaries[i] - (i == 0 ? 0 : boundaries[i - 1]);
+                int width = boundaries[i] - (i == 0 ? _parser.RowLeftTwips : boundaries[i - 1]);
                 if (width > 0) css.Append("width:").Append(WordParagraphFormatting.TwipsToPt(width)).Append("pt;");
                 if (_tables.ColorHex(shading[i]) is { } fill) css.Append("background:#").Append(fill).Append(';');
             }

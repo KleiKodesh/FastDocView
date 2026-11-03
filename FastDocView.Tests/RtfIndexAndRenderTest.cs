@@ -85,7 +85,7 @@ public static class RtfIndexAndRenderTest
         TestReport.Check(document.EstimatedTextLength(1) < 20, $"{what}: note bodies excluded from text length ({document.EstimatedTextLength(1)})");
         // the marker's text; its attributes carry the label geometry (WordListLabelHtml: tab gap, alignment)
         static bool Marker(string html, string label)
-            => System.Text.RegularExpressions.Regex.IsMatch(html, "class=\"list-marker\"[^>]*>" + System.Text.RegularExpressions.Regex.Escape(label) + "<");
+            => System.Text.RegularExpressions.Regex.IsMatch(html, "class=\"list-marker\"[^>]*>(" + System.Text.RegularExpressions.Regex.Escape(DocxFidelityTest.TabGapOpenTag) + ")?" + System.Text.RegularExpressions.Regex.Escape(label) + "<");
         TestReport.Check(Marker(Html(2), "1.") && Marker(Html(3), "1.1") && Marker(Html(4), "2.") && Marker(Html(5), "•"),
                          $"{what}: list markers (counted, \\listtext, bullet)");
         TestReport.Check(Html(6).Contains("<table") && Regex.Matches(Html(6), "<td").Count == 2 && Html(6).Contains("width:144pt") && Html(6).Contains("background:#EEEEEE")

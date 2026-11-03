@@ -44,6 +44,8 @@ internal sealed class RtfParser
     private readonly List<short> _cellShading = new();
     private short _pendingCellShading;
     private bool _isRowRightToLeft;
+    private int _rowLeft;          // \trleft: the row's leftmost edge from the column's, twips
+    private byte _rowAlignment;    // \trql 0 / \trqc 1 / \trqr 2
 
     // pending 8-bit text (decoded in one go: double-byte code pages need the byte pairs together)
     private byte[] _textBytes = new byte[4096];
@@ -86,6 +88,9 @@ internal sealed class RtfParser
     public bool IsInFootnote => _footnoteDepth >= 0;
     public bool IsInListText => _listTextDepth >= 0;
     public bool IsRowRightToLeft => _isRowRightToLeft;
+    public int RowLeftTwips => _rowLeft;
+    /// <summary>0 left (\trql, the default), 1 centre (\trqc), 2 right (\trqr).</summary>
+    public int RowAlignment => _rowAlignment;
     public IReadOnlyList<int> CellBoundaries => _cellBoundaries;
     public IReadOnlyList<short> CellShading => _cellShading;
 
@@ -111,7 +116,7 @@ internal sealed class RtfParser
         return bytes;
     }
 
-    public int SnapshotSize => 4 + (_depth + 1) * RtfGroupState.Size + 4 * 4 + 1 + 4 + _cellBoundaries.Count * 6;
+    public int SnapshotSize => 4 + (_depth + 1) * RtfGroupState.Size + 4 * 4 + 1 + 4 + 1 + 4 + _cellBoundaries.Count * 6;
 
     /// <summary>Writes the snapshot into <paramref name="bytes"/> (at least <see cref="SnapshotSize"/> long).</summary>
     public void WriteSnapshot(Span<byte> bytes)
@@ -126,6 +131,8 @@ internal sealed class RtfParser
         WriteInt(bytes, ref at, _unicodePairDepth);
         WriteInt(bytes, ref at, _nestedTablePropertiesDepth);
         bytes[at++] = (byte)(_isRowRightToLeft ? 1 : 0);
+        WriteInt(bytes, ref at, _rowLeft);
+        bytes[at++] = _rowAlignment;
         WriteInt(bytes, ref at, _cellBoundaries.Count);
         for (int i = 0; i < _cellBoundaries.Count; i++)
         {
@@ -147,6 +154,8 @@ internal sealed class RtfParser
         _unicodePairDepth = ReadInt(bytes, ref at);
         _nestedTablePropertiesDepth = ReadInt(bytes, ref at);
         _isRowRightToLeft = bytes[at++] != 0;
+        _rowLeft = ReadInt(bytes, ref at);
+        _rowAlignment = bytes[at++];
         int cells = ReadInt(bytes, ref at);
         _cellBoundaries.Clear(); _cellShading.Clear();
         for (int i = 0; i < cells; i++)
@@ -648,6 +657,10 @@ internal sealed class RtfParser
                 return;
             case RtfWord.UnicodePair: _unicodePairDepth = _depth; return;
             case RtfWord.UnicodeDestination: state.Set(RtfStateFlags.DropText, false); return;
+            // {\*\shppict {\pict ...}}: Word's picture for readers that know shapes; its \pict is read like a bare one.
+            // {\nonshppict} (the copy for older readers) stays skipped (LibreOffice rtfdispatchflag.cxx NONSHPPICT: SKIP).
+            case RtfWord.ShapePicture when _sink.WantsPictures && IsTextDestination(state): return;
+            case RtfWord.Picture when _sink.WantsPictures && IsTextDestination(state): ReadPicture(state); return;
             case RtfWord.Picture: case RtfWord.ShapePicture: case RtfWord.Shape:
                 if (IsTextDestination(state)) _sink.Embedded(RtfEmbeddedKind.Picture, state);
                 SkipGroup(name);
@@ -740,6 +753,7 @@ internal sealed class RtfParser
             case RtfWord.RowDefault:
                 if (_nestedTablePropertiesDepth >= 0) return;
                 _cellBoundaries.Clear(); _cellShading.Clear(); _pendingCellShading = 0; _isRowRightToLeft = false;
+                _rowLeft = 0; _rowAlignment = 0;
                 return;
             case RtfWord.CellBoundary:
                 if (_nestedTablePropertiesDepth >= 0) return;
@@ -749,6 +763,12 @@ internal sealed class RtfParser
             case RtfWord.CellShading: if (_nestedTablePropertiesDepth >= 0) return; _pendingCellShading = (short)parameter; return;
             case RtfWord.RightToLeftRow: _isRowRightToLeft = true; state.RunType = RtfRunType.None; return;
             case RtfWord.LeftToRightRow: _isRowRightToLeft = false; return;
+            // \trleft = the table indent, \trql / \trqc / \trqr = its alignment (LibreOffice rtfdispatchvalue.cxx TRLEFT,
+            // rtfdispatchflag.cxx TRQL / TRQC / TRQR -> tblInd / jc); a nested row definition keeps its own (not applied).
+            case RtfWord.RowLeft: if (_nestedTablePropertiesDepth < 0) _rowLeft = (int)Math.Max(int.MinValue, Math.Min(int.MaxValue, parameter)); return;
+            case RtfWord.RowAlignLeft: if (_nestedTablePropertiesDepth < 0) _rowAlignment = 0; return;
+            case RtfWord.RowAlignCenter: if (_nestedTablePropertiesDepth < 0) _rowAlignment = 1; return;
+            case RtfWord.RowAlignRight: if (_nestedTablePropertiesDepth < 0) _rowAlignment = 2; return;
 
             // ── character ──
             case RtfWord.Plain:
@@ -822,6 +842,66 @@ internal sealed class RtfParser
     {
         Push();
         SkipGroup(default);
+    }
+
+    /// <summary>
+    /// The rest of a {\pict} group, decoded: \picwgoal / \pichgoal (twips) scaled by \picscalex / \picscaley percent -
+    /// LibreOffice rtfdocumentimpl.cxx resolvePict: the goal size (else \picw / \pich) times scale / 100 - and the picture
+    /// data as hex digits (or \binN raw bytes) at the group's own level; nested groups ({\*\blipuid}, {\*\picprop}) are
+    /// stepped over. \pngblip / \jpegblip name a type a browser shows (LibreOffice rtfdispatchflag.cxx PNGBLIP / JPEGBLIP);
+    /// any other blip (\emfblip, \wmetafile, ...) gives "". Closes the group.
+    /// </summary>
+    private void ReadPicture(in RtfGroupState state)
+    {
+        int depth = 1, goalWidth = 0, goalHeight = 0, scaleX = 100, scaleY = 100, high = -1;
+        string extension = "";
+        var data = new MemoryStream();
+        while (true)
+        {
+            int b = ReadByte();
+            if (b < 0) break;
+            if (b == '{') { depth++; continue; }
+            if (b == '}') { if (--depth == 0) { if (!Pop()) _position = _end; break; } continue; }
+            if (b == '\\')
+            {
+                int c = ReadByte();
+                if (c < 0) break;
+                if (!IsLetter(c)) continue;
+                int length = 0;
+                while (c >= 0 && IsLetter(c)) { if (length < MaxWordLength) _word[length] = (byte)c; length++; c = ReadByte(); }
+                bool negative = c == '-';
+                if (negative) c = ReadByte();
+                long parameter = 0;
+                while (c >= '0' && c <= '9') { if (parameter < int.MaxValue) parameter = parameter * 10 + (c - '0'); c = ReadByte(); }
+                if (c >= 0 && c != ' ') _position--;
+                bool isBinary = length == 3 && _word[0] == 'b' && _word[1] == 'i' && _word[2] == 'n';
+                if (depth != 1) { if (isBinary && parameter > 0) SkipBytes(parameter); continue; }
+                string word = System.Text.Encoding.ASCII.GetString(_word, 0, Math.Min(length, MaxWordLength));
+                int value = (int)Math.Min(int.MaxValue, negative ? -parameter : parameter);
+                switch (word)
+                {
+                    case "picwgoal": goalWidth = value; break;
+                    case "pichgoal": goalHeight = value; break;
+                    case "picscalex": scaleX = value; break;
+                    case "picscaley": scaleY = value; break;
+                    case "pngblip": extension = ".png"; break;
+                    case "jpegblip": extension = ".jpg"; break;
+                    case "bin":
+                        for (long i = 0; i < parameter; i++) { int raw = ReadByte(); if (raw < 0) break; data.WriteByte((byte)raw); }
+                        break;
+                }
+                continue;
+            }
+            if (depth != 1) continue;
+            int digit = HexValue(b);
+            if (digit < 0) continue;                                  // white space between the digits
+            if (high < 0) high = digit; else { data.WriteByte((byte)(high << 4 | digit)); high = -1; }
+        }
+        // \picw / \pich are the picture's own extent (pixels for bitmaps), not the shown size: without a goal size the
+        // picture keeps its natural size (0 here).
+        int shownWidth = goalWidth > 0 ? (int)((long)goalWidth * scaleX / 100) : 0;
+        int shownHeight = goalHeight > 0 ? (int)((long)goalHeight * scaleY / 100) : 0;
+        _sink.Picture(shownWidth, shownHeight, data.ToArray(), extension, state);
     }
 
     /// <summary>Skips to the end of the current group (braces counted, escapes and \binN data stepped over) and closes it.</summary>

@@ -33,6 +33,37 @@ public sealed class DocxDocumentParts
         return targets;
     }
 
+    /// <summary>The picture relationships of the main part and the note parts: r:id -> package part name (resolved). Small; read at open.</summary>
+    public IReadOnlyDictionary<string, string> ImageParts { get; }
+    public IReadOnlyDictionary<string, string> FootnoteImageParts { get; }
+    public IReadOnlyDictionary<string, string> EndnoteImageParts { get; }
+
+    private static Dictionary<string, string> LoadImageParts(ZipArchive zip, string? sourcePartName)
+    {
+        var parts = new Dictionary<string, string>(StringComparer.Ordinal);
+        XElement? root = sourcePartName is null ? null : LoadPart(zip, DocxPackagePartNames.RelationshipsPartName(sourcePartName))?.Root;
+        if (root is null) return parts;
+        foreach (XElement relationship in root.Elements())
+        {
+            string? type = (string?)relationship.Attribute("Type"), id = (string?)relationship.Attribute("Id"), target = (string?)relationship.Attribute("Target");
+            if (id is null || string.IsNullOrEmpty(target) || type is null || (string?)relationship.Attribute("TargetMode") == "External") continue;
+            if (type.EndsWith("/image", StringComparison.OrdinalIgnoreCase)) parts[id] = DocxPackagePartNames.ResolveTarget(sourcePartName!, target!);
+        }
+        return parts;
+    }
+
+    /// <summary>A picture part's bytes, read on demand when a block that shows it is rendered (never kept); null when absent.</summary>
+    public byte[]? ReadPartBytes(string partName)
+    {
+        using var zip = new ZipArchive(_package, ZipArchiveMode.Read, leaveOpen: true);
+        ZipArchiveEntry? entry = zip.GetEntry(partName);
+        if (entry is null) return null;
+        using Stream data = entry.Open();
+        var bytes = new MemoryStream(entry.Length is > 0 and < int.MaxValue ? (int)entry.Length : 0);
+        data.CopyTo(bytes);
+        return bytes.ToArray();
+    }
+
     /// <summary>settings.xml w:compat options the renderer follows.</summary>
     public DocxCompatibilitySettings Compatibility { get; }
     /// <summary>theme1.xml fonts and colors with settings.xml's clrSchemeMapping / themeFontLang; always present (empty without a theme part).</summary>
@@ -63,6 +94,9 @@ public sealed class DocxDocumentParts
         HyperlinkTargets = LoadHyperlinkTargets(zip, DocxPackagePartNames.RelationshipsPartName(PartNames.Document));
         FootnoteHyperlinkTargets = PartNames.Footnotes is { } footnotes ? LoadHyperlinkTargets(zip, DocxPackagePartNames.RelationshipsPartName(footnotes)) : new Dictionary<string, string>();
         EndnoteHyperlinkTargets = PartNames.Endnotes is { } endnotes ? LoadHyperlinkTargets(zip, DocxPackagePartNames.RelationshipsPartName(endnotes)) : new Dictionary<string, string>();
+        ImageParts = LoadImageParts(zip, PartNames.Document);
+        FootnoteImageParts = LoadImageParts(zip, PartNames.Footnotes);
+        EndnoteImageParts = LoadImageParts(zip, PartNames.Endnotes);
     }
 
     private DocxNumberingDefinitions LoadNumbering()

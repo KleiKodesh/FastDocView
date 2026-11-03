@@ -21,7 +21,9 @@ public enum WordListLabelAlignment : byte { Start, Center, End }
 /// </summary>
 public static class WordListLabelHtml
 {
-    public const int DefaultTabStopTwips = 720;   // [MS-DOC] Dop dxaTab / ECMA-376 17.15.1.25 defaultTabStop when absent
+    public const int DefaultTabStopTwips = 720;
+    /// <summary>The least room a tab suffix leaves after a label that reaches past its stop (a quarter em, about a space).</summary>
+    public const string MinimumTabGapEm = "0.25";   // [MS-DOC] Dop dxaTab / ECMA-376 17.15.1.25 defaultTabStop when absent
 
     public static void Append(StringBuilder html, string label, string? labelCss, WordListLabelSuffix suffix,
                               WordParagraphFormatting paragraph, int defaultTabStopTwips,
@@ -37,7 +39,14 @@ public static class WordListLabelHtml
         // or both sides (center) - the label ends at / is centred on its position whatever its width.
         if (alignment != WordListLabelAlignment.Start)
             html.Append("<span style=\"display:inline-flex;width:0;white-space:nowrap;justify-content:").Append(alignment == WordListLabelAlignment.End ? "flex-end" : "center").Append("\">");
+        // A label wider than its gap: Word / LibreOffice search the next tab stop from where the label ENDS (txttab.cxx
+        // SwTextFormatter::NewTabPortion: nTabPos = rInf.X(), the stop at the left margin only "inside the hanging indent"),
+        // so the text never touches the label. The label's width is unknown here: the tab keeps at least a quarter em,
+        // which only shows when the label (nearly) fills its gap.
+        bool keepsTabGap = suffix == WordListLabelSuffix.Tab && alignment == WordListLabelAlignment.Start;
+        if (keepsTabGap) html.Append("<span style=\"padding-inline-end:").Append(MinimumTabGapEm).Append("em\">");
         html.Append(isLabelHtml ? label : WordHtmlText.Encode(label));
+        if (keepsTabGap) html.Append("</span>");
         if (alignment != WordListLabelAlignment.Start) html.Append("</span>");
         html.Append("</span>");
         if (suffix == WordListLabelSuffix.Space) html.Append(' ');
