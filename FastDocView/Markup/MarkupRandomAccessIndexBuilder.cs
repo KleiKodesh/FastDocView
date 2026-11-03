@@ -48,48 +48,6 @@ public static class MarkupRandomAccessIndexBuilder
                                            scanner.BlockTextLengths.ToArray(), scanner.BlockStackIds.ToArray(), scanner.Stacks.ToArray(), scanner.Headings.ToArray());
     }
 
-    /// <summary>
-    /// A loose .html / .htm file: the file is the HTML text itself (no transfer encoding), so block starts are file
-    /// offsets and a window is a plain read. Encoding: a BOM, then a &lt;meta charset&gt; / http-equiv content type in
-    /// the first bytes, then the .txt detection. One block per block-level element; the head's &lt;style&gt; is kept, scoped.
-    /// </summary>
-    public static MarkupRandomAccessIndex BuildHtml(Stream file, long sourceLength, long sourceTicks,
-                                                    IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
-    {
-        file.Position = 0;
-        var chunk = new byte[Math.Max(ChunkSize, MarkupTextEncoding.DetectionSampleBytes)];
-        int sampleLength = ReadFully(file, chunk, MarkupTextEncoding.DetectionSampleBytes);
-        (int codePage, int bomLength, string reason) = MarkupTextEncoding.DetectHtml(chunk.AsSpan(0, sampleLength),
-            sampleLength < MarkupTextEncoding.DetectionSampleBytes ? sampleLength : file.Length);
-        Encoding encoding = MarkupTextEncoding.FromCodePage(codePage);
-        int unitSize = codePage is MarkupTextEncoding.Utf16LittleEndian or MarkupTextEncoding.Utf16BigEndian ? 2 : 1;
-
-        var scanner = new MarkupBlockScanner(MarkupBlockMode.Elements, unitSize, codePage == MarkupTextEncoding.Utf16BigEndian, encoding) { StartsBodyImplicitly = true };
-        scanner.Feed(chunk, bomLength, sampleLength - bomLength, bomLength);
-        long done = sampleLength;
-        progress?.Report(new WordDocumentIndexProgress(done, file.Length, scanner.BlockStartOffsets.Count));
-        while (!scanner.IsBodyEnded)
-        {
-            cancellation.ThrowIfCancellationRequested();
-            int read = file.Read(chunk, 0, chunk.Length);
-            if (read <= 0) break;
-            scanner.Feed(chunk, 0, read, done);
-            done += read;
-            progress?.Report(new WordDocumentIndexProgress(done, file.Length, scanner.BlockStartOffsets.Count));
-        }
-        long textEnd = scanner.IsBodyEnded ? scanner.BodyEndTagOffset : done;
-        scanner.Finish(textEnd);
-        progress?.Report(new WordDocumentIndexProgress(file.Length, file.Length, scanner.BlockStartOffsets.Count));
-
-        long sampleStart = scanner.BlockStartOffsets.Count > 0 ? scanner.BlockStartOffsets[0] : bomLength;
-        int sampleBytes = (int)Math.Max(0, Math.Min(textEnd - sampleStart, RightToLeftSampleBytes)) & ~(unitSize - 1);
-        bool isRightToLeft = sampleBytes > 0 && IsHebrewAt(file, encoding, sampleStart, sampleBytes);
-        return new MarkupRandomAccessIndex(MarkupSourceKind.Html, sourceLength, sourceTicks, codePage, reason, MimeTransferEncoding.Identity,
-                                           textEnd, textEnd, isRightToLeft, WebArchiveStylesheet.Scope(scanner.StyleText),
-                                           scanner.BlockStartOffsets.ToArray(), [], scanner.BlockTextLengths.ToArray(),
-                                           scanner.BlockStackIds.ToArray(), scanner.Stacks.ToArray(), scanner.Headings.ToArray());
-    }
-
     private static bool IsHebrewAt(Stream file, Encoding encoding, long offset, int count)
     {
         var bytes = new byte[count];

@@ -15,9 +15,12 @@ namespace FastDocView;
 /// </summary>
 public static class WordWindowedDocumentOpener
 {
-    public static readonly string[] SupportedExtensions = [".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot", ".odt", ".ott", ".fodt", ".mht", ".mhtml", ".txt", ".rtf", ".html", ".htm"];
+    // No loose .html / .htm (decided 2026-11-03): real web pages often need scripts, external CSS and live resources a
+    // static windowed reader does not run, so they would render broken. Word web archives (.mht/.mhtml) stay: they are
+    // self-contained static documents.
+    public static readonly string[] SupportedExtensions = [".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot", ".odt", ".ott", ".fodt", ".mht", ".mhtml", ".txt", ".rtf"];
 
-    public enum WordFileFormat { Docx, DocBinary, WebArchive, RichText, OpenDocument, FlatOpenDocument, Unknown, PlainText, Html }
+    public enum WordFileFormat { Docx, DocBinary, WebArchive, RichText, OpenDocument, FlatOpenDocument, Unknown, PlainText }
 
     public static WordFileFormat DetectFormat(string filePath)
     {
@@ -25,7 +28,6 @@ public static class WordWindowedDocumentOpener
         using FileStream file = WordDocumentFileStream.OpenShared(filePath);
         _ = file.Read(header, 0, 4);
         if (Path.GetExtension(filePath).Equals(".txt", StringComparison.OrdinalIgnoreCase)) return WordFileFormat.PlainText;   // any bytes are text; no signature applies
-        if (Path.GetExtension(filePath).ToLowerInvariant() is ".html" or ".htm") return WordFileFormat.Html;                // HTML has no signature either
         if (header[0] == (byte)'P' && header[1] == (byte)'K')
             return OdtPackage.IsOpenDocumentTextPackage(file) ? WordFileFormat.OpenDocument : WordFileFormat.Docx;
         if ((header[0] == (byte)'<' || (header[0] == 0xEF && header[1] == 0xBB && header[2] == 0xBF)) && OdtPackage.IsFlatOpenDocumentText(file))
@@ -60,7 +62,6 @@ public static class WordWindowedDocumentOpener
             WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Open(filePath, isFlat: true, policy, progress, cancellation),
             WordFileFormat.WebArchive => MarkupWindowedDocument.Open(filePath, MarkupSourceKind.WebArchive, policy, progress, cancellation),
             WordFileFormat.PlainText => MarkupWindowedDocument.Open(filePath, MarkupSourceKind.PlainText, policy, progress, cancellation),
-            WordFileFormat.Html => MarkupWindowedDocument.Open(filePath, MarkupSourceKind.Html, policy, progress, cancellation),
             WordFileFormat.RichText => RtfWindowedDocument.Open(filePath, policy, progress, cancellation),
             _ => throw DescribeUnknown(filePath),
         };

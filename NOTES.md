@@ -568,6 +568,10 @@ inside a character). Index format v2 (re-detects old .txt indexes). LibreOffice
 confidence threshold, fallback the system ANSI code page. `<meta charset>` is not honoured for .txt
 (Notepad++ only sniffs it for HTML/XML file types).
 
+**Loose .html / .htm: not supported (decided 2026-11-03).** Real web pages often need scripts, external CSS and live
+resources that a static windowed reader does not run, so they would render broken. The reader, its encoding prescan
+and its test were removed. Word web archives (MHTML) stay: they are self-contained static documents.
+
 **MHTML** (.mht/.mhtml, and .doc files beginning with "MIME"): `WebArchiveContainer` reads headers only
 (RFC 2045 §5.1 parameters, RFC 2046 §5.1.1 boundaries) and takes the first text/html part; its body is
 decoded streaming (`MimeTransferDecoder`, RFC 2045 §6.7 quoted-printable leniently, §6.8 base64) and

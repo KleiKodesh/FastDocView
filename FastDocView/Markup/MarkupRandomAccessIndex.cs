@@ -2,7 +2,7 @@ using System.Text;
 
 namespace FastDocView.Markup;
 
-public enum MarkupSourceKind : byte { PlainText = 0, WebArchive = 1, Html = 2 }
+public enum MarkupSourceKind : byte { PlainText = 0, WebArchive = 1 } // 2 was loose .html; dropped: real web pages need scripts and live resources we do not run
 
 /// <summary>
 /// The index of a plain-text (.txt read as HTML) or web-archive (MHTML) document. Text offsets are
