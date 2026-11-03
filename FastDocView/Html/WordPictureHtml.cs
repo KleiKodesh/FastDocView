@@ -19,6 +19,11 @@ public enum WordPictureWrap : byte
 /// <summary>Where a floating picture sits across the column - physical sides, as DrawingML wp:align and ODF style:horizontal-pos.</summary>
 public enum WordPictureSide : byte { Left, Center, Right }
 
+/// <summary>A text box's own look: inner margins (points), border / fill as CSS colours (null = none), rotation, vertical text, auto-grow height.</summary>
+public readonly record struct WordTextBoxStyle(double LeftInsetPt, double TopInsetPt, double RightInsetPt, double BottomInsetPt,
+                                               string? BorderColor, double BorderWidthPt, bool BorderDash, string? FillColor,
+                                               double RotationDegrees, bool VerticalText, bool GrowsWithText);
+
 /// <summary>A picture's box: size and the gap kept to the text around it (points), wrap and side.</summary>
 public readonly record struct WordPictureLayout(double WidthPt, double HeightPt, WordPictureWrap Wrap, WordPictureSide Side,
                                                 double TopPt, double RightPt, double BottomPt, double LeftPt, double OffsetPt = 0);
@@ -51,6 +56,21 @@ public static class WordPictureHtml
         if (layout.WidthPt > 0 && layout.HeightPt > 0)
             css.Append("aspect-ratio:").Append(Points(layout.WidthPt)).Append('/').Append(Points(layout.HeightPt)).Append(';');
         else if (layout.HeightPt > 0) css.Append("height:").Append(Points(layout.HeightPt)).Append("pt;");
+        AppendPlacement(css, layout);
+        if (pictureId is not null)
+        {
+            html.Append("<img class=\"word-picture\" alt=\"\" ").Append(PictureIdAttribute).Append("=\"").Append(WordHtmlText.Encode(pictureId)).Append('"');
+            if (layout.WidthPt > 0 && layout.HeightPt > 0)
+                html.Append(" width=\"").Append(Pixels(layout.WidthPt)).Append("\" height=\"").Append(Pixels(layout.HeightPt)).Append('"');
+            html.Append(" loading=\"lazy\" decoding=\"async\" style=\"").Append(css).Append("\">");
+        }
+        else
+            html.Append("<span class=\"word-picture word-picture-missing\" style=\"").Append(css).Append("\">[image]</span>");
+    }
+
+    /// <summary>The float / block / margin CSS of an object placed as <see cref="WordPictureHtml"/> describes (pictures, text boxes, shapes share it).</summary>
+    public static void AppendPlacement(StringBuilder css, WordPictureLayout layout)
+    {
         WordPictureSide side = layout.Side;
         WordPictureWrap wrap = layout.Wrap;
         if (wrap == WordPictureWrap.Square && side == WordPictureSide.Center) wrap = WordPictureWrap.TopAndBottom;
@@ -73,16 +93,31 @@ public static class WordPictureHtml
                    .Append(side == WordPictureSide.Left ? Points(layout.OffsetPt) + "pt" : "auto").Append(';');
                 break;
         }
-        if (pictureId is not null)
-        {
-            html.Append("<img class=\"word-picture\" alt=\"\" ").Append(PictureIdAttribute).Append("=\"").Append(WordHtmlText.Encode(pictureId)).Append('"');
-            if (layout.WidthPt > 0 && layout.HeightPt > 0)
-                html.Append(" width=\"").Append(Pixels(layout.WidthPt)).Append("\" height=\"").Append(Pixels(layout.HeightPt)).Append('"');
-            html.Append(" loading=\"lazy\" decoding=\"async\" style=\"").Append(css).Append("\">");
-        }
-        else
-            html.Append("<span class=\"word-picture word-picture-missing\" style=\"").Append(css).Append("\">[image]</span>");
     }
+
+    /// <summary>
+    /// Opens a text box: a box at its placement (<see cref="AppendPlacement"/>), its width, its height (a minimum when it grows
+    /// with its text - DrawingML a:spAutoFit, LibreOffice textbodypropertiescontext.cxx:255-259 PROP_TextAutoGrowHeight), the inner
+    /// margins, border, fill and rotation. The caller renders the box's own paragraphs and then <see cref="CloseTextBox"/>.
+    /// </summary>
+    public static void OpenTextBox(StringBuilder html, WordPictureLayout layout, WordTextBoxStyle style)
+    {
+        var css = new StringBuilder("box-sizing:border-box;overflow-wrap:break-word;");
+        if (layout.Wrap == WordPictureWrap.Inline) css.Append("display:inline-block;vertical-align:bottom;");
+        if (layout.WidthPt > 0) css.Append("width:").Append(Points(layout.WidthPt)).Append("pt;");
+        if (layout.HeightPt > 0) css.Append(style.GrowsWithText ? "min-height:" : "height:").Append(Points(layout.HeightPt)).Append("pt;");
+        if (!style.GrowsWithText && layout.HeightPt > 0) css.Append("overflow:hidden;");
+        AppendPlacement(css, layout);
+        css.Append("padding:").Append(Margins(style.TopInsetPt, style.RightInsetPt, style.BottomInsetPt, style.LeftInsetPt)).Append(';');
+        if (style.BorderColor is { } border) css.Append("border:").Append(Points(Math.Max(0.25, style.BorderWidthPt))).Append("pt ").Append(style.BorderDash ? "dashed" : "solid").Append(' ').Append(border).Append(';');
+        else css.Append("border:0;");   // over the stylesheet's frame for boxes without a placement
+        if (style.FillColor is { } fill) css.Append("background:").Append(fill).Append(';');
+        if (style.RotationDegrees != 0) css.Append("transform:rotate(").Append(style.RotationDegrees.ToString("0.##", CultureInfo.InvariantCulture)).Append("deg);");
+        if (style.VerticalText) css.Append("writing-mode:vertical-rl;");
+        html.Append("<span class=\"text-box\" style=\"").Append(css).Append("\">");
+    }
+
+    public static void CloseTextBox(StringBuilder html) => html.Append("</span>");
 
     /// <summary>The &lt;img&gt; attribute naming the picture for <see cref="IWordWindowedDocument.ReadPicture"/>.</summary>
     public const string PictureIdAttribute = "data-word-picture";

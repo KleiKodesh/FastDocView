@@ -70,7 +70,7 @@ internal sealed class DocBinaryFloatingPictures
     public WordDocumentPicture? Read(string pictureId)
     {
         if (!pictureId.StartsWith(IdPrefix, StringComparison.Ordinal)
-            || !uint.TryParse(pictureId.AsSpan(IdPrefix.Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out uint spid))
+            || !uint.TryParse(pictureId.Substring(IdPrefix.Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out uint spid))
             return null;
         if (Locate(spid) is not { } blip) return null;
         byte[] bytes = DocBinaryPictures.Read(blip.stream, blip.dataAt, blip.dataLength);

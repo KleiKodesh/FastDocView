@@ -775,12 +775,17 @@ public sealed class DocxBlockHtmlRenderer
         _openFields.Clear();
         bool outerIsRightToLeft = _isParagraphRightToLeft;   // the text box's own paragraphs set it; the outer runs need theirs back
         _textBoxDepth++;
+        XElement? boxLayout = drawing.Elements().FirstOrDefault(e => e.Name.LocalName == Docx.DocxDrawingStripper.PictureLayoutElementName && e.Attribute("textBox") is not null);
         foreach (XElement textBox in textBoxes)
         {
-            html.Append("<span class=\"text-box\">");
+            // a chain of linked boxes (wps:linkedTxbx) keeps its whole text in the first box's w:txbxContent (ECMA-376 Part 1
+            // 20.4: only the first box of the chain holds txbxContent), so each box renders the text it holds.
+            if (boxLayout is not null) WordPictureHtml.OpenTextBox(html, DrawingLayout(boxLayout), TextBoxStyle(boxLayout));
+            else html.Append("<span class=\"text-box\">");
             _previousStyleKey = null;
             yield return new(RenderBlocks(textBox.Elements(), html, isAutoSpacingContainer: true));
-            html.Append("</span>");
+            WordPictureHtml.CloseTextBox(html);
+            boxLayout = null;   // a second box in one drawing (a group) has no layout of its own here
         }
         _activeLinkOpenTag = outerLink;
         _openFields.Clear();
@@ -802,7 +807,13 @@ public sealed class DocxBlockHtmlRenderer
     {
         string? embed = (string?)picture.Attribute("embed");
         string? pictureId = embed is { Length: > 0 } && _pictures is not null ? _pictures(_currentPicturePart, embed) : null;
-        if ((string?)picture.Attribute("kind") == "vml") { WordPictureHtml.Append(html, VmlPictureLayout(picture), pictureId); return; }
+        WordPictureHtml.Append(html, DrawingLayout(picture), pictureId);
+    }
+
+    /// <summary>The placement of a drawing (picture or text box) from the layout element the stripper kept.</summary>
+    private static WordPictureLayout DrawingLayout(XElement picture)
+    {
+        if ((string?)picture.Attribute("kind") == "vml") return VmlPictureLayout(picture);
         double Emu(string name) => double.TryParse((string?)picture.Attribute(name), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ? value / EmuPerPoint : 0;
         string? wrap = (string?)picture.Attribute("wrap");
         WordPictureWrap pictureWrap = (string?)picture.Attribute("kind") != "anchor" ? WordPictureWrap.Inline
@@ -821,7 +832,29 @@ public sealed class DocxBlockHtmlRenderer
             _ => (string?)picture.Attribute("wrapText") switch { "left" => WordPictureSide.Right, "right" => WordPictureSide.Left, _ => WordPictureSide.Left },
         };
         double offset = align is null && picture.Attribute("posOffset") is not null ? Math.Max(0, Emu("posOffset")) : 0;
-        WordPictureHtml.Append(html, new WordPictureLayout(Emu("cx"), Emu("cy"), pictureWrap, side, Emu("distT"), Emu("distR"), Emu("distB"), Emu("distL"), offset), pictureId);
+        return new WordPictureLayout(Emu("cx"), Emu("cy"), pictureWrap, side, Emu("distT"), Emu("distR"), Emu("distB"), Emu("distL"), offset);
+    }
+
+    /// <summary>
+    /// A wps text box's look from the layout element. Unset insets take the ECMA-376 Part 1 21.1.2.1.1 bodyPr defaults
+    /// (lIns / rIns 91440 EMU, tIns / bIns 45720 EMU); a line without a colour is drawn black, a line with a:noFill not at all;
+    /// a:ln w defaults to 0 = the thinnest line (20.1.2.2.24). rot is in 60000ths of a degree (ST_Angle 20.1.10.3). vert
+    /// vert / eaVert / vert270 / wordArtVert / mongolianVert = text runs top to bottom (21.1.10.83 ST_TextVerticalType).
+    /// </summary>
+    private static WordTextBoxStyle TextBoxStyle(XElement layout)
+    {
+        double Inset(string name, double fallback)
+            => double.TryParse((string?)layout.Attribute(name), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ? value / EmuPerPoint : fallback / EmuPerPoint;
+        static string? Color(string? value) => value is { Length: 6 } && value.All(Uri.IsHexDigit) ? "#" + value : null;
+        string? lineFill = (string?)layout.Attribute("lineFill");
+        string? border = (string?)layout.Attribute("line") is null ? null : lineFill == "none" ? null : Color(lineFill) ?? "#000000";
+        double.TryParse((string?)layout.Attribute("rot"), NumberStyles.Float, CultureInfo.InvariantCulture, out double rotation);
+        string? vert = (string?)layout.Attribute("vert");
+        string? dash = (string?)layout.Attribute("dash");
+        return new WordTextBoxStyle(Inset("lIns", 91440), Inset("tIns", 45720), Inset("rIns", 91440), Inset("bIns", 45720),
+                                    border, Inset("lineW", 0), dash is not null && dash != "solid", Color((string?)layout.Attribute("fill")),
+                                    rotation / 60000, vert is "vert" or "eaVert" or "vert270" or "wordArtVert" or "mongolianVert",
+                                    layout.Attribute("autoFit") is not null);
     }
 
     /// <summary>

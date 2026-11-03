@@ -223,7 +223,15 @@ Ordered by value for text-heavy Hebrew documents:
 2. ~~Themes — `theme1.xml` fonts and colors~~ — done (.docx).
 3. Tables, properly — `tblGrid`/`tcW` widths, borders (`tblBorders`/`tcBorders`), row heights, `tblInd`, nested tables, `.doc` rows reassembled from cell marks into `<table>`.
 4. Images — `drawing`/`pict` → rels → blob endpoint (inline only; floating as inline).
-5. Text boxes / shapes — `mc:AlternateContent` → `w:txbxContent` rendered inline after the paragraph.
+5. Text boxes / shapes — `mc:AlternateContent` → `w:txbxContent`. A wps text box (DrawingML wp:anchor / wp:inline with
+   wps:txbx) is a real box where it is anchored, placed by the same WordPictureHtml.AppendPlacement as pictures (wrap,
+   side, dist gaps, offset): wp:extent width, height fixed or a minimum with a:spAutoFit (LibreOffice
+   oox/source/drawingml/textbodypropertiescontext.cxx:255-259), bodyPr insets (:75-80; unset = ECMA-376 Part 1 21.1.2.1.1
+   defaults 0.1in / 0.05in), vert (:132), a:xfrm rot, srgbClr solid fill / noFill, a:ln width / colour / prstDash. Theme
+   colours (schemeClr) are not resolved. Linked boxes: the first box holds the chain's whole txbxContent, so it shows all the
+   text (no split). VML-only text boxes, .odt / .rtf / .doc boxes and shapes without text: still the old inline frame.
+   Wrap on both sides of a centred object is not possible in CSS: CSS Shapes 1 section 2 ("does not allow content to wrap
+   on both sides of a float"); a centred square wrap stays top-and-bottom.
 6. Paragraph borders/shading, tab stops (`w:tabs` positions), character spacing/scale, caps/small caps, underline styles, `w:lvlRestart`, legal numbering.
 7. Fields — `fldSimple`/`fldChar` result text (done) + `HYPERLINK`, `REF`, `PAGEREF` targets as anchors; `TOC` left as text.
 8. Tracked changes toggle (show/hide `w:ins`/`w:del`), comments ignored.

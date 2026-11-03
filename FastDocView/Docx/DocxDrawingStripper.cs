@@ -108,8 +108,55 @@ internal static class DocxDrawingStripper
             }
         }
         if (IndexOfOpenTag(drawing, frame, "a:blip") is var blip and >= 0) Copy("embed", OpenTagAt(drawing, blip), "r:embed");
+        WriteTextBoxShape(layout, drawing);
         layout.Append("/>");
         WriteUtf8(output, layout.ToString());
+    }
+
+    /// <summary>
+    /// A wps:wsp text box's look (ECMA-376 Part 1 20.4 / 20.1, wps = Word 2010 shapes): wps:bodyPr lIns / tIns / rIns / bIns
+    /// (EMU), vert, a:spAutoFit (LibreOffice oox textbodypropertiescontext.cxx:75-80 insets, :132 vert, :255-259 spAutoFit =
+    /// auto-grow height), a:xfrm rot (60000ths of a degree, 20.1.7.6), and in wps:spPr the fill (a:solidFill / a:noFill) and
+    /// a:ln (w in EMU, its own a:solidFill / a:noFill, a:prstDash). Only srgbClr colours are read; a theme colour (schemeClr)
+    /// falls back to no fill and a black line, as the box still needs an edge.
+    /// </summary>
+    private static void WriteTextBoxShape(StringBuilder layout, ReadOnlySpan<byte> drawing)
+    {
+        int textBox = IndexOfOpenTag(drawing, 0, "wps:txbx");
+        if (textBox < 0) return;
+        layout.Append(" textBox=\"1\"");
+        void Copy(string attribute, ReadOnlySpan<byte> tag, string name)
+        {
+            if (AttributeValue(tag, name) is { } value) layout.Append(' ').Append(attribute).Append("=\"").Append(value).Append('"');
+        }
+        if (IndexOfOpenTag(drawing, textBox, "wps:bodyPr") is var body and >= 0)
+        {
+            ReadOnlySpan<byte> bodyTag = OpenTagAt(drawing, body);
+            foreach (string name in new[] { "lIns", "tIns", "rIns", "bIns", "vert" }) Copy(name, bodyTag, name);
+            int bodyEnd = drawing.Slice(body).IndexOf("</wps:bodyPr>"u8);
+            if (bodyEnd >= 0 && IndexOfOpenTag(drawing.Slice(body, bodyEnd), 0, "a:spAutoFit") >= 0) layout.Append(" autoFit=\"1\"");
+        }
+        int shapeProperties = IndexOfOpenTag(drawing, 0, "wps:spPr");
+        if (shapeProperties < 0) return;
+        int shapeEnd = drawing.Slice(shapeProperties).IndexOf("</wps:spPr>"u8);
+        if (shapeEnd < 0) return;
+        ReadOnlySpan<byte> spPr = drawing.Slice(shapeProperties, shapeEnd);
+        if (IndexOfOpenTag(spPr, 0, "a:xfrm") is var transform and >= 0) Copy("rot", OpenTagAt(spPr, transform), "rot");
+        int line = IndexOfOpenTag(spPr, 0, "a:ln");
+        ReadOnlySpan<byte> fillPart = line < 0 ? spPr : spPr.Slice(0, line);
+        int solid = IndexOfOpenTag(fillPart, 0, "a:solidFill");
+        if (IndexOfOpenTag(fillPart, 0, "a:noFill") is var noFill and >= 0 && (solid < 0 || noFill < solid)) layout.Append(" fill=\"none\"");
+        else if (solid >= 0 && IndexOfOpenTag(fillPart, solid, "a:srgbClr") is var fillColor and >= 0) Copy("fill", OpenTagAt(fillPart, fillColor), "val");
+        if (line < 0) return;
+        ReadOnlySpan<byte> lineTag = OpenTagAt(spPr, line);
+        if (lineTag.Length > 0 && lineTag[lineTag.Length - 1] == (byte)'/') { Copy("lineW", lineTag, "w"); return; }
+        int lineEnd = spPr.Slice(line).IndexOf("</a:ln>"u8);
+        ReadOnlySpan<byte> ln = lineEnd < 0 ? spPr.Slice(line) : spPr.Slice(line, lineEnd);
+        layout.Append(" line=\"1\"");
+        Copy("lineW", lineTag, "w");
+        if (IndexOfOpenTag(ln, 0, "a:noFill") >= 0) layout.Append(" lineFill=\"none\"");
+        else if (IndexOfOpenTag(ln, 0, "a:srgbClr") is var lineColor and >= 0) Copy("lineFill", OpenTagAt(ln, lineColor), "val");
+        if (IndexOfOpenTag(ln, 0, "a:prstDash") is var dash and >= 0) Copy("dash", OpenTagAt(ln, dash), "val");
     }
 
     /// <summary>

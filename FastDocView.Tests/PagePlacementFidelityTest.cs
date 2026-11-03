@@ -24,6 +24,7 @@ public static class PagePlacementFidelityTest
         DocxVmlPictures();
         RtfFloatingShapes();
         DocBinaryPicturesAndRows();
+        DocxTextBoxes();
     }
 
     /// <summary>The picture ids of a block's &lt;img&gt; elements (data-word-picture), in order.</summary>
@@ -84,6 +85,29 @@ public static class PagePlacementFidelityTest
         => $"<w:p><w:r><w:drawing><wp:anchor {DrawingNamespaces} distT=\"127000\" distB=\"127000\" distL=\"254000\" distR=\"254000\" behindDoc=\"{behind}\" simplePos=\"0\" relativeHeight=\"1\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">"
          + $"<wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"column\">{position}</wp:positionH><wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>"
          + $"<wp:extent cx=\"914400\" cy=\"457200\"/>{wrap}<wp:docPr id=\"1\" name=\"p\"/>{Graphic}</wp:anchor></w:drawing></w:r><w:r><w:t>text</w:t></w:r></w:p>";
+
+    private static string TextBoxAnchor(string wrap, string position, string spPr, string bodyPr)
+        => $"<w:p><w:r><w:drawing><wp:anchor {DrawingNamespaces} distT=\"0\" distB=\"0\" distL=\"127000\" distR=\"127000\" behindDoc=\"0\" simplePos=\"0\" relativeHeight=\"1\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">"
+         + $"<wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"column\">{position}</wp:positionH><wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>"
+         + $"<wp:extent cx=\"1270000\" cy=\"635000\"/>{wrap}<wp:docPr id=\"2\" name=\"Text Box 2\"/><a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">"
+         + $"<wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"><wps:cNvSpPr txBox=\"1\"/><wps:spPr>{spPr}</wps:spPr>"
+         + "<wps:txbx><w:txbxContent><w:p><w:r><w:t>inbox</w:t></w:r></w:p></w:txbxContent></wps:txbx>" + bodyPr + "</wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>after</w:t></w:r></w:p>";
+
+    /// <summary>A wps text box at its anchor: size (fixed / auto-grow), placement shared with pictures, insets, fill, line, rotation, vertical text.</summary>
+    private static void DocxTextBoxes()
+    {
+        TestReport.Step("Placement: .docx text boxes");
+        string body = TextBoxAnchor("<wp:wrapSquare wrapText=\"bothSides\"/>", "<wp:align>right</wp:align>",
+                          "<a:xfrm rot=\"5400000\"><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1270000\" cy=\"635000\"/></a:xfrm><a:prstGeom prst=\"rect\"/><a:solidFill><a:srgbClr val=\"FFFF00\"/></a:solidFill><a:ln w=\"25400\"><a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill><a:prstDash val=\"dash\"/></a:ln>",
+                          "<wps:bodyPr lIns=\"0\" tIns=\"12700\" rIns=\"25400\" bIns=\"38100\" vert=\"vert\"><a:spAutoFit/></wps:bodyPr>")
+                    + TextBoxAnchor("<wp:wrapTopAndBottom/>", "<wp:align>left</wp:align>", "<a:noFill/><a:ln><a:noFill/></a:ln>", "<wps:bodyPr/>");
+        List<string> html = DocxFidelityTest.RenderAll("placement-textboxes", body);
+        TestReport.Check(html[0].Contains("<span class=\"text-box\" style=\"box-sizing:border-box;overflow-wrap:break-word;width:100pt;min-height:50pt;float:right;margin:0pt 0pt 0pt 10pt;padding:1pt 2pt 3pt 0pt;border:2pt dashed #FF0000;background:#FFFF00;transform:rotate(90deg);writing-mode:vertical-rl;\">"),
+                         "square right: floats at its extent, grows with its text, insets / dashed red line / yellow fill / 90 deg / vertical (" + html[0] + ")");
+        TestReport.Check(html[1].Contains("width:100pt;height:50pt;overflow:hidden;display:block;margin:0pt auto 0pt 0pt;padding:3.6pt 7.2pt 3.6pt 7.2pt;border:0;\">") && !html[1].Contains("background:"),
+                         "top and bottom left: fixed height, default insets 0.1in / 0.05in, no line, no fill (" + html[1] + ")");
+        TestReport.Check(html.All(h => System.Text.RegularExpressions.Regex.Matches(h, "inbox").Count == 1 && h.Contains("after")), "the box text once, the paragraph text after it");
+    }
 
     /// <summary>wp:inline in the line, wp:anchor square / topAndBottom / none placed as WordPictureHtml documents, the picture from its relationship.</summary>
     private static void DocxPictures()
