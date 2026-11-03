@@ -31,39 +31,118 @@ public sealed class DocxNumberingDefinitions
     private readonly Dictionary<int, string> _numStyleLinkByAbstractId = new();
     private readonly Func<string, int>? _numIdOfStyle;
 
+    // Lazy source (numbering.xml cut into its top-level elements): a num / abstractNum is parsed on first use. Null once
+    // every definition is in the tables — the part was given parsed, or parsed whole after a fragment failed to parse.
+    private DocxNumberingPartSlices? _slices;
+    private readonly HashSet<int> _loadedNums = new();
+    private readonly HashSet<int> _loadedAbstractNums = new();
+
     /// <param name="numIdOfStyle">A numbering style's numId (its pPr/numPr), for w:numStyleLink; -1 when it has none.</param>
     public DocxNumberingDefinitions(XDocument? numberingDocument, Func<string, int>? numIdOfStyle = null)
     {
         _numIdOfStyle = numIdOfStyle;
+        ReadWhole(numberingDocument);
+    }
+
+    /// <summary>
+    /// From the part's bytes: only the lists a window uses are parsed (<see cref="DocxNumberingPartSlices"/>), so a big
+    /// document's first window does not pay for a megabyte of numbering it never shows. A part the slicer cannot follow,
+    /// or a fragment that does not parse, falls back to the whole-part parse (keeping what precedes the first error).
+    /// </summary>
+    public DocxNumberingDefinitions(byte[]? numberingPart, Func<string, int>? numIdOfStyle = null)
+    {
+        _numIdOfStyle = numIdOfStyle;
+        if (numberingPart is null) return;
+        _slices = DocxNumberingPartSlices.TryCut(numberingPart);
+        if (_slices is null) ReadWholeBytes(numberingPart);
+    }
+
+    private void ReadWholeBytes(byte[] numberingPart)
+        => ReadWhole(WordDocumentXml.LoadPartKeepingContentBeforeFirstError(() => new MemoryStream(numberingPart, writable: false)));
+
+    private void ReadWhole(XDocument? numberingDocument)
+    {
         XElement? root = numberingDocument?.Root;
         if (root is null) return;
-        foreach (XElement num in root.Elements(W + "num"))
+        foreach (XElement num in root.Elements(W + "num")) ReadNum(num);
+        foreach (XElement abstractNum in root.Elements(W + "abstractNum")) ReadAbstractNum(abstractNum);
+    }
+
+    private void ReadNum(XElement num)
+    {
+        int? numId = DocxStyleCascade.TwipsAttribute(num, "numId");
+        int? abstractId = DocxStyleCascade.TwipsAttribute(num.Element(W + "abstractNumId"), "val");
+        if (numId is not { } id || abstractId is not { } abstractNumId) return;
+        _abstractIdByNumId[id] = abstractNumId;
+        foreach (XElement levelOverride in num.Elements(W + "lvlOverride"))
         {
-            int? numId = DocxStyleCascade.TwipsAttribute(num, "numId");
-            int? abstractId = DocxStyleCascade.TwipsAttribute(num.Element(W + "abstractNumId"), "val");
-            if (numId is not { } id || abstractId is not { } abstractNumId) continue;
-            _abstractIdByNumId[id] = abstractNumId;
-            foreach (XElement levelOverride in num.Elements(W + "lvlOverride"))
+            int level = DocxStyleCascade.TwipsAttribute(levelOverride, "ilvl") ?? 0;
+            if (DocxStyleCascade.TwipsAttribute(levelOverride.Element(W + "startOverride"), "val") is { } start)
             {
-                int level = DocxStyleCascade.TwipsAttribute(levelOverride, "ilvl") ?? 0;
-                if (DocxStyleCascade.TwipsAttribute(levelOverride.Element(W + "startOverride"), "val") is { } start)
-                {
-                    if (!_startOverridesByNumId.TryGetValue(id, out var overrides)) _startOverridesByNumId[id] = overrides = new Dictionary<int, int>();
-                    overrides[level] = start;
-                }
-                if (levelOverride.Element(W + "lvl") is { } lvl) _overrideLevels[(id, level)] = ReadLevel(lvl, level);
+                if (!_startOverridesByNumId.TryGetValue(id, out var overrides)) _startOverridesByNumId[id] = overrides = new Dictionary<int, int>();
+                overrides[level] = start;
             }
+            if (levelOverride.Element(W + "lvl") is { } lvl) _overrideLevels[(id, level)] = ReadLevel(lvl, level);
         }
-        foreach (XElement abstractNum in root.Elements(W + "abstractNum"))
+    }
+
+    private void ReadAbstractNum(XElement abstractNum)
+    {
+        int? abstractId = DocxStyleCascade.TwipsAttribute(abstractNum, "abstractNumId");
+        if (abstractId is not { } id) return;
+        if ((string?)abstractNum.Element(W + "numStyleLink")?.Attribute(W + "val") is { } link) _numStyleLinkByAbstractId[id] = link;
+        foreach (XElement level in abstractNum.Elements(W + "lvl"))
         {
-            int? abstractId = DocxStyleCascade.TwipsAttribute(abstractNum, "abstractNumId");
-            if (abstractId is not { } id) continue;
-            if ((string?)abstractNum.Element(W + "numStyleLink")?.Attribute(W + "val") is { } link) _numStyleLinkByAbstractId[id] = link;
-            foreach (XElement level in abstractNum.Elements(W + "lvl"))
-            {
-                int levelIndex = DocxStyleCascade.TwipsAttribute(level, "ilvl") ?? 0;
-                _levels[(id, levelIndex)] = ReadLevel(level, levelIndex);
-            }
+            int levelIndex = DocxStyleCascade.TwipsAttribute(level, "ilvl") ?? 0;
+            _levels[(id, levelIndex)] = ReadLevel(level, levelIndex);
+        }
+    }
+
+    /// <summary>Parses the w:num elements with this id (lazy source only; every one, in order, as the whole-part parse layers duplicates).</summary>
+    private void EnsureNum(int numId)
+    {
+        if (_slices is null || !_loadedNums.Add(numId) || !_slices.NumsById.TryGetValue(numId, out List<DocxNumberingPartSlices.Slice>? slices)) return;
+        foreach (DocxNumberingPartSlices.Slice slice in slices)
+        {
+            if (ParseSlice(slice) is not { } num) return;       // fell back to the whole part: everything is loaded now
+            ReadNum(num);
+        }
+    }
+
+    private void EnsureAbstractNum(int abstractId)
+    {
+        if (_slices is null || !_loadedAbstractNums.Add(abstractId) || !_slices.AbstractNumsById.TryGetValue(abstractId, out List<DocxNumberingPartSlices.Slice>? slices)) return;
+        foreach (DocxNumberingPartSlices.Slice slice in slices)
+        {
+            if (ParseSlice(slice) is not { } abstractNum) return;
+            ReadAbstractNum(abstractNum);
+        }
+    }
+
+    /// <summary>One top-level element parsed in the root's namespace context; null after a parse failure, which switched to the whole-part tables.</summary>
+    private XElement? ParseSlice(DocxNumberingPartSlices.Slice slice)
+    {
+        DocxNumberingPartSlices slices = _slices!;
+        try
+        {
+            byte[] closeTag = "</w:numbering>"u8.ToArray();
+            using var wrapped = new MemoryStream(slices.RootOpenTag.Length + slice.Length + closeTag.Length);
+            wrapped.Write(slices.RootOpenTag, 0, slices.RootOpenTag.Length);
+            wrapped.Write(slices.Bytes, slice.Start, slice.Length);
+            wrapped.Write(closeTag, 0, closeTag.Length);
+            wrapped.Position = 0;
+            return WordDocumentXml.ReadFirstChildElement(wrapped, LoadOptions.None, tolerateUndeclaredPrefixes: false, "numbering.xml");
+        }
+        catch (Exception exception) when (exception is InvalidDataException or System.Xml.XmlException)
+        {
+            _slices = null;
+            _abstractIdByNumId.Clear();
+            _startOverridesByNumId.Clear();
+            _overrideLevels.Clear();
+            _levels.Clear();
+            _numStyleLinkByAbstractId.Clear();
+            ReadWholeBytes(slices.Bytes);
+            return null;
         }
     }
 
@@ -84,30 +163,42 @@ public sealed class DocxNumberingDefinitions
         return new LevelDefinition(format, text, start, restart, isLegal, suffix, level.Element(W + "rPr"), level.Element(W + "pPr"), justification);
     }
 
-    public bool IsEmpty => _abstractIdByNumId.Count == 0;
+    /// <summary>No list at all (with the lazy source: no w:num with an id — a num without an abstractNumId then resolves to no list, as before).</summary>
+    public bool IsEmpty => _slices is { } slices ? slices.NumsById.Count == 0 : _abstractIdByNumId.Count == 0;
 
     /// <summary>The abstractNum whose levels and counters a num uses — through w:numStyleLink when the abstractNum is only a link.</summary>
     public int? AbstractIdOf(int numId)
     {
+        EnsureNum(numId);
         if (!_abstractIdByNumId.TryGetValue(numId, out int abstractId)) return null;
+        EnsureAbstractNum(abstractId);
         if (!_numStyleLinkByAbstractId.ContainsKey(abstractId)) return abstractId;      // the common case: no link, nothing to allocate
         var seen = new HashSet<int> { abstractId };
         while (_numStyleLinkByAbstractId.TryGetValue(abstractId, out string? style))
         {
             int linkedNumId = _numIdOfStyle?.Invoke(style) ?? -1;
+            EnsureNum(linkedNumId);
             if (!_abstractIdByNumId.TryGetValue(linkedNumId, out int linkedAbstractId) || !seen.Add(linkedAbstractId)) break;
             abstractId = linkedAbstractId;
+            EnsureAbstractNum(abstractId);
         }
         return abstractId;
     }
 
     /// <summary>The level definition a paragraph of <paramref name="numId"/> uses: the num's lvlOverride/lvl, else the abstract level.</summary>
     public LevelDefinition? LevelOf(int numId, int abstractId, int level)
-        => _overrideLevels.TryGetValue((numId, level), out LevelDefinition? own) ? own
-         : _levels.TryGetValue((abstractId, level), out LevelDefinition? definition) ? definition : null;
+    {
+        EnsureNum(numId);
+        EnsureAbstractNum(abstractId);
+        return _overrideLevels.TryGetValue((numId, level), out LevelDefinition? own) ? own
+             : _levels.TryGetValue((abstractId, level), out LevelDefinition? definition) ? definition : null;
+    }
 
     public int? StartOverrideOf(int numId, int level)
-        => _startOverridesByNumId.TryGetValue(numId, out var overrides) && overrides.TryGetValue(level, out int start) ? start : null;
+    {
+        EnsureNum(numId);
+        return _startOverridesByNumId.TryGetValue(numId, out var overrides) && overrides.TryGetValue(level, out int start) ? start : null;
+    }
 
     /// <summary>Fills the "%1.%2" pattern of a level with the current counters of all levels; with isLgl every number is decimal.</summary>
     public string FormatLabel(int numId, int abstractId, int level, int[] counters)

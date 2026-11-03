@@ -41,8 +41,9 @@ public sealed class DocxDocumentParts
     public DocxPackagePartNames PartNames { get; }
 
     /// <summary>
-    /// numbering.xml is only needed by the index pass (list labels are stored in the index), so it
-    /// is parsed on first use — a reopen from a cached index never pays for it (~75 ms on big files).
+    /// numbering.xml is read on first use (the first list paragraph counted), and then only the lists asked for are
+    /// parsed (<see cref="DocxNumberingDefinitions"/>'s lazy source) — a big document's part is a megabyte for hundreds
+    /// of lists, of which a window uses a few; parsing it whole cost the first window ~75 ms.
     /// </summary>
     public DocxNumberingDefinitions Numbering => _numbering ??= LoadNumbering();
 
@@ -67,7 +68,16 @@ public sealed class DocxDocumentParts
     private DocxNumberingDefinitions LoadNumbering()
     {
         using var zip = new ZipArchive(_package, ZipArchiveMode.Read, leaveOpen: true);
-        return new DocxNumberingDefinitions(LoadPart(zip, PartNames.Numbering), styleId => Styles.NumberingOf(styleId).numId);
+        ZipArchiveEntry? entry = PartNames.Numbering is null ? null : zip.GetEntry(PartNames.Numbering);
+        byte[]? bytes = null;
+        if (entry is not null)
+        {
+            using Stream stream = entry.Open();
+            var buffer = new MemoryStream(entry.Length > 0 && entry.Length < int.MaxValue ? (int)entry.Length : 0);
+            stream.CopyTo(buffer);
+            bytes = buffer.ToArray();
+        }
+        return new DocxNumberingDefinitions(bytes, styleId => Styles.NumberingOf(styleId).numId);
     }
 
     /// <summary>The scanner's hook: paragraph style / direct numPr → the next label of that list.</summary>
