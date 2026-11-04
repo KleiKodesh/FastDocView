@@ -47,14 +47,21 @@ internal sealed class DocBinaryFloatingPictures
     private HashSet<uint>? _textBoxSpids;
     private readonly DocBinaryTextBoxStories _stories;
 
-    public DocBinaryFloatingPictures(Stream tableStream, Stream wordDocument, Stream? dataStream, DocBinaryFileInformationBlock fib)
+    /// <param name="isHeader">
+    /// The header / footer stories' shapes (PlcSpaHdr, anchored at CPs counted from the header story's start - LibreOffice
+    /// ww8par.cxx:3656 passes the story CP to Read_GrafLayer, ww8graf.cxx:2605-2620 seeks the header PLCF with it - with the header
+    /// text-box story)
+    /// instead of the main text's. The flow view does not show headers, so nothing renders these; the paged view reads them
+    /// through <see cref="AnchorCps"/> / <see cref="Drawing"/> / <see cref="At"/> - they never reach the body or its search.
+    /// </param>
+    public DocBinaryFloatingPictures(Stream tableStream, Stream wordDocument, Stream? dataStream, DocBinaryFileInformationBlock fib, bool isHeader = false)
     {
         _tableStream = tableStream;
         _wordDocument = wordDocument;
         _dataStream = dataStream;
-        _plcSpa = fib.MainShapeAnchors;
+        _plcSpa = isHeader ? fib.HeaderShapeAnchors : fib.MainShapeAnchors;
         _drawing = fib.DrawingGroup;
-        _stories = new DocBinaryTextBoxStories(tableStream, fib);
+        _stories = new DocBinaryTextBoxStories(tableStream, fib, isHeader);
     }
 
     /// <summary>The drawing anchored at <paramref name="cp"/> when it is not a lone picture <see cref="At"/> shows: shapes, groups, text boxes.</summary>
@@ -64,6 +71,16 @@ internal sealed class DocBinaryFloatingPictures
         if (_pibBySpid is null) ReadDrawing();
         if (!_containerBySpid!.TryGetValue(fspa.spid, out var container)) return null;
         return DocBinaryDrawnShapes.Read(_tableStream, container.start, container.end, container.isGroup, LayoutOf(fspa), _stories, this);
+    }
+
+    /// <summary>The CPs that anchor a shape (main text or header story CPs, as this table was made for).</summary>
+    public IReadOnlyList<int> AnchorCps
+    {
+        get
+        {
+            int[] cps = _anchorCps ??= ReadAnchorCps();
+            return cps.Length < 2 ? [] : new ArraySegment<int>(cps, 0, cps.Length - 1);
+        }
     }
 
     /// <summary>The text-box CP ranges of the drawings anchored in [<paramref name="startCp"/>, <paramref name="endCp"/>) (the search).</summary>

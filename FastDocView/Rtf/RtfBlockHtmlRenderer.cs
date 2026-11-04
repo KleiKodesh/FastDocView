@@ -191,7 +191,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     private void EmitParagraph(in RtfGroupState state, bool isSectionEnd)
     {
-        bool isInTable = _flow == _bodyFlow && (state.IsInTable || _flow.Tables.Count > 0 && _flow.Tables[0].Cells.Count > 0);
+        bool isInTable = (_flow == _bodyFlow || _flow.IsTextBox) && (state.IsInTable || _flow.Tables.Count > 0 && _flow.Tables[0].Cells.Count > 0);
         bool isTopLevel = _flow == _bodyFlow && !isInTable;
         WordParagraphFormatting formatting = ParagraphFormatting(state);
         int outline = isTopLevel ? (state.OutlineLevel is >= 0 and <= 8 ? state.OutlineLevel : state.OutlineLevel == 9 ? -1 : _tables.OutlineLevelOfStyle(state.Style)) : -1;
@@ -377,6 +377,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (_textBoxOuterFlow is null) return;
         FlushRun();
         if (_flow.HasInline) EmitParagraph(_parser.Current, isSectionEnd: false);
+        for (int level = _flow.Tables.Count - 1; level >= 0; level--)
+            if (_flow.Tables[level].Cells.Count > 0 || _flow.Tables[level].Cell.Length > 0) CloseRow(level + 1);
         string html = _flow.Output.ToString();
         _flow = _textBoxOuterFlow;
         _textBoxOuterFlow = null;
@@ -523,9 +525,12 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         return _flow.Tables[level - 1];
     }
 
+    public override void TextBoxCellEnd(in RtfGroupState state, bool isNested) { if (_listTextTarget is null) CellEnd(state, isNested); }
+    public override void TextBoxRowEnd(in RtfGroupState state, bool isNested) { if (_listTextTarget is null) RowEnd(state, isNested); }
+
     public override void CellEnd(in RtfGroupState state, bool isNested)
     {
-        if (_flow != _bodyFlow) return;                                   // tables inside notes: text only
+        if (_flow != _bodyFlow && !_flow.IsTextBox) return;               // tables inside notes: text only; a text box draws its own
         FlushRun();
         int level = isNested ? Math.Max(2, (int)state.NestingLevel) : 1;
         if (_flow.HasInline)
@@ -542,7 +547,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     public override void RowEnd(in RtfGroupState state, bool isNested)
     {
-        if (_flow != _bodyFlow) return;
+        if (_flow != _bodyFlow && !_flow.IsTextBox) return;
         FlushRun();
         int level = isNested ? Math.Max(2, (int)state.NestingLevel) : 1;
         if (_flow.HasInline)

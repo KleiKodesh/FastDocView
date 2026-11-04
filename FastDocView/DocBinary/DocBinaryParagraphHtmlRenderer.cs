@@ -504,13 +504,28 @@ public sealed class DocBinaryParagraphHtmlRenderer
         string text = _pieces.ReadText(range.start, range.end);
         int paragraphStart = range.start;
         string? previousStyleKey = null;
+        int? rowStart = null;                     // a table row of the story: its paragraphs up to the row-end mark, drawn as the body draws rows
         for (int i = 0; i < text.Length; i++)
         {
             if (text[i] is not ('\r' or CellOrRowMark) && i != text.Length - 1) continue;
             int end = range.start + i + 1;
-            if (end > paragraphStart) previousStyleKey = AppendParagraph(html, paragraphStart, end, previousStyleKey, null);
+            if (end > paragraphStart)
+            {
+                TableParagraphInfo table = ReadTableInfo(paragraphStart, end);
+                if (table.IsInTable)
+                {
+                    rowStart ??= paragraphStart;
+                    if (table.IsRowEnd) { html.Append(RenderRow(rowStart.Value, end)); rowStart = null; previousStyleKey = null; }
+                }
+                else
+                {
+                    if (rowStart is { } open) { html.Append(RenderRow(open, paragraphStart)); rowStart = null; }
+                    previousStyleKey = AppendParagraph(html, paragraphStart, end, previousStyleKey, null);
+                }
+            }
             paragraphStart = end;
         }
+        if (rowStart is { } last) html.Append(RenderRow(last, range.end));
     }
 
     /// <summary>The Data stream's pictures (inline 0x01 pictures); none for a document without a Data stream.</summary>

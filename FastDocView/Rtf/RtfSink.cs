@@ -47,6 +47,9 @@ internal abstract class RtfSink
     public virtual void TextBoxEnd() { }
     /// <summary>\par, \sect, \cell or \row inside a text box: ends a paragraph of the box, never the block.</summary>
     public virtual void TextBoxParagraphEnd(in RtfGroupState state) { }
+    /// <summary>\cell / \nestcell and \row / \nestrow inside a text box: its own table (never the block's); by default a paragraph end.</summary>
+    public virtual void TextBoxCellEnd(in RtfGroupState state, bool isNested) => TextBoxParagraphEnd(state);
+    public virtual void TextBoxRowEnd(in RtfGroupState state, bool isNested) => TextBoxParagraphEnd(state);
     /// <summary>A group closed; <paramref name="depth"/> is the depth after the close (0 = the document group).</summary>
     public virtual void GroupClosed(int depth) { }
     public virtual void UnhandledWord(ReadOnlySpan<byte> name) { }

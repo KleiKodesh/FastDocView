@@ -23,13 +23,14 @@ internal sealed class DocBinaryTextBoxStories
     private (int[] cps, bool[] reusable)? _storyTable;
     private int[]? _breakCps;
 
-    public DocBinaryTextBoxStories(Stream tableStream, DocBinaryFileInformationBlock fib)
+    /// <param name="isHeader">The header / footer text-box story (PlcfHdrtxbxTxt / PlcfHdrtxbxBkd, after the main one) instead of the main text's.</param>
+    public DocBinaryTextBoxStories(Stream tableStream, DocBinaryFileInformationBlock fib, bool isHeader = false)
     {
         _tableStream = tableStream;
-        _stories = fib.TextBoxTexts;
-        _breaks = fib.TextBoxBreaks;
-        _storyStart = fib.TextBoxStoryStart;
-        _storyLength = fib.TextBoxCharacterCount;
+        _stories = isHeader ? fib.HeaderTextBoxTexts : fib.TextBoxTexts;
+        _breaks = isHeader ? fib.HeaderTextBoxBreaks : fib.TextBoxBreaks;
+        _storyStart = isHeader ? fib.HeaderTextBoxStoryStart : fib.TextBoxStoryStart;
+        _storyLength = isHeader ? fib.HeaderTextBoxCharacterCount : fib.TextBoxCharacterCount;
     }
 
     /// <summary>The document CP range of the text an lTxid shows; null when it names no story.</summary>

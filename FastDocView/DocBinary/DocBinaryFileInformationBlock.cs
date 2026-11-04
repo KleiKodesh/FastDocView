@@ -24,7 +24,8 @@ public sealed class DocBinaryFileInformationBlock
     public int HeaderCharacterCount { get; }        // ccpHdd
     public int CommentCharacterCount { get; }       // ccpAtn
     public int EndnoteCharacterCount { get; }       // ccpEdn
-    public int TextBoxCharacterCount { get; }       // ccpTxbx (FibRgLw97 after ccpEdn; LibreOffice ww8scan.cxx:5969-5976 read order)
+    public int TextBoxCharacterCount { get; }
+    public int HeaderTextBoxCharacterCount { get; } // ccpHdrTxbx (after ccpTxbx, ww8scan.cxx:5976)       // ccpTxbx (FibRgLw97 after ccpEdn; LibreOffice ww8scan.cxx:5969-5976 read order)
     public (uint offset, uint length) StyleSheet { get; }          // Stshf
     public (uint offset, uint length) PieceTable { get; }          // Clx
     public (uint offset, uint length) CharacterBinTable { get; }   // PlcfBteChpx
@@ -43,13 +44,20 @@ public sealed class DocBinaryFileInformationBlock
     public (uint offset, uint length) MainShapeAnchors { get; }    // PlcSpaMom (index 40; LibreOffice ww8scan.cxx:6117 read order)
     public (uint offset, uint length) DrawingGroup { get; }        // OfficeArtContent at fcDggInfo (index 50; ww8scan.cxx:6138)
     public (uint offset, uint length) TextBoxTexts { get; }        // PlcftxbxTxt (index 56; ww8scan.cxx:6138-6150 read order)
-    public (uint offset, uint length) TextBoxBreaks { get; }       // PlcftxbxBkd (index 75; ww8scan.cxx:6208-6216, at 0x2da + 3 * 8)
+    public (uint offset, uint length) TextBoxBreaks { get; }
+    public (uint offset, uint length) HeaderShapeAnchors { get; }  // PlcSpaHdr (index 41; ww8scan.cxx:6117-6120 read order)
+    public (uint offset, uint length) HeaderTextBoxTexts { get; }  // PlcfHdrtxbxTxt (index 58; ww8scan.cxx:6150-6154)
+    public (uint offset, uint length) HeaderTextBoxBreaks { get; } // PlcfHdrtxbxBkd (index 76; ww8scan.cxx:6216-6217)       // PlcftxbxBkd (index 75; ww8scan.cxx:6208-6216, at 0x2da + 3 * 8)
 
     /// <summary>Where each story starts in the CP space: main text, footnotes, headers, comments, endnotes ([MS-DOC] §2.3).</summary>
     public int FootnoteStoryStart => MainTextCharacterCount;
     public int EndnoteStoryStart => MainTextCharacterCount + FootnoteCharacterCount + HeaderCharacterCount + CommentCharacterCount;
     /// <summary>The main text-box story starts after the endnotes (ww8scan.cxx GetBaseCp MAN_TXBX).</summary>
     public int TextBoxStoryStart => EndnoteStoryStart + EndnoteCharacterCount;
+    /// <summary>The header text-box story follows the main one (ww8scan.cxx GetBaseCp MAN_TXBX_HDFT adds ccpTxbx).</summary>
+    public int HeaderTextBoxStoryStart => TextBoxStoryStart + TextBoxCharacterCount;
+    /// <summary>The header / footer story starts after the footnotes ([MS-DOC] §2.3; ww8scan.cxx GetBaseCp MAN_HDFT).</summary>
+    public int HeaderStoryStart => MainTextCharacterCount + FootnoteCharacterCount;
 
     public DocBinaryFileInformationBlock(Stream wordDocumentStream)
     {
@@ -84,6 +92,7 @@ public sealed class DocBinaryFileInformationBlock
         CommentCharacterCount = BitConverter.ToInt32(fib, 0x5C);
         EndnoteCharacterCount = BitConverter.ToInt32(fib, 0x60);
         TextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x64));
+        HeaderTextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x68));
         if (MainTextCharacterCount < 0 || FootnoteCharacterCount < 0 || HeaderCharacterCount < 0 || CommentCharacterCount < 0 || EndnoteCharacterCount < 0)
             throw new InvalidDataException("Damaged Word document: the FIB gives a negative character count.");
 
@@ -107,6 +116,9 @@ public sealed class DocBinaryFileInformationBlock
         DrawingGroup = FcLcb(fib, 50);
         TextBoxTexts = FcLcb(fib, 56);
         TextBoxBreaks = FcLcb(fib, 75);
+        HeaderShapeAnchors = FcLcb(fib, 41);
+        HeaderTextBoxTexts = FcLcb(fib, 58);
+        HeaderTextBoxBreaks = FcLcb(fib, 76);
     }
 
     private readonly int _fcLcbCount;

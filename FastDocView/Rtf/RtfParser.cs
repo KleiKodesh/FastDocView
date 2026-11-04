@@ -753,6 +753,7 @@ internal sealed class RtfParser
                 state.Set(RtfStateFlags.DropText, false);
                 _textBoxDepth = _depth;
                 shape.HasText = true;
+                SaveRowDefinition();
                 _sink.TextBoxStart(shape);
                 return;
             }
@@ -816,9 +817,16 @@ internal sealed class RtfParser
                 if (state.Destination is >= RtfDestination.FontTable and <= RtfDestination.ListOverrideLevel) return;
                 if (_shapes.Count > 0)
                 {
-                    // inside a shape: a text box's paragraph ends (its tables are drawn as paragraphs); never the block's
-                    if (_textBoxDepth >= 0 && IsTextDestination(state)) _sink.TextBoxParagraphEnd(state);
-                    return;
+                    // inside a shape: a text box's paragraph / cell / row ends - its own tables; never the block's
+                    if (_textBoxDepth < 0 || !IsTextDestination(state)) return;
+                    switch (word)
+                    {
+                        case RtfWord.Cell: _sink.TextBoxCellEnd(state, isNested: false); return;
+                        case RtfWord.NestedCell: _sink.TextBoxCellEnd(state, isNested: true); return;
+                        case RtfWord.Row: _sink.TextBoxRowEnd(state, isNested: false); return;
+                        case RtfWord.NestedRow: _sink.TextBoxRowEnd(state, isNested: true); return;
+                        default: _sink.TextBoxParagraphEnd(state); return;
+                    }
                 }
                 switch (word)
                 {
@@ -1086,6 +1094,21 @@ internal sealed class RtfParser
         _sink.TextBoxEnd();
     }
 
+    // A text box's own tables (\trowd ... \cellx inside {\shptxt}) must not replace the row definition of the table the shape sits in.
+    private (int[] boundaries, short[] shading, short pending, bool rightToLeft, int left, byte alignment)? _outerRow;
+
+    private void SaveRowDefinition()
+        => _outerRow = (_cellBoundaries.ToArray(), _cellShading.ToArray(), _pendingCellShading, _isRowRightToLeft, _rowLeft, _rowAlignment);
+
+    private void RestoreRowDefinition()
+    {
+        if (_outerRow is not { } row) return;
+        _cellBoundaries.Clear(); _cellBoundaries.AddRange(row.boundaries);
+        _cellShading.Clear(); _cellShading.AddRange(row.shading);
+        (_pendingCellShading, _isRowRightToLeft, _rowLeft, _rowAlignment) = (row.pending, row.rightToLeft, row.left, row.alignment);
+        _outerRow = null;
+    }
+
     /// <summary>A group inside a shape closes: a property name / value, a text box, or a shape itself.</summary>
     private void CloseShapeGroup()
     {
@@ -1105,7 +1128,7 @@ internal sealed class RtfParser
                 if (property == "gtextUNICODE" && !shape.HasText && text.Length > 0) EmitShapeString(shape, text);
             }
         }
-        if (_depth == _textBoxDepth) { _textBoxDepth = -1; _sink.TextBoxEnd(); }
+        if (_depth == _textBoxDepth) { _textBoxDepth = -1; _sink.TextBoxEnd(); RestoreRowDefinition(); }
         RtfShapePlacement last = _shapes[_shapes.Count - 1];
         if (_depth != last.Depth) return;
         _shapes.RemoveAt(_shapes.Count - 1);

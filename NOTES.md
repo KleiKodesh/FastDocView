@@ -1480,3 +1480,12 @@ EnhancedCustomShapeGeometry.cxx (default filling / stroking tables :6155-6213); 
   waves) is not drawn: the text sits straight in the box.
 - Checks: RtfShapesFidelityTest blocks 8-9; DocBinaryShapesFidelityTest (the RTF fixture and a Fontwork .fodt saved as .doc
   by LibreOffice).
+- **Tables inside text boxes** (both formats): .doc text-box story paragraphs in a table are grouped up to their row-end mark
+  and drawn by `RenderRow` as in the body; RTF \cell / \row inside {\shptxt} are `TextBoxCellEnd` / `TextBoxRowEnd` (never a
+  block end) and the renderer draws the box's own table rows; the box's \trowd does not replace the outer row definition
+  (saved and restored around the text box).
+- **.doc header / footer shapes**: `DocBinaryWindowedDocument.HeaderDrawings` reads PlcSpaHdr (FibRgFcLcb97 41) with the header
+  text-box story (PlcfHdrtxbxTxt 58, PlcfHdrtxbxBkd 76, after the main text-box story by ccpTxbx; ccpHdrTxbx at 0x68), anchors
+  counted from the header story's start (ww8par.cxx:3656 / ww8graf.cxx:2605-2620). Ready for the paged view: `AnchorCps`,
+  `Drawing(cp)`, `At(cp)`; the flow view shows no headers, so they never reach the body or its search
+  (DocBinaryShapesFidelityTest: a LibreOffice-saved header with a text box and an ellipse).

@@ -134,6 +134,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         _renderer.Bookmarks = Bookmarks;
         _renderer.Pictures = new DocBinaryPictures(_dataStream);
         _renderer.FloatingPictures = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock);
+        HeaderDrawings = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock, isHeader: true);
 
         int[] sectionStartCps = DocBinarySectionTable.ReadStartCps(_tableStream, FileInformationBlock.SectionDescriptors);
         bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc)
@@ -213,6 +214,9 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
             finally { _releasableFile?.Release(); }
         }
     }
+
+    /// <summary>The header / footer shapes (read only when asked: the paged view; the flow view shows no headers).</summary>
+    internal DocBinaryFloatingPictures? HeaderDrawings { get; private set; }
 
     /// <summary>
     /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan): one pass over the piece characters gives both the block

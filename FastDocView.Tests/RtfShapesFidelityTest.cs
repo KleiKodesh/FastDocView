@@ -51,6 +51,9 @@ public static class RtfShapesFidelityTest
         // 9 the shape's own geometry (pVerticies / pSegmentInfo: move, 2 lines, close, end) and WordArt (gtextUNICODE in Arial 36 pt)
         @"\pard " + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom1440\shpwr1", Property("shapeType", "0") + Property("pVerticies", "8;3;(0,0);(21600,0);(10800,21600)") + Property("pSegmentInfo", "2;4;16384;2;24577;32768"))
             + Shape(@"\shpleft0\shptop0\shpright2880\shpbottom720\shpwr1", Property("shapeType", "136") + Property("fGtext", "1") + Property("fillColor", "255") + Property("gtextUNICODE", "WordArtText") + Property("gtextFont", "Arial") + Property("gtextSize", "2359296")) + @"\par",
+        // 10 a text box holding a two-cell table, inside a one-cell outer table row (the box's \trowd must not replace the outer row's)
+        @"\trowd\cellx3000\pard\intbl " + Shape(@"\shpleft0\shptop0\shpright2880\shpbottom1440\shpwr1", Property("shapeType", "202"),
+            @"\trowd\cellx1000\cellx2000\pard\intbl cellA\cell cellB\cell\row\pard after table") + @" outer\cell\row",
     ];
 
     public static void Run()
@@ -126,6 +129,9 @@ public static class RtfShapesFidelityTest
                          && html[8].Contains("data-word-picture=\"8:0\""), "rectangular shades, the 8 x 8 pattern, the picture fill clipped to the ellipse");
         TestReport.Check(html[9].Contains("<path d=\"M0 0L72 0L36 72Z\"") && html[9].Contains("class=\"word-art\" style=\"display:block;text-align:center;font-family:'Arial';color:#ff0000;font-size:36pt;\"") && Occurrences(html[9], "<path") == 2
                          && SearchCount(path, "WordArtText") == 1, "custom geometry from pVerticies / pSegmentInfo; WordArt text in its font and size, found once (" + html[9] + ")");
+        TestReport.Check(html[10].Contains("<td style=\"width:150pt;\">") && html[10].Contains("<td style=\"width:50pt;\"><span class=\"text-box-paragraph\"")
+                         && html[10].Contains("cellA") && html[10].Contains("cellB") && html[10].Contains("after table") && SearchCount(path, "cellA") == 1 && SearchCount(path, "cellB") == 1,
+                         "a table inside a text box is a table; the outer row keeps its own width (" + html[10] + ")");
         TestReport.Check(html[6].Contains("translate(72 0) rotate(90)"), "a rotated group turns its child about the group's centre");
         foreach ((string query, int expected) in new[] { ("boxtext", 1), ("second line", 1), ("outside", 1), ("arrowtext", 1), ("groupone", 1), ("grouptwo", 1), ("RESULTCOPY", 0), ("GROUPCOPY", 0) })
         {
