@@ -1815,3 +1815,14 @@ vs #d4d4d4 against the dark variant) gets class dark-text-on-fill = light-dark(c
 SmartArt accent blue 2.03 -> 5.71:1 (live). It runs in the library's one host output path,
 RenderBlocksForDisplay / RenderNotesForDisplay (WordWindowedDocumentHostExtensions), used by Core and the dev server;
 the renderers keep plain colours because that raw output is what the fidelity harness compares with Word.
+
+## Fields over a partial index (2026-11-04)
+
+- A field that reads a list the on-demand index is still building - REF / NOTEREF to a bookmark not found yet, TOC
+  (headings), INDEX / TOA (XE / TA entries), STYLEREF not found backward - shows nothing instead of Word's "not found"
+  error and marks its block provisional (`WordFieldContext.UsedIncompleteIndex`, reset per block; .rtf and .docx). The
+  page fetches provisional blocks again once the index is complete. .docx drops its note-HTML cache on completion.
+  .odt shows saved field text only, .doc is always complete, .txt / MHTML have no fields.
+- Theme colours: `url(...)` / `light-dark(...)` are skipped to their matching parenthesis; rgb() / rgba() / hsl() /
+  hsla() (MHTML) get the same light-dark pair as hex colours, alpha kept on the dark side.
+- Checks: StreamingFormatsIncrementalOpenTest (early REF to a late bookmark, RTF on demand), DocxThemeAndUnderlineTest.

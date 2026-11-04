@@ -349,7 +349,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         return output;
     }
 
-    public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
+    public IReadOnlyList<WordDocumentHeading> Headings { get { lock (_readLock) return _index.Headings; } }
     public (int footnotes, int endnotes) NoteCounts => (0, 0);
     public IReadOnlyList<WordDocumentNoteReference> NoteReferences => [];
     public IReadOnlyList<WordDocumentNoteHtml> RenderNotes(int firstNoteIndex, int count) => [];

@@ -63,6 +63,21 @@ public sealed class WordFieldContext
     /// </summary>
     public Func<bool>? IsBookmarkListComplete { get; init; }
 
+    /// <summary>
+    /// Set when a field read a list the index was still building (a bookmark not found yet, the headings for TOC, the XE / TA
+    /// entries, a STYLEREF not found): the block is drawn provisionally (<see cref="WordDocumentBlockHtml.IsProvisional"/>) and
+    /// the page fetches it again once the index is complete. The reader clears it before each block.
+    /// </summary>
+    public bool UsedIncompleteIndex { get; set; }
+
+    /// <summary>Whether the index is complete; when it is not, the caller is reading partial data (<see cref="UsedIncompleteIndex"/>).</summary>
+    internal bool ReadsCompleteIndex()
+    {
+        if (IsBookmarkListComplete?.Invoke() ?? true) return true;
+        UsedIncompleteIndex = true;
+        return false;
+    }
+
     /// <summary>The block a bookmark starts in; null when it is not known (yet).</summary>
     public Func<string, int?>? BookmarkBlock { get; init; }
 
