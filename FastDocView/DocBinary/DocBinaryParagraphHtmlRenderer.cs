@@ -539,11 +539,11 @@ public sealed class DocBinaryParagraphHtmlRenderer
                     continue;
                 case '\u0008' when isSpecial && _textBoxDepth == 0 && FloatingPictures?.At(runCp + i) is { } floating:
                     Flush();
-                    WordPictureHtml.Append(html, floating.layout, floating.pictureId);
+                    WordPictureHtml.Append(html, floating.layout with { ColumnWidthPt = ColumnWidthPt }, floating.pictureId);
                     continue;
                 case '\u0008' when isSpecial && _textBoxDepth == 0 && FloatingPictures?.Drawing(runCp + i) is { } drawing:
                     Flush();
-                    AppendDrawing(html, drawing);
+                    AppendDrawing(html, drawing with { Layout = drawing.Layout with { ColumnWidthPt = ColumnWidthPt } });
                     continue;
                 case '\u0001': case '\u0008': if (isSpecial) visible.Append("<span class=\"unsupported\">[image]</span>"); continue;
                 case AutoNumberedNoteMark:
@@ -656,6 +656,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
     internal DocBinaryPictures Pictures { get; set; } = new(null);
 
     /// <summary>The main text's floating (0x08) pictures; null when not set.</summary>
+    /// <summary>The text width (points) of the section of the block being rendered: the column a floating object picks its nearer edge in (0 = unknown).</summary>
+    public double ColumnWidthPt { get; set; }
     internal DocBinaryFloatingPictures? FloatingPictures { get; set; }
 
     /// <summary>

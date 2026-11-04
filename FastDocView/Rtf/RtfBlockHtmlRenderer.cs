@@ -318,9 +318,9 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     /// <summary>
     /// A {\pict} in the text: an inline picture at its goal size. A {\shp} with a picture floats as the shape's placement
-    /// says (meanings in RtfParser.ReadShape): \shpwr 1 = above and below, 2 / 4 = beside, 3 / 5 = through the text; \shpwr
+    /// says (meanings in RtfParser.ReadShape): \shpwr 1 = above and below, 2 / 4 / 5 = beside, 3 = through the text; \shpwr
     /// not given is drawn above and below (a block - our choice, the shape group gives no wrap); \shpwrk 1 / 2 = text only
-    /// on that side; \shpwr 4 along its wrap polygon (else its outline); posh 1 / 4 left, 2 centre, 3 / 5 right, else at \shpleft from the left. Its id is the block and the
+    /// on that side; \shpwr 4 / 5 along its wrap polygon (else its outline); posh 1 / 4 left, 2 centre, 3 / 5 right, else at \shpleft from the left. Its id is the block and the
     /// picture's place among the block's pictures.
     /// </summary>
     public override void Picture(in RtfPicture picture, in RtfGroupState state)
@@ -344,10 +344,13 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     }
 
     /// <summary>A floating shape's placement (meanings in RtfParser.OpenShape), size in points.</summary>
-    private static WordPictureLayout ShapeLayout(RtfShapePlacement shape, double widthPt, double heightPt)
+    /// <summary>The text width (points) of the section of the block being rendered: the column a floating object picks its nearer edge in (0 = unknown).</summary>
+    public double ColumnWidthPt { get; set; }
+
+    private WordPictureLayout ShapeLayout(RtfShapePlacement shape, double widthPt, double heightPt)
     {
         const double EmuPerPoint = 12700;
-        WordPictureWrap wrap = shape.Wrap switch { 2 or 4 => WordPictureWrap.Square, 3 or 5 => WordPictureWrap.None, _ => WordPictureWrap.TopAndBottom };
+        WordPictureWrap wrap = shape.Wrap switch { 2 or 4 or 5 => WordPictureWrap.Square, 3 => WordPictureWrap.None, _ => WordPictureWrap.TopAndBottom };
         WordPictureSide side = shape.HorizontalPosition switch
         {
             1 or 4 => WordPictureSide.Left,
@@ -358,10 +361,13 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         double offset = shape.HorizontalPosition == 0 ? Math.Max(0, shape.Left / 20.0) : 0;
         // \shpwrk: 1 = text only on the left, 2 = only on the right, 0 / 3 both / largest (rtfdispatchvalue.cxx:1205-1224 -> ST_WrapText)
         WordPictureTextSides sides = shape.WrapSide switch { 1 => WordPictureTextSides.LeftOnly, 2 => WordPictureTextSides.RightOnly, _ => WordPictureTextSides.Both };
-        // \shpwr 4 = wrapTight (rtfdispatchvalue.cxx:1250-1254) along pWrapPolygonVertices; \shpwr 5 is THROUGH there (:1255-1257), drawn as none
-        IReadOnlyList<IReadOnlyList<(double X, double Y)>>? contour = shape.Wrap == 4 ? WordPictureContour.FromWordUnits(shape.WrapPolygon, widthPt, heightPt) : null;
+        // \shpwr 4 tight / 5 through (Word 97 RTF for Drawing Objects: "5 Wrap through"; Word's through = tight plus the
+        // polygon's holes - MS-DOC FSPA wr 5 "wrap tightly, but allow holes") along pWrapPolygonVertices (rtfsdrimport.cxx:856-885).
+        // LibreOffice reads 5 as THROUGH = text over the object (rtfdispatchvalue.cxx:1255-1257); Word does not.
+        IReadOnlyList<IReadOnlyList<(double X, double Y)>>? contour = shape.Wrap is 4 or 5 ? WordPictureContour.FromWordUnits(shape.WrapPolygon, widthPt, heightPt) : null;
         return new WordPictureLayout(widthPt, heightPt, wrap, side, shape.WrapTop / EmuPerPoint, shape.WrapRight / EmuPerPoint,
-                                     shape.WrapBottom / EmuPerPoint, shape.WrapLeft / EmuPerPoint, offset, sides, contour);
+                                     shape.WrapBottom / EmuPerPoint, shape.WrapLeft / EmuPerPoint, offset, sides, contour,
+                                     shape.IsPageRelative ? 0 : ColumnWidthPt);   // a page-relative offset includes the margin: no nearer-edge choice
     }
 
     /// <summary>WordArt text centred in its font and size (msdffdef.hxx:121-125 gtextUNICODE / gtextSize / gtextFont), known once the shape closed.</summary>
@@ -456,7 +462,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         RtfShapeDrawing.Collect(root, 0, 0, width, height, shapes, texts, (in RtfPicture p) => PictureIdOf(p));
         bool inFlow = !root.IsGroup && texts.Count == 1 && root.FitsShapeToText && root.RotationDegrees == 0;
         // a tight wrap without a wrap polygon follows the shape's own outline
-        if (root.Wrap == 4 && layout.Wrap == WordPictureWrap.Square && layout.Contour is null) layout = layout with { Contour = WordShapeHtml.Outlines(shapes) };
+        if (root.Wrap is 4 or 5 && layout.Wrap == WordPictureWrap.Square && layout.Contour is null) layout = layout with { Contour = WordShapeHtml.Outlines(shapes) };
         WordShapeHtml.OpenFrame(target, layout, inFlow);
         WordShapeHtml.AppendGeometry(target, shapes, width, height, stretches: inFlow);
         foreach (WordShape shape in shapes)

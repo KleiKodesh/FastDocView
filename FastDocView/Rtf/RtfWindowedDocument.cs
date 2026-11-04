@@ -332,6 +332,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         for (int blockIndex = first; blockIndex < end; blockIndex++)
         {
             _fieldContext.CurrentBlock = blockIndex;
+            _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(_file, _index, _table, blockIndex);
             result.Add(new WordDocumentBlockHtml(blockIndex, _table.BlockKindOf(blockIndex), html, notes));
         }

@@ -60,6 +60,8 @@ public sealed partial class OdtBlockHtmlRenderer
     public OdtBlockHtmlRenderer(OdtStyleCascade styles) => _styles = styles;
 
     /// <summary>The block being rendered (its index names the pictures stored inside it); -1 when unknown.</summary>
+    /// <summary>The text width (points) of the section of the block being rendered: the column a floating object picks its nearer edge in (0 = unknown).</summary>
+    public double ColumnWidthPt { get; set; }
     public int CurrentBlockIndex { get; set; } = -1;
 
     /// <summary>
@@ -366,7 +368,9 @@ public sealed partial class OdtBlockHtmlRenderer
             && Property(OdtStyleCascade.Style, "vertical-rel") is null or "paragraph" or "paragraph-content" or "char" or "line")
             top += Math.Max(0, y);
         WordPictureTextSides sides = wrapValue switch { "left" => WordPictureTextSides.LeftOnly, "right" => WordPictureTextSides.RightOnly, _ => WordPictureTextSides.Both };
-        return new WordPictureLayout(width, height, wrap, side, top, Gap("right"), Gap("bottom"), Gap("left"), offset, sides);
+        return new WordPictureLayout(width, height, wrap, side, top, Gap("right"), Gap("bottom"), Gap("left"), offset, sides,
+                                     // the nearer edge only for an offset from the paragraph / page text area (20.290 style:horizontal-rel); page / frame include more
+                                     ColumnWidthPt: Property(OdtStyleCascade.Style, "horizontal-rel") is null or "paragraph" or "paragraph-content" or "page-content" ? ColumnWidthPt : 0);
     }
 
     // -- text boxes and shapes -------------------------------------------------------------

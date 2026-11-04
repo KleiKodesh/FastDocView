@@ -38,7 +38,7 @@ public enum WordPictureTextSides : byte { Both, LeftOnly, RightOnly }
 public readonly record struct WordPictureLayout(double WidthPt, double HeightPt, WordPictureWrap Wrap, WordPictureSide Side,
                                                 double TopPt, double RightPt, double BottomPt, double LeftPt, double OffsetPt = 0,
                                                 WordPictureTextSides TextSides = WordPictureTextSides.Both,
-                                                IReadOnlyList<IReadOnlyList<(double X, double Y)>>? Contour = null);
+                                                IReadOnlyList<IReadOnlyList<(double X, double Y)>>? Contour = null, double ColumnWidthPt = 0);
 
 /// <summary>
 /// Draws a picture at its size where the document puts it. The browser has no page or anchor, so a floating picture is a
@@ -118,8 +118,16 @@ public static class WordPictureHtml
     {
         WordPictureTextSides.LeftOnly => true,
         WordPictureTextSides.RightOnly => false,
-        _ => layout.Side == WordPictureSide.Right,
+        _ => layout.Side == WordPictureSide.Right || (layout.Side == WordPictureSide.Left && NearerRight(layout)),
     };
+
+    /// <summary>
+    /// An object placed by its offset from the left (no alignment) whose centre lies right of the column's centre: the right edge
+    /// is nearer. The column is the section's text width (<see cref="WordPictureLayout.ColumnWidthPt"/>, 0 = unknown: left). A
+    /// centred object's centre is the column's own - the tie, left.
+    /// </summary>
+    private static bool NearerRight(WordPictureLayout layout)
+        => layout.ColumnWidthPt > 0 && layout.OffsetPt > 0 && layout.OffsetPt + layout.WidthPt / 2 > layout.ColumnWidthPt / 2;
 
     /// <summary>
     /// Opens a text box: a box at its placement (<see cref="AppendPlacement"/>), its width, its height (a minimum when it grows

@@ -89,6 +89,8 @@ internal sealed class RtfShapePlacement
     public int Wrap;
     /// <summary>\shpwrk (0 both sides, 1 left, 2 right, 3 largest).</summary>
     public int WrapSide;
+    /// <summary>\shpbxpage or posrelh 1 (rtfdispatchflag.cxx:1229-1232, rtfsdrimport.cxx:711-721): \shpleft counts from the page edge.</summary>
+    public bool IsPageRelative;
     /// <summary>posh (0 = not given: placed at \shpleft).</summary>
     public int HorizontalPosition;
     /// <summary>dxWrapDistLeft, dyWrapDistTop, dxWrapDistRight, dyWrapDistBottom in EMU.</summary>
@@ -197,6 +199,7 @@ internal sealed class RtfShapePlacement
         switch (name)
         {
             case "posh": HorizontalPosition = (int)Math.Max(0, Math.Min(5, number)); break;
+            case "posrelh": IsPageRelative = number == 1; break;
             case "dxWrapDistLeft": WrapLeft = number; break;
             case "dyWrapDistTop": WrapTop = number; break;
             case "dxWrapDistRight": WrapRight = number; break;

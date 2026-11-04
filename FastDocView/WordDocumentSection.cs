@@ -40,6 +40,18 @@ public static class WordDocumentPageSetup
         return width >= MinimumTextWidthTwips && width <= 31680 * 2 ? (int)width : DefaultTextWidthTwips;
     }
 
+    /// <summary>The text width (points) of the section holding block <paramref name="blockIndex"/>.</summary>
+    public static double TextWidthPointsAt(IReadOnlyList<WordDocumentSection> sections, int blockIndex)
+    {
+        int low = 0, high = sections.Count - 1, found = -1;      // the last section starting at or before the block
+        while (low <= high)
+        {
+            int middle = (low + high) >> 1;
+            if (sections[middle].FirstBlockIndex <= blockIndex) { found = middle; low = middle + 1; } else high = middle - 1;
+        }
+        return (found >= 0 ? sections[found].TextWidthTwips : DefaultTextWidthTwips) / 20.0;
+    }
+
     /// <summary>
     /// Sections from section ends: <paramref name="lastBlockIndexes"/>[i] is the last block of section i
     /// (inclusive), <paramref name="widths"/>[i] its text width. Blocks after the last recorded end (a

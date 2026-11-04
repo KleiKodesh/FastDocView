@@ -358,6 +358,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         foreach ((int blockIndex, XElement element) in _reader.ReadBlocks(firstBlockIndex, count))
         {
             _renderer.CurrentBlockIndex = blockIndex;
+            _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
             _renderer.RootOpenTag ??= _blocks.RootOpenTag;
             _renderer.Pictures ??= ReadPicture;
             _renderer.ListStyles ??= _blocks.ListStyleNamed;
