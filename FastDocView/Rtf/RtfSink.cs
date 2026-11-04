@@ -94,7 +94,7 @@ internal sealed class RtfShapePlacement
     /// <summary>shapeType (-1 = not given: a rectangle, LibreOffice rtfsdrimport.cxx:293-300 "Word seems to implement it as a rectangle").</summary>
     public int ShapeType = -1;
     /// <summary>fillColor / lineColor: 24-bit BGR (LibreOffice rtfsdrimport.cxx:459, 476 BGRToRGB); null = not given.</summary>
-    public int? FillColor, LineColor;
+    public int? FillColor, LineColor, FillBackColor;
     /// <summary>lineWidth in EMU (null = Word's 0.75 pt, rtfsdrimport.cxx:384).</summary>
     public long? LineWidth;
     /// <summary>fFilled / fLine (Boolean 1 / 0); null = not given.</summary>
@@ -131,8 +131,9 @@ internal sealed class RtfShapePlacement
             case "dxWrapDistRight": WrapRight = number; break;
             case "dyWrapDistBottom": WrapBottom = number; break;
             case "shapeType": ShapeType = clamped; break;
-            case "fillColor": FillColor = clamped; break;
-            case "lineColor": LineColor = clamped; break;
+            case "fillColor": FillColor = (int)(uint)number; break;
+            case "lineColor": LineColor = (int)(uint)number; break;
+            case "fillBackColor": FillBackColor = (int)(uint)number; break;
             case "lineWidth": LineWidth = number; break;
             case "fFilled": Filled = number != 0; break;
             case "fLine": HasLine = number != 0; break;

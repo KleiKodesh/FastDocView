@@ -1439,3 +1439,7 @@ EnhancedCustomShapeGeometry.cxx (default filling / stroking tables :6155-6213); 
 - RTF fill default now follows the OfficeArt table too (a line is not filled: LibreOffice makes it a LineShape).
 - Check: `--fidelity` WordOfficeArtGeometryTest (every table finite) and RtfShapesFidelityTest outlines (ellipse, triangle,
   round rectangle, diamond, smiley, arrow, line + arrow end).
+- **Colours** (both formats, 2026-11-04): `Html/WordOfficeArtColor` resolves MSO_CLR as msdffimp.cxx:3420-3640 - scheme colours
+  (no palette in Word) = the property default, system colours = LibreOffice's standard StyleSettings values
+  (vcl settings.cxx:497-559) or another property (0xF0..0xFF), then gray / darken / lighten / add / subtract / black-white /
+  inverts; a system colour that names another system colour keeps Word's manager default white (ww8par.cxx:500-501).

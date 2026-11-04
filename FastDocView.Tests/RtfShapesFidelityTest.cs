@@ -38,6 +38,8 @@ public static class RtfShapesFidelityTest
         // 6 a group turned 90 degrees: its left-half child turns about the group's centre
         @"\pard {\shpgrp{\*\shpinst\shpleft0\shptop0\shpright2880\shpbottom1440" + Property("rotation", "5898240") + Property("groupLeft", "0") + Property("groupTop", "0") + Property("groupRight", "200") + Property("groupBottom", "100")
             + @"{\shp{\*\shpinst" + Property("relLeft", "0") + Property("relTop", "0") + Property("relRight", "100") + Property("relBottom", "100") + Property("shapeType", "1") + @"}}}}\par",
+        // 7 system colours (MSO_CLR 0x10..): button face darkened by 0x80 as the fill; a red fill and "use the fill colour" (0xF0) as the line
+        @"\pard " + Shape(@"\shpleft0\shptop0\shpright720\shpbottom720\shpwr1", Property("shapeType", "1") + Property("fillColor", "276824320")) + Shape(@"\shpleft0\shptop0\shpright720\shpbottom720\shpwr1", Property("shapeType", "1") + Property("fillColor", "255") + Property("lineColor", "268435696")) + @"\par",
     ];
 
     public static void Run()
@@ -104,6 +106,7 @@ public static class RtfShapesFidelityTest
         TestReport.Check(html[4].Contains("<path d=\"M0 0L138.57 34.64\" fill=\"none\"") && Occurrences(html[4], "<path") == 2 && html[4].Contains("<path d=\"M144 36L"), "line with an end arrow (no fill: a line is not filled by default; the 2 pt minimum medium arrow, 6 pt long) (" + html[4] + ")");
         TestReport.Check(html[5].Contains("M36 0L72 72L0 72Z") && html[5].Contains("M12 0L12 0L10.82 0.03") && html[5].Contains("M36 0L72 36L36 72L0 36L36 0Z") && html[5].Contains("M16.23 48.37C28.93 61.73 43.07 61.73 55.77 48.37"),
                          "triangle, round rectangle (corner 3600 / 21600), diamond, smiley face (type 96: eyes and the mouth curve) (" + html[5] + ")");
+        TestReport.Check(html[7].Contains("fill=\"#606060\"") && html[7].Contains("stroke=\"#ff0000\""), "system colours: button face C0C0C0 darkened by 128/256; a line that takes the fill colour (" + html[7] + ")");
         TestReport.Check(html[6].Contains("translate(72 0) rotate(90)"), "a rotated group turns its child about the group's centre");
         foreach ((string query, int expected) in new[] { ("boxtext", 1), ("second line", 1), ("outside", 1), ("arrowtext", 1), ("groupone", 1), ("grouptwo", 1), ("RESULTCOPY", 0), ("GROUPCOPY", 0) })
         {

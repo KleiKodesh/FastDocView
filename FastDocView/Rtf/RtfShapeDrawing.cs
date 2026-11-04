@@ -15,16 +15,24 @@ internal static class RtfShapeDrawing
     /// <summary>The fill, or null: fFilled defaults to on (rtfsdrimport.cxx:199) - except for the types OfficeArt does not fill by default (a line becomes
     /// a LineShape without fill, rtfsdrimport.cxx:329-330; the same table as .doc), fillColor to white ("White in Word", rtfsdrimport.cxx:360-363).</summary>
     public static string? FillColorCss(RtfShapePlacement shape)
-        => (shape.Filled ?? WordOfficeArtShapeTypes.IsFilledByDefault(shape.ShapeType < 0 ? WordOfficeArtShapeTypes.Rectangle : shape.ShapeType)) ? Css(shape.FillColor ?? 0xFFFFFF) : null;
+        => (shape.Filled ?? WordOfficeArtShapeTypes.IsFilledByDefault(shape.ShapeType < 0 ? WordOfficeArtShapeTypes.Rectangle : shape.ShapeType)) ? Css(shape, shape.FillColor ?? 0xFFFFFF, WordOfficeArtColor.FillColor) : null;
 
     /// <summary>The line, or null: fLine 0 = no line (rtfsdrimport.cxx:183-190), lineColor defaults to black (rtfsdrimport.cxx:382).</summary>
-    public static string? LineColorCss(RtfShapePlacement shape) => shape.HasLine == false ? null : Css(shape.LineColor ?? 0);
+    public static string? LineColorCss(RtfShapePlacement shape) => shape.HasLine == false ? null : Css(shape, shape.LineColor ?? 0, WordOfficeArtColor.LineColor);
 
     /// <summary>lineWidth in points; Word's default 0.75 pt (rtfsdrimport.cxx:384).</summary>
     public static double LineWidthPt(RtfShapePlacement shape) => shape.LineWidth is { } emu ? emu / EmuPerPoint : 0.75;
 
-    /// <summary>A colour value: 24-bit BGR (rtfsdrimport.cxx:459 BGRToRGB).</summary>
-    private static string Css(int bgr) => "#" + (bgr & 0xFF).ToString("x2") + ((bgr >> 8) & 0xFF).ToString("x2") + ((bgr >> 16) & 0xFF).ToString("x2");
+    /// <summary>A colour value: the same MSO_CLR numbers as .doc (24-bit, red in the low byte - rtfsdrimport.cxx:459 BGRToRGB - plus the
+    /// scheme / system colour bits LibreOffice's RTF import drops; resolved by <see cref="WordOfficeArtColor"/> as for .doc).</summary>
+    private static string Css(RtfShapePlacement shape, int value, int property)
+        => WordOfficeArtColor.Css(unchecked((uint)value), property, other => other switch
+        {
+            WordOfficeArtColor.FillColor => shape.FillColor is { } fill ? unchecked((uint)fill) : null,
+            WordOfficeArtColor.LineColor => shape.LineColor is { } line ? unchecked((uint)line) : null,
+            WordOfficeArtColor.FillBackColor => shape.FillBackColor is { } back ? unchecked((uint)back) : null,
+            _ => null,
+        }, shape.HasLine != false);
 
     public delegate string? PictureIdOf(in RtfPicture picture);
 

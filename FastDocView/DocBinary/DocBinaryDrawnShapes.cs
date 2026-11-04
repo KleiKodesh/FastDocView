@@ -184,8 +184,8 @@ internal static class DocBinaryDrawnShapes
         {
             X = x, Y = y, Width = width, Height = height,
             RotationDegrees = Rotation(record), FlipHorizontal = (record.Flags & 0x40) != 0, FlipVertical = (record.Flags & 0x80) != 0,
-            FillColor = filled ? Color(p, PropertyFillColor, 0xFFFFFF) : null,
-            LineColor = stroked ? Color(p, PropertyLineColor, 0) : null,
+            FillColor = filled ? Color(p, PropertyFillColor, 0xFFFFFF, stroked) : null,
+            LineColor = stroked ? Color(p, PropertyLineColor, 0, stroked) : null,
             LineWidthPt = (p.TryGetValue(PropertyLineWidth, out uint lineWidth) ? (int)lineWidth : 9525) / 12700.0,
             Dash = p.TryGetValue(PropertyLineDashing, out uint dashing) ? WordOfficeArtShapeTypes.Dash((int)dashing) : null,
             FillOpacity = p.TryGetValue(PropertyFillOpacity, out uint fillOpacity) ? fillOpacity / 65536.0 : 1,
@@ -215,11 +215,6 @@ internal static class DocBinaryDrawnShapes
 
     private static double Emu(Dictionary<int, uint> properties, int id, int fallback) => (properties.TryGetValue(id, out uint value) ? (int)value : fallback) / 12700.0;
 
-    private static string Color(Dictionary<int, uint> properties, int id, uint fallback)
-    {
-        uint value = properties.TryGetValue(id, out uint set) ? set : fallback;
-        if ((value & 0xFE000000) == 0xFE000000) value &= 0x00FFFFFF;
-        if (((value >> 24) & 0x19) != 0) value = fallback;
-        return "#" + (value & 0xFF).ToString("x2") + ((value >> 8) & 0xFF).ToString("x2") + ((value >> 16) & 0xFF).ToString("x2");
-    }
+    private static string Color(Dictionary<int, uint> properties, int id, uint fallback, bool hasLine)
+        => WordOfficeArtColor.Css(properties.TryGetValue(id, out uint set) ? set : fallback, id, other => properties.TryGetValue(other, out uint value) ? value : null, hasLine);
 }
