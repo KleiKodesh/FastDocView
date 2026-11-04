@@ -1538,3 +1538,8 @@ EnhancedCustomShapeGeometry.cxx (default filling / stroking tables :6155-6213); 
   it bends again when the page zoom or the device pixel ratio changes. Fixture: `fidelity-v1-fontwork-curved.fodt` (inflate
   with a gradient, wave) saved as .doc by LibreOffice (DocBinaryShapesFidelityTest); live:
   `vue-demo/playwright/fontworkCheck.mjs <rtf fixture> <curved .doc>` (curved bending, gradient paint, pixel ratio 1 -> 2, Ctrl + =).
+- **2026-11-04, the fill spans the text's own bounds**: LibreOffice puts all glyph outlines of a text effect into one path
+  object with the shape's fill (EnhancedCustomShapeFontWork.cxx:1096-1130 CreateSdrObjectFromParagraphOutlines), so its
+  gradient spans the text, not the shape's box. The page copies the paint over the union of the bent ink and the single-line
+  text boxes (linear gradients laid out again at their angle, rectangular shades mapped, patterns keep their tile); live check
+  on the inflate fixture (its gradient runs from the ink's top to its bottom).

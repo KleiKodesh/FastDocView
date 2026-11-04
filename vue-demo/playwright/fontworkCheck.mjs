@@ -64,6 +64,19 @@ if (curvedPath) {
   const inflate = await bent('InflateText'), wave = await bent('WaveText')
   console.log('  ' + JSON.stringify({ inflate, wave }))
   check(!!inflate && inflate.isBent && inflate.dataLength > 1000 && inflate.paint.startsWith('url(#word-officeart-gradient-'), 'inflate: bent between its curved outlines, painted with its gradient')
+  // the gradient spans the bent text's own bounds (LibreOffice: all glyph outlines in one object with the shape's fill,
+  // EnhancedCustomShapeFontWork.cxx:1096-1130): angle 0 runs from the ink's top to its bottom
+  const span = await page.evaluate(() => {
+    const text = [...document.querySelectorAll('text[data-fontwork="pair"]')].find(t => t.textContent === 'InflateText')
+    const [x, y, w, h] = (text?.getAttribute('data-fontwork-ink') ?? '').split(' ').map(Number)
+    const id = /url\(#([^)]+)\)/.exec(text?.previousElementSibling?.querySelector('rect[mask]')?.getAttribute('fill') ?? '')?.[1]
+    const gradient = id ? document.getElementById(id) : null
+    const band = text?.previousElementSibling?.querySelector('mask image')
+    return { ink: { x, y, w, h }, id, y1: Number(gradient?.getAttribute('y1')), y2: Number(gradient?.getAttribute('y2')), bandHeight: Number(band?.getAttribute('height') ?? 0) }
+  })
+  console.log('  ' + JSON.stringify(span))
+  check(!!span.id && span.id.includes('-text-') && Math.abs(span.y1 - span.ink.y) < 0.01 && Math.abs(span.y2 - (span.ink.y + span.ink.h)) < 0.01,
+        'inflate: its gradient spans the bent ink (top to bottom), not the shape box')
   check(!!wave && wave.isBent && wave.dataLength > 1000 && wave.paint === '#0000ff', 'wave: bent between its curved outlines, in its colour')
   check(await countInPage('InflateText') === 1 && await countInPage('WaveText') === 1, 'curved WordArt texts once in the page')
   // a resolution change (browser zoom, another screen): the bent text is drawn again at the new density
