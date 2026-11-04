@@ -1243,7 +1243,8 @@ Sources: LibreOffice core master read 2026-11-04 (cited file:line in each class)
 - **Objects** (`Odt/OdtShapeBuilder.cs`): rect (draw:corner-radius only, as LibreOffice), circle / ellipse kinds, line, polygon,
   polyline, path (open = not filled), connector (svg:d when its ends match, else `OdtConnectorRoute` = ImpCalcEdgeTrack; ends
   connected to shapes are routed as free ends - the other shape may sit in another block, never read), measure
-  (`OdtMeasureShape`, label width estimated as 0.5 em per character), caption (`OdtCaptionShape`), regular-polygon (not imported
+  (`OdtMeasureShape`; the server lays it out with a 0.5 em-per-character label estimate, the app page lays the dimension line and
+  label out again with the label's measured size - `data-measure` inputs, vue-frontend `fastDocViewShapeText.ts`), caption (`OdtCaptionShape`), regular-polygon (not imported
   by LibreOffice; drawn per ODF 19.123 / 19.128 / 19.211), groups; draw:transform as a full matrix (rotate / skew / scale /
   translate / matrix).
 - **Paint** (`Odt/OdtShapeStyle.cs`, `Odt/OdtFillPaint.cs`): LibreOffice's pool defaults when unset (fill solid #729fcf, line
@@ -1256,8 +1257,14 @@ Sources: LibreOffice core master read 2026-11-04 (cited file:line in each class)
   WordOfficeArtFontwork (align from draw:fit-to-size / textarea-horizontal-align; LibreOffice does not use text-path-mode);
   text boxes: vertical alignment, painted fills, numbered lists and tables (a paragraph holding a box table becomes
   `div.word-paragraph-block` - a table inside a `<p>` is split by the HTML parser).
-- **Not possible / not done, with reason**: auto-grow of a shape to its text needs browser text metrics (LibreOffice-saved files
-  carry the grown size); contour-mode "full" and text on both sides of a float cannot be laid out in CSS (CSS Shapes 1 s.2); the
+- **Shapes that grow with their text** (2026-11-04): a draw:custom-shape with draw:auto-grow-height="true" carries `data-autogrow*`
+  (text area, shape size, fo:padding, fo:min-width / min-height, alignment); the app page (`fastDocViewShapeText.ts`) measures the
+  text and resizes the frame as SdrObjCustomShape::AdjustTextFrameWidthAndHeight + ImpCalculateTextFrame do (grow or shrink;
+  direction by text alignment; width too for no-wrap text), stretching the outline (non-scaling strokes). Not done: rotated /
+  sheared / mirrored / scaled shapes, groups, draw:text-rotate-angle (LibreOffice also moves a rotated rectangle); attribute
+  absent = no growth. Other objects (rect, ellipse ...) are not text frames in LibreOffice and never grow. Checks: `--fidelity`
+  OdtShapeTextFidelityTest, live `vue-demo/playwright/shapeTextCheck.mjs TestOutput/fidelity-v1-odt-shape-text.fodt`.
+- **Not possible / not done, with reason**: contour-mode "full" and text on both sides of a float cannot be laid out in CSS (CSS Shapes 1 s.2); the
   ODF 1.2 + LibreOffice 7 unitless-degree gradient angle needs meta.xml's generator, not read (1.2 = tenths).
 - **Wrap**: style:wrap-contour = CSS shape-outside polygon from the outline (1 pt sweep) with shape-margin; page-anchored objects
   at body level are their own paragraph blocks (index format 9, which also keeps every graphic property and drawing style).
@@ -1632,7 +1639,8 @@ One engine in `Fields/` for .docx, .doc and .rtf; each format only finds the fie
   (A 110010011, B 101101101, C 110101011, D 111010111, E 101000101 - Wikipedia "Facing Identification Mark" from the USPS
   Domestic Mail Manual 708.9 / 202); ADVANCE \u / \d raise / lower the paragraph's later runs (position: relative) - \x / \y
   are page positions (paged view TODO).
-- RTF  \w walk back at most 4096 blocks and stop at another list's paragraph (\ls per block from the span scans);
+- RTF 
+ \w walk back at most 4096 blocks and stop at another list's paragraph (\ls per block from the span scans);
   STYLEREF looks at most 4096 blocks each way - every block read is a span rescan (no per-style table in the index).
 - RTF field lookups read through a second block table whose rescans compute no fields: a lookup runs while the document's
   table is mid-rescan and must not re-enter it.
