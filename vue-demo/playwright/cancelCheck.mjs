@@ -30,15 +30,22 @@ step(`open ${DEMO_URL}`)
 await page.goto(DEMO_URL, { waitUntil: 'domcontentloaded' })
 await page.waitForFunction(() => !!window.__fastDocViewDemo, null, { timeout: 120_000 })
 await page.waitForFunction(() => window.__fastDocViewTest?.state().isIndexComplete, null, { timeout: 120_000 }).catch(() => {})
+// the page's own (first) document is open and shown before the counts start
+await page.waitForFunction(() => [...document.querySelectorAll('.windowed-scroller-viewport [data-index]')].some(row => (row.textContent ?? '').trim().length > 0), null, { timeout: 120_000 })
+await page.waitForTimeout(500)
 
+// documents other runs left open on this dev server (idle-closed later) are not this check's: counts are relative
+const shownPageDocuments = await openDocuments()     // includes the page's own document
+console.log(`  open documents at start: ${shownPageDocuments}`)
 step('tab closed while a cold open runs')
 let before = await cancelled()
 await page.evaluate(path => window.__fastDocViewDemo.open(path, { rebuildIndex: true }), slowFile)
 await page.waitForTimeout(150)
 await page.evaluate(() => window.__fastDocViewDemo.close())
 check(await waitUntil(async () => (await cancelled()) > before), 'the service cancelled the open')
-check(await waitUntil(async () => (await openDocuments()) === 0), 'no document stays open')
+check(await waitUntil(async () => (await openDocuments()) === shownPageDocuments - 1), "no document stays open (the page's own closed, the cancelled one never opened)")
 
+console.log(`  open documents after close: ${await openDocuments()}`)
 step('another file opened while a cold open runs')
 before = await cancelled()
 await page.evaluate(path => window.__fastDocViewDemo.open(path, { rebuildIndex: true }), slowFile)
@@ -47,7 +54,7 @@ await page.evaluate(path => window.__fastDocViewDemo.open(path), otherFile)
 check(await waitUntil(async () => (await cancelled()) > before), 'the service cancelled the replaced open')
 await page.waitForFunction(() => [...document.querySelectorAll('.windowed-scroller-viewport [data-index]')].some(row => (row.textContent ?? '').trim().length > 0), null, { timeout: 60_000 })
 check(true, 'the other file shows')
-check(await waitUntil(async () => (await openDocuments()) === 1), 'only the shown document is open')
+check(await waitUntil(async () => (await openDocuments()) === shownPageDocuments), 'only the shown document is open')
 check(consoleErrors.length === 0, `no console errors${consoleErrors.length ? ': ' + consoleErrors.join(' | ') : ''}`)
 
 await browser.close()

@@ -642,6 +642,8 @@ direction is read from), and `ScanAhead` runs the **same one pass** on, paused b
 - Measured (`--streaming-incremental`, 300k blocks): RTF 22.8 MB open 33 ms (first window 84 ms);
   .txt 11.2 MB open 6 ms; MHTML 16.5-17.9 MB open 4 ms. Live (vue-demo): text shown after 133 ms (.txt)
   and 303 ms (.rtf), count only grows.
+- RTF direction (2026-11-04 fix): the paragraph majority is counted over the first 100 blocks only, in the one-go
+  pass as in the on-demand one, so a first open and a reopen from the saved index show the same direction.
 - .doc stays one-go: its index pass on the 40 MB sample is 0.5-0.9 s cold, and it is cancellable.
 - Cancellation: `WordWindowedDocumentSet.Open(..., cancellation)`; every builder checks the token per
   step (also when the first blocks are already known). After an on-demand open returns, the token is

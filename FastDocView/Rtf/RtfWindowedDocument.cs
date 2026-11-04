@@ -13,7 +13,7 @@ namespace FastDocView.Rtf;
 /// </summary>
 public sealed class RtfWindowedDocument : IWordWindowedDocument
 {
-    public const int OnDemandFirstBlockCount = 100;
+    public const int OnDemandFirstBlockCount = RtfRandomAccessIndexBuilder.DirectionSampleBlocks;   // the direction is known by then
 
     private RtfRandomAccessIndex _indexField;
     private RtfCompactBlockTable _tableField;
@@ -126,7 +126,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }   // the sidecar is a cache
     }
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
-    public bool IsRightToLeft => _isRightToLeft ??= _indexField.IsRightToLeft;     // fixed at open (an on-demand open: from the first blocks)
+    public bool IsRightToLeft => _isRightToLeft ??= _indexField.IsRightToLeft;     // from the first blocks: the same on a first open and a reopen
     private bool? _isRightToLeft;
     public string Stylesheet { get; }
     public WordIndexDecision Decision { get; }

@@ -107,6 +107,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     private bool _hasListText;
     private int _rowCells;
     private int _rightToLeftParagraphs, _paragraphs;
+    /// <summary>Blocks the direction majority is counted over (= the on-demand first open's first blocks).</summary>
+    internal const int DirectionSampleBlocks = 100;
 
     // page setup (RTF 1.5 spec defaults: \paperw 12240, \margl / \margr 1800, \gutter 0); a \sectd
     // resets the section's values to the document's
@@ -555,8 +557,13 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             if (isSectionEnd) _isSectionEndPending = true;          // the section ends with this row
             return;
         }
-        _paragraphs++;
-        if (state.Has(RtfStateFlags.RightToLeftParagraph)) _rightToLeftParagraphs++;
+        // the document's direction is decided from its first DirectionSampleBlocks blocks: the data an on-demand first open
+        // has too, so the first open and a reopen from the saved index show the same direction
+        if (_starts.Count < DirectionSampleBlocks)
+        {
+            _paragraphs++;
+            if (state.Has(RtfStateFlags.RightToLeftParagraph)) _rightToLeftParagraphs++;
+        }
         int outline = state.OutlineLevel is >= 0 and <= 8 ? state.OutlineLevel : state.OutlineLevel == 9 ? -1 : OutlineLevelOfStyle(state.Style);
         if (outline >= 0)
         {

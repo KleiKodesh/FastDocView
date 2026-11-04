@@ -107,7 +107,7 @@ public static class RtfIndexAndRenderTest
         string formats = Html(10);
         TestReport.Check(formats.Contains("font-weight:bold") && formats.Contains("font-style:italic") && formats.Contains("text-decoration:underline")
                          && formats.Contains("line-through") && formats.Contains("font-size:20pt") && formats.Contains("color:light-dark(#FF0000,")
-                         && formats.Contains("background-color:yellow") && formats.Contains("vertical-align:super") && formats.Contains("vertical-align:sub"),
+                         && formats.Contains("background-color:light-dark(#ffff00,") && formats.Contains("vertical-align:super") && formats.Contains("vertical-align:sub"),
                          $"{what}: \\b \\i \\ul \\strike \\fs \\cf \\highlight \\super \\sub");
         TestReport.Check(Html(11).StartsWith("<h2", StringComparison.Ordinal), $"{what}: \\s2 \"heading 2\" renders <h2>");
         TestReport.Check(Html(12).Contains(((char)0x05D0).ToString()) && !Html(12).Contains("ansi fallback"), $"{what}: \\upr shows the \\ud text only");

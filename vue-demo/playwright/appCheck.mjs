@@ -105,6 +105,9 @@ if (complete.footnoteCount + complete.endnoteCount > 0) {
     check(!!landed && landed.label === referenceLabel && Math.abs(landed.offset) <= 12,
           "the clicked reference's note lands at the notes pane's top")
     if (landed) {
+      // sync off first: with it on, the notes pane rightly follows the text to the end, and a document with notes
+      // throughout (synthetic RTF: one every ~12 blocks) then no longer draws the landed note
+      await page.evaluate(() => window.__fastDocViewTest.setNotesSync(false))
       await scrollToBlock(Math.max(0, (await state()).blockCount - 1))
       await page.waitForTimeout(400)
       const back = await page.$(`.fast-doc-view-notes-pane .fast-doc-view-note[data-note-index="${landed.index}"] :is(.note-label, .note-mark)`)
@@ -113,6 +116,7 @@ if (complete.footnoteCount + complete.endnoteCount > 0) {
         await page.waitForTimeout(600)
         check(!!(await page.$('.note-reference--current')), 'clicking the note label jumps back and flashes its reference')
       } else check(false, 'the landed note keeps its label after the text scrolled away')
+      await page.evaluate(() => window.__fastDocViewTest.setNotesSync(true))
     }
   }
 }
