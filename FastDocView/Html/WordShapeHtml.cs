@@ -36,8 +36,8 @@ public enum WordLineEndType : byte { None, Triangle, Stealth, Diamond, Oval, Arr
 
 public readonly record struct WordLineEnd(WordLineEndType Type, int Width, int Length);
 
-/// <summary>Hatch lines (LibreOffice drawing::Hatch): colour, opacity, spacing in points, angle in degrees counter-clockwise, 1 / 2 / 3 line sets.</summary>
-public sealed record WordShapeHatch(string Color, double Opacity, double DistancePt, double AngleDegrees, int Sets);
+/// <summary>A preset pattern: foreground colour and opacity, the 8 rows of its 8 x 8 cell (bit 0x80 = the left pixel).</summary>
+public sealed record WordShapePattern(string Color, double Opacity, byte[] Rows);
 
 /// <summary>
 /// How a picture fills a shape: stretched into the box inset by (Left, Top, Right, Bottom) fractions (negative = beyond), or
@@ -99,8 +99,8 @@ public sealed class WordShape
     public bool GradientRectangular;
     /// <summary>The geometry's text rectangle in the shape's own points (unflipped); null = the whole box.</summary>
     public (double X, double Y, double Width, double Height)? TextRect;
-    /// <summary>A hatch fill (pattern) drawn over <see cref="FillColor"/> (its background, or none).</summary>
-    public WordShapeHatch? Hatch;
+    /// <summary>A preset pattern (pattFill) drawn over <see cref="FillColor"/> (its background, or none).</summary>
+    public WordShapePattern? Pattern;
     /// <summary>A picture fill (blipFill) by picture id, stretched to the box less its fill rectangle, or tiled.</summary>
     public string? FillPictureId;
     public WordShapePictureFill FillPicture;
@@ -330,32 +330,24 @@ public static class WordShapeHtml
     }
 
     /// <summary>
-    /// A hatch over the fill (LibreOffice draws a pattern fill as a hatch, see DocxPatternHatch): hairline sets of parallel
-    /// lines at the hatch spacing, the first at the hatch angle (counter-clockwise), a second at -90 and a third at -45 degrees
-    /// (drawinglayer fillhatchprimitive2d.cxx:62-88), across the box grown for the angle (texture.cxx GeoTexSvxHatch :810-860),
-    /// clipped to the path; the colour takes the path's darken / lighten too (AdaptObjColor :2851-2865).
+    /// A preset pattern over the fill (a:pattFill): its 8 x 8 bit cell (DocxPresetPattern) as an SVG pattern tile, one cell
+    /// pixel = 0.75 pt (one CSS pixel at 96 per inch, the device pixel the GDI+ hatch brush draws), set bits in the foreground
+    /// colour, the background under it already drawn as the shape's fill; clipped to the path. The colour takes the path's
+    /// darken / lighten too (AdaptObjColor :2851-2865).
     /// </summary>
-    private static void AppendHatch(StringBuilder html, WordShape shape, string fillData, WordShapeHatch hatch, double brightness)
+    private static void AppendPattern(StringBuilder html, WordShape shape, string fillData, WordShapePattern pattern, double brightness)
     {
-        if (hatch.DistancePt <= 0) return;
-        double w = shape.Width, h = shape.Height, cx = w / 2, cy = h / 2, reach = Math.Sqrt(w * w + h * h) / 2;
-        string clip = AppendClip(html, fillData);
-        var d = new StringBuilder();
-        double[] angles = hatch.Sets switch { 3 => [hatch.AngleDegrees, hatch.AngleDegrees - 90, hatch.AngleDegrees - 45], 2 => [hatch.AngleDegrees, hatch.AngleDegrees - 90], _ => [hatch.AngleDegrees] };
-        foreach (double angle in angles)
-        {
-            double radians = -angle * Math.PI / 180, ux = Math.Cos(radians), uy = Math.Sin(radians), nx = -uy, ny = ux;
-            int count = (int)Math.Ceiling(reach / hatch.DistancePt);
-            for (int k = -count; k <= count; k++)
-            {
-                double ox = cx + nx * k * hatch.DistancePt, oy = cy + ny * k * hatch.DistancePt;
-                d.Append('M').Append(Number(ox - ux * reach)).Append(' ').Append(Number(oy - uy * reach)).Append('L').Append(Number(ox + ux * reach)).Append(' ').Append(Number(oy + uy * reach));
-            }
-        }
-        html.Append("<path clip-path=\"url(#").Append(clip).Append(")\" d=\"").Append(d).Append("\" fill=\"none\" stroke=\"").Append(WordShapeColor.Brightened(hatch.Color, brightness))
-            .Append("\" stroke-width=\"0.75\" vector-effect=\"non-scaling-stroke\"");
-        if (hatch.Opacity < 1) html.Append(" stroke-opacity=\"").Append(Opacity(hatch.Opacity)).Append('"');
-        html.Append("/>");
+        const double Cell = 0.75;
+        var cells = new StringBuilder();
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 8; x++)
+                if ((pattern.Rows[y] & (0x80 >> x)) != 0) cells.Append('M').Append(Number(x * Cell)).Append(' ').Append(Number(y * Cell)).Append("h0.75v0.75h-0.75Z");
+        string color = WordShapeColor.Brightened(pattern.Color, brightness);
+        string definition = "<pattern patternUnits=\"userSpaceOnUse\" width=\"6\" height=\"6\"><path d=\"" + cells + "\" fill=\"" + color + "\""
+                          + (pattern.Opacity < 1 ? " fill-opacity=\"" + Opacity(pattern.Opacity) + "\"" : "") + "/></pattern>";
+        string id = "word-shape-pattern-" + StableHash(definition);
+        html.Append("<defs>").Append(definition.Insert("<pattern".Length, " id=\"" + id + "\"")).Append("</defs>")
+            .Append("<path d=\"").Append(fillData).Append("\" fill-rule=\"evenodd\" fill=\"url(#").Append(id).Append(")\" stroke=\"none\"/>");
     }
 
     /// <summary>
@@ -446,7 +438,7 @@ public static class WordShapeHtml
                     if (gradientId is null && shape.FillOpacity < 1) html.Append(" fill-opacity=\"").Append(Opacity(shape.FillOpacity)).Append('"');
                     html.Append(" stroke=\"none\"/>");
                 }
-                if (shape.Hatch is { } hatch) AppendHatch(html, shape, fillData, hatch, brightness);
+                if (shape.Pattern is { } pattern) AppendPattern(html, shape, fillData, pattern, brightness);
             }
             if (!path.Stroke || shape.LineColor is not { } line) continue;
             var stroke = new StringBuilder(" fill=\"none\" stroke=\"").Append(line).Append("\" stroke-width=\"").Append(Number(lineWidth)).Append('"');

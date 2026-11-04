@@ -859,6 +859,14 @@ public sealed class DocxBlockHtmlRenderer
             else shape = DocxShapeReader.ReadVml(layout, style, width, height);
             shapes = shape is null ? DocxShapeReader.ReadVmlGroup(layout, width, height, embed => _pictures is not null ? _pictures(_currentPicturePart, embed) : null) : [shape];
         }
+        else if (layout.Element("shapes")!.Element("chartex") is { } chartEx)
+        {
+            WordShapeHtml.OpenFrame(html, placement, growsWithText: false);
+            if (RelatedPart is not null && DocxDrawingParts.ChartEx(id => RelatedPart(_currentPicturePart, id), (string?)chartEx.Attribute("id") ?? "", _styles.Theme) is { CanDraw: true } model)
+                html.Append(model.Svg(placement.WidthPt, placement.HeightPt));
+            WordShapeHtml.CloseFrame(html);
+            yield break;
+        }
         else if (layout.Element("shapes")!.Element("chart") is { } chart)
         {
             WordShapeHtml.OpenFrame(html, placement, growsWithText: false);
@@ -1088,7 +1096,7 @@ public sealed class DocxBlockHtmlRenderer
 
     /// <summary>
     /// mc:AlternateContent → the first mc:Choice (all its requirements are WordprocessingML extensions we degrade gracefully), else
-    /// mc:Fallback - and the Fallback too when the Choice is a drawing this library does not draw: a chartex chart (cx:chart) or a
+    /// mc:Fallback - and the Fallback too when the Choice is a drawing this library does not draw: a chartex chart DocxChartEx cannot draw (a region map without a "clear" geography cache) or a
     /// SmartArt without a drawing part (DocxDrawingParts.DiagramDrawing).
     /// </summary>
     private XElement? ChosenAlternative(XElement alternateContent)
@@ -1103,7 +1111,7 @@ public sealed class DocxBlockHtmlRenderer
     {
         foreach (XElement shapes in choice.Descendants().Where(e => e.Name.LocalName == "shapes" && e.Parent?.Name.LocalName == Docx.DocxDrawingStripper.PictureLayoutElementName))
         {
-            if (shapes.Element("chartex") is not null) return false;
+            if (shapes.Element("chartex") is { } chartEx && (RelatedPart is null || DocxDrawingParts.ChartEx(id => RelatedPart(_currentPicturePart, id), (string?)chartEx.Attribute("id") ?? "", _styles.Theme) is not { CanDraw: true })) return false;
             if (shapes.Element("diagram") is { } diagram && (RelatedPart is null || DocxDrawingParts.DiagramDrawing(id => RelatedPart(_currentPicturePart, id), (string?)diagram.Attribute("dm") ?? "") is null)) return false;
         }
         return true;

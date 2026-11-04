@@ -37,7 +37,7 @@ internal sealed class DocxSearchTextScanner
         WordXmlSearchText.WordprocessingNamespace or WordXmlSearchText.WordprocessingStrictNamespace => NamespaceKind.Wordprocessing,
         WordXmlSearchText.MarkupCompatibilityNamespace => NamespaceKind.MarkupCompatibility,
         WordXmlSearchText.DiagramNamespace => NamespaceKind.Diagram,
-        WordXmlSearchText.ChartNamespace => NamespaceKind.Chart,
+        WordXmlSearchText.ChartNamespace or WordXmlSearchText.ChartExNamespace => NamespaceKind.Chart,
         _ => NamespaceKind.Other,
     };
 

@@ -350,10 +350,10 @@ internal static class DocxShapeReader
                     shape.GradientAngleDegrees = angle;
                     break;
                 case FillKind.Pattern:
-                    // fillproperties.cxx:754-781: a hatch in the foreground colour over the background colour; no foreground = the background solid
-                    if (Foreground is { } foreground && PatternPreset is not null && DocxPatternHatch.Of(PatternPreset) is { } hatch)
+                    // the preset's cell in the foreground colour over the background colour (DocxPresetPattern); no foreground = the background solid
+                    if (Foreground is { } foreground && PatternPreset is not null && DocxPresetPattern.Rows(PatternPreset) is { } rows)
                     {
-                        shape.Hatch = new WordShapeHatch(foreground.Css, foreground.Opacity, hatch.DistancePt, hatch.AngleDegrees, hatch.Sets);
+                        shape.Pattern = new WordShapePattern(foreground.Css, foreground.Opacity, rows);
                         if (Background is { } back) { shape.FillColor = back.Css; shape.FillOpacity = back.Opacity; }
                     }
                     else if (Background is { } back) { shape.FillColor = back.Css; shape.FillOpacity = back.Opacity; }

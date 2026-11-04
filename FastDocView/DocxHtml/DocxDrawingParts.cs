@@ -30,10 +30,16 @@ internal static class DocxDrawingParts
         => related(chartRelationshipId) is { } chart && chart.Type.EndsWith("/chart", StringComparison.OrdinalIgnoreCase) && chart.Xml.Root is { } root
            ? DocxChart.Read(DocxShapeGeometry.WithoutNamespaces(root), theme) : null;
 
+    public static DocxChartEx? ChartEx(RelatedPartReader related, string chartRelationshipId, DocxTheme? theme)
+        => related(chartRelationshipId) is { } chart && chart.Type.EndsWith("/chartEx", StringComparison.OrdinalIgnoreCase) && chart.Xml.Root is { } root
+           ? DocxChartEx.Read(DocxShapeGeometry.WithoutNamespaces(root), theme) : null;
+
     /// <summary>The text a SmartArt or chart drawing shows, for search: shape texts in drawing order / the chart's texts, one per line.</summary>
     public static string? SearchText(RelatedPartReader related, string relationshipId, DocxTheme? theme)
     {
         if (related(relationshipId) is not { } part) return null;
+        if (part.Type.EndsWith("/chartEx", StringComparison.OrdinalIgnoreCase))
+            return ChartEx(related, relationshipId, theme) is { CanDraw: true } chartEx ? string.Join("\n", chartEx.Texts()) : null;
         if (part.Type.EndsWith("/chart", StringComparison.OrdinalIgnoreCase))
             return Chart(related, relationshipId, theme) is { } chart ? string.Join("\n", chart.Texts()) : null;
         if (DiagramDrawing(related, relationshipId) is not { } drawing) return null;

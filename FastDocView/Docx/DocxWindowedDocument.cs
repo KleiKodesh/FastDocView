@@ -421,7 +421,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         {
             if (element.Ancestors().Any(a => a.Name.LocalName == "Fallback" && a.Name.NamespaceName == WordXmlSearchText.MarkupCompatibilityNamespace)) continue;
             string? id = element.Name.NamespaceName == WordXmlSearchText.DiagramNamespace && element.Name.LocalName == "relIds" ? (string?)element.Attribute(relationships + "dm")
-                       : element.Name.NamespaceName == WordXmlSearchText.ChartNamespace && element.Name.LocalName == "chart" ? (string?)element.Attribute(relationships + "id") : null;
+                       : element.Name.NamespaceName is WordXmlSearchText.ChartNamespace or WordXmlSearchText.ChartExNamespace && element.Name.LocalName == "chart" ? (string?)element.Attribute(relationships + "id") : null;
             if (id is not null) FeedDrawing(kind, id, matcher);
         }
     }

@@ -1377,6 +1377,14 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns
   (objectformatter.cxx). Layout and automatic axis scaling are our own. chartex charts (cx:chart: waterfall, treemap,
   sunburst, histogram, box and whisker, funnel, region map) show their mc:Fallback picture.
+- chartex (2026-11-04, DocxChartEx): histogram (binning: size / count / Scott's rule, underflow / overflow), pareto,
+  waterfall (subtotals, connectors), funnel, box and whisker (QUARTILE.EXC / .INC, 1.5 IQR whiskers, outliers, mean),
+  treemap (squarified, banner / overlapping parent labels), sunburst, and region maps from a "clear" geography cache
+  (Bing point-compressed rings; mercator / miller / robinson / albers). Only a region map cached as "binary" (format not
+  specified, [MS-ODRAWXML] 2.24.3.29) shows its mc:Fallback picture. Search reads their document text (titles, legend,
+  categories, data labels; not computed bin ranges).
+- Pattern fills: the exact 8 x 8 cell of each prstPattern (GDI+ hatch bitmaps, Wine gdiplus brush.c), an SVG pattern of
+  0.75 pt pixels, over the background colour; replaces LibreOffice's hatch approximation.
 - Search: SmartArt shape text and chart text (title, axis titles, legend, category and data labels; not value-axis
   numbers) are fed after their block's text, once, by both the byte scanner and the reference reader (dgm:relIds /
   c:chart outside mc:Fallback); notes likewise.

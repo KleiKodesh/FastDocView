@@ -62,9 +62,9 @@ public static class DocxDrawingLayoutFidelityTest
         // rect gradient centred: the top region from its inner edge (pos 0) to the top edge (pos 1); m = 36 / 2
         TestReport.Check(html[1].Contains("<path d=\"M0 0L72 0L54 18L18 18Z\"") && html[1].Contains("x1=\"0\" y1=\"18\" x2=\"0\" y2=\"0\"") && html[1].Contains("fill=\"#0000FF\""),
                          "a:path rect: LibreOffice's rectangular gradient, the last stop outside the inner regions (" + html[1] + ")");
-        // horz = SINGLE, 1 mm, 0 degrees (hatchmap.hxx): 15 lines each side of the centre over the half diagonal 40.25
-        TestReport.Check(html[2].Contains("fill=\"#FFFFFF\"") && html[2].Contains("M-4.25 -24.52L76.25 -24.52") && html[2].Contains("stroke=\"#000000\" stroke-width=\"0.75\""),
-                         "pattFill horz: black 1 mm hatch over the white background (" + html[2] + ")");
+        // horz = GDI+ HatchStyleHorizontal: one full pixel row at the top of the 8 x 8 cell (Wine brush.c:204, rows bottom-up there), 0.75 pt pixels
+        TestReport.Check(html[2].Contains("fill=\"#FFFFFF\"") && html[2].Contains("width=\"6\" height=\"6\"><path d=\"M0 0h0.75v0.75h-0.75ZM0.75 0h0.75v0.75h-0.75Z") && html[2].Contains("M5.25 0h0.75v0.75h-0.75Z\" fill=\"#000000\"") && html[2].Contains("fill=\"url(#word-shape-pattern-"),
+                         "pattFill horz: the preset's 8 x 8 cell (one black top row) over the white background (" + html[2] + ")");
         TestReport.Check(html[3].Contains("class=\"word-shape-fill-picture\"") && html[3].Contains("data-word-picture=\"m:rIdP\"") && html[3].Contains("left:7.2pt;top:0pt;width:64.8pt;height:36pt;")
                          && html[3].Contains("opacity:0.5;") && html[3].Contains("clipPathUnits=\"objectBoundingBox\"") && Regex.Matches(html[3], "<svg class=\"word-shape-geometry\"").Count == 2,
                          "blipFill: the picture stretched into the box less fillRect l 10 %, half transparent, clipped, between two SVG layers (" + html[3] + ")");
