@@ -1270,13 +1270,20 @@ Sources: LibreOffice core master read 2026-11-04 (cited file:line in each class)
   WordOfficeArtFontwork (align from draw:fit-to-size / textarea-horizontal-align; LibreOffice does not use text-path-mode);
   text boxes: vertical alignment, painted fills, numbered lists and tables (a paragraph holding a box table becomes
   `div.word-paragraph-block` - a table inside a `<p>` is split by the HTML parser).
-- **Shapes that grow with their text** (2026-11-04): a draw:custom-shape with draw:auto-grow-height="true" carries `data-autogrow*`
-  (text area, shape size, fo:padding, fo:min-width / min-height, alignment); the app page (`fastDocViewShapeText.ts`) measures the
-  text and resizes the frame as SdrObjCustomShape::AdjustTextFrameWidthAndHeight + ImpCalculateTextFrame do (grow or shrink;
-  direction by text alignment; width too for no-wrap text), stretching the outline (non-scaling strokes). Not done: rotated /
-  sheared / mirrored / scaled shapes, groups, draw:text-rotate-angle (LibreOffice also moves a rotated rectangle), the contour-wrap
-  outline is not regrown; attribute absent = no growth. Other objects (rect, ellipse ...) are not text frames in LibreOffice and
-  never grow. Checks: `--fidelity` OdtShapeTextFidelityTest, live `vue-demo/playwright/shapeTextCheck.mjs TestOutput/fidelity-v1-odt-shape-text.fodt`.
+- **Shapes that grow with their text** (2026-11-04): a draw:custom-shape with draw:auto-grow-height (absent = on: the item pool's
+  default, svdattr.cxx:247 - no import or Writer code sets another, see AutoGrowAttributes) carries `data-autogrow*` on its text box
+  (text area in its own points, size, fo:padding, fo:min-width / min-height, alignment, its matrix, mirroring, turn,
+  draw:text-rotate-angle). The app page (`fastDocViewShapeText.ts`) measures the text in the unturned area and resizes the shape as
+  SdrObjCustomShape::AdjustTextFrameWidthAndHeight + ImpCalculateTextFrame do (grow or shrink; direction by text alignment; width
+  too for no-wrap text), in the shape's own coordinates before its transform (a rotated rectangle moves with its turned top left,
+  svdoashp.cxx:2420-2428), mirroring redone about the new centre; the outline stretches (non-scaling strokes). Every frame the page
+  touches (`data-shape-page`) then takes the new bounds of all its shapes and dimension lines (groups grow by their members) and a
+  contour wrap is swept again from the new outlines. Other objects (rect, ellipse ...) are not text frames in LibreOffice and never
+  grow. Shape text boxes are not clamped by the stylesheet's `.text-box { max-width: 100% }` (a turned area is wider than its frame).
+- **Dimension lines**: the arrows are the shape's own markers (their width and length reach the layout,
+  sdrmeasureprimitive2d.cxx:150-170), drawn per piece end (help lines carry none); the page redraws the pieces with their markers
+  and sizes the frame from the measured label. Checks: `--fidelity` OdtShapeTextFidelityTest, live
+  `vue-demo/playwright/shapeTextCheck.mjs TestOutput/fidelity-v2-odt-shape-text.fodt`.
 - **Not possible / not done, with reason**: contour-mode "full" and text on both sides of a float cannot be laid out in CSS (CSS Shapes 1 s.2);.
 - **Wrap**: style:wrap-contour = CSS shape-outside polygon from the outline (1 pt sweep) with shape-margin; page-anchored objects
   at body level are their own paragraph blocks (index format 9, which also keeps every graphic property and drawing style).
