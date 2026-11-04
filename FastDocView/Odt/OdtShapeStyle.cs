@@ -60,7 +60,7 @@ internal sealed class OdtShapeStyle
         return (((rgb >> 16) & 0xFF) / 255.0, ((rgb >> 8) & 0xFF) / 255.0, (rgb & 0xFF) / 255.0);
     }
 
-    private static string Hex((double R, double G, double B) c)
+    internal static string Hex((double R, double G, double B) c)
         => "#" + (((int)Math.Round(c.R * 255) << 16) | ((int)Math.Round(c.G * 255) << 8) | (int)Math.Round(c.B * 255)).ToString("x6", CultureInfo.InvariantCulture);
 
     /// <summary>A path brightness / colour-data change on an RGB colour (the same rules as <see cref="WordShapeColor.Brightened"/>).</summary>

@@ -21,8 +21,8 @@ namespace FastDocView.Odt;
 ///   svdoashp.cxx:826-1050) - per property: adjustments, view box, coordinates, segments, stretch points, text frames,
 ///   equations. A type without a preset and without a path draws nothing (CreatePathObj :2890-2893). A "rectangle" /
 ///   "ooxml-rect" is drawn as a plain rectangle (CreateObject :3042-3055).
-/// draw:handle and glue points do not change the drawing and are not read. 3-D extrusion (draw:extrusion="true") is drawn as
-/// the flat shape.
+/// draw:handle and glue points do not change the drawing and are not read. 3-D extrusion (draw:extrusion="true") is read into
+/// <see cref="Extrusion"/> and drawn by <see cref="OdtExtrusion"/> (EnhancedCustomShape3d.cxx).
 /// </summary>
 internal sealed class OdtEnhancedGeometry
 {
@@ -36,6 +36,8 @@ internal sealed class OdtEnhancedGeometry
     public double TextRotateAngle;
     public bool IsRectangle;
     public WordCustomShapeEngine? Engine;
+    /// <summary>The shape's 3-D extrusion; null = drawn flat.</summary>
+    public OdtExtrusion? Extrusion;
 
     /// <summary>The geometry of a custom shape of <paramref name="width"/> x <paramref name="height"/> points.</summary>
     public static OdtEnhancedGeometry Read(XElement? geometry, double width, double height, bool filled, bool stroked)
@@ -51,6 +53,7 @@ internal sealed class OdtEnhancedGeometry
         result.TextPathScaleX = Attribute("text-path-scale") == "shape";
         result.TextPathSameLetterHeights = Attribute("text-path-same-letter-heights") == "true";
         if (double.TryParse(Attribute("text-rotate-angle"), NumberStyles.Float, CultureInfo.InvariantCulture, out double textRotate)) result.TextRotateAngle = textRotate;
+        result.Extrusion = OdtExtrusion.Read(geometry);
 
         int? presetType = result.Type is null ? null : WordOfficeArtShapeDefinitions.TypeOfName(result.Type);
         if (presetType == WordOfficeArtShapeTypes.Rectangle) { result.IsRectangle = true; return result; }

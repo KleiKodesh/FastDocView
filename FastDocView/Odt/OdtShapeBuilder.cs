@@ -290,7 +290,60 @@ internal sealed class OdtShapeBuilder
         if (!closedForFill) { shape.FillColor = null; shape.FillPainter = null; shape.FillPictureId = null; }
         drawn.Style.ApplyStroke(shape);
         if (shape.LineJoin == WordLineJoin.Miter) shape.MiterLimit = 1 / Math.Sin(7.5 * Math.PI / 180);
+        if (drawn.Geometry?.Extrusion is { } extrusion) Extrude(drawn, extrusion, full);
         return drawn;
+    }
+
+    /// <summary>
+    /// An extruded custom shape: its outline objects become the projected faces (<see cref="OdtExtrusion"/>). The 3-D scene takes the
+    /// shape's rotation and mirroring itself and the result is not rotated or mirrored again (EnhancedCustomShapeEngine.cxx:262-266);
+    /// a shear of the box still applies after (:270-282). Faces have no outline unless the shade mode is draft (Create3DObject :379-388).
+    /// </summary>
+    private void Extrude(OdtDrawnShape drawn, OdtExtrusion extrusion, WordAffine full)
+    {
+        WordShape shape = drawn.Shape;
+        OdtEnhancedGeometry geometry = drawn.Geometry!;
+        var sources = new List<OdtExtrusionSource>();
+        foreach (WordShapePath path in shape.Paths ?? [])
+        {
+            // a path with neither fill nor line is a placeholder that is removed (:415-416, :1083-1086); the shape's own colours are used,
+            // not the path's darken / lighten (the 3-D object takes the shape's item set, :418)
+            bool filled = path.Fill != WordShapePathFill.None;
+            if (!filled && !path.Stroke) continue;
+            var source = new OdtExtrusionSource { Filled = filled };
+            foreach (WordShapeSubpath subpath in path.Subpaths)
+                source.Rings.Add((OdtShapeStyle.Flatten(subpath), filled || subpath.Closed));
+            sources.Add(source);
+        }
+        var fill = OdtShapeStyle.ParseColor(drawn.Style.Get(Draw + "fill-color")) ?? OdtShapeStyle.ParseColor(OdtShapeStyle.DefaultFillColor)!.Value;
+        var secondary = OdtShapeStyle.ParseColor(drawn.Style.Get(Draw + "secondary-fill-color")) ?? OdtShapeStyle.ParseColor(OdtShapeStyle.DefaultFillColor)!.Value;  // xpool.cxx:200
+        var line = OdtShapeStyle.ParseColor(drawn.Style.Get(Svg + "stroke-color")) ?? OdtShapeStyle.ParseColor(OdtShapeStyle.DefaultStrokeColor)!.Value;
+        bool textured = drawn.Style.FillKind is "gradient" or "bitmap";
+        double rotationDegrees = -Math.Atan2(full.B, full.A) * 180 / Math.PI;      // draw:transform rotate(a) is Rotate(-a) here
+        var faces = extrusion.Project(sources, shape.Width, shape.Height, rotationDegrees, geometry.MirrorHorizontal, geometry.MirrorVertical, fill, secondary, line, textured);
+        var paths = new List<WordShapePath>();
+        foreach (OdtExtrusionFace face in faces)
+        {
+            var path = new WordShapePath { Fill = face.OutlineOnly ? WordShapePathFill.None : WordShapePathFill.Normal, Stroke = face.OutlineOnly, SolidFill = face.OutlineOnly ? null : face.Color };
+            foreach (var ring in face.Rings)
+            {
+                if (ring.Count == 0) continue;
+                var subpath = new WordShapeSubpath { StartX = ring[0].X, StartY = ring[0].Y, Closed = true };
+                for (int i = 1; i < ring.Count; i++) subpath.Segments.Add(WordShapeSegment.Line(ring[i].X, ring[i].Y));
+                path.Subpaths.Add(subpath);
+            }
+            paths.Add(path);
+        }
+        shape.Paths = paths;
+        if (extrusion.ShadeMode == "draft") { shape.LineColor = OdtShapeStyle.Hex(line); shape.Dash = null; }
+        else shape.LineColor = null;
+        shape.HeadEnd = shape.TailEnd = default;
+        shape.HeadMarker = shape.TailMarker = null;
+        // the box's centre where the transform puts it; the rotation taken out of the transform (shear and scale stay)
+        (double cx, double cy) = full.Apply(shape.Width / 2, shape.Height / 2);
+        WordAffine linear = new(full.A, full.B, full.C, full.D, 0, 0);
+        WordAffine unrotated = WordAffine.Then(linear, WordAffine.Rotate(-Math.Atan2(full.B, full.A)));
+        shape.Transform = WordAffine.Then(WordAffine.Then(WordAffine.Translate(-shape.Width / 2, -shape.Height / 2), unrotated), WordAffine.Translate(cx, cy));
     }
 
     private static WordShapePath Path(WordShapeSubpath subpath, bool fill)

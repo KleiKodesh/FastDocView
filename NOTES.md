@@ -1239,7 +1239,14 @@ Sources: LibreOffice core master read 2026-11-04 (cited file:line in each class)
   the RTF round rectangle 72 x 36 has 6 pt corners, not 12).
 - **ODF geometry** (`Odt/OdtEnhancedGeometry.cs`): enhanced-path, equations by name, modifiers, text-areas, view-box,
   sub-view-size, mirror, text-rotate-angle; presets by draw:type merged per property (MergeDefaultAttributes); "rectangle" is a
-  plain rectangle; an unknown type without a path draws nothing. 3-D extrusion is drawn flat (a 3-D scene renderer is out of scope).
+  plain rectangle; an unknown type without a path draws nothing. 3-D extrusion (draw:extrusion="true", `OdtExtrusion`) is drawn as LibreOffice's
+  EnhancedCustomShape3d::Create3DObject builds its scene: each outline object extruded (back z 0, front z depth), the scene matrix
+  (centre, shape rotation, mirroring, rotation angles about the rotation centre, skew shear for parallel), parallel or perspective
+  projection (viewpoint + origin), back faces culled unless double-sided, and one flat colour per face from solveColorModel with the
+  two lights, soft lights, ambient brightness, diffusion, specularity, shininess and metal (lights as 8-bit colours). The faces replace
+  the outline, back to front; the box is placed by its centre without rotating or mirroring again. Needs a real 3-D renderer, so
+  approximated: Gouraud / Phong (flat colour per face instead), the z-buffer (painter's order by mean depth - differs only for concave
+  outlines), lit bitmap / gradient textures (front face drawn with the unlit fill), wide-line contours (centre line extruded).
 - **Objects** (`Odt/OdtShapeBuilder.cs`): rect (draw:corner-radius only, as LibreOffice), circle / ellipse kinds, line, polygon,
   polyline, path (open = not filled), connector (svg:d when its ends match, else `OdtConnectorRoute` = ImpCalcEdgeTrack; ends
   connected to shapes are routed as free ends - the other shape may sit in another block, never read), measure

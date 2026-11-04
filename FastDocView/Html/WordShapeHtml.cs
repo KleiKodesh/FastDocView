@@ -35,6 +35,8 @@ public sealed class WordShapePath
     public int LuminancePercent;
     /// <summary>The fill half of a sub-path group LibreOffice draws as a fill and a stroke object; a text effect lays its text on the other half only.</summary>
     internal bool IsFillCopy;
+    /// <summary>A solid colour this path is filled with instead of the shape's fill (an extruded face's lit colour, OdtExtrusion); null = the shape's fill.</summary>
+    internal string? SolidFill;
 }
 
 /// <summary>A line end (DrawingML a:headEnd / a:tailEnd, ST_LineEndType) with its width and length (0 small, 1 medium, 2 large).</summary>
@@ -505,7 +507,13 @@ public static class WordShapeHtml
                 WordShapePathFill.Lighten => 0.4, WordShapePathFill.LightenLess => 0.2, _ => 0,
             };
             if (path.LuminancePercent != 0) brightness = WordShapeColor.LuminanceMarker(path.LuminancePercent);
-            if (path.Fill != WordShapePathFill.None && shape.FillPainter is { } painter)
+            if (path.Fill != WordShapePathFill.None && path.SolidFill is { } solid)
+            {
+                html.Append("<path d=\"").Append(PathData(path.Subpaths, closeAll: true)).Append("\" fill-rule=\"evenodd\" fill=\"").Append(solid).Append('"');
+                if (shape.FillOpacity < 1) html.Append(" fill-opacity=\"").Append(Opacity(shape.FillOpacity)).Append('"');
+                html.Append(" stroke=\"none\"/>");
+            }
+            else if (path.Fill != WordShapePathFill.None && shape.FillPainter is { } painter)
             {
                 (string definitions, string painted) = painter(brightness);
                 html.Append("<defs>").Append(definitions).Append("</defs>");
