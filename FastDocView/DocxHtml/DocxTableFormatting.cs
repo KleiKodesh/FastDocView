@@ -87,7 +87,7 @@ public static class DocxTableFormatting
         var css = new StringBuilder();
         if (WidthCss(tcPr?.Element(W + "tcW")) is { } width) css.Append("width:").Append(width).Append(';');
         XElement? shading = tcPr?.Element(W + "shd") ?? styleCellProperties.Select(layer => layer.Element(W + "shd")).LastOrDefault(element => element is not null);
-        if (shading is not null && DocxStyleCascade.FillHex(shading, theme) is { } fill) css.Append("background:#").Append(fill).Append(';');
+        if (shading is not null && DocxStyleCascade.FillHex(shading, theme) is { } fill) css.Append("background:").Append(WordHtmlColor.Css(fill)).Append(';');
         string? verticalAlign = (string?)tcPr?.Element(W + "vAlign")?.Attribute(W + "val");
         if (verticalAlign is "center" or "bottom") css.Append("vertical-align:").Append(verticalAlign == "center" ? "middle" : "bottom").Append(';');
         if (TextDirectionCss((string?)tcPr?.Element(W + "textDirection")?.Attribute(W + "val")) is { } direction) css.Append(direction);

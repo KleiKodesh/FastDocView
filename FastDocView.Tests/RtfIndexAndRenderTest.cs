@@ -88,7 +88,7 @@ public static class RtfIndexAndRenderTest
             => System.Text.RegularExpressions.Regex.IsMatch(html, "class=\"list-marker\"[^>]*>(" + System.Text.RegularExpressions.Regex.Escape(DocxFidelityTest.TabGapOpenTag) + ")?" + System.Text.RegularExpressions.Regex.Escape(label) + "<");
         TestReport.Check(Marker(Html(2), "1.") && Marker(Html(3), "1.1") && Marker(Html(4), "2.") && Marker(Html(5), "•"),
                          $"{what}: list markers (counted, \\listtext, bullet)");
-        TestReport.Check(Html(6).Contains("<table") && Regex.Matches(Html(6), "<td").Count == 2 && Html(6).Contains("width:144pt") && Html(6).Contains("background:#EEEEEE")
+        TestReport.Check(Html(6).Contains("<table") && Regex.Matches(Html(6), "<td").Count == 2 && Html(6).Contains("width:144pt") && Html(6).Contains("background:light-dark(#EEEEEE,")
                          && prefix[6].Notes.Count == 1 && prefix[6].Notes[0].Html.Contains("footnote in cell"),
                          $"{what}: table row: two cells, \\cellx widths, \\clcbpat shading, footnote in a cell");
         TestReport.Check(Html(8).Contains(HebrewFour) && Html(8).Contains(" end") && !Html(8).Contains("?") && !Html(8).Contains("x"),
@@ -106,7 +106,7 @@ public static class RtfIndexAndRenderTest
                          $"{what}: \\pict and \\shppict drawn once each by id (the \\shppict PNG), \\nonshppict dropped ({pictures})");
         string formats = Html(10);
         TestReport.Check(formats.Contains("font-weight:bold") && formats.Contains("font-style:italic") && formats.Contains("text-decoration:underline")
-                         && formats.Contains("line-through") && formats.Contains("font-size:20pt") && formats.Contains("color:#FF0000")
+                         && formats.Contains("line-through") && formats.Contains("font-size:20pt") && formats.Contains("color:light-dark(#FF0000,")
                          && formats.Contains("background-color:yellow") && formats.Contains("vertical-align:super") && formats.Contains("vertical-align:sub"),
                          $"{what}: \\b \\i \\ul \\strike \\fs \\cf \\highlight \\super \\sub");
         TestReport.Check(Html(11).StartsWith("<h2", StringComparison.Ordinal), $"{what}: \\s2 \"heading 2\" renders <h2>");

@@ -1751,3 +1751,16 @@ PagePlacementFidelityTest (centred wrapSquare floats left), OdtShapesFidelityTes
 - **Notes pane for .rtf / .odt / .fodt**: RenderNotes = the blocks' notes verified for all three (`NotesWindowTest` now
   includes a synthetic .fodt) and live in the notes pane. Still not done: a notes-only render (the body HTML of a note's block is
   built and dropped) - a speed item, not a correctness one.
+
+
+## Dark theme (2026-11-04)
+
+Explicit document colours (run colour, underline colour, run / paragraph / cell shading, highlights) are written as
+`light-dark(original, darkVariant)` by `WordHtmlColor.Css`; the page's `color-scheme` picks one, so the HTML and the
+index cache stay theme-independent and a theme switch re-renders nothing. The dark variant keeps hue and chroma and
+inverts CIELAB lightness, `L' = min(110 - L, 100)` (Chromium's dark mode, `dark_mode_color_filter.cc`
+`LABColorFilter::InvertColor`; Word's own dark mode also shifts document colours rather than inverting them, but its
+formula is not published). Auto colours are never written and inherit the page text colour. The stylesheet's own
+colours are `var(--fdv-*, Word's value)`: `--fdv-text`, `--fdv-link`, `--fdv-muted`, `--fdv-muted-strong`,
+`--fdv-rule`, `--fdv-table-border`, `--fdv-frame-border`; a host maps them to its theme. Not remapped: shape / text-box
+fills and the text inside them (OfficeArt), which would need the fill and text remapped together.

@@ -94,7 +94,7 @@ public sealed class WordParagraphFormatting
         if (isSpacingSuppressed) { if (SpaceAfterTwips != 0) css.Append("margin-top:-").Append(TwipsToPt(SpaceAfterTwips)).Append("pt;"); }
         else if (SpaceBeforeTwips != 0 && !IsBorderJoinedAbove) css.Append("margin-top:").Append(TwipsToPt(SpaceBeforeTwips)).Append("pt;");
         if (SpaceAfterTwips != 0 && !IsBorderJoinedBelow) css.Append("margin-bottom:").Append(TwipsToPt(SpaceAfterTwips)).Append("pt;");
-        if (ShadingHex is not null) css.Append("background-color:#").Append(ShadingHex).Append(';');
+        if (ShadingHex is not null) css.Append("background-color:").Append(WordHtmlColor.Css(ShadingHex)).Append(';');
         if (FirstTabStopTwips > 0) css.Append("tab-size:").Append(TwipsToPt(FirstTabStopTwips)).Append("pt;");
         bool hasBorder = false;
         string? top = IsBorderJoinedAbove ? BorderBetweenCss : BorderTopCss;

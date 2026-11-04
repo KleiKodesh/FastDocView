@@ -445,7 +445,7 @@ public sealed class OdtStyleCascade
         if (Twips(properties.Attribute(Fo + "padding")) is { } padding) css.Append("padding:").Append(WordParagraphFormatting.TwipsToPt(padding)).Append("pt;");
         foreach (string side in new[] { "top", "bottom", "left", "right" })
             if (Twips(properties.Attribute(Fo + "padding-" + side)) is { } sidePadding) css.Append("padding-").Append(side).Append(':').Append(WordParagraphFormatting.TwipsToPt(sidePadding)).Append("pt;");
-        if ((string?)properties.Attribute(Fo + "background-color") is { } background && ColorHex(background) is { } hex) css.Append("background-color:#").Append(hex).Append(';');
+        if ((string?)properties.Attribute(Fo + "background-color") is { } background && ColorHex(background) is { } hex) css.Append("background-color:").Append(WordHtmlColor.Css(hex)).Append(';');
         if ((string?)properties.Attribute(Style + "vertical-align") is "middle" or "bottom" or "top")
             css.Append("vertical-align:").Append((string?)properties.Attribute(Style + "vertical-align")).Append(';');
         return css.ToString();
@@ -497,7 +497,7 @@ public sealed class OdtStyleCascade
             case "margins": css.Append("margin-left:").Append(Margin("left") ?? "0").Append(";margin-right:").Append(Margin("right") ?? "0").Append(';'); break;
             default: css.Append("margin-left:").Append(Margin("left") ?? "0").Append(";margin-right:auto;"); break;
         }
-        if ((string?)properties.Attribute(Fo + "background-color") is { } background && ColorHex(background) is { } hex) css.Append("background-color:#").Append(hex).Append(';');
+        if ((string?)properties.Attribute(Fo + "background-color") is { } background && ColorHex(background) is { } hex) css.Append("background-color:").Append(WordHtmlColor.Css(hex)).Append(';');
         bool? rtl = (string?)properties.Attribute(Style + "writing-mode") switch { "rl-tb" or "rl" => true, "lr-tb" or "lr" => false, _ => null };
         return (css.ToString(), rtl);
     }

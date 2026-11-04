@@ -68,7 +68,7 @@ public static partial class DocxFidelityTest
                     + "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"1\"/><w:numId w:val=\"1\"/></w:numPr><w:rPr><w:i/></w:rPr></w:pPr><w:r><w:t>e</w:t></w:r></w:p>"
                     + "<w:p><w:pPr><w:rPr><w:sz w:val=\"48\"/></w:rPr></w:pPr></w:p>";
         List<string> html = RenderAll("list-labels", body, "", numbering);
-        TestReport.Check(html[0].Contains("<span class=\"list-marker\" style=\"font-weight:bold;color:#FF0000;min-width:36pt;\">" + TabGapOpenTag + "1.</span></span>"), "level rPr formats the label; default suffix is a tab");
+        TestReport.Check(html[0].Contains("<span class=\"list-marker\" style=\"font-weight:bold;color:light-dark(#FF0000,#ff200d);min-width:36pt;\">" + TabGapOpenTag + "1.</span></span>"), "level rPr formats the label; default suffix is a tab");
         TestReport.Check(html[1].Contains(">1)</span> a") == false && html[1].Contains(">1)</span> b"), "suff space");
         TestReport.Check(html[2].Contains(">1]</span>c"), "suff nothing");
         TestReport.Check(html[3].Contains(">•</span>") && !html[3].Contains("Symbol"), "a Symbol-font bullet is mapped to a bullet and drops the symbol font");

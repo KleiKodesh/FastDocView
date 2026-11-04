@@ -24,10 +24,10 @@ public static partial class DocxFidelityTest
                      + "<w:tblGrid><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1000\"/></w:tblGrid>" + Row("h1", "h2") + Row("r1", "r1e") + Row("r2", "r2e") + Row("r3", "r3e") + "</w:tbl>";
         string html = RenderAll("table-conditions", table, BandedStyle)[0];
         string CellOf(string text) { int at = html.IndexOf(">" + text + "<", StringComparison.Ordinal); return html.Substring(html.LastIndexOf("<td", at, StringComparison.Ordinal), at - html.LastIndexOf("<td", at, StringComparison.Ordinal)); }
-        TestReport.Check(CellOf("h1").Contains("background:#4472C4") && CellOf("h1").Contains("font-weight:bold"), "firstRow: shading and bold");
-        TestReport.Check(CellOf("h2").Contains("font-style:italic") && CellOf("h2").Contains("color:#FF0000"), "neCell + lastCol on the top-right cell");
-        TestReport.Check(CellOf("r1").Contains("background:#D9E2F3") && !CellOf("r2").Contains("background:#D9E2F3") && CellOf("r3").Contains("background:#D9E2F3"), "band1Horz on odd body rows only");
-        TestReport.Check(CellOf("r1e").Contains("color:#FF0000") && !CellOf("r1").Contains("color:#FF0000"), "lastCol only on the last cell");
+        TestReport.Check(CellOf("h1").Contains("background:light-dark(#4472C4,") && CellOf("h1").Contains("font-weight:bold"), "firstRow: shading and bold");
+        TestReport.Check(CellOf("h2").Contains("font-style:italic") && CellOf("h2").Contains("color:light-dark(#FF0000,"), "neCell + lastCol on the top-right cell");
+        TestReport.Check(CellOf("r1").Contains("background:light-dark(#D9E2F3,") && !CellOf("r2").Contains("background:light-dark(#D9E2F3,") && CellOf("r3").Contains("background:light-dark(#D9E2F3,"), "band1Horz on odd body rows only");
+        TestReport.Check(CellOf("r1e").Contains("color:light-dark(#FF0000,") && !CellOf("r1").Contains("color:light-dark(#FF0000,"), "lastCol only on the last cell");
 
         // default paragraph style 12 pt + left: the table style's 9 pt and centering win, unless overrideTableStyleFontSizeAndJustification
         const string normal12 = """<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults>""";
