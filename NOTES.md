@@ -1688,8 +1688,11 @@ CSS cannot put text on both sides of a float (CSS Shapes 1 s.2), so the object f
 placed; centred = left, our choice for the tie), its horizontal offset dropped, and the text wraps fully along the other
 side. A one-sided wrap (left / right only) floats opposite its text and keeps its offset. `WordPictureLayout.TextSides` +
 `WordPictureHtml.AppendPlacement` / `FloatsRight`. .doc reads the side from posh (0x038F in the 0xF122 record,
-msdffimp.cxx:5199-5216; inside / outside as on an odd page). Limit: an object placed by an absolute offset alone (no alignment)
-floats left - the flow view has no column width to tell which edge is nearer.
+msdffimp.cxx:5199-5216; inside / outside as on an odd page). An object placed by its offset alone (no alignment) floats to the nearer edge of its section's text width (page width
+minus margins and gutter, already in every index - `WordDocumentSection`, `WordDocumentPageSetup.TextWidthPointsAt`; the
+renderer gets it per block as `ColumnWidthPt`): right when its centre lies right of the column's centre. A centred object's
+centre is the column's own - the tie, left. Multi-column sections are not split: the flow view shows one column at the
+full text width, so that is the width the reader sees. Page-relative offsets (.doc bx 1) carry no offset and float left.
 
 Contour wrap = CSS `shape-outside:polygon(...)` from `WordPictureContour.ShapeOutsideCss` (the outline's extreme on the
 text side per 1 pt row, at most 2000 rows; gap on the text side as shape-margin; through drawn as tight - a float keeps
@@ -1698,8 +1701,12 @@ its text on one side). The contour:
   Word's 21600 x 21600 space over the object ([MS-OI29500] as quoted by LibreOffice WrapPolygonHandler.cxx:120-129).
 - .doc FSPA wr 4 / 5 (ww8graf.cxx:2721-2725 bContour): pWrapPolygonVertices 899 (msdffimp.cxx:5574-5605, 8-byte int32 or
   4-byte int16 pairs), else the drawn shapes' own outline (`WordShapeHtml.Outlines`); a lone picture without one: its box.
-- RTF \shpwr 4 (wrapTight, rtfdispatchvalue.cxx:1250-1254) with pWrapPolygonVertices "8;n;(x,y);..." (rtfsdrimport.cxx:
-  856-885), else the shape's outline; \shpwr 5 is THROUGH in LibreOffice (:1255-1257) and stays drawn as none.
+- RTF \shpwr 4 / 5 with pWrapPolygonVertices "8;n;(x,y);..." (rtfsdrimport.cxx:856-885), else the shape's outline.
+- "Through" is a contour wrap in Word, like tight plus the polygon's holes: ECMA-376 wp:wrapThrough (Part 1 20.4.2.17),
+  MS-DOC FSPA wr 5 "wrap tightly, but allow holes" (as quoted by Apache POI fspa_type.xml from the Word 97-2007 binary
+  spec; LibreOffice ww8graf.cxx:2721-2725 the same), RTF \shpwr 5 "Wrap through" (Word 97 RTF for Drawing Objects). All
+  three are drawn as contour wrap. LibreOffice differs for RTF only: it reads \shpwr 5 as THROUGH = text over the object
+  (rtfdispatchvalue.cxx:1255-1257). Holes cannot be laid out in CSS (one side per float), so through = tight here.
 - ODF style:wrap-contour: draw:contour-polygon / contour-path, else a shape's own outlines. The page re-sweeps the
   contour when a shape grows with its text (vue-frontend fastDocViewShapeText.ts `contourPolygon`, same format).
 LibreOffice's extra 15-twip shift of Word polygons (WrapPolygonHandler.cxx:99-114) is its own guess and not applied.
