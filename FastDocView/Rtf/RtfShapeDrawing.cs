@@ -42,7 +42,7 @@ internal static class RtfShapeDrawing
     /// </summary>
     private static void TextEffect(WordShape drawn, RtfShapePlacement shape)
     {
-        if (shape.WordArtText is { } text) WordOfficeArtFontwork.Apply(drawn, text, shape.WordArtFont);
+        if (shape.WordArtText is { } text) WordOfficeArtFontwork.Apply(drawn, text, shape.WordArtFont, shape.WordArtAlign);
         else { drawn.Geometry = WordShapeGeometry.Path; drawn.Paths = []; }
     }
 

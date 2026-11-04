@@ -4,7 +4,16 @@ using System.Text;
 namespace FastDocView.Html;
 
 /// <summary>One line of text-effect (WordArt / Fontwork) text set on a path: SVG path data in the shape's points, the font size, and the text.</summary>
-public sealed record WordShapeTextOnPath(string PathData, double PathLength, double FontSizePt, string Text);
+public sealed record WordShapeTextOnPath(string PathData, double PathLength, double FontSizePt, string Text)
+{
+    /// <summary>Single-line mode: the line height before LibreOffice's fit factor (the page multiplies it by min(outline length / text width)).</summary>
+    public double LineHeightPt { get; init; }
+    /// <summary>Paired mode: the upper and lower outlines (SVG path data) the glyphs are bent between, and this line's band (index of count).</summary>
+    public string? UpperData { get; init; }
+    public string? LowerData { get; init; }
+    public int LineIndex { get; init; }
+    public int LineCount { get; init; } = 1;
+}
 
 /// <summary>
 /// Text effects (WordArt / Fontwork) laid out as LibreOffice lays them out (svx/source/customshapes/EnhancedCustomShapeFontWork.cxx,
@@ -46,19 +55,25 @@ public static class WordOfficeArtFontwork
             int count = (left - 1) / areasLeft + 1;
             List<(double X, double Y)> curve;
             double fontSize;
+            string? upperData = null, lowerData = null;
             if (singleLine) { curve = outlines[area]; fontSize = lineHeight; }
             else
             {
                 List<(double X, double Y)> upper = outlines[area * 2], lower = outlines[area * 2 + 1];
                 curve = Between(upper, lower, 0.5);
                 fontSize = MeanGap(upper, lower) / count;
+                upperData = PathData(upper);
+                lowerData = PathData(lower);
             }
             for (int i = 0; i < count; i++)
             {
                 // the line's distance from the area's centre, along the outline's normals (centred lines: 0 for one line)
                 double offset = (i - (count - 1) / 2.0) * fontSize;
                 List<(double X, double Y)> line = offset == 0 ? curve : Offset(curve, offset);
-                result.Add(new WordShapeTextOnPath(PathData(line), Length(line), fontSize, lines[next + i]));
+                result.Add(new WordShapeTextOnPath(PathData(line), Length(line), fontSize, lines[next + i])
+                {
+                    LineHeightPt = lineHeight, UpperData = upperData, LowerData = lowerData, LineIndex = i, LineCount = count,
+                });
             }
             next += count; left -= count; area++; areasLeft--;
         }
@@ -161,8 +176,9 @@ public static class WordOfficeArtFontwork
 
     /// <summary>Turns <paramref name="shape"/> (its geometry evaluated) into its text effect: the text on the outlines, filled with the
     /// shape's fill (a gradient / pattern paint too), the outline itself not drawn (EnhancedCustomShapeEngine.cxx:236-262).</summary>
-    public static void Apply(WordShape shape, string text, string? font)
+    public static void Apply(WordShape shape, string text, string? font, int align = 1)
     {
+        shape.TextOnPathAlign = align;
         shape.TextOnPaths = Layout(shape.Paths ?? [], text, shape.Height);
         shape.TextOnPathFont = font;
         shape.TextOnPathColor = shape.FillPaint ?? shape.FillColor ?? "#000000";

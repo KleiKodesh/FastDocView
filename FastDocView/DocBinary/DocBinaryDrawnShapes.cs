@@ -356,7 +356,7 @@ internal static class DocBinaryDrawnShapes
         // outline (svx EnhancedCustomShapeEngine.cxx:236-262), the text filled with the shape's fill colour
         bool textEffect = Flag(p, 255, 0x4000) ?? (p.TryGetValue(255, out uint gtextFlags) && (gtextFlags & 0x4000) != 0);
         DocBinaryShapeText? shapeText = TextOf(table, record, stories);
-        if (textEffect && shapeText?.Literal is { } wordArt) WordOfficeArtFontwork.Apply(shape, wordArt, shapeText.Value.FontFamily);
+        if (textEffect && shapeText?.Literal is { } wordArt) WordOfficeArtFontwork.Apply(shape, wordArt, shapeText.Value.FontFamily, p.TryGetValue(194, out uint align) ? (int)align : 1);   // gtextAlign 194
         else if (shapeText is { } text)
         {
             shape.TextIndex = texts.Count;

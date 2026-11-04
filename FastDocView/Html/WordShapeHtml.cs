@@ -87,6 +87,8 @@ public sealed class WordShape
     /// <summary>Text-effect (WordArt / Fontwork) lines set on paths (<see cref="WordOfficeArtFontwork"/>), drawn in their font and colour.</summary>
     internal List<WordShapeTextOnPath>? TextOnPaths;
     internal string? TextOnPathFont, TextOnPathColor;
+    /// <summary>gtextAlign (MSO_GEOTEXTALIGN, msdffdef.hxx:594-601: 0 stretch, 1 centre - the default, msdffimp.cxx:4466 -, 2 left, 3 right, 4 letter / 5 word justify).</summary>
+    internal int TextOnPathAlign = 1;
     public WordLineCap LineCap;
     /// <summary>Per stop of <see cref="GradientStops"/> (null = all opaque).</summary>
     public List<double>? GradientStopOpacities;
@@ -464,9 +466,17 @@ public static class WordShapeHtml
     }
 
     /// <summary>Each text-effect line along its path: SVG textPath places and turns every glyph, its centre on the path, the line stretched to the path's length.</summary>
+    /// <remarks>
+    /// The page finishes what needs the browser's font metrics (KitveiHakodesh vue-frontend fastDocViewFontwork.ts), from these
+    /// attributes on each &lt;text&gt;: data-fontwork="single" with data-fontwork-height (the line height before the fit factor) and
+    /// data-fontwork-length (its outline's length) - the shape's lines share one fit factor, so they sit in one data-fontwork-shape
+    /// group; data-fontwork="pair" with data-fontwork-upper / -lower (the two outlines) and data-fontwork-line / -lines (its band).
+    /// Without the page's script the text stays on the path as written here.
+    /// </remarks>
     private static void AppendTextOnPaths(StringBuilder html, WordShape shape)
     {
         if (shape.FillDefinitions is { } definitions) { html.Append("<defs>").Append(definitions).Append("</defs>"); shape.FillDefinitions = null; }
+        html.Append("<g data-fontwork-shape=\"\">");
         foreach (WordShapeTextOnPath line in shape.TextOnPaths!)
         {
             if (line.Text.Length == 0 || line.PathLength <= 0) continue;
@@ -474,9 +484,16 @@ public static class WordShapeHtml
             html.Append("<defs><path id=\"").Append(id).Append("\" d=\"").Append(line.PathData).Append("\"/></defs>");
             html.Append("<text font-size=\"").Append(Number(line.FontSizePt)).Append("\" dominant-baseline=\"central\" fill=\"").Append(shape.TextOnPathColor ?? "#000000").Append('"');
             if (shape.TextOnPathFont is { Length: > 0 } font) html.Append(" font-family=\"").Append(WordHtmlText.Encode(font)).Append('"');
+            if (line.UpperData is { } upper && line.LowerData is { } lower)
+                html.Append(" data-fontwork=\"pair\" data-fontwork-upper=\"").Append(upper).Append("\" data-fontwork-lower=\"").Append(lower)
+                    .Append("\" data-fontwork-line=\"").Append(line.LineIndex).Append("\" data-fontwork-lines=\"").Append(line.LineCount).Append('"');
+            else
+                html.Append(" data-fontwork=\"single\" data-fontwork-height=\"").Append(Number(line.LineHeightPt)).Append("\" data-fontwork-length=\"").Append(Number(line.PathLength)).Append('"');
+            html.Append(" data-fontwork-align=\"").Append(shape.TextOnPathAlign).Append('"');
             html.Append("><textPath href=\"#").Append(id).Append("\" textLength=\"").Append(Number(line.PathLength)).Append("\" lengthAdjust=\"spacingAndGlyphs\">")
                 .Append(WordHtmlText.Encode(line.Text)).Append("</textPath></text>");
         }
+        html.Append("</g>");
     }
 
     private static string PathData(List<WordShapeSubpath> subpaths, bool closeAll)

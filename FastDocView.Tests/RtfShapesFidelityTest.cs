@@ -137,7 +137,8 @@ public static class RtfShapesFidelityTest
                          "axial shade (focus 50): the start colour on the axis");
         TestReport.Check(Occurrences(html[8], "word-officeart-shade-") >= 4 && html[8].Contains("word-officeart-pattern-") && html[8].Contains("word-shape-fill-picture")
                          && html[8].Contains("data-word-picture=\"8:0\""), "rectangular shades, the 8 x 8 pattern, the picture fill clipped to the ellipse");
-        TestReport.Check(html[9].Contains("<path d=\"M0 0L72 0L36 72Z\"") && html[9].Contains("<text font-size=\"36\" dominant-baseline=\"central\" fill=\"#ff0000\" font-family=\"Arial\"><textPath href=\"#word-shape-textpath-")
+        TestReport.Check(html[9].Contains("<path d=\"M0 0L72 0L36 72Z\"") && html[9].Contains("<text font-size=\"36\" dominant-baseline=\"central\" fill=\"#ff0000\" font-family=\"Arial\" data-fontwork=\"pair\" data-fontwork-upper=\"M0 0L")
+                         && html[9].Contains("data-fontwork=\"single\" data-fontwork-height=\"144\"") && html[9].Contains("data-fontwork-align=\"1\"><textPath href=\"#word-shape-textpath-")
                          && html[9].Contains("\" textLength=\"144\" lengthAdjust=\"spacingAndGlyphs\">WordArtText</textPath>") && html[9].Contains("d=\"M0 18L2.25 18")
                          && html[9].Contains(">ArchText</textPath>") && html[9].Contains("fill=\"#0000ff\"") && !html[9].Contains("word-art")
                          && SearchCount(path, "ArchText") == 1

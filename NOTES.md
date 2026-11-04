@@ -1516,3 +1516,11 @@ EnhancedCustomShapeGeometry.cxx (default filling / stroking tables :6155-6213); 
   (.doc gtextUNICODE and RTF gtext text are still fed once).
 - `.docx`: VML WordArt (v:textpath on the same MSO shape types) and DrawingML prstTxWarp are not read by the .docx reader yet; the
   shared `WordOfficeArtGeometry.Preset` + `WordOfficeArtFontwork.Apply` take an MSO type, its adjust values and the string.
+- **2026-11-04, the page finishes Fontwork with the browser's font metrics** (KitveiHakodesh vue-frontend
+  `features/fast-doc-view/fastDocViewFontwork.ts`, directive on the block HTML): the single-outline fit factor is applied with
+  measured text widths (SVG getComputedTextLength), as LibreOffice's CalculateHorizontalScalingFactor / GetFontWorkOutline do,
+  then the line is placed per gtextAlign (msdffimp.cxx:4466-4478); paired outlines are bent as FitTextOutlinesToShapeOutlines
+  does - the mapping is linear in fy for each fx, so the text is drawn once into a canvas and copied column by column (one
+  device pixel wide) between the two curves; the bent image replaces the paint, the text stays (transparent) for selection.
+  The writer marks each line with data-fontwork-* attributes (`WordShapeHtml.AppendTextOnPaths`); without the page's script the
+  midline layout above remains. Live check: `vue-demo/playwright/fontworkCheck.mjs`.

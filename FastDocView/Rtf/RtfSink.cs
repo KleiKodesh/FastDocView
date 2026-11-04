@@ -139,6 +139,8 @@ internal sealed class RtfShapePlacement
     public bool IsTextEffect;
     /// <summary>The gtextUNICODE string itself (drawn on the outlines by a text effect).</summary>
     public string? WordArtText;
+    /// <summary>gtextAlign (1 = centre when not given).</summary>
+    public int WordArtAlign = 1;
     public string? WordArtFont;
     public double WordArtSizePt;
     public string? TextHtml;
@@ -219,6 +221,7 @@ internal sealed class RtfShapePlacement
             case "lineDashing": LineDashing = clamped; break;
             case "fillType": FillType = clamped; break;
             case "fGtext": IsTextEffect = number != 0; break;
+            case "gtextAlign": WordArtAlign = clamped; break;
             case "geoLeft": GeoLeft = clamped; break;
             case "geoTop": GeoTop = clamped; break;
             case "geoRight": GeoRight = clamped; break;
