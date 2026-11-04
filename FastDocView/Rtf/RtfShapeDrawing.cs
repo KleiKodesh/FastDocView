@@ -12,8 +12,10 @@ internal static class RtfShapeDrawing
         => new((shape.TextLeft ?? 91440) / EmuPerPoint, (shape.TextTop ?? 45720) / EmuPerPoint, (shape.TextRight ?? 91440) / EmuPerPoint,
                (shape.TextBottom ?? 45720) / EmuPerPoint, null, 0, false, null, 0, null, shape.FitsShapeToText);
 
-    /// <summary>The fill, or null: fFilled defaults to on (rtfsdrimport.cxx:199), fillColor to white ("White in Word", rtfsdrimport.cxx:360-363).</summary>
-    public static string? FillColorCss(RtfShapePlacement shape) => shape.Filled == false ? null : Css(shape.FillColor ?? 0xFFFFFF);
+    /// <summary>The fill, or null: fFilled defaults to on (rtfsdrimport.cxx:199) - except for the types OfficeArt does not fill by default (a line becomes
+    /// a LineShape without fill, rtfsdrimport.cxx:329-330; the same table as .doc), fillColor to white ("White in Word", rtfsdrimport.cxx:360-363).</summary>
+    public static string? FillColorCss(RtfShapePlacement shape)
+        => (shape.Filled ?? WordOfficeArtShapeTypes.IsFilledByDefault(shape.ShapeType < 0 ? WordOfficeArtShapeTypes.Rectangle : shape.ShapeType)) ? Css(shape.FillColor ?? 0xFFFFFF) : null;
 
     /// <summary>The line, or null: fLine 0 = no line (rtfsdrimport.cxx:183-190), lineColor defaults to black (rtfsdrimport.cxx:382).</summary>
     public static string? LineColorCss(RtfShapePlacement shape) => shape.HasLine == false ? null : Css(shape.LineColor ?? 0);
@@ -57,13 +59,13 @@ internal static class RtfShapeDrawing
             X = x, Y = y, Width = width, Height = height,
             RotationDegrees = shape.RotationDegrees, FlipHorizontal = shape.FlipHorizontal, FlipVertical = shape.FlipVertical,
             FillColor = FillColorCss(shape), LineColor = LineColorCss(shape), LineWidthPt = LineWidthPt(shape),
-            HeadArrow = shape.StartArrow, TailArrow = shape.EndArrow,
             Dash = shape.LineDashing is { } dashing ? WordOfficeArtShapeTypes.Dash(dashing) : null,
             FillOpacity = shape.FillOpacity is { } fillOpacity ? fillOpacity / 65536.0 : 1,
             LineOpacity = shape.LineOpacity is { } lineOpacity ? lineOpacity / 65536.0 : 1,
             TextStyle = TextStyle(shape),
         };
-        WordOfficeArtShapeTypes.Apply(drawn, shape.ShapeType < 0 ? WordOfficeArtShapeTypes.Rectangle : shape.ShapeType, shape.Adjust1, shape.Adjust2);
+        WordOfficeArtShapeTypes.Apply(drawn, shape.ShapeType < 0 ? WordOfficeArtShapeTypes.Rectangle : shape.ShapeType, shape.Adjust);
+        WordOfficeArtShapeTypes.ApplyLineEnds(drawn, shape.StartArrowType, shape.StartArrowWidth, shape.StartArrowLength, shape.EndArrowType, shape.EndArrowWidth, shape.EndArrowLength);
         if (shape.Picture is { } picture)
         {
             drawn.Geometry = WordShapeGeometry.Picture;

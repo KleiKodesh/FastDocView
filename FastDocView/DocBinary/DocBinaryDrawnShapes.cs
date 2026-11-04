@@ -188,15 +188,22 @@ internal static class DocBinaryDrawnShapes
             LineColor = stroked ? Color(p, PropertyLineColor, 0) : null,
             LineWidthPt = (p.TryGetValue(PropertyLineWidth, out uint lineWidth) ? (int)lineWidth : 9525) / 12700.0,
             Dash = p.TryGetValue(PropertyLineDashing, out uint dashing) ? WordOfficeArtShapeTypes.Dash((int)dashing) : null,
-            HeadArrow = p.TryGetValue(PropertyStartArrow, out uint startArrow) && startArrow != 0,
-            TailArrow = p.TryGetValue(PropertyEndArrow, out uint endArrow) && endArrow != 0,
             FillOpacity = p.TryGetValue(PropertyFillOpacity, out uint fillOpacity) ? fillOpacity / 65536.0 : 1,
             LineOpacity = p.TryGetValue(PropertyLineOpacity, out uint lineOpacity) ? lineOpacity / 65536.0 : 1,
             TextStyle = new WordTextBoxStyle(Emu(p, PropertyTextLeft, 25 * 3600), Emu(p, PropertyTextTop, 13 * 3600), Emu(p, PropertyTextRight, 25 * 3600),
                                              Emu(p, PropertyTextBottom, 13 * 3600), null, 0, false, null, 0, null,
                                              p.TryGetValue(PropertyFitText, out uint fit) && (fit & 2) != 0),
         };
-        WordOfficeArtShapeTypes.Apply(shape, type, p.TryGetValue(PropertyAdjust, out uint a1) ? (int)a1 : null, p.TryGetValue(PropertyAdjust2, out uint a2) ? (int)a2 : null);
+        var adjust = new int?[10];
+        for (int i = 0; i < 10; i++) adjust[i] = p.TryGetValue(PropertyAdjust + i, out uint value) ? (int)value : null;
+        WordOfficeArtShapeTypes.Apply(shape, type, adjust);
+        // line ends only when fArrowheadsOK (line booleans 0x10, set by default) - msdffimp.cxx:1063
+        if (stroked && (Flag(p, PropertyLineFlags, 0x10) ?? true))
+        {
+            int? Get(int id) => p.TryGetValue(id, out uint v) ? (int)v : null;
+            WordOfficeArtShapeTypes.ApplyLineEnds(shape, Get(PropertyStartArrow), Get(PropertyStartArrow + 2), Get(PropertyStartArrow + 3),
+                                                  Get(PropertyEndArrow), Get(PropertyEndArrow + 3), Get(PropertyEndArrow + 4));
+        }
         if (p.ContainsKey(PropertyPib)) { shape.Geometry = WordShapeGeometry.Picture; shape.PictureId = DocBinaryFloatingPictures.IdPrefix + record.Spid.ToString(System.Globalization.CultureInfo.InvariantCulture); }
         if (p.TryGetValue(PropertyTextId, out uint textId) && stories.RangeOf(textId) is { } range) { shape.TextIndex = texts.Count; texts.Add(range); }
         shapes.Add(shape);

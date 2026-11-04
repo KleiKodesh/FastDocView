@@ -273,7 +273,7 @@ public static class PagePlacementFidelityTest
                          "\\shpwr2 + posh 3: floats right at the shape's size, dxWrapDistLeft as the gap, \\shprslt not drawn (" + html[0] + ")");
         TestReport.Check(html[1].Contains("display:block;margin:0pt auto 0pt auto;"), "\\shpwr1 + posh 2: a centred block above and below (" + html[1] + ")");
         TestReport.Check(html[2].Contains("display:block;margin:0pt auto 0pt 36pt;"), "\\shpwr3, no posh: through the text, at \\shpleft (" + html[2] + ")");
-        TestReport.Check(html[3].Contains("<rect") && !html[3].Contains("[image]") && html[3].Contains("no picture"), "a shape without a picture is drawn as its shape type (RtfShapesFidelityTest) (" + html[3] + ")");
+        TestReport.Check(html[3].Contains("<path d=\"M0 0L36 0L36 0L0 0L0 0Z\"") && !html[3].Contains("[image]") && html[3].Contains("no picture"), "a shape without a picture is drawn as its shape type (RtfShapesFidelityTest) (" + html[3] + ")");
         TestReport.Check(document.ReadPicture("0:0") is { ContentType: "image/png" } read && read.Bytes.SequenceEqual(Png), "ReadPicture of a shape's pib picture");
         TestReport.Check(document.ReadPicture("0:1") is null, "the \\shprslt copy is not a second picture");
     }

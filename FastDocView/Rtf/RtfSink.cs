@@ -106,10 +106,10 @@ internal sealed class RtfShapePlacement
     public bool FlipHorizontal, FlipVertical, FitsShapeToText;
     /// <summary>rotation: fixed 16.16 degrees, positive = clockwise (rtfsdrimport.cxx:245-249).</summary>
     public double RotationDegrees;
-    /// <summary>lineStartArrowhead / lineEndArrowhead other than 0 (none).</summary>
-    public bool StartArrow, EndArrow;
-    /// <summary>adjustValue / adjust2Value (the shape type's 21600 space; null = its default).</summary>
-    public int? Adjust1, Adjust2;
+    /// <summary>lineStartArrowhead / Width / Length and lineEndArrowhead / Width / Length (MSOLINEEND / -WIDTH / -LENGTH; null = not given).</summary>
+    public int? StartArrowType, StartArrowWidth, StartArrowLength, EndArrowType, EndArrowWidth, EndArrowLength;
+    /// <summary>adjustValue .. adjust10Value (the shape type's coordinate space; null = its default).</summary>
+    public readonly int?[] Adjust = new int?[10];
     /// <summary>lineDashing (MSO_LineDashing; null = solid), fillOpacity / lineOpacity (fixed 16.16, 65536 = opaque).</summary>
     public int? LineDashing;
     public long? FillOpacity, LineOpacity;
@@ -152,13 +152,20 @@ internal sealed class RtfShapePlacement
             case "fFlipV": FlipVertical = number != 0; break;
             case "fFitShapeToText": FitsShapeToText = number == 1; break;
             case "rotation": RotationDegrees = number / 65536.0; break;
-            case "lineStartArrowhead": StartArrow = number != 0; break;
-            case "lineEndArrowhead": EndArrow = number != 0; break;
-            case "adjustValue": Adjust1 = clamped; break;
+            case "lineStartArrowhead": StartArrowType = clamped; break;
+            case "lineStartArrowWidth": StartArrowWidth = clamped; break;
+            case "lineStartArrowLength": StartArrowLength = clamped; break;
+            case "lineEndArrowhead": EndArrowType = clamped; break;
+            case "lineEndArrowWidth": EndArrowWidth = clamped; break;
+            case "lineEndArrowLength": EndArrowLength = clamped; break;
+            case "adjustValue": Adjust[0] = clamped; break;
+            case "adjust2Value" or "adjust3Value" or "adjust4Value" or "adjust5Value" or "adjust6Value" or "adjust7Value" or "adjust8Value"
+                or "adjust9Value" or "adjust10Value":
+                Adjust[int.Parse(name.Substring(6, name.Length - 11), System.Globalization.CultureInfo.InvariantCulture) - 1] = clamped;
+                break;
             case "lineDashing": LineDashing = clamped; break;
             case "fillOpacity": FillOpacity = number; break;
             case "lineOpacity": LineOpacity = number; break;
-            case "adjust2Value": Adjust2 = clamped; break;
         }
     }
 }

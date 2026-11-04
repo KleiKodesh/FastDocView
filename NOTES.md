@@ -1421,3 +1421,21 @@ EnhancedCustomShapeGeometry.cxx (default filling / stroking tables :6155-6213); 
   box of their size), custom geometry (pVertices / pSegmentInfo), gradient / pattern / picture fills (fillType), WordArt text
   (gtextUNICODE complex property in .doc), header / footer shapes (PlcSpaHdr), text-box tables drawn as paragraphs, system
   colours (the defaults are used), RTF fillType gradients.
+
+### OfficeArt presets and line ends for RTF and .doc (2026-11-04)
+
+- **Every MSO preset**: `scripts/generate-officeart-shapes.py` copies LibreOffice's svx EnhancedCustomShapeGeometry.cxx tables
+  (GetCustomShapeContent: 190 types - vertices, segments, calculation records, default adjust values, coordinate size) into
+  the generated `Html/WordOfficeArtShapeDefinitions.cs`; `Html/WordOfficeArtGeometry.cs` evaluates them as LibreOffice does
+  (EnhancedCustomShape2d.cxx GetEquation :88-330 and CreateSubPath :2078-2690, svdoashp.cxx lcl_ShapeSegmentFromBinary
+  :96-165, tools poly.cxx arcs :246-330) into the shared `WordShapePath` model; adjustValue .. adjust10Value honoured. Types
+  without a table (e.g. 0 = not primitive) stay a box. Regenerate:
+  `python scripts/generate-officeart-shapes.py <EnhancedCustomShapeGeometry.cxx> <include/svx/msdffdef.hxx> FastDocView/Html/WordOfficeArtShapeDefinitions.cs`.
+- **Line ends** (both formats): MSOLINEEND 1-5 ([MS-ODRAW] 2.4.16; 6 / 7 "MUST be ignored"; the RTF shapes page's list
+  numbers the open arrow 6 and its lineDashing list skips 5 - both disagree with [MS-ODRAW] / msdffdef.hxx, which are followed),
+  width / length 2.4.17 / 2.4.18, drawn with LibreOffice's binary arrow geometry (msdffimp.cxx:786-900 GetLineArrow: 2 pt
+  minimum, factors 2 / 3 / 5, open arrow 3.5 / 4.5 / 6, diamond and oval centred) through the shared line-end drawing
+  (`WordShape.HeadMarker` / `TailMarker`). .doc: only with fArrowheadsOK (line booleans 0x10, msdffimp.cxx:1063).
+- RTF fill default now follows the OfficeArt table too (a line is not filled: LibreOffice makes it a LineShape).
+- Check: `--fidelity` WordOfficeArtGeometryTest (every table finite) and RtfShapesFidelityTest outlines (ellipse, triangle,
+  round rectangle, diamond, smiley, arrow, line + arrow end).

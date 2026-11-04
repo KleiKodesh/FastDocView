@@ -96,14 +96,14 @@ public static class RtfShapesFidelityTest
                          && html[0].Contains("border:2pt solid #008000") && html[0].Contains("background:#ffff00") && html[0].Contains("padding:0pt 0pt 0pt 0pt"),
                          "text box: size, square wrap, line, fill, insets");
         TestReport.Check(Occurrences(html[0], "text-box-paragraph") == 2 && html[0].Contains("boxtext one") && html[0].Contains("outside text"), "text box: two paragraphs, outside text kept");
-        TestReport.Check(html[1].Contains("<ellipse") && html[1].Contains("fill=\"#ff0000\"") && html[1].Contains("stroke=\"none\""), "ellipse: red fill, no line");
+        TestReport.Check(html[1].Contains("<path d=\"M72 18L71.83 19.76") && html[1].Contains("fill=\"#ff0000\"") && !html[1].Contains("stroke=\"#"), "ellipse (LibreOffice's msoEllipse: a full angle ellipse): red fill, no line (" + html[1] + ")");
         TestReport.Check(html[2].Contains("<path d=\"M0 9") && html[2].Contains("fill=\"none\"") && html[2].Contains("stroke=\"#0000ff\"") && html[2].Contains("arrowtext"),
                          "arrow: MSO outline, no fill, blue line, its text");
         TestReport.Check(html[3].Contains("left:0pt;top:0pt;width:144pt;height:72pt") && html[3].Contains("left:144pt;top:36pt;width:144pt;height:36pt")
                          && html[3].Contains("rotate(90)") && html[3].Contains("groupone") && html[3].Contains("grouptwo"), "group: children placed by relLeft.. in groupLeft.., rotation");
-        TestReport.Check(html[4].Contains("<path d=\"M0 0L144 36\"") && Occurrences(html[4], "<path") == 2, "line with an end arrow");
-        TestReport.Check(html[5].Contains("M36 0L72 72L0 72Z") && html[5].Contains(" 0 0 1 ") && html[5].Contains("M36 0L72 36L36 72L0 36Z") && html[5].Contains("<rect"),
-                         "triangle, round rectangle, diamond, unknown type as a box");
+        TestReport.Check(html[4].Contains("<path d=\"M0 0L138.57 34.64\" fill=\"none\"") && Occurrences(html[4], "<path") == 2 && html[4].Contains("<path d=\"M144 36L"), "line with an end arrow (no fill: a line is not filled by default; the 2 pt minimum medium arrow, 6 pt long) (" + html[4] + ")");
+        TestReport.Check(html[5].Contains("M36 0L72 72L0 72Z") && html[5].Contains("M12 0L12 0L10.82 0.03") && html[5].Contains("M36 0L72 36L36 72L0 36L36 0Z") && html[5].Contains("M16.23 48.37C28.93 61.73 43.07 61.73 55.77 48.37"),
+                         "triangle, round rectangle (corner 3600 / 21600), diamond, smiley face (type 96: eyes and the mouth curve) (" + html[5] + ")");
         TestReport.Check(html[6].Contains("translate(72 0) rotate(90)"), "a rotated group turns its child about the group's centre");
         foreach ((string query, int expected) in new[] { ("boxtext", 1), ("second line", 1), ("outside", 1), ("arrowtext", 1), ("groupone", 1), ("grouptwo", 1), ("RESULTCOPY", 0), ("GROUPCOPY", 0) })
         {

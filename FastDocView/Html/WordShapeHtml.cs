@@ -69,6 +69,8 @@ public sealed class WordShape
     public List<WordShapePath>? Paths;
     /// <summary>Line ends at the start (head) and end (tail) of every open subpath of <see cref="Paths"/>.</summary>
     public WordLineEnd HeadEnd, TailEnd;
+    /// <summary>A line end drawn by its own format's geometry (OfficeArt binary arrows) instead of <see cref="WordLineEndGeometry"/>.</summary>
+    internal WordLineEndMarker? HeadMarker, TailMarker;
     public WordLineCap LineCap;
     /// <summary>Per stop of <see cref="GradientStops"/> (null = all opaque).</summary>
     public List<double>? GradientStopOpacities;
@@ -305,13 +307,13 @@ public static class WordShapeHtml
         if (length <= 0) return;
         double start = 0, end = 0, startOverlap = 0, endOverlap = 0;
         var markers = new StringBuilder();
-        if (WordLineEndGeometry.Marker(shape.HeadEnd, shape.LineWidthPt) is { } head)
+        if ((shape.HeadMarker ?? WordLineEndGeometry.Marker(shape.HeadEnd, shape.LineWidthPt)) is { } head)
         {
             start = head.Consumed;
             startOverlap = head.Width / 15;
             AppendMarker(markers, head, points[0], PointAt(points, cumulative, Math.Min(start, length)), color, shape.LineOpacity);
         }
-        if (WordLineEndGeometry.Marker(shape.TailEnd, shape.LineWidthPt) is { } tail)
+        if ((shape.TailMarker ?? WordLineEndGeometry.Marker(shape.TailEnd, shape.LineWidthPt)) is { } tail)
         {
             end = tail.Consumed;
             endOverlap = tail.Width / 15;

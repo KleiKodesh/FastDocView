@@ -24,7 +24,7 @@ public static class DocBinaryShapesFidelityTest
                 int shown = Occurrences(Tags.Replace(html, ""), word), found = SearchCount(doc, word);
                 TestReport.Check(shown == 1 && found == 1, $"LibreOffice .doc: '{word}' shown {shown}, found {found}, expected 1 / 1");
             }
-            TestReport.Check(html.Contains("<svg") && html.Contains("<ellipse") && html.Contains("text-box"), "LibreOffice .doc: shapes drawn, text boxes placed");
+            TestReport.Check(html.Contains("<svg") && html.Contains("<path d=") && html.Contains("text-box"), "LibreOffice .doc: shapes drawn, text boxes placed");
             int placeholder = html.IndexOf("[image]", StringComparison.Ordinal);
             TestReport.Check(placeholder < 0, "LibreOffice .doc: no shape left as a placeholder" + (placeholder < 0 ? "" : " (" + html.Substring(Math.Max(0, placeholder - 300), Math.Min(400, html.Length - Math.Max(0, placeholder - 300))) + ")"));
         }
