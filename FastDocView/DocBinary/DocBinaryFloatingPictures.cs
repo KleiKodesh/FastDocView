@@ -108,11 +108,13 @@ internal sealed class DocBinaryFloatingPictures
         bool pageRelative = bx == 1 || (fspa.flags & 0x2000) != 0;
         WordPictureWrap wrap = wr switch { 1 => WordPictureWrap.TopAndBottom, 3 => WordPictureWrap.None, _ => WordPictureWrap.Square };
         WordPictureSide side = (wr is 2 or 4 && wrk == 1) ? WordPictureSide.Right : WordPictureSide.Left;
-        double offsetPt = side == WordPictureSide.Left && !pageRelative ? Math.Max(0, fspa.xaLeft / 20.0) : 0;
+        // xaLeft from the margin / column (bx 0 / 2: the column) or the page edge (bx 1, fRcaSimple)
+        double offsetPt = side == WordPictureSide.Left ? Math.Max(0, fspa.xaLeft / 20.0) : 0;
         // wrk only counts for wr 2 / 4 (ww8graf.cxx:2730-2749): 1 = text only on the left, 2 = only on the right, 0 / 3 both / largest
         WordPictureTextSides sides = wr is 2 or 4 ? wrk switch { 1 => WordPictureTextSides.LeftOnly, 2 => WordPictureTextSides.RightOnly, _ => WordPictureTextSides.Both }
                                                   : WordPictureTextSides.Both;
-        return new WordPictureLayout(widthPt, heightPt, wrap, side, 0, 0, 0, 0, offsetPt, sides);
+        return new WordPictureLayout(widthPt, heightPt, wrap, side, 0, 0, 0, 0, offsetPt, sides,
+                                     OffsetOrigin: pageRelative ? WordPictureOffsetOrigin.Page : WordPictureOffsetOrigin.Column);
     }
 
     /// <summary>

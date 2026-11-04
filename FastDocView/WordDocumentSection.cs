@@ -7,7 +7,9 @@ namespace FastDocView;
 /// right margins and the gutter (twips, 1/1440 inch), as Word and LibreOffice lay out the text.
 /// Index-time data; no file access.
 /// </summary>
-public readonly record struct WordDocumentSection(int FirstBlockIndex, int TextWidthTwips);
+/// <param name="ColumnLeftTwips">Where the text column starts from the page's left edge: left margin + gutter (twips); -1 = not
+/// known. Turns an object offset from the page edge into one from the column.</param>
+public readonly record struct WordDocumentSection(int FirstBlockIndex, int TextWidthTwips, int ColumnLeftTwips = -1);
 
 /// <summary>Page setup defaults and the text-width rule shared by the formats.</summary>
 public static class WordDocumentPageSetup
@@ -41,7 +43,16 @@ public static class WordDocumentPageSetup
     }
 
     /// <summary>The text width (points) of the section holding block <paramref name="blockIndex"/>.</summary>
-    public static double TextWidthPointsAt(IReadOnlyList<WordDocumentSection> sections, int blockIndex)
+    public static double TextWidthPointsAt(IReadOnlyList<WordDocumentSection> sections, int blockIndex) => SectionAt(sections, blockIndex).TextWidthTwips / 20.0;
+
+    /// <summary>Where the text column of block <paramref name="blockIndex"/>'s section starts from the page's left edge (points); -1 = not known.</summary>
+    public static double ColumnLeftPointsAt(IReadOnlyList<WordDocumentSection> sections, int blockIndex)
+        => SectionAt(sections, blockIndex).ColumnLeftTwips is >= 0 and var left ? left / 20.0 : -1;
+
+    /// <summary>The left margin plus a left gutter: where the text column starts on the page (twips).</summary>
+    public static int ColumnLeft(int leftMarginTwips, int gutterTwips) => Math.Max(0, leftMarginTwips) + Math.Max(0, gutterTwips);
+
+    private static WordDocumentSection SectionAt(IReadOnlyList<WordDocumentSection> sections, int blockIndex)
     {
         int low = 0, high = sections.Count - 1, found = -1;      // the last section starting at or before the block
         while (low <= high)
@@ -49,7 +60,7 @@ public static class WordDocumentPageSetup
             int middle = (low + high) >> 1;
             if (sections[middle].FirstBlockIndex <= blockIndex) { found = middle; low = middle + 1; } else high = middle - 1;
         }
-        return (found >= 0 ? sections[found].TextWidthTwips : DefaultTextWidthTwips) / 20.0;
+        return found >= 0 ? sections[found] : new WordDocumentSection(0, DefaultTextWidthTwips);
     }
 
     /// <summary>
@@ -57,14 +68,16 @@ public static class WordDocumentPageSetup
     /// (inclusive), <paramref name="widths"/>[i] its text width. Blocks after the last recorded end (a
     /// section whose page setup is not known yet, while the index builds) belong to the last section.
     /// </summary>
-    public static IReadOnlyList<WordDocumentSection> FromSectionEnds(IReadOnlyList<int> lastBlockIndexes, IReadOnlyList<int> widths)
+    public static IReadOnlyList<WordDocumentSection> FromSectionEnds(IReadOnlyList<int> lastBlockIndexes, IReadOnlyList<int> widths, IReadOnlyList<int>? columnLefts = null)
     {
         if (lastBlockIndexes.Count == 0) return DefaultSections;
         var sections = new List<WordDocumentSection>(lastBlockIndexes.Count);
         int first = 0;
         for (int i = 0; i < lastBlockIndexes.Count; i++)
         {
-            if (sections.Count == 0 || sections[sections.Count - 1].TextWidthTwips != widths[i]) sections.Add(new WordDocumentSection(first, widths[i]));
+            int left = columnLefts is not null && i < columnLefts.Count ? columnLefts[i] : -1;
+            if (sections.Count == 0 || sections[sections.Count - 1].TextWidthTwips != widths[i] || sections[sections.Count - 1].ColumnLeftTwips != left)
+                sections.Add(new WordDocumentSection(first, widths[i], left));
             first = lastBlockIndexes[i] + 1;
         }
         return sections;
@@ -79,8 +92,8 @@ public static class WordDocumentPageSetup
         var sections = new List<WordDocumentSection>();
         foreach (WordDocumentSection section in starts)
         {
-            if (sections.Count > 0 && section.FirstBlockIndex <= sections[sections.Count - 1].FirstBlockIndex) { sections[sections.Count - 1] = sections[sections.Count - 1] with { TextWidthTwips = section.TextWidthTwips }; continue; }
-            if (sections.Count > 0 && sections[sections.Count - 1].TextWidthTwips == section.TextWidthTwips) continue;
+            if (sections.Count > 0 && section.FirstBlockIndex <= sections[sections.Count - 1].FirstBlockIndex) { sections[sections.Count - 1] = sections[sections.Count - 1] with { TextWidthTwips = section.TextWidthTwips, ColumnLeftTwips = section.ColumnLeftTwips }; continue; }
+            if (sections.Count > 0 && sections[sections.Count - 1].TextWidthTwips == section.TextWidthTwips && sections[sections.Count - 1].ColumnLeftTwips == section.ColumnLeftTwips) continue;
             sections.Add(sections.Count == 0 ? section with { FirstBlockIndex = 0 } : section);
         }
         return sections.Count == 0 ? DefaultSections : sections;

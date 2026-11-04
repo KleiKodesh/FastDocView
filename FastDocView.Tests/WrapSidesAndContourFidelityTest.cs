@@ -33,19 +33,21 @@ public static class WrapSidesAndContourFidelityTest
         @"\pard " + Shape(@"\shpleft6000\shptop0\shpright7440\shpbottom1440\shpwr2\shpwrk0", Property("shapeType", "1")) + @"nearright\par",
         // 7 placed by offset alone near the left: floats left
         @"\pard " + Shape(@"\shpleft500\shptop0\shpright1940\shpbottom1440\shpwr2\shpwrk0", Property("shapeType", "1")) + @"nearleft\par",
-        // 8 the same offset as 6 but from the page edge (\shpbxpage): it includes the margin - no nearer-edge choice, left
-        @"\pard " + Shape(@"\shpbxpage\shpleft6000\shptop0\shpright7440\shpbottom1440\shpwr2\shpwrk0", Property("shapeType", "1")) + @"pageleft\par",
+        // 8 centred on the page from its edge (\shpbxpage, left margin 1800): 5400 - 1800 + 720 = 4320 = the column centre - the tie, left
+        @"\pard " + Shape(@"\shpbxpage\shpleft5400\shptop0\shpright6840\shpbottom1440\shpwr2\shpwrk0", Property("shapeType", "1")) + @"pageleft\par",
+        // 9 from the page edge, right of centre (7000 - 1800 + 720 > 4320): right
+        @"\pard " + Shape(@"\shpbxpage\shpleft7000\shptop0\shpright8440\shpbottom1440\shpwr2\shpwrk0", Property("shapeType", "1")) + @"pageright\par",
     ];
 
     public static void Run()
     {
         TestReport.Step("Two-sided and contour wrap: .rtf (synthetic + LibreOffice), .docx, .doc");
-        string rtf = Path.Combine(TestReport.OutputDirectory, "fidelity-v3-rtf-wrap-sides-contour.rtf");
+        string rtf = Path.Combine(TestReport.OutputDirectory, "fidelity-v4-rtf-wrap-sides-contour.rtf");
         string document = @"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}" + string.Join("", RtfBody) + "}";
         if (!File.Exists(rtf) || File.ReadAllText(rtf) != document) File.WriteAllText(rtf, document, new UTF8Encoding(false));
         List<string> html = Render(rtf);
-        TestReport.Check(html.Count >= 9, $"rtf: one block per paragraph ({html.Count})");
-        if (html.Count >= 9)
+        TestReport.Check(html.Count >= 10, $"rtf: one block per paragraph ({html.Count})");
+        if (html.Count >= 10)
         {
             TestReport.Check(html[0].Contains("float:left;") && !html[0].Contains("display:block;margin"), "rtf centred both sides: floats flush left (" + html[0] + ")");
             TestReport.Check(html[1].Contains("float:right;"), "rtf right both sides: floats right (" + html[1] + ")");
@@ -55,7 +57,8 @@ public static class WrapSidesAndContourFidelityTest
                              "rtf \\shpwr4 + pWrapPolygonVertices: shape-outside from the polygon (" + html[3] + ")");
             TestReport.Check(html[5].Contains("shape-outside:polygon(0pt 0pt,0pt 0pt,1pt 1pt,"), "rtf \\shpwr5 (through): a contour like tight (" + html[5] + ")");
             TestReport.Check(html[6].Contains("float:right;"), "rtf offset alone, centre right of the column's: floats right (" + html[6] + ")");
-            TestReport.Check(html[8].Contains("float:left;"), "rtf page-relative offset: floats left (" + html[8] + ")");
+            TestReport.Check(html[8].Contains("float:left;"), "rtf page-relative offset centred on the page: the tie, floats left (" + html[8] + ")");
+            TestReport.Check(html[9].Contains("float:right;"), "rtf page-relative offset right of the column centre: floats right (" + html[9] + ")");
             TestReport.Check(html[7].Contains("float:left;"), "rtf offset alone near the left: floats left (" + html[7] + ")");
             TestReport.Check(html[4].Contains("shape-outside:polygon(") && html[4].Contains(",72pt 36pt,"), "rtf \\shpwr4 ellipse, no polygon: its outline (widest at mid-height) (" + html[4] + ")");
         }

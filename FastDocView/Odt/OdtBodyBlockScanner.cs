@@ -557,11 +557,12 @@ internal sealed class OdtBodyBlockScanner
     private void NoteSectionStart(string family, string? styleName)
     {
         int block = BlockStartOffsets.Count - 1;
-        if (SectionStarts.Count == 0) SectionStarts.Add(new WordDocumentSection(0, _styles.PageSetup.DefaultTextWidthTwips));
+        if (SectionStarts.Count == 0) SectionStarts.Add(new WordDocumentSection(0, _styles.PageSetup.DefaultTextWidthTwips, _styles.PageSetup.DefaultColumnLeftTwips));
         if (_styles.MasterPageNameOf(family, styleName) is not { } master) return;
         int width = _styles.PageSetup.TextWidthOfMasterPage(master) ?? _styles.PageSetup.DefaultTextWidthTwips;
-        if (block == 0) SectionStarts[0] = new WordDocumentSection(0, width);
-        else SectionStarts.Add(new WordDocumentSection(block, width));
+        int left = _styles.PageSetup.ColumnLeftOfMasterPage(master) ?? _styles.PageSetup.DefaultColumnLeftTwips;
+        if (block == 0) SectionStarts[0] = new WordDocumentSection(0, width, left);
+        else SectionStarts.Add(new WordDocumentSection(block, width, left));
     }
 
     private void StartBlock(WordDocumentBlockKind kind, byte listLevel, string? label)

@@ -18,7 +18,7 @@ public readonly record struct RtfNoteReference(int BlockIndex, WordDocumentNoteK
 public sealed class RtfRandomAccessIndex
 {
     private const string Magic = "KHRTFIDX";
-    private const int FormatVersion = 8;     // 8: XE / TA entries;     // 7: anchor heads hold the open fields + field counters (RtfFieldTracker)
+    private const int FormatVersion = 9;     // 9: section column lefts; 8: XE / TA entries;     // 7: anchor heads hold the open fields + field counters (RtfFieldTracker)
      // 4: compact block tables; 5: no per-block tables - span anchors + parser snapshot + list state, Elias-Fano lists; 6: row indent + alignment in the snapshot
     /// <summary>File bytes between span anchors: a random block rescans at most this much.</summary>
     public const long AnchorSpanBytes = 256 << 10;
@@ -37,6 +37,7 @@ public sealed class RtfRandomAccessIndex
     /// <summary>Per section: its last block (inclusive) and its page text width in twips.</summary>
     public int[] SectionLastBlocks { get; init; } = [];
     public int[] SectionTextWidths { get; init; } = [];
+    public int[] SectionColumnLefts { get; init; } = [];
     /// <summary>Bookmarks ({\*\bkmkstart name}) and the block each marks.</summary>
     public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
 
@@ -148,6 +149,7 @@ public sealed class RtfRandomAccessIndex
         Section($"note references ({NoteReferences.Length})");
         IndexBinaryArrays.WriteDeltaVarints(writer, SectionLastBlocks);
         IndexBinaryArrays.WriteVarints(writer, SectionTextWidths);
+        IndexBinaryArrays.WriteVarints(writer, SectionColumnLefts);
         Section($"sections ({SectionLastBlocks.Length})");
         IndexBinaryArrays.WriteCompressedStrings(writer, Bookmarks.Names);
         new EliasFanoSequence(Bookmarks.Blocks).Write(writer);
@@ -201,7 +203,8 @@ public sealed class RtfRandomAccessIndex
         }
         int[] sectionLastBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
         int[] sectionTextWidths = IndexBinaryArrays.ReadVarints(reader);
-        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)blockCount))
+        int[] sectionColumnLefts = IndexBinaryArrays.ReadVarints(reader);
+        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionColumnLefts.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)blockCount))
             throw new InvalidDataException("RTF index: section table does not match the blocks.");
         string[] bookmarkNames = IndexBinaryArrays.ReadCompressedStrings(reader);
         int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
@@ -212,6 +215,7 @@ public sealed class RtfRandomAccessIndex
         {
             SectionLastBlocks = sectionLastBlocks,
             SectionTextWidths = sectionTextWidths,
+            SectionColumnLefts = sectionColumnLefts,
             Bookmarks = new WordDocumentBookmarkTable(bookmarkNames, bookmarkBlocks),
             IndexEntries = indexEntries,
         };

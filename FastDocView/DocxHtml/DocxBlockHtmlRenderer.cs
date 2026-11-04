@@ -17,6 +17,8 @@ public sealed class DocxBlockHtmlRenderer
 {
     /// <summary>The text width (points) of the section of the block being rendered: the column a floating object picks its nearer edge in (0 = unknown).</summary>
     public double ColumnWidthPt { get; set; }
+    /// <summary>Where that column starts from the page's left edge (points; -1 = not known).</summary>
+    public double ColumnLeftPt { get; set; } = -1;
     private static readonly XNamespace W = DocxStyleCascade.W;
 
     /// <summary>(kind, note id in footnotes.xml/endnotes.xml) → its number and label, or null when unknown.</summary>
@@ -1091,8 +1093,7 @@ public sealed class DocxBlockHtmlRenderer
         return new WordPictureLayout(width, height, pictureWrap, side, Emu("distT"), Emu("distR"), Emu("distB"), Emu("distL"), offset,
                                      TextSidesOf((string?)picture.Attribute("wrapText")),
                                      WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs((string?)picture.Attribute("wrapPolygon")), width, height),
-                                     // the nearer edge only for an offset from the column / margin (ST_RelFromH, ECMA-376 Part 1 20.4.3.4); page, character ... include more
-                                     (string?)picture.Attribute("relativeFrom") is "column" or "margin" ? ColumnWidthPt : 0);
+                                     ColumnWidthPt, OriginOfDrawing((string?)picture.Attribute("relativeFrom")), ColumnLeftPt);
     }
 
     /// <summary>
@@ -1171,9 +1172,29 @@ public sealed class DocxBlockHtmlRenderer
                                      Length("mso-wrap-distance-bottom"), Length("mso-wrap-distance-left"), offset,
                                      TextSidesOf((string?)picture.Attribute("wrapText")),
                                      WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs(coords), width, height),
-                                     // mso-position-horizontal-relative: the nearer edge only from the column (text, the default) or margin
-                                     (style.TryGetValue("mso-position-horizontal-relative", out string? relative) ? relative : null) is null or "text" or "margin" ? ColumnWidthPt : 0);
+                                     ColumnWidthPt, OriginOfVml(style.TryGetValue("mso-position-horizontal-relative", out string? relative) ? relative : null), ColumnLeftPt);
     }
+
+    /// <summary>
+    /// wp:positionH relativeFrom (ECMA-376 Part 1 20.4.3.4 ST_RelFromH): column / margin = the column's edge; page, leftMargin,
+    /// insideMargin = the page edge (inside on an odd page); rightMargin / outsideMargin = the right margin area; character = none.
+    /// </summary>
+    private static WordPictureOffsetOrigin OriginOfDrawing(string? relativeFrom) => relativeFrom switch
+    {
+        null or "column" or "margin" => WordPictureOffsetOrigin.Column,
+        "page" or "leftMargin" or "insideMargin" => WordPictureOffsetOrigin.Page,
+        "rightMargin" or "outsideMargin" => WordPictureOffsetOrigin.EndMargin,
+        _ => WordPictureOffsetOrigin.Other,
+    };
+
+    /// <summary>VML mso-position-horizontal-relative: text (the default) / margin = the column; page, left-margin-area, inner-margin-area = the page edge; right / outer margin areas = the right margin area; char = none.</summary>
+    private static WordPictureOffsetOrigin OriginOfVml(string? relative) => relative switch
+    {
+        null or "text" or "margin" => WordPictureOffsetOrigin.Column,
+        "page" or "left-margin-area" or "inner-margin-area" => WordPictureOffsetOrigin.Page,
+        "right-margin-area" or "outer-margin-area" => WordPictureOffsetOrigin.EndMargin,
+        _ => WordPictureOffsetOrigin.Other,
+    };
 
     /// <summary>
     /// wp:wrapSquare / wrapTight / wrapThrough wrapText (ECMA-376 Part 1 20.4.3.7 ST_WrapText: bothSides, left = "text shall only

@@ -19,7 +19,7 @@ namespace FastDocView.Docx;
 public sealed class DocxRandomAccessIndex
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 15;     // 15: XE / TA entries;     // 14: field counters (SEQ / AUTONUM / LISTNUM) in the open-field stacks; 12: compact per-block tables; 13: no per-block tables — span anchors + list counter state, one window store, Elias-Fano block lists
+    private const int FormatVersion = 16;     // 16: section column lefts; 15: XE / TA entries;     // 14: field counters (SEQ / AUTONUM / LISTNUM) in the open-field stacks; 12: compact per-block tables; 13: no per-block tables — span anchors + list counter state, one window store, Elias-Fano block lists
     public const int TextLengthGroupSize = 64;
     /// <summary>Output bytes between span anchors: a random block rescans at most this much (~1-2 ms) on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
@@ -45,6 +45,7 @@ public sealed class DocxRandomAccessIndex
     /// <summary>Per section: its last block (inclusive) and its page text width in twips (see DocxBodyBlockScanner).</summary>
     public int[] SectionLastBlocks { get; private set; } = [];
     public int[] SectionTextWidths { get; private set; } = [];
+    public int[] SectionColumnLefts { get; private set; } = [];
     /// <summary>Bookmarks in body order: name and the block it marks (see DocxBodyBlockScanner.BookmarkNames).</summary>
     public string[] BookmarkNames { get; private set; } = [];
     public int[] BookmarkBlocks { get; private set; } = [];
@@ -88,10 +89,11 @@ public sealed class DocxRandomAccessIndex
         return this;
     }
 
-    internal DocxRandomAccessIndex WithSections(int[] sectionLastBlocks, int[] sectionTextWidths)
+    internal DocxRandomAccessIndex WithSections(int[] sectionLastBlocks, int[] sectionTextWidths, int[] sectionColumnLefts)
     {
         SectionLastBlocks = sectionLastBlocks;
         SectionTextWidths = sectionTextWidths;
+        SectionColumnLefts = sectionColumnLefts;
         return this;
     }
 
@@ -271,6 +273,7 @@ public sealed class DocxRandomAccessIndex
         int[] widthTable = SectionTextWidths.Distinct().OrderBy(w => w).ToArray();
         IndexBinaryArrays.WriteVarints(writer, widthTable);
         IndexBinaryArrays.WriteByteIds(writer, SectionTextWidths.Select(w => (short)Array.IndexOf(widthTable, w)).ToArray());
+        IndexBinaryArrays.WriteVarints(writer, SectionColumnLefts);
         Section("sections");
         IndexBinaryArrays.WriteCompressedStrings(writer, BookmarkNames);
         new EliasFanoSequence(BookmarkBlocks).Write(writer);
@@ -329,7 +332,8 @@ public sealed class DocxRandomAccessIndex
         short[] widthIds = IndexBinaryArrays.ReadByteIds(reader);
         if (widthIds.Any(id => id < 0 || id >= widthTable.Length)) throw new InvalidDataException("Word index: section widths out of range.");
         int[] sectionTextWidths = widthIds.Select(id => widthTable[id]).ToArray();
-        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)blockCount))
+        int[] sectionColumnLefts = IndexBinaryArrays.ReadVarints(reader);
+        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionColumnLefts.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)blockCount))
             throw new InvalidDataException("Word index: section table does not match the blocks.");
         string[] bookmarkNames = IndexBinaryArrays.ReadCompressedStrings(reader);
         int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
@@ -340,7 +344,7 @@ public sealed class DocxRandomAccessIndex
         return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints, blockCount, anchors, groupTotals,
                                          headings, noteReferences, footnotesPart, endnotesPart)
             .WithOpenFieldPairs(openFieldBlocks, openFieldIds, openFieldStacks)
-            .WithSections(sectionLastBlocks, sectionTextWidths)
+            .WithSections(sectionLastBlocks, sectionTextWidths, sectionColumnLefts)
             .WithBookmarks(bookmarkNames, bookmarkBlocks)
             .WithIndexEntries(indexEntries);
     }

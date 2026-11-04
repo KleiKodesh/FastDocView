@@ -18,7 +18,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 10;    // 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
+    private const int FormatVersion = 11;    // 11: section column lefts (+1, 0 = unknown); 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
     /// <summary>Body bytes between span anchors: a random block rescans at most this much on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
 
@@ -41,6 +41,8 @@ public sealed class OdtRandomAccessIndex
     /// <summary>Per section: its first block and its page text width in twips (see OdtPageSetup).</summary>
     public int[] SectionFirstBlocks { get; init; } = [];
     public int[] SectionTextWidths { get; init; } = [];
+    /// <summary>Per section: the column start on the page + 1 (twips; 0 = not known).</summary>
+    public int[] SectionColumnLefts { get; init; } = [];
     /// <summary>Bookmarks and reference marks (name -> block), see OdtBodyBlockScanner.BookmarkNames.</summary>
     public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
     /// <summary>The blocks holding shapes with an id (OdtBodyBlockScanner.ConnectedShapeBlocks) - only while <see cref="ConnectedShapes"/> is still to be recorded; not stored.</summary>
@@ -175,6 +177,7 @@ public sealed class OdtRandomAccessIndex
         Section($"note references ({NoteReferences.Length})");
         IndexBinaryArrays.WriteDeltaVarints(writer, SectionFirstBlocks);
         IndexBinaryArrays.WriteVarints(writer, SectionTextWidths);
+        IndexBinaryArrays.WriteVarints(writer, SectionColumnLefts);
         Section($"sections ({SectionFirstBlocks.Length})");
         IndexBinaryArrays.WriteCompressedStrings(writer, Bookmarks.Names);
         new EliasFanoSequence(Bookmarks.Blocks).Write(writer);
@@ -235,7 +238,8 @@ public sealed class OdtRandomAccessIndex
         }
         int[] sectionFirstBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
         int[] sectionTextWidths = IndexBinaryArrays.ReadVarints(reader);
-        if (sectionFirstBlocks.Length != sectionTextWidths.Length || sectionFirstBlocks.Any(block => (uint)block >= (uint)Math.Max(1, blockCount)))
+        int[] sectionColumnLefts = IndexBinaryArrays.ReadVarints(reader);
+        if (sectionFirstBlocks.Length != sectionTextWidths.Length || sectionColumnLefts.Length != sectionTextWidths.Length || sectionFirstBlocks.Any(block => (uint)block >= (uint)Math.Max(1, blockCount)))
             throw new InvalidDataException("OpenDocument index: section table does not match the blocks.");
         string[] bookmarkNames = IndexBinaryArrays.ReadCompressedStrings(reader);
         int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
@@ -247,6 +251,7 @@ public sealed class OdtRandomAccessIndex
         {
             SectionFirstBlocks = sectionFirstBlocks,
             SectionTextWidths = sectionTextWidths,
+            SectionColumnLefts = sectionColumnLefts,
             Bookmarks = new WordDocumentBookmarkTable(bookmarkNames, bookmarkBlocks),
             ConnectedShapes = connectedShapes,
         };

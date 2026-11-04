@@ -38,7 +38,15 @@ public enum WordPictureTextSides : byte { Both, LeftOnly, RightOnly }
 public readonly record struct WordPictureLayout(double WidthPt, double HeightPt, WordPictureWrap Wrap, WordPictureSide Side,
                                                 double TopPt, double RightPt, double BottomPt, double LeftPt, double OffsetPt = 0,
                                                 WordPictureTextSides TextSides = WordPictureTextSides.Both,
-                                                IReadOnlyList<IReadOnlyList<(double X, double Y)>>? Contour = null, double ColumnWidthPt = 0);
+                                                IReadOnlyList<IReadOnlyList<(double X, double Y)>>? Contour = null, double ColumnWidthPt = 0,
+                                                WordPictureOffsetOrigin OffsetOrigin = WordPictureOffsetOrigin.Column, double ColumnLeftPt = -1);
+
+/// <summary>
+/// What a floating object's <see cref="WordPictureLayout.OffsetPt"/> counts from: the text column (or its margin edge - the same
+/// place), the page's left edge (page, left / inside margin area - inside taken as an odd page), the right margin area's left
+/// edge (right / outside margin area), or something the flow view cannot place (a character, a frame): no nearer-edge choice.
+/// </summary>
+public enum WordPictureOffsetOrigin : byte { Column, Page, EndMargin, Other }
 
 /// <summary>
 /// Draws a picture at its size where the document puts it. The browser has no page or anchor, so a floating picture is a
@@ -94,7 +102,7 @@ public static class WordPictureHtml
                 break;
             case WordPictureWrap.Square:
                 bool floatsRight = FloatsRight(layout);
-                double offset = layout.TextSides == WordPictureTextSides.Both ? 0 : layout.OffsetPt;
+                double offset = layout.TextSides == WordPictureTextSides.Both ? 0 : DrawnOffset(layout);
                 css.Append("float:").Append(floatsRight ? "right" : "left").Append(";margin:")
                    .Append(floatsRight ? Margins(layout.TopPt, 0, layout.BottomPt, layout.LeftPt)
                                        : Margins(layout.TopPt, layout.RightPt, layout.BottomPt, offset))
@@ -108,7 +116,7 @@ public static class WordPictureHtml
                 css.Append("display:block;margin:").Append(Points(top)).Append("pt ")
                    .Append(side == WordPictureSide.Right ? "0" : "auto").Append(' ')
                    .Append(Points(bottom)).Append("pt ")
-                   .Append(side == WordPictureSide.Left ? Points(layout.OffsetPt) + "pt" : "auto").Append(';');
+                   .Append(side == WordPictureSide.Left ? Points(DrawnOffset(layout)) + "pt" : "auto").Append(';');
                 break;
         }
     }
@@ -127,7 +135,22 @@ public static class WordPictureHtml
     /// centred object's centre is the column's own - the tie, left.
     /// </summary>
     private static bool NearerRight(WordPictureLayout layout)
-        => layout.ColumnWidthPt > 0 && layout.OffsetPt > 0 && layout.OffsetPt + layout.WidthPt / 2 > layout.ColumnWidthPt / 2;
+        => layout.ColumnWidthPt > 0 && ColumnOffset(layout) is var offset and > 0 && offset + layout.WidthPt / 2 > layout.ColumnWidthPt / 2;
+
+    /// <summary>
+    /// The offset from the column's left edge: a page offset less the column's start (left margin + gutter, <see
+    /// cref="WordPictureLayout.ColumnLeftPt"/>), a right-margin-area offset plus the column's width; NaN when it cannot be converted.
+    /// </summary>
+    private static double ColumnOffset(WordPictureLayout layout) => layout.OffsetOrigin switch
+    {
+        WordPictureOffsetOrigin.Column => layout.OffsetPt,
+        WordPictureOffsetOrigin.Page when layout.ColumnLeftPt >= 0 => layout.OffsetPt - layout.ColumnLeftPt,
+        WordPictureOffsetOrigin.EndMargin when layout.ColumnWidthPt > 0 => layout.ColumnWidthPt + layout.OffsetPt,
+        _ => double.NaN,
+    };
+
+    /// <summary>The offset drawn from the column's left edge (never negative; 0 when it cannot be converted).</summary>
+    private static double DrawnOffset(WordPictureLayout layout) => ColumnOffset(layout) is var offset and > 0 ? offset : 0;
 
     /// <summary>
     /// Opens a text box: a box at its placement (<see cref="AppendPlacement"/>), its width, its height (a minimum when it grows

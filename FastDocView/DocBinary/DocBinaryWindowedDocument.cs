@@ -425,6 +425,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
             WordDocumentBlockKind kind = _table.BlockKindOf(blockIndex);
             if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex;
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
+            _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             string html = kind == WordDocumentBlockKind.TableRow
                 ? _renderer.RenderRow(start, end)
                 : _renderer.Render(start, end, PreviousStyleKey(blockIndex), listLabel: _table.ListLabelOf(blockIndex));

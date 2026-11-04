@@ -1699,9 +1699,13 @@ msdffimp.cxx:5199-5216; inside / outside as on an odd page). An object placed by
 minus margins and gutter, already in every index - `WordDocumentSection`, `WordDocumentPageSetup.TextWidthPointsAt`; the
 renderer gets it per block as `ColumnWidthPt`): right when its centre lies right of the column's centre. A centred object's
 centre is the column's own - the tie, left. Multi-column sections are not split: the flow view shows one column at the
-full text width, so that is the width the reader sees. Only an offset from the column / margin / paragraph is weighed (.docx relativeFrom column / margin, VML
-mso-position-horizontal-relative text / margin, ODF horizontal-rel paragraph / paragraph-content / page-content, RTF
-without \shpbxpage / posrelh 1, .doc bx 0 / 2): a page-relative offset includes the margin, so it floats left as before.
+full text width, so that is the width the reader sees. Offsets from other origins are converted to the column first (`WordPictureOffsetOrigin`, `WordPictureHtml.ColumnOffset`):
+from the page edge (.docx relativeFrom page / leftMargin / insideMargin, VML page / left- / inner-margin-area, ODF
+horizontal-rel page / page-start-margin, RTF \shpbxpage / posrelh 1, .doc bx 1) less the column start = left margin +
+gutter; from the right margin area (rightMargin / outsideMargin, right- / outer-margin-area, page-end-margin) plus the text
+width. Inside / outside are taken as an odd page. A character / frame origin is not converted (left). The column start is
+stored per section next to the text width (index formats: .docx 16, RTF 9, ODT 11; .doc reads its SEP at open).
+Not done: a right-to-left section's gutter on the right (w:rtlGutter / tlgutter) - the gutter is always counted on the left.
 
 Contour wrap = CSS `shape-outside:polygon(...)` from `WordPictureContour.ShapeOutsideCss` (the outline's extreme on the
 text side per 1 pt row, at most 2000 rows; gap on the text side as shape-margin; through drawn as tight - a float keeps

@@ -23,7 +23,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
 
     /// <summary>Page text width per section (\paperw / \margl / \margr / \gutter and their per-section forms), from the index.</summary>
     public int? FindBookmark(string name) => _index.Bookmarks.BlockOf(name);     // the index is always complete
-    public IReadOnlyList<WordDocumentSection> Sections => _sections ??= WordDocumentPageSetup.FromSectionEnds(_index.SectionLastBlocks, _index.SectionTextWidths);
+    public IReadOnlyList<WordDocumentSection> Sections => _sections ??= WordDocumentPageSetup.FromSectionEnds(_index.SectionLastBlocks, _index.SectionTextWidths, _index.SectionColumnLefts);
     private IReadOnlyList<WordDocumentSection>? _sections;
     public bool IsIndexComplete => true;
     public int KnownBlockCount => _index.BlockCount;
@@ -258,7 +258,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         for (int block = forward ? from + 1 : Math.Min(from, _index.BlockCount - 1); forward ? block < limit : block > limit; block += forward ? 1 : -1)
         {
             if (!numbers.Contains(LookupTable.StyleOf(block))) continue;
-            var renderer = new RtfBlockHtmlRenderer(_index.Tables) { FieldContext = null };
+            var renderer = new RtfBlockHtmlRenderer(_index.Tables) { FieldContext = null, ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, block), ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, block) };
             long position = _file.Position;
             try { return (block, PlainHtmlText(renderer.Render(_file, _index, LookupTable, block).html).Trim()); }
             finally { _file.Position = position; }
@@ -287,7 +287,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         try
         {
             // its own renderer: this runs while the document's renderer is mid-block
-            var renderer = new RtfBlockHtmlRenderer(_index.Tables) { FieldContext = _fieldContext };
+            var renderer = new RtfBlockHtmlRenderer(_index.Tables) { FieldContext = _fieldContext, ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, block), ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, block) };
             long position = _file.Position;
             string html;
             try { html = renderer.Render(_file, _index, LookupTable, block).html; }
@@ -333,6 +333,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         {
             _fieldContext.CurrentBlock = blockIndex;
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
+            _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(_file, _index, _table, blockIndex);
             result.Add(new WordDocumentBlockHtml(blockIndex, _table.BlockKindOf(blockIndex), html, notes));
         }

@@ -384,6 +384,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         {
             _renderer.CurrentBlockIndex = blockIndex;
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
+            _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             _renderer.RootOpenTag ??= _blocks.RootOpenTag;
             _renderer.Pictures ??= ReadPicture;
             _renderer.ListStyles ??= _blocks.ListStyleNamed;
@@ -556,7 +557,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                 if (_builder is { } builder) return WordDocumentPageSetup.FromSectionStarts(builder.KnownSectionStarts);
                 OdtRandomAccessIndex index = _index!;
                 return _sections ??= WordDocumentPageSetup.FromSectionStarts(
-                    index.SectionFirstBlocks.Select((first, i) => new WordDocumentSection(first, index.SectionTextWidths[i])));
+                    index.SectionFirstBlocks.Select((first, i) => new WordDocumentSection(first, index.SectionTextWidths[i], index.SectionColumnLefts[i] - 1)));
             }
         }
     }
