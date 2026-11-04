@@ -1253,7 +1253,8 @@ Sources: LibreOffice core master read 2026-11-04 (cited file:line in each class)
   to - has its snap rectangle and draw:glue-points recorded at index time (`OdtConnectedShapeTable`, index format 10; the scanner
   notes the blocks holding one, they are read once when the index is final), so a shape in another block is never read at render
   time; a shape in other coordinates (another paragraph's anchor) is moved to where svg:x1/y1 or x2/y2 put the end; a shape not
-  known yet on a first open = a free end. Word formats need no routing: LibreOffice turns a .docx wps connector into a routed
+  known yet on a first open = a free end, and its block is marked provisional (`WordDocumentBlockHtml.IsProvisional`):
+  the app drops those blocks when the index completes and fetches the ones on screen again (`odtConnectorsCheck.mjs --first-open`). Word formats need no routing: LibreOffice turns a .docx wps connector into a routed
   ConnectorShape only inside a drawing canvas (oox/source/shape/WpsContext.cxx:585-592, one drawing = one block) and reads the
   .doc/.rtf solver container only for PowerPoint (filter/source/msfilter/svdfppt.cxx:1603-1606; ww8par.cxx / ww8graf.cxx never read
   it) - Word and LibreOffice draw those connectors from their own stored geometry, which we already do), measure

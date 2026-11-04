@@ -52,9 +52,9 @@ export const fastDocViewApi: FastDocViewApi = {
     return result
   },
   async blocks(documentId, first, count) {
-    const blocks = await readJson<{ index: number; kind: number; html: string; notes: FastDocViewBlock['notes'] }[]>(
+    const blocks = await readJson<{ index: number; kind: number; html: string; notes: FastDocViewBlock['notes']; provisional: boolean }[]>(
       await fetch(`/api/documents/${documentId}/blocks?first=${first}&count=${count}`))
-    return blocks.map(block => ({ index: block.index, kind: BLOCK_KIND_NAMES[block.kind] ?? 'other', html: block.html, notes: block.notes }))
+    return blocks.map(block => ({ index: block.index, kind: BLOCK_KIND_NAMES[block.kind] ?? 'other', html: block.html, notes: block.notes, ...(block.provisional ? { provisional: true } : {}) }))
   },
   async sections(documentId) {
     return readJson<{ firstBlockIndex: number; textWidthTwips: number }[]>(await fetch(`/api/documents/${documentId}/sections`))

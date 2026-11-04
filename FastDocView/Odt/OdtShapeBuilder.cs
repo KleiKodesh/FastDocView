@@ -71,6 +71,12 @@ internal sealed class OdtShapeBuilder
     /// <summary>The block being rendered (the coordinates of a paragraph-anchored connector, <see cref="OdtConnectedShapeTable.FrameOf"/>).</summary>
     public int CurrentBlockIndex { get; set; } = -1;
 
+    /// <summary>Whether a glued connector routed without its shapes counts as provisional (rendering for a reader; not index-time measuring).</summary>
+    public bool IsRecordingProvisionalGlue { get; set; }
+
+    /// <summary>A glued connector was routed as free points because the shapes' table is not known yet; reset by the caller per block.</summary>
+    public bool UsedProvisionalGlue { get; set; }
+
     /// <summary>The snap rectangle of shapes: their boxes through their transforms (the renderer's frame; a group's union).</summary>
     internal static (double X, double Y, double Width, double Height) SnapBounds(List<OdtDrawnShape> drawn)
     {
@@ -423,9 +429,12 @@ internal sealed class OdtShapeBuilder
     /// </summary>
     private List<WordShapeSubpath> RouteConnected(XElement connector, string kind, (double X, double Y) start, (double X, double Y) end, double[] skew)
     {
-        if (ConnectedShapes is null
-            || ((string?)connector.Attribute(Draw + "start-shape") is null && (string?)connector.Attribute(Draw + "end-shape") is null))
+        bool isGlued = (string?)connector.Attribute(Draw + "start-shape") is not null || (string?)connector.Attribute(Draw + "end-shape") is not null;
+        if (ConnectedShapes is null || !isGlued)
+        {
+            if (isGlued && IsRecordingProvisionalGlue) UsedProvisionalGlue = true;    // the shapes are known once the index is final
             return OdtConnectorRoute.Route(kind, start, end, skew, null, null);
+        }
         (string key, XElement outermost) = OdtConnectedShapeTable.FrameOf(connector, CurrentBlockIndex);
         List<(OdtConnectorEnd? End, bool Verify)> startCandidates = Candidates("start", start), endCandidates = Candidates("end", end);
         const double Tolerance = 1.5 * 72 / 2540;          // within a hundredth of a millimetre after rounding
