@@ -31,84 +31,313 @@ public static class WordHtmlColor
     }
 
     /// <summary>
-    /// <paramref name="html"/> with every bare hex colour inside its tags (style values, SVG fill / stroke / stop-color
-    /// attributes, gradients, borders) written through <see cref="Css"/>, so a shape's fill, its line and the text in it
-    /// are remapped together. Text content, values already in light-dark(), url(#id) and href="#id" are left as they are.
-    /// Pictures are &lt;img&gt; elements and are never touched (bitmaps keep their colours, as in Word).
-    /// One linear pass; a block without '#' is returned as is. Hosts apply it to block and note HTML at their transport
-    /// (renderers keep writing plain colours, which the fidelity harness checks).
+    /// <paramref name="html"/> for display in either theme: every explicit colour in a colour-bearing place is written
+    /// through <see cref="Css"/>. Only these places are touched (an allowlist): the attributes in
+    /// <see cref="ColorAttributes"/>, and inside style="..." and &lt;style&gt; elements the properties in
+    /// <see cref="IsColorProperty"/>. Text, every other attribute (data-*, title, alt, class, href...), url(...), quoted
+    /// strings and values already in light-dark() are copied as they are. Pictures are &lt;img&gt; and never change.
+    /// <para>
+    /// A shape or text box (class word-shape / text-box) whose first solid fill (its own background, else the first
+    /// fill="..." inside it) is better read with dark text once remapped gets the class <see cref="DarkTextOnFillClass"/>;
+    /// the stylesheet gives it light-dark(currentColor, #000), so text with no colour of its own picks black over a
+    /// light remapped fill in the dark theme (WCAG contrast against the remapped fill, light text taken as #d4d4d4),
+    /// and light mode is unchanged. One linear pass.
+    /// </para>
     /// </summary>
     public static string ThemeAwareMarkup(string html)
     {
-        if (html.IndexOf('#') < 0) return html;
-        System.Text.StringBuilder? result = null;
-        int copied = 0;
-        bool inTag = false;
-        for (int i = 0; i < html.Length; i++)
+        if (html.IndexOf('<') < 0) return html;
+        var output = new System.Text.StringBuilder(html.Length + html.Length / 8);
+        var shapes = new List<ShapeScope>();
+        int depth = 0, position = 0;
+        while (position < html.Length)
         {
-            char c = html[i];
-            if (!inTag) { if (c == '<') inTag = true; continue; }
-            if (c == '>') { inTag = false; continue; }
-            if (c == 'l' && string.CompareOrdinal(html, i, "light-dark(", 0, 11) == 0)
+            int open = html.IndexOf('<', position);
+            if (open < 0) { output.Append(html, position, html.Length - position); break; }
+            output.Append(html, position, open - position);
+            if (string.CompareOrdinal(html, open, "<!--", 0, 4) == 0)
             {
-                int close = html.IndexOf(')', i);
-                if (close < 0) break;
-                i = close;
+                int commentEnd = html.IndexOf("-->", open + 4, StringComparison.Ordinal);
+                position = commentEnd < 0 ? html.Length : commentEnd + 3;
+                output.Append(html, open, position - open);
                 continue;
             }
-            if (char.IsLetter(c) && (i == 0 || !char.IsLetterOrDigit(html[i - 1]) && html[i - 1] != '-') && IsColorValueStart(html, i))
+            int close = TagEnd(html, open);
+            if (close < 0) { output.Append(html, open, html.Length - open); break; }
+            position = close + 1;
+            if (open + 1 < html.Length && html[open + 1] is '!' or '?') { output.Append(html, open, position - open); continue; }
+            if (open + 1 < html.Length && html[open + 1] == '/')
             {
-                // a named colour (VML and highlight names: the 16 HTML colours, VML 2.2.4 / CSS 2.1 4.3.6) as a paint value
-                int wordEnd = i;
-                while (wordEnd < html.Length && char.IsLetter(html[wordEnd])) wordEnd++;
-                string word = html.Substring(i, wordEnd - i);
-                if (!word.All(Uri.IsHexDigit) && TryParse(word, out _, out _, out _))
-                {
-                    result ??= new System.Text.StringBuilder(html.Length + 64);
-                    result.Append(html, copied, i - copied).Append(Css(word));
-                    copied = wordEnd;
-                }
-                i = wordEnd - 1;
+                output.Append(html, open, position - open);
+                depth--;
+                while (shapes.Count > 0 && shapes[shapes.Count - 1].Depth > depth) CloseShape(output, shapes);
                 continue;
             }
-            if (c != '#' || (i > 0 && html[i - 1] == '&') || IsReference(html, i)) continue;   // &#160; is a character reference
-            int end = i + 1;
-            while (end < html.Length && Uri.IsHexDigit(html[end])) end++;
-            int length = end - i - 1;
-            if (length is not (3 or 6) || (end < html.Length && (char.IsLetterOrDigit(html[end]) || html[end] is '_' or '-'))) continue;
-            result ??= new System.Text.StringBuilder(html.Length + 64);
-            result.Append(html, copied, i - copied).Append(Css(html.Substring(i, end - i)));
-            copied = end;
-            i = end - 1;
+            string name = AppendTag(html, open, close, output, shapes, depth, out bool isSelfClosing);
+            if (isSelfClosing || VoidElements.Contains(name))
+            {
+                while (shapes.Count > 0 && shapes[shapes.Count - 1].Depth > depth) CloseShape(output, shapes);
+                continue;
+            }
+            depth++;
+            if (name is "style" or "script")
+            {
+                int end = html.IndexOf("</" + name, position, StringComparison.OrdinalIgnoreCase);
+                if (end < 0) end = html.Length;
+                string raw = html.Substring(position, end - position);
+                output.Append(name == "style" ? ThemeAwareStyleSheet(raw) : raw);
+                position = end;
+            }
         }
-        if (result is null) return html;
-        return result.Append(html, copied, html.Length - copied).ToString();
+        while (shapes.Count > 0) CloseShape(output, shapes);
+        return output.ToString();
     }
 
-    /// <summary>Position <paramref name="index"/> starts the value of a paint attribute or colour property.</summary>
-    private static bool IsColorValueStart(string html, int index)
+    /// <summary>The class a shape gets when dark text reads better on its remapped fill (styled by the stylesheet).</summary>
+    public const string DarkTextOnFillClass = "dark-text-on-fill";
+
+    /// <summary>The attributes whose whole value is a colour (SVG paint and HTML 4 colour attributes).</summary>
+    public static readonly IReadOnlyCollection<string> ColorAttributes =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "fill", "stroke", "stop-color", "flood-color", "lighting-color", "color", "bgcolor" };
+
+    /// <summary>A CSS property whose value can hold a colour.</summary>
+    public static bool IsColorProperty(string property)
     {
-        int start = index;
-        if (start > 0 && html[start - 1] is '"' or '\'') start--;
-        while (start > 0 && html[start - 1] == ' ') start--;
-        foreach (string name in PaintNames)
-            if (EndsWith(html, start, name)) return true;
+        property = property.Trim().ToLowerInvariant();
+        return ColorProperties.Contains(property) || property.StartsWith("border", StringComparison.Ordinal)
+               || property.StartsWith("outline", StringComparison.Ordinal) || property.StartsWith("column-rule", StringComparison.Ordinal);
+    }
+
+    private static readonly HashSet<string> ColorProperties = new(StringComparer.Ordinal)
+    {
+        "color", "background", "background-color", "background-image", "fill", "stroke", "stop-color", "flood-color", "lighting-color",
+        "text-decoration", "text-decoration-color", "text-emphasis", "text-emphasis-color", "-webkit-text-stroke",
+        "-webkit-text-stroke-color", "-webkit-text-fill-color", "box-shadow", "text-shadow", "caret-color",
+    };
+
+    private static readonly HashSet<string> VoidElements = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+    };
+
+    private sealed class ShapeScope
+    {
+        public int Depth;                 // the depth of the shape's content (its element's depth + 1)
+        public int ClassValueEnd;         // output index just before the class value's closing quote
+        public (int R, int G, int B)? Fill;
+    }
+
+    private static void CloseShape(System.Text.StringBuilder output, List<ShapeScope> shapes)
+    {
+        ShapeScope shape = shapes[shapes.Count - 1];
+        shapes.RemoveAt(shapes.Count - 1);
+        if (shape.Fill is { } fill && PrefersDarkText(fill.R, fill.G, fill.B)) output.Insert(shape.ClassValueEnd, " " + DarkTextOnFillClass);
+    }
+
+    /// <summary>Whether black text beats the theme's light text (#d4d4d4) on the dark-theme variant of this fill (WCAG 2 contrast).</summary>
+    public static bool PrefersDarkText(int red, int green, int blue)
+    {
+        (int r, int g, int b) = DarkVariant(red, green, blue);
+        double fill = RelativeLuminance(r, g, b), light = RelativeLuminance(0xd4, 0xd4, 0xd4);
+        double withBlack = (fill + 0.05) / 0.05;
+        double withLight = (Math.Max(fill, light) + 0.05) / (Math.Min(fill, light) + 0.05);
+        return withBlack > withLight;
+    }
+
+    private static double RelativeLuminance(int red, int green, int blue)
+        => 0.2126 * ToLinear(red / 255.0) + 0.7152 * ToLinear(green / 255.0) + 0.0722 * ToLinear(blue / 255.0);
+
+    /// <summary>The '&gt;' ending the tag that starts at <paramref name="open"/>, skipping quoted values; -1 when none.</summary>
+    private static int TagEnd(string html, int open)
+    {
+        char quote = '\0';
+        for (int i = open + 1; i < html.Length; i++)
+        {
+            char c = html[i];
+            if (quote != '\0') { if (c == quote) quote = '\0'; }
+            else if (c is '"' or '\'') quote = c;
+            else if (c == '>') return i;
+        }
+        return -1;
+    }
+
+    /// <summary>Copies the start tag [open, close] to <paramref name="output"/>, rewriting colour attributes and style; returns its name.</summary>
+    private static string AppendTag(string html, int open, int close, System.Text.StringBuilder output, List<ShapeScope> shapes, int depth, out bool isSelfClosing)
+    {
+        int i = open + 1;
+        while (i < close && !char.IsWhiteSpace(html[i]) && html[i] != '/') i++;
+        string name = html.Substring(open + 1, i - open - 1).ToLowerInvariant();
+        isSelfClosing = false;
+        output.Append(html, open, i - open);
+        ShapeScope? shape = null;
+        (int, int, int)? ownFill = null, paintFill = null;
+        while (i < close)
+        {
+            int start = i;
+            while (i < close && (char.IsWhiteSpace(html[i]) || html[i] == '/')) { if (html[i] == '/') isSelfClosing = true; i++; }
+            output.Append(html, start, i - start);
+            if (i >= close) break;
+            int nameStart = i;
+            while (i < close && html[i] != '=' && !char.IsWhiteSpace(html[i]) && html[i] != '/') i++;
+            string attribute = html.Substring(nameStart, i - nameStart);
+            output.Append(attribute);
+            isSelfClosing = false;   // a '/' before an attribute does not close the tag
+            if (i >= close || html[i] != '=') continue;
+            output.Append('=');
+            i++;
+            char quote = i < close && html[i] is '"' or '\'' ? html[i] : '\0';
+            int valueStart = quote != '\0' ? i + 1 : i;
+            int valueEnd = quote != '\0' ? html.IndexOf(quote, valueStart) : valueStart;
+            if (quote == '\0') while (valueEnd < close && !char.IsWhiteSpace(html[valueEnd])) valueEnd++;
+            if (valueEnd < 0 || valueEnd > close) valueEnd = close;
+            string value = html.Substring(valueStart, valueEnd - valueStart);
+            if (quote != '\0') output.Append(quote);
+            if (attribute.Equals("style", StringComparison.OrdinalIgnoreCase))
+                output.Append(ThemeAwareDeclarations(value, out ownFill));
+            else if (ColorAttributes.Contains(attribute))
+            {
+                output.Append(ThemeAwareValue(value, out (int, int, int)? first));
+                if (attribute.Equals("fill", StringComparison.OrdinalIgnoreCase)) paintFill = first;
+            }
+            else
+            {
+                output.Append(value);
+                if (quote != ' ' && attribute.Equals("class", StringComparison.OrdinalIgnoreCase) && HasShapeClass(value))
+                    shape = new ShapeScope { Depth = depth + 1, ClassValueEnd = output.Length };
+            }
+            if (quote != '\0') output.Append(quote);
+            i = quote != '\0' ? Math.Min(close, valueEnd + 1) : valueEnd;
+        }
+        output.Append('>');
+        // the fill this element paints: an SVG fill inside open shapes, or a shape's own background
+        if (paintFill is not null)
+            for (int s = shapes.Count - 1; s >= 0; s--) if (shapes[s].Fill is null) shapes[s].Fill = paintFill;
+        if (shape is not null)
+        {
+            shape.Fill = ownFill ?? paintFill;
+            shapes.Add(shape);
+        }
+        return name;
+    }
+
+    private static bool HasShapeClass(string value)
+    {
+        foreach (string token in value.Split(' '))
+            if (token is "word-shape" or "text-box") return true;
         return false;
     }
 
-    private static readonly string[] PaintNames =
-        ["fill=", "stroke=", "stop-color=", "flood-color=", "fill:", "stroke:", "stop-color:", "color:", "background:", "background-color:"];
-
-    /// <summary>'#' starting a fragment reference (url(#id), href="#id"), not a colour.</summary>
-    private static bool IsReference(string html, int hashIndex)
+    /// <summary>A style sheet's declaration blocks through <see cref="ThemeAwareDeclarations"/>; selectors and at-rules are copied.</summary>
+    private static string ThemeAwareStyleSheet(string css)
     {
-        int start = hashIndex;
-        while (start > 0 && html[start - 1] is '"' or '\'' or ' ') start--;
-        return EndsWith(html, start, "url(") || EndsWith(html, start, "href=");
+        var output = new System.Text.StringBuilder(css.Length + 32);
+        int position = 0;
+        while (position < css.Length)
+        {
+            int open = css.IndexOf('{', position);
+            if (open < 0) { output.Append(css, position, css.Length - position); break; }
+            int close = css.IndexOf('}', open + 1);
+            int nested = css.IndexOf('{', open + 1);
+            if (nested >= 0 && (close < 0 || nested < close)) { output.Append(css, position, open + 1 - position); position = open + 1; continue; }   // @media { ... }
+            if (close < 0) close = css.Length;
+            output.Append(css, position, open + 1 - position).Append(ThemeAwareDeclarations(css.Substring(open + 1, close - open - 1), out _));
+            position = close;
+        }
+        return output.ToString();
     }
 
-    private static bool EndsWith(string html, int end, string suffix)
-        => end >= suffix.Length && string.CompareOrdinal(html, end - suffix.Length, suffix, 0, suffix.Length) == 0;
+    /// <summary>"prop: value; ..." with the values of colour properties through <see cref="ThemeAwareValue"/>.
+    /// <paramref name="background"/>: the first colour of a background / background-color declaration.</summary>
+    private static string ThemeAwareDeclarations(string declarations, out (int, int, int)? background)
+    {
+        background = null;
+        var output = new System.Text.StringBuilder(declarations.Length + 32);
+        int position = 0;
+        while (position <= declarations.Length)
+        {
+            int end = DeclarationEnd(declarations, position);
+            string declaration = declarations.Substring(position, end - position);
+            int colon = declaration.IndexOf(':');
+            if (colon > 0 && IsColorProperty(declaration.Substring(0, colon)))
+            {
+                string property = declaration.Substring(0, colon).Trim().ToLowerInvariant();
+                output.Append(declaration, 0, colon + 1).Append(ThemeAwareValue(declaration.Substring(colon + 1), out (int, int, int)? first));
+                if (background is null && property is "background" or "background-color") background = first;
+            }
+            else output.Append(declaration);
+            if (end >= declarations.Length) break;
+            output.Append(';');
+            position = end + 1;
+        }
+        return output.ToString();
+    }
+
+    private static int DeclarationEnd(string declarations, int start)
+    {
+        int parentheses = 0;
+        char quote = '\0';
+        for (int i = start; i < declarations.Length; i++)
+        {
+            char c = declarations[i];
+            if (quote != '\0') { if (c == quote) quote = '\0'; continue; }
+            if (c is '"' or '\'') quote = c;
+            else if (c == '(') parentheses++;
+            else if (c == ')') parentheses = Math.Max(0, parentheses - 1);
+            else if (c == ';' && parentheses == 0) return i;
+        }
+        return declarations.Length;
+    }
+
+    /// <summary>
+    /// A colour value with each colour token (#rgb, #rrggbb, a named colour) through <see cref="Css"/>; url(...),
+    /// light-dark(...), quoted strings and character references (&amp;#160;) are copied.
+    /// <paramref name="first"/>: the first colour, for a shape's fill.
+    /// </summary>
+    private static string ThemeAwareValue(string value, out (int, int, int)? first)
+    {
+        first = null;
+        System.Text.StringBuilder? output = null;
+        int copied = 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (c is '"' or '\'') { int q = value.IndexOf(c, i + 1); i = q < 0 ? value.Length : q; continue; }
+            if (c is 'u' or 'U' or 'l' or 'L' && (StartsWithAt(value, i, "url(") || StartsWithAt(value, i, "light-dark(")))
+            {
+                int closeParenthesis = value.IndexOf(')', i);
+                i = closeParenthesis < 0 ? value.Length : closeParenthesis;
+                continue;
+            }
+            int end;
+            if (c == '#' && (i == 0 || value[i - 1] != '&'))
+            {
+                end = i + 1;
+                while (end < value.Length && Uri.IsHexDigit(value[end])) end++;
+                if (end - i - 1 is not (3 or 6) || (end < value.Length && (char.IsLetterOrDigit(value[end]) || value[end] is '_' or '-'))) { i = end - 1; continue; }
+            }
+            else if (char.IsLetter(c) && (i == 0 || !(char.IsLetterOrDigit(value[i - 1]) || value[i - 1] is '-' or '_' or '&' or '#')))
+            {
+                end = i;
+                while (end < value.Length && (char.IsLetterOrDigit(value[end]) || value[end] is '-' or '_')) end++;
+                string word = value.Substring(i, end - i);
+                if (word.All(Uri.IsHexDigit) || !word.All(char.IsLetter) || !TryParse(word, out _, out _, out _)) { i = end - 1; continue; }
+            }
+            else continue;
+            string token = value.Substring(i, end - i);
+            if (TryParse(token, out int red, out int green, out int blue))
+            {
+                first ??= (red, green, blue);
+                output ??= new System.Text.StringBuilder(value.Length + 32);
+                output.Append(value, copied, i - copied).Append(Css(token));
+                copied = end;
+            }
+            i = end - 1;
+        }
+        return output is null ? value : output.Append(value, copied, value.Length - copied).ToString();
+    }
+
+    private static bool StartsWithAt(string text, int index, string prefix)
+        => index + prefix.Length <= text.Length && string.Compare(text, index, prefix, 0, prefix.Length, StringComparison.OrdinalIgnoreCase) == 0;
 
     /// <summary>The dark-theme variant: CIELAB lightness inverted (110 - L, at most 100), a and b kept.</summary>
     public static (int Red, int Green, int Blue) DarkVariant(int red, int green, int blue)

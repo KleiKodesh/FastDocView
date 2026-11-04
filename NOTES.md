@@ -1773,3 +1773,12 @@ remapped together. Text content, `url(#id)`, `href="#id"` and values already in 
 Live (2026-11-04, shapes / ODT / RTF / chartex / SmartArt fixtures): fills and strokes remap, HTML identical across
 themes. Known: saturated mid-lightness fills (pure red, accent blue) stay mid-lightness under L' = 110 - L, so light
 auto text on them is about 2-2.6:1 - the same as Chromium's own dark mode.
+Update 2 (same day): the rewrite is an allowlist - only fill / stroke / stop-color / flood-color / lighting-color /
+color / bgcolor attributes and colour properties (color, background*, border*, outline*, column-rule*, text-decoration*,
+text-emphasis*, shadows, SVG paint) inside style="" and <style> sheets; data-*, title, alt and every other attribute
+are copied. The renderers never write <style> (MHTML's are dropped by MarkupBlockRenderer), but the sheets are handled
+anyway. A shape / text box whose first solid fill is better read with dark text once remapped (WCAG contrast of #000
+vs #d4d4d4 against the dark variant) gets class dark-text-on-fill = light-dark(currentColor, #000): red 2.59 -> 5.46:1,
+SmartArt accent blue 2.03 -> 5.71:1 (live). It runs in the library's one host output path,
+RenderBlocksForDisplay / RenderNotesForDisplay (WordWindowedDocumentHostExtensions), used by Core and the dev server;
+the renderers keep plain colours because that raw output is what the fidelity harness compares with Word.

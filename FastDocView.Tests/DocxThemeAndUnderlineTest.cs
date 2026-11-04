@@ -30,6 +30,19 @@ public static class DocxThemeAndUnderlineTest
                          "ThemeAwareMarkup: named paint colours remapped only as paint values");
         TestReport.Check(WordHtmlColor.ThemeAwareMarkup("<span title=\"a&#160;b\" style=\"color:fed\">x</span>") == "<span title=\"a&#160;b\" style=\"color:fed\">x</span>",
                          "ThemeAwareMarkup: character references and hex-letter words are not colours");
+        string allow = WordHtmlColor.ThemeAwareMarkup("<p data-x=\"#abcdef\" title=\"#fff red\" alt=\"#000\" bgcolor=\"#ffffff\"><style>.a { color: #000; } @media print { .b { border: 1px solid red } }</style></p>");
+        TestReport.Check(allow.Contains("data-x=\"#abcdef\"") && allow.Contains("title=\"#fff red\"") && allow.Contains("alt=\"#000\"")
+                         && allow.Contains("bgcolor=\"light-dark(#ffffff,") && allow.Contains(".a { color: light-dark(#000,") && allow.Contains("solid light-dark(#ff0000,"),
+                         "ThemeAwareMarkup: only allowlisted attributes / colour properties, <style> sheets too");
+        string onRed = WordHtmlColor.ThemeAwareMarkup("<span class=\"word-shape\"><svg><path fill=\"#FF0000\"/></svg><span class=\"text-box word-shape-text\">x</span></span>");
+        string onWhite = WordHtmlColor.ThemeAwareMarkup("<span class=\"text-box\" style=\"background:#FFFFFF\">x</span>");
+        TestReport.Check(onRed.StartsWith("<span class=\"word-shape " + WordHtmlColor.DarkTextOnFillClass + "\">", StringComparison.Ordinal)
+                         && !onRed.Contains("word-shape-text " + WordHtmlColor.DarkTextOnFillClass) && !onWhite.Contains(WordHtmlColor.DarkTextOnFillClass),
+                         "ThemeAwareMarkup: dark text on a red fill (light remapped), theme text on white (dark remapped)");
+        const string tricky = "<!-- a > b <x fill=\"#000\"> --><a href=x/>t</a><br/><span class=\"word-shape\"><svg><path fill=\"#FF0000\"/></svg></span>";
+        string trickyOut = WordHtmlColor.ThemeAwareMarkup(tricky);
+        TestReport.Check(trickyOut.StartsWith("<!-- a > b <x fill=\"#000\"> --><a href=x/>t</a><br/><span class=\"word-shape " + WordHtmlColor.DarkTextOnFillClass + "\">", StringComparison.Ordinal),
+                         "ThemeAwareMarkup: comments copied, '/' in an unquoted value is not self-closing");
         TestReport.Check(markup.Contains("fill=\"light-dark(#FFFFFF,") && markup.Contains("stroke='light-dark(#000,#ffffff)'")
                          && markup.Contains("url(#g1)") && markup.Contains("href=\"#abc\"") && markup.Contains("linear-gradient(light-dark(#ff0000,")
                          && markup.Contains("color:light-dark(#000000,#ffffff)\"") && markup.Contains(">#ffffff text<"),
