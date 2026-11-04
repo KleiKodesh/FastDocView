@@ -312,15 +312,7 @@ public sealed partial class OdtBlockHtmlRenderer
             if (WordPictureHtml.ContentTypeOf(part) is not null) pictureId = PackagePicturePrefix + part;
         }
         double width = Points((string?)frame.Attribute(SvgNs + "width")), height = Points((string?)frame.Attribute(SvgNs + "height"));
-        WordPictureLayout layout = Placement(frame, width, height);
-        var picture = new StringBuilder();
-        WordPictureHtml.Append(picture, layout, pictureId);
-        if (ContourCss(frame, layout, width, height, null) is { } contour)
-        {
-            int styleEnd = picture.ToString().LastIndexOf("\">", StringComparison.Ordinal);
-            if (styleEnd > 0) picture.Insert(styleEnd, contour);
-        }
-        html.Append(picture);
+        WordPictureHtml.Append(html, WithContour(frame, Placement(frame, width, height), width, height, null), pictureId);
     }
 
     private static double Points(string? length) => length is not null && OdtStyleCascade.Twips(length) is { } twips ? twips / 20.0 : 0;
@@ -335,8 +327,8 @@ public sealed partial class OdtBlockHtmlRenderer
     /// beside, none = above and below, run-through = through the text; "left: text wraps around the left side of the shape",
     /// so the object goes right); 20.298 style:horizontal-pos (left / center / right, from-left with svg:x - physical sides;
     /// inside / outside / from-inside follow page parity, taken as an odd page) and fo:margin-* (the gap to the text).
-    /// Text on both sides (parallel / dynamic of a centred object) cannot be laid out in CSS (see NOTES.md): it falls back to
-    /// text above and below (<see cref="WordPictureHtml.AppendPlacement"/>). Without a horizontal position or a one-sided wrap
+    /// Text on both sides (parallel / dynamic / biggest) cannot be laid out in CSS (see NOTES.md): the object floats flush to its
+    /// side and the text runs along the other (<see cref="WordPictureHtml.AppendPlacement"/>). Without a horizontal position or a one-sided wrap
     /// the object goes to the paragraph's start side (right in a right-to-left paragraph) - our choice, the spec gives no
     /// default. style:vertical-pos from-top with svg:y below a paragraph / character anchor (20.397 / 20.398) is added to the
     /// top gap (a float cannot move up; page / frame relations are ignored - the flow view has no page).
@@ -373,7 +365,8 @@ public sealed partial class OdtBlockHtmlRenderer
         if (wrap != WordPictureWrap.Inline && Property(OdtStyleCascade.Style, "vertical-pos") == "from-top"
             && Property(OdtStyleCascade.Style, "vertical-rel") is null or "paragraph" or "paragraph-content" or "char" or "line")
             top += Math.Max(0, y);
-        return new WordPictureLayout(width, height, wrap, side, top, Gap("right"), Gap("bottom"), Gap("left"), offset);
+        WordPictureTextSides sides = wrapValue switch { "left" => WordPictureTextSides.LeftOnly, "right" => WordPictureTextSides.RightOnly, _ => WordPictureTextSides.Both };
+        return new WordPictureLayout(width, height, wrap, side, top, Gap("right"), Gap("bottom"), Gap("left"), offset, sides);
     }
 
     // -- text boxes and shapes -------------------------------------------------------------
@@ -397,7 +390,7 @@ public sealed partial class OdtBlockHtmlRenderer
         if (minWidth is not null && !minWidth.Contains('%') && Points(minWidth) > width) width = Points(minWidth);
         if (minHeight is not null && !minHeight.Contains('%')) { height = Points(minHeight); grows = true; }
         (string? borderColor, double borderWidth, bool borderDash) = Border(frame);
-        WordPictureLayout layout = Placement(frame, width, height);
+        WordPictureLayout layout = WithContour(frame, Placement(frame, width, height), width, height, null);
         var box = new StringBuilder();
         WordPictureHtml.OpenTextBox(box, layout,
                                     new WordTextBoxStyle(Padding(frame, "left"), Padding(frame, "top"), Padding(frame, "right"), Padding(frame, "bottom"),
@@ -405,7 +398,7 @@ public sealed partial class OdtBlockHtmlRenderer
         // draw:textarea-vertical-align (Writer frames: TextVerticalAdjust, sdpropls.cxx:149): the box a flex column
         string? vertical = GraphicProperty(frame, OdtStyleCascade.Draw + "textarea-vertical-align");
         bool painted = GraphicProperty(frame, OdtStyleCascade.Draw + "fill") is "gradient" or "hatch" or "bitmap";
-        string extra = (ContourCss(frame, layout, width, height, null) ?? "") + (painted ? "position:relative;isolation:isolate;" : "")
+        string extra = (painted ? "position:relative;isolation:isolate;" : "")
                      + (vertical is "middle" or "bottom" or "justify"
                         ? (layout.Wrap == WordPictureWrap.Inline ? "display:inline-flex;" : "display:flex;") + "flex-direction:column;justify-content:"
                           + (vertical == "middle" ? "center" : vertical == "bottom" ? "flex-end" : "space-between") + ";"

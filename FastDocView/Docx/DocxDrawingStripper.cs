@@ -94,6 +94,7 @@ internal static class DocxDrawingStripper
                 {
                     layout.Append(" wrap=\"").Append(wrap).Append('"');
                     Copy("wrapText", OpenTagAt(drawing, at), "wrapText");
+                    if (wrap is "wrapTight" or "wrapThrough") AppendWrapPolygon(layout, drawing, at, wrap);
                     break;
                 }
             if (IndexOfOpenTag(drawing, frame, "wp:positionH") is var horizontal and >= 0)
@@ -113,6 +114,35 @@ internal static class DocxDrawingStripper
         if (shapes.Length == 0) layout.Append("/>");
         else layout.Append('>').Append(shapes).Append("</").Append(PictureLayoutElementName).Append('>');
         WriteUtf8(output, layout.ToString());
+    }
+
+    /// <summary>
+    /// The wp:wrapPolygon of a wp:wrapTight / wp:wrapThrough (ECMA-376 Part 1 20.4.2.16 / 20.4.2.17 / 20.4.2.18: wp:start then
+    /// wp:lineTo, each x / y) as wrapPolygon="x,y x,y ...", in Word's 21600 x 21600 space over the object
+    /// (<see cref="Html.WordPictureContour.WordUnits"/>; LibreOffice WrapPolygonHandler.cxx:179-208 collects the same points).
+    /// </summary>
+    private static void AppendWrapPolygon(StringBuilder layout, ReadOnlySpan<byte> drawing, int wrapAt, string wrap)
+    {
+        int close = drawing.Slice(wrapAt).IndexOf(Encoding.UTF8.GetBytes("</wp:" + wrap + ">"));
+        if (close < 0) return;
+        ReadOnlySpan<byte> body = drawing.Slice(wrapAt, close);
+        var points = new StringBuilder();
+        int count = 0;
+        for (int at = 0; at < body.Length && count < 4096;)
+        {
+            int start = IndexOfOpenTag(body, at, "wp:start"), lineTo = IndexOfOpenTag(body, at, "wp:lineTo");
+            int next = start < 0 ? lineTo : lineTo < 0 ? start : Math.Min(start, lineTo);
+            if (next < 0) break;
+            ReadOnlySpan<byte> tag = OpenTagAt(body, next);
+            if (AttributeValue(tag, "x") is { } x && AttributeValue(tag, "y") is { } y)
+            {
+                if (points.Length > 0) points.Append(' ');
+                points.Append(x).Append(',').Append(y);
+                count++;
+            }
+            at = next + 1;
+        }
+        if (count > 2) layout.Append(" wrapPolygon=\"").Append(points).Append('"');
     }
 
     /// <summary>
@@ -304,6 +334,7 @@ internal static class DocxDrawingStripper
         }
         var layout = new StringBuilder("<" + PictureLayoutElementName + " kind=\"vml\" embed=\"" + embed + "\"");
         if (shape >= 0 && AttributeValue(OpenTagAt(picture, shape), "style") is { } style) layout.Append(" style=\"").Append(style).Append('"');
+        if (shape >= 0 && AttributeValue(OpenTagAt(picture, shape), "wrapcoords") is { } wrapCoords) layout.Append(" wrapcoords=\"").Append(wrapCoords).Append('"');
         if (IndexOfOpenTag(picture, 0, "w10:wrap") is var wrap and >= 0)
         {
             ReadOnlySpan<byte> wrapTag = OpenTagAt(picture, wrap);
@@ -354,7 +385,7 @@ internal static class DocxDrawingStripper
         {
             if (AttributeValue(tag, name) is { } value) layout.Append(' ').Append(attribute).Append("=\"").Append(value).Append('"');
         }
-        foreach (string name in new[] { "style", "fillcolor", "filled", "strokecolor", "stroked", "strokeweight", "arcsize", "from", "to", "type", "adj" }) Copy(name, shapeTag, name);
+        foreach (string name in new[] { "style", "fillcolor", "filled", "strokecolor", "stroked", "strokeweight", "arcsize", "from", "to", "type", "adj", "wrapcoords" }) Copy(name, shapeTag, name);
         Copy("spt", shapeTag, "o:spt");
         // WordArt: v:textpath string and style, the attributes LibreOffice reads (vmlshapecontext.cxx:510-514)
         if (IndexOfOpenTag(body, 0, "v:textpath") is var textPath and >= 0)
@@ -392,6 +423,7 @@ internal static class DocxDrawingStripper
     {
         var layout = new StringBuilder("<" + PictureLayoutElementName + " kind=\"vml\" vmlShape=\"group\"");
         if (AttributeValue(OpenTagAt(picture, group), "style") is { } style) layout.Append(" style=\"").Append(style).Append('"');
+        if (AttributeValue(OpenTagAt(picture, group), "wrapcoords") is { } wrapCoords) layout.Append(" wrapcoords=\"").Append(wrapCoords).Append('"');
         if (IndexOfOpenTag(picture, 0, "w10:wrap") is var wrap and >= 0)
         {
             ReadOnlySpan<byte> wrapTag = OpenTagAt(picture, wrap);

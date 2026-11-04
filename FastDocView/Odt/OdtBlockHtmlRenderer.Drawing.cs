@@ -72,21 +72,19 @@ public sealed partial class OdtBlockHtmlRenderer
     /// <summary>
     /// Contour wrapping (style:wrap-contour="true", ODF 1.3 part 3 20.401): text runs along the object's outline instead of its box.
     /// The outline: a frame's draw:contour-polygon / draw:contour-path (10.4.11.2 / .3, its svg:viewBox mapped to the frame), a
-    /// shape's own outlines. As CSS shape-outside on the float (border-box coordinates) - the outline's extreme on the text side
-    /// at every point of height (1 pt steps), so the text meets it line by line, with the gap on the text side as shape-margin.
-    /// style:wrap-contour-mode full (text also into the outline's indentations) cannot be laid out in CSS: a float keeps its text
-    /// on one side (CSS Shapes 1, section 2) - drawn as outside. Null when the object does not float or wraps its box.
+    /// shape's own outlines; the shared <see cref="WordPictureContour"/> turns it into shape-outside. style:wrap-contour-mode full
+    /// (text also into the outline's indentations) cannot be laid out in CSS: a float keeps its text on one side (CSS Shapes 1,
+    /// section 2) - drawn as outside. The layout unchanged when the object does not float or wraps its box.
     /// </summary>
-    private string? ContourCss(XElement element, WordPictureLayout layout, double width, double height, List<List<(double X, double Y)>>? outlines)
+    private WordPictureLayout WithContour(XElement element, WordPictureLayout layout, double width, double height, List<List<(double X, double Y)>>? outlines)
     {
-        if (layout.Wrap != WordPictureWrap.Square || layout.Side == WordPictureSide.Center || !(width > 0) || !(height > 0) || !(!double.IsNaN(width) && !double.IsInfinity(width)) || !(!double.IsNaN(height) && !double.IsInfinity(height))) return null;
-        double step = Math.Max(1, height / 2000);            // 1 pt rows, at most 2000 (a taller object: rows below a pixel apart on screen anyway)
-        if (GraphicProperty(element, OdtStyleCascade.Style + "wrap-contour") != "true") return null;
+        if (layout.Wrap != WordPictureWrap.Square || !(width > 0) || !(height > 0) || double.IsInfinity(width) || double.IsInfinity(height)) return layout;
+        if (GraphicProperty(element, OdtStyleCascade.Style + "wrap-contour") != "true") return layout;
         if (element.Name == DrawNs + "frame")
         {
             outlines = null;
             XElement? contour = element.Element(DrawNs + "contour-polygon") ?? element.Element(DrawNs + "contour-path");
-            if (contour is null || OdtSvgPath.ViewBox((string?)contour.Attribute(SvgNs + "viewBox")) is not { Width: > 0, Height: > 0 } box) return null;
+            if (contour is null || OdtSvgPath.ViewBox((string?)contour.Attribute(SvgNs + "viewBox")) is not { Width: > 0, Height: > 0 } box) return layout;
             double sx = width / box.Width, sy = height / box.Height;
             if (contour.Name.LocalName == "contour-polygon")
             {
@@ -96,32 +94,7 @@ public sealed partial class OdtBlockHtmlRenderer
             else if (OdtSvgPath.Parse((string?)contour.Attribute(SvgNs + "d")) is { Count: > 0 } paths)
                 outlines = paths.Select(p => OdtShapeStyle.Flatten(p).Select(q => ((q.X - box.X) * sx, (q.Y - box.Y) * sy)).ToList()).ToList();
         }
-        if (outlines is not { Count: > 0 }) return null;
-        bool textOnRight = layout.Side == WordPictureSide.Left;
-        var polygon = new List<(double X, double Y)>();
-        for (double y = 0; ; y = Math.Min(height, y + step))
-        {
-            double? extreme = null;
-            foreach (List<(double X, double Y)> outline in outlines)
-                for (int i = 0; i < outline.Count; i++)
-                {
-                    (double x1, double y1) = outline[i]; (double x2, double y2) = outline[(i + 1) % outline.Count];
-                    if ((y < Math.Min(y1, y2)) || (y > Math.Max(y1, y2))) continue;
-                    double x = y1 == y2 ? (textOnRight ? Math.Max(x1, x2) : Math.Min(x1, x2)) : x1 + (y - y1) / (y2 - y1) * (x2 - x1);
-                    extreme = extreme is null ? x : textOnRight ? Math.Max(extreme.Value, x) : Math.Min(extreme.Value, x);
-                }
-            if (extreme is { } e) polygon.Add((Math.Max(0, Math.Min(width, e)), y));
-            if (y >= height) break;
-        }
-        if (polygon.Count < 2) return null;
-        double edge = textOnRight ? 0 : width;
-        var css = new StringBuilder("shape-outside:polygon(");
-        css.Append(Css(edge)).Append("pt ").Append(Css(polygon[0].Y)).Append("pt");
-        foreach ((double x, double y) in polygon) css.Append(',').Append(Css(x)).Append("pt ").Append(Css(y)).Append("pt");
-        css.Append(',').Append(Css(edge)).Append("pt ").Append(Css(polygon[polygon.Count - 1].Y)).Append("pt) border-box;");
-        double gap = textOnRight ? layout.RightPt : layout.LeftPt;
-        if (gap > 0) css.Append("shape-margin:").Append(Css(gap)).Append("pt;");
-        return css.ToString();
+        return outlines is { Count: > 0 } ? layout with { Contour = outlines } : layout;
     }
 
     /// <summary>
@@ -170,7 +143,7 @@ public sealed partial class OdtBlockHtmlRenderer
         List<List<(double X, double Y)>> outlines = drawn.SelectMany(d => (d.Shape.Paths ?? []).SelectMany(p => p.Subpaths)
             .Select(s => OdtShapeStyle.Flatten(s).Select(q => (d.Shape.Transform ?? WordAffine.Identity).Apply(q.X, q.Y)).ToList())).ToList();
         int frameAt = html.Length;
-        WordShapeHtml.OpenFrame(html, layout, growsWithText: false, ContourCss(element, layout, width, height, outlines));
+        WordShapeHtml.OpenFrame(html, WithContour(element, layout, width, height, outlines), growsWithText: false);
         if (pageLayout) html.Insert(frameAt + "<span class=\"word-shape\"".Length, " data-shape-page=\"" + Css(width) + " " + Css(height) + "\"");
         WordShapeHtml.AppendGeometry(html, drawn.Select(d => d.Shape).ToList(), width, height, stretches: false);
         for (int k = 0; k < drawn.Count; k++)
