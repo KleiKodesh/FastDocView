@@ -23,6 +23,33 @@ public static class WordFieldsOtherFormatsTest
             WordSaved(path, extension);
         }
         HandWrittenRtf();
+        DocListContexts(Path.GetFullPath(Path.Combine(folder, "fields-lists-v1.doc")));
+    }
+
+    /// <summary>
+    /// .doc REF \n \w \r on a three-level list "%1)" "%2)" "%3)" (fields-lists-v1.doc, make-fields-lists-fixture.ps1): the
+    /// fields carry Word's results, which the renderer shows; the same codes are computed here through the document's own
+    /// field context (the span scan's list contexts) as a field Word saved without a result or dirty would be. Word 16's
+    /// results (COM, 2026-11-04): inside 2)b) \r "i)"; from outside the list \n "i)", \w "2)b)i)", \r "i)".
+    /// </summary>
+    private static void DocListContexts(string path)
+    {
+        if (!File.Exists(path)) { TestReport.Check(false, "test-data/word-fields/fields-lists-v1.doc present"); return; }
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-fields-lists-doc") };
+        using var document = (DocBinaryWindowedDocument)WordWindowedDocumentOpener.Open(path, policy);
+        List<string> text = document.RenderBlocks(0, document.BlockCount).Select(block => Strip(block.Html).Trim()).ToList();
+        int Block(string part) => text.FindIndex(block => block.Contains(part, StringComparison.Ordinal));
+        Fields.WordFieldContext context = document.Renderer.FieldContext!;
+        string Computed(string code, int block)
+        {
+            context.CurrentBlock = block;
+            return Fields.WordFieldEvaluator.Compute(Fields.WordFieldInstruction.Parse(code), context) is { } output ? output.Text ?? "" : "";
+        }
+        int outside = Block("refs "), inside = Block("sub b ");
+        string fromOutside = string.Join(" | ", Computed("REF deep \\n", outside), Computed("REF deep \\w", outside), Computed("REF deep \\r", outside));
+        TestReport.Check(outside >= 0 && fromOutside == "i) | 2)b)i) | i)", $".doc REF \\n / \\w / \\r from outside the list (Word 16: i), 2)b)i), i)): [{fromOutside}]");
+        TestReport.Check(inside >= 0 && Computed("REF deep \\r", inside) == "i)", $".doc REF \\r from inside 2)b) (Word 16: i)): [{Computed("REF deep \\r", inside)}]");
+        TestReport.Check(Computed("REF deep \\w", Block("one")) == "2)b)i)", ".doc REF \\w from inside 1): the full number");
     }
 
     private static string Strip(string html) => WordFieldsFidelityTest.Strip(html);

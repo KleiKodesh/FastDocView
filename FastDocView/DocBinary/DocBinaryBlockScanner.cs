@@ -26,6 +26,10 @@ internal sealed class DocBinaryBlockScanner
     /// <summary>Per block: an index into <see cref="ListLabels"/>, -1 when the block is not a list item.</summary>
     public List<int> BlockListLabelIds { get; } = new();
     public List<string> ListLabels { get; } = new();
+    /// <summary>Per block: an index into <see cref="ListContexts"/> (REF \w \r), -1 when the block is not a list item.</summary>
+    public List<int> BlockListContextIds { get; } = new();
+    public List<string> ListContexts { get; } = new();
+    private readonly Dictionary<string, int> _listContextIds = new();
     public List<WordDocumentHeading> Headings { get; } = new();
     /// <summary>The CP every block of the scan so far ends at (the next block's start) - the last block's end once <see cref="Finish"/> ran.</summary>
     public int ScannedEndCp => _paragraphStart;
@@ -85,6 +89,7 @@ internal sealed class DocBinaryBlockScanner
         BlockStartCps.Add(start);
         BlockKinds.Add(kind);
         BlockListLabelIds.Add(-1);
+        BlockListContextIds.Add(-1);
         StateOfLastBlock = _pendingState is { } pending && pending.cp == start ? pending.state : null;
         if (StateOfLastBlock is not null) _pendingState = null;
         BlockAdded?.Invoke(BlockStartCps.Count - 1, start);
@@ -96,6 +101,12 @@ internal sealed class DocBinaryBlockScanner
         BlockListLabelIds[BlockListLabelIds.Count - 1] = id;
     }
 
+    private void SetListContext(string context)
+    {
+        if (!_listContextIds.TryGetValue(context, out int id)) { id = ListContexts.Count; ListContexts.Add(context); _listContextIds[context] = id; }
+        BlockListContextIds[BlockListContextIds.Count - 1] = id;
+    }
+
     private void OnParagraphEnd(int end, char mark)
     {
         int start = _paragraphStart;
@@ -105,6 +116,7 @@ internal sealed class DocBinaryBlockScanner
         (WordParagraphFormatting formatting, int styleIndex) = _renderer.ResolveParagraph(start, end);
         // Every list paragraph advances its counter, cell paragraphs included — a list that runs through a table keeps counting.
         string? label = formatting.NumberingId > 0 ? _listCounter.Next(formatting.NumberingId, formatting.NumberingLevel) : null;
+        string? context = label is { Length: > 0 } ? _listCounter.ContextOf(formatting.NumberingId, formatting.NumberingLevel) : null;
         if (table.IsInTable || mark == '\u0007')
         {
             if (_rowStart < 0) _rowStart = start;
@@ -114,6 +126,7 @@ internal sealed class DocBinaryBlockScanner
         if (_rowStart >= 0) { AddBlock(_rowStart, start, WordDocumentBlockKind.TableRow); _rowStart = -1; }   // a row without its end mark
         AddBlock(start, end, WordDocumentBlockKind.Paragraph);
         if (label is { Length: > 0 }) SetListLabel(label);
+        if (context is not null) SetListContext(context);
         if (!CollectsHeadings) return;
         int level = _styles.HeadingLevelOf(styleIndex);
         if (level > 0)

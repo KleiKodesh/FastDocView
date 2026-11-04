@@ -174,6 +174,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
             BookmarkText = BookmarkText,
             BookmarkBlock = FindBookmark,
             ListLabelOfBlock = block => block >= 0 && block < BlockCount ? _table.ListLabelOf(block) : null,
+            ListContextOfBlock = block => block >= 0 && block < BlockCount ? _table.ListContextOf(block) : null,
             NoteMarkOfBookmark = NoteMarkOfBookmark,
             StyledParagraph = StyledParagraph,
             Headings = () => _index is null ? [] : Headings,

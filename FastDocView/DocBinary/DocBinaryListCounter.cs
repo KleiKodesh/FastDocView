@@ -77,4 +77,37 @@ public sealed class DocBinaryListCounter
         counters[level]++;
         return _definitions.FormatLabel(listOverride, list, level, definition, counters);
     }
+
+    /// <summary>
+    /// The paragraph's number in full context, as REF / STYLEREF \w and \r need it - the same form as
+    /// <see cref="DocxHtml.DocxListCounter.ContextOf"/>: "#lsid", then "level U+0002 label" per level from the top, each
+    /// level's own number text with the current counters; an upper level a deeper level's text already holds (a placeholder
+    /// in its xst, [MS-DOC] 2.9.150 rgbxchNums) is not repeated. Call right after <see cref="Next"/> for the same paragraph;
+    /// null when it is not a list item.
+    /// </summary>
+    public string? ContextOf(int rawListFormatOverride, int level)
+    {
+        if (_definitions.IsEmpty) return null;
+        int overrideIndex = rawListFormatOverride;
+        if (overrideIndex <= 0 || overrideIndex == NotInListMarker || level == SkippedLevel) return null;
+        if (overrideIndex >= 0xF802) overrideIndex = 0x10000 - overrideIndex;
+        if (level < 0 || level >= DocBinaryListDefinitions.MaxLevels) return null;
+        if (_definitions.OverrideAt(overrideIndex) is not { } listOverride || _definitions.ListOf(listOverride.ListId) is not { } list) return null;
+        if (!_countersByListId.TryGetValue(list.ListId, out int[]? counters)) return null;
+        var included = new List<string>();
+        var covered = new HashSet<int>();
+        for (int k = level; k >= 0; k--)
+        {
+            if (covered.Contains(k) || _definitions.LevelFor(listOverride, list, k) is not { } definition) continue;
+            included.Insert(0, k.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\u0002" + _definitions.FormatLabel(listOverride, list, k, definition, counters));
+            foreach (byte offset in definition.PlaceholderOffsets)
+            {
+                if (offset == 0) break;
+                if (offset - 1 < definition.NumberText.Length) covered.Add(definition.NumberText[offset - 1]);
+            }
+        }
+        if (included.Count == 0) return null;
+        included.Insert(0, "#" + list.ListId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return string.Join("\u0001", included);
+    }
 }

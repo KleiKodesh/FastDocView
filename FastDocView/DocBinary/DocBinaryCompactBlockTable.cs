@@ -142,6 +142,14 @@ internal sealed class DocBinaryCompactBlockTable
         return labelIndex >= 0 ? span.Scanner.ListLabels[labelIndex] : null;
     }
 
+    /// <summary>The block's list number in full context (REF \w \r), recomputed by the span scan from the anchor's counter state; null when not a list item.</summary>
+    public string? ListContextOf(int blockIndex)
+    {
+        Span span = EnsureStarted(blockIndex, out int local);
+        int contextIndex = span.Scanner.BlockListContextIds[local];
+        return contextIndex >= 0 ? span.Scanner.ListContexts[contextIndex] : null;
+    }
+
     /// <summary>The exact text length when the block's span has been scanned past it, else null (the index's group average stands in).</summary>
     public int? KnownTextLength(int blockIndex)
     {

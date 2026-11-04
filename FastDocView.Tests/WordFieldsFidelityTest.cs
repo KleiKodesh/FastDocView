@@ -21,6 +21,8 @@ public static class WordFieldsFidelityTest
         DocxRendering();
         DocxLookups();
         DocxListContexts();
+        DocxListLookupsAcrossSpans();
+        DocxTableOfContentsFarHeading();
     }
 
     private static readonly WordFieldContext English = new() { Culture = CultureInfo.GetCultureInfo("en-US"), Now = new DateTime(2024, 3, 5, 14, 7, 9) };
@@ -410,6 +412,99 @@ public static class WordFieldsFidelityTest
         TestReport.Check(Field("REF x \\p", hebrew) == "מעל" && Field("REF x \\n \\p", hebrew) == "1 מעל", "\\p in Hebrew text: מעל (Word 16 wrote it for a Hebrew field)");
         hebrew.CurrentBlock = 1;
         TestReport.Check(Field("REF x \\p", hebrew) == "מתחת", "\\p in Hebrew text below: מתחת");
+    }
+
+    /// <summary>
+    /// Can a list-number lookup re-enter a block scan in progress (the RTF reader's crash)? A .docx of ~20 index spans whose
+    /// REF \w fields each point to a list item in a span far from their own, more spans than the table caches: rendering a
+    /// window and searching (fields computed while the search pieces are fed) make every lookup scan, evict and rescan other
+    /// spans mid-render. Each REF must still show its target's full number (counters hand-worked: levels "%1)" "%2)" "%3)").
+    /// </summary>
+    private static void DocxListLookupsAcrossSpans()
+    {
+        const string numbering = """
+            <w:abstractNum w:abstractNumId="1">
+              <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1)"/></w:lvl>
+              <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2)"/></w:lvl>
+              <w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="lowerRoman"/><w:lvlText w:val="%3)"/></w:lvl>
+            </w:abstractNum>
+            <w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>
+            """;
+        int[] pattern = [0, 1, 2, 2, 1, 2];               // 1) a) i) ii) b) i)
+        string[] romans = ["i", "ii"];
+        const int Items = 12060, Every = 402;        // Every a multiple of the pattern: item % Every == 2 is a level-3 item
+        string padding = new string('x', 300);
+        var body = new StringBuilder();
+        var counters = new int[3];
+        var fullNumbers = new Dictionary<string, string>();   // bookmark -> its full number
+        var references = new List<(int block, string bookmark)>();
+        int block = 0;
+        for (int item = 0; item < Items; item++)
+        {
+            int level = pattern[item % pattern.Length];
+            counters[level]++;
+            for (int deeper = level + 1; deeper < 3; deeper++) counters[deeper] = 0;
+            string bookmark = "";
+            if (level == 2 && item % Every == 2)
+            {
+                bookmark = "bm" + item;
+                fullNumbers[bookmark] = $"{counters[0]}){(char)('a' + counters[1] - 1)}){romans[counters[2] - 1]})";
+            }
+            body.Append("<w:p><w:pPr><w:numPr><w:ilvl w:val=\"").Append(level).Append("\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>");
+            if (bookmark.Length > 0) body.Append("<w:bookmarkStart w:id=\"").Append(item).Append("\" w:name=\"").Append(bookmark).Append("\"/>");
+            body.Append(Run("item " + item + " " + padding));
+            if (bookmark.Length > 0) body.Append("<w:bookmarkEnd w:id=\"").Append(item).Append("\"/>");
+            body.Append("</w:p>");
+            block++;
+            if (item % Every == Every - 1)
+            {
+                // a plain paragraph referring to bookmarks far behind and far ahead (other spans)
+                foreach (int target in new[] { (item + Items / 2) % Items, (item + Items / 3) % Items })
+                {
+                    string targetBookmark = "bm" + (target / Every * Every + 2);
+                    body.Append("<w:p>").Append(Run("ref ")).Append(Complex($" REF {targetBookmark} \\w ", null)).Append("</w:p>");
+                    references.Add((block++, targetBookmark));
+                }
+            }
+        }
+        List<string> inMemory = DocxFidelityTest.RenderAll("fields-list-spans-v1", body.ToString(), "", numbering);
+        int wrong = references.Count(reference => Strip(inMemory[reference.block]) != "ref " + fullNumbers[reference.bookmark]);
+        TestReport.Check(wrong == 0, $"REF \\w across the document, one in-memory pass: {references.Count - wrong} of {references.Count} as Word numbers them");
+
+        string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-fields-list-spans-v1.docx");
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-fields-list-spans"), ForcedMode = WordIndexMode.Sidecar };
+        using (DocxWindowedDocument.Open(path, policy)) { }
+        using var document = DocxWindowedDocument.Open(path, policy);       // reopened: the compact table, spans rescanned on demand
+        TestReport.Check(document.Index.Anchors.Length > 12, $"the fixture spans more anchors ({document.Index.Anchors.Length}) than the table caches (8)");
+        var random = new Random(5);
+        wrong = 0;
+        foreach ((int referenceBlock, string bookmark) in references.OrderBy(_ => random.Next()))
+        {
+            int first = Math.Max(0, referenceBlock - 3);
+            IReadOnlyList<WordDocumentBlockHtml> window = document.RenderBlocks(first, Math.Min(8, document.BlockCount - first));
+            if (Strip(window[referenceBlock - first].Html) != "ref " + fullNumbers[bookmark]) wrong++;
+        }
+        TestReport.Check(wrong == 0, $"REF \\w from the compact table, windows in random order (each lookup scans and evicts other spans): {references.Count - wrong} of {references.Count} right");
+        string sought = fullNumbers[references[^1].bookmark];
+        int[] expected = references.Where(reference => fullNumbers[reference.bookmark].Contains(sought)).Select(reference => reference.block).ToArray();
+        int[] bytes = Hits(document, sought, DocxWindowedDocument.DocxSearchTextMode.Bytes), referenceHits = Hits(document, sought, DocxWindowedDocument.DocxSearchTextMode.ReferenceXmlReader);
+        TestReport.Check(bytes.SequenceEqual(expected) && referenceHits.SequenceEqual(expected),
+                         $"search \"{sought}\" (computed REF \\w, lookups mid-piece): [{string.Join(",", expected)}] (bytes [{string.Join(",", bytes)}], reference [{string.Join(",", referenceHits)}])");
+    }
+
+    /// <summary>
+    /// A TOC \h whose heading is far below it (block 601): the live check (vue-demo playwright/fieldsCheck.mjs on
+    /// fidelity-v1-fields-toc-far-v1.docx) clicks the entry with the heading off screen and expects the jump to bring it in.
+    /// </summary>
+    private static void DocxTableOfContentsFarHeading()
+    {
+        const string styles = """<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style>""";
+        var body = new StringBuilder("<w:p>" + Complex(" TOC \\o \"1-1\" \\h ", null) + "</w:p>");
+        for (int i = 1; i <= 600; i++) body.Append("<w:p>").Append(Run("filler paragraph " + i)).Append("</w:p>");
+        body.Append("<w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr>").Append(Run("Far heading")).Append("</w:p>");
+        body.Append("<w:p>").Append(Run("after the heading")).Append("</w:p>");
+        List<string> html = DocxFidelityTest.RenderAll("fields-toc-far-v1", body.ToString(), styles);
+        TestReport.Check(html[0].Contains("href=\"#block-601\"") && Strip(html[0]).Contains("Far heading"), "TOC \\h: the entry links to its heading 601 blocks below");
     }
 
     private static int[] Hits(DocxWindowedDocument document, string query, DocxWindowedDocument.DocxSearchTextMode mode)

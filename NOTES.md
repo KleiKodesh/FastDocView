@@ -1617,7 +1617,9 @@ One engine in `Fields/` for .docx, .doc and .rtf; each format only finds the fie
   → \n "i)", \w "2)b)i)", \r "i)" both from inside 2)b) and from outside the list; a trailing period dropped, "1." → "1").
   .docx builds the full context in the list counter (each level's own lvlText with the counters; an upper level already in a
   deeper level's text, %1 in "%1.%2.", is not repeated); .rtf walks back over the blocks' list levels to the nearest
-  paragraph of each upper level; .doc keeps no level per block, so its \r / \w are the paragraph's own label. \p writes
+  paragraph of each upper level; .doc builds it like .docx in its list counter during the span scan (each level's
+  xst with the counters; a level a deeper xst holds as a placeholder, rgbxchNums, is not repeated) - no index change, the
+  span anchors already carry the counter state (fields-lists-v1.doc, Word 16 via COM, same values). \p writes
   "above" / "below", or Word 16's Hebrew "מעל" / "מתחת" when the document is right-to-left (Word follows the field's text
   language; the readers know the document's direction, not each run's language, before any text). NOTEREF (\f \p);
   STYLEREF (back from the field's block, then forward - flow view has no page for Word's page-relative search or \l; Word's
@@ -1634,6 +1636,10 @@ One engine in `Fields/` for .docx, .doc and .rtf; each format only finds the fie
   STYLEREF looks at most 4096 blocks each way - every block read is a span rescan (no per-style table in the index).
 - RTF field lookups read through a second block table whose rescans compute no fields: a lookup runs while the document's
   table is mid-rescan and must not re-enter it.
+- .docx lookups cannot re-enter a scan (checked 2026-11-04): a span scan only feeds the scanner and the list labeller (no
+  fields); a render reads its blocks' XML whole before any field computes, and search feeds its own buffer - a lookup's
+  rescan touches only the scan chunk and the ring. Harness: REF \w to far spans, more spans than the cache holds, random
+  window order and search (DocxListLookupsAcrossSpans).
 - Bookmark lookups during a render never scan on: while the first open is still indexing, a bookmark not found yet is
   unknown (the field shows nothing until the index completes), not missing. .doc SEQ \s heading positions are read once.
 - Still not computed: INCLUDETEXT / INCLUDEPICTURE (never fetched), USERNAME / USERINITIALS / USERADDRESS without an
