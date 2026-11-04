@@ -85,10 +85,12 @@ public static class WordFieldFormat
             case "ORDTEXT": return value is < 0 or > 999999 ? NumberNotRepresentable : OrdinalText(value);
             case "DOLLARTEXT":
             {
-                if (number < 0 || number > 999999) return NumberNotRepresentable;
-                decimal cents = Math.Round(number, 2, MidpointRounding.AwayFromZero);
-                long dollars = (long)Math.Floor(cents);
-                int hundredths = (int)((cents - dollars) * 100);
+                // Word 16: the whole part is checked and spelled as it is; the cents are the fraction rounded, without a carry
+                // (999999.999 → "nine hundred ninety-nine thousand nine hundred ninety-nine and 00/100", .994 → 99/100,
+                // 1000000 → NumberNotRepresentable)
+                if (number < 0 || Math.Floor(number) > 999999) return NumberNotRepresentable;
+                long dollars = (long)Math.Floor(number);
+                int hundredths = (int)(Math.Round((number - dollars) * 100, 0, MidpointRounding.AwayFromZero) % 100);
                 return CardinalText(dollars) + " and " + hundredths.ToString("00", CultureInfo.InvariantCulture) + "/100";
             }
             case "HEX": return value < 0 ? NumberNotRepresentable : value.ToString("X", CultureInfo.InvariantCulture);

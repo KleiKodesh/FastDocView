@@ -37,7 +37,19 @@ public static class WrapSidesAndContourFidelityTest
         @"\pard " + Shape(@"\shpbxpage\shpleft5400\shptop0\shpright6840\shpbottom1440\shpwr2\shpwrk0", Property("shapeType", "1")) + @"pageleft\par",
         // 9 from the page edge, right of centre (7000 - 1800 + 720 > 4320): right
         @"\pard " + Shape(@"\shpbxpage\shpleft7000\shptop0\shpright8440\shpbottom1440\shpwr2\shpwrk0", Property("shapeType", "1")) + @"pageright\par",
+        // 10 as 6, but the offset is from the anchor character (posrelh 3): unknown in the column - its own side, left
+        @"\pard " + Shape(@"\shpleft6000\shptop0\shpright7440\shpbottom1440\shpwr2\shpwrk0", Property("shapeType", "1") + Property("posrelh", "3")) + @"character\par",
     ];
+
+    /// <summary>
+    /// A page-relative object at 5600 twips with margins 1800 and a 2000-twip gutter: with the gutter on the left the column
+    /// starts at 3800 (offset 5600 - 3800 + 720 = 2520, left of the 6640-wide column's centre 3320: left); a right-to-left
+    /// gutter (\rtlgutter) leaves the column at 1800 (4520 &gt; 3320: right); a gutter at the top (\gutterprl) neither moves
+    /// the column nor narrows it (4520 &gt; 4320: right).
+    /// </summary>
+    private static string GutterDocument(string gutterWords)
+        => @"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}\paperw12240\margl1800\margr1800\gutter2000\sectd" + gutterWords + @"\pard "
+           + Shape(@"\shpbxpage\shpleft5600\shptop0\shpright7040\shpbottom1440\shpwr2\shpwrk0", Property("shapeType", "1")) + @"gutter\par}";
 
     public static void Run()
     {
@@ -53,15 +65,28 @@ public static class WrapSidesAndContourFidelityTest
             TestReport.Check(html[1].Contains("float:right;"), "rtf right both sides: floats right (" + html[1] + ")");
             TestReport.Check(html[2].Contains("float:right;"), "rtf \\shpwrk1 (text on the left): floats right (" + html[2] + ")");
             // text on the right of a left float: the polygon runs from the left edge along the triangle's right side x = y
-            TestReport.Check(html[3].Contains("shape-outside:polygon(0pt 0pt,0pt 0pt,1pt 1pt,") && html[3].Contains("72pt 72pt,0pt 72pt) border-box;"),
+            TestReport.Check(html[3].Contains("shape-outside:polygon(0% 0%,0% 0%,1.389% 1.389%,") && html[3].Contains("100% 100%,0% 100%) border-box;"),
                              "rtf \\shpwr4 + pWrapPolygonVertices: shape-outside from the polygon (" + html[3] + ")");
-            TestReport.Check(html[5].Contains("shape-outside:polygon(0pt 0pt,0pt 0pt,1pt 1pt,"), "rtf \\shpwr5 (through): a contour like tight (" + html[5] + ")");
+            TestReport.Check(html[5].Contains("shape-outside:polygon(0% 0%,0% 0%,1.389% 1.389%,"), "rtf \\shpwr5 (through): a contour like tight (" + html[5] + ")");
             TestReport.Check(html[6].Contains("float:right;"), "rtf offset alone, centre right of the column's: floats right (" + html[6] + ")");
             TestReport.Check(html[8].Contains("float:left;"), "rtf page-relative offset centred on the page: the tie, floats left (" + html[8] + ")");
             TestReport.Check(html[9].Contains("float:right;"), "rtf page-relative offset right of the column centre: floats right (" + html[9] + ")");
             TestReport.Check(html[7].Contains("float:left;"), "rtf offset alone near the left: floats left (" + html[7] + ")");
-            TestReport.Check(html[4].Contains("shape-outside:polygon(") && html[4].Contains(",72pt 36pt,"), "rtf \\shpwr4 ellipse, no polygon: its outline (widest at mid-height) (" + html[4] + ")");
+            TestReport.Check(html[4].Contains("shape-outside:polygon(") && html[4].Contains(",100% 50%,"), "rtf \\shpwr4 ellipse, no polygon: its outline (widest at mid-height) (" + html[4] + ")");
         }
+        TestReport.Check(html.Count >= 11 && html[10].Contains("float:left;"), "rtf posrelh 3 (from the character): not taken as a column offset (" + (html.Count >= 11 ? html[10] : "") + ")");
+        // the contour is in percentages of the float's box, so it follows the float when max-width shrinks it; the gap stays in pt
+        TestReport.Check(html.Count >= 4 && !html[3].Contains("pt 0pt,") && html[3].Contains("% 0%,"), "contour polygon in percentages of the box (" + (html.Count >= 4 ? html[3] : "") + ")");
+        foreach ((string words, string expected, string name) in new[] { ("", "float:left;", "left gutter"), (@"\rtlgutter", "float:right;", "\\rtlgutter"), (@"\gutterprl", "float:right;", "\\gutterprl") })
+        {
+            string gutterFile = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-rtf-gutter-" + (words.Length == 0 ? "left" : words.TrimStart('\\')) + ".rtf");
+            string gutterDocument = GutterDocument(words);
+            if (!File.Exists(gutterFile) || File.ReadAllText(gutterFile) != gutterDocument) File.WriteAllText(gutterFile, gutterDocument, new UTF8Encoding(false));
+            List<string> gutterHtml = Render(gutterFile);
+            TestReport.Check(gutterHtml.Count > 0 && gutterHtml[0].Contains(expected), $"rtf {name}: the column start and width follow the gutter's place ({expected}; got {(gutterHtml.Count > 0 ? gutterHtml[0] : "")})");
+        }
+        TestReport.Check(WordDocumentPageSetup.GutterPlacement(2000, false, false) == (2000, 2000) && WordDocumentPageSetup.GutterPlacement(2000, true, false) == (2000, 0)
+                         && WordDocumentPageSetup.GutterPlacement(2000, true, true) == (0, 0), "gutter placement: left, right-to-left, at the top");
         string folder = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "libreoffice", "sw", "qa", "extras");
         foreach (string file in new[] { Path.Combine(folder, "ooxmlexport", "data", "picture-wrap-polygon.docx"), Path.Combine(folder, "rtfexport", "data", "picture-wrap-polygon.rtf") })
         {

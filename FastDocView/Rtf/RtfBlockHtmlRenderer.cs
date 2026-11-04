@@ -369,7 +369,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         IReadOnlyList<IReadOnlyList<(double X, double Y)>>? contour = shape.Wrap is 4 or 5 ? WordPictureContour.FromWordUnits(shape.WrapPolygon, widthPt, heightPt) : null;
         return new WordPictureLayout(widthPt, heightPt, wrap, side, shape.WrapTop / EmuPerPoint, shape.WrapRight / EmuPerPoint,
                                      shape.WrapBottom / EmuPerPoint, shape.WrapLeft / EmuPerPoint, offset, sides, contour,
-                                     ColumnWidthPt, shape.IsPageRelative ? WordPictureOffsetOrigin.Page : WordPictureOffsetOrigin.Column, ColumnLeftPt);
+                                     ColumnWidthPt, shape.IsPageRelative ? WordPictureOffsetOrigin.Page : shape.IsCharacterRelative ? WordPictureOffsetOrigin.Other : WordPictureOffsetOrigin.Column, ColumnLeftPt);
     }
 
     /// <summary>WordArt text centred in its font and size (msdffdef.hxx:121-125 gtextUNICODE / gtextSize / gtextFont), known once the shape closed.</summary>

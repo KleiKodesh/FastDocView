@@ -7,7 +7,7 @@ namespace FastDocView.Html;
 /// Contour wrapping for every format: the text runs along an object's outline instead of its box (.docx wp:wrapTight /
 /// wp:wrapThrough with wp:wrapPolygon, VML wrapcoords, .doc / RTF pWrapPolygonVertices, ODF style:wrap-contour). Drawn as CSS
 /// shape-outside on the float (CSS Shapes 1): the outline's extreme on the text side at every point of height (1 pt rows, at most
-/// 2000), so the text meets it line by line, with the gap on the text side as shape-margin. A float keeps its text on one side
+/// 2000), as percentages of the float's box so it follows the float when the float is drawn narrower, so the text meets it line by line, with the gap on the text side as shape-margin. A float keeps its text on one side
 /// (CSS Shapes 1, section 2), so "through" (text also into the outline's indentations) is drawn as tight.
 /// </summary>
 public static class WordPictureContour
@@ -70,14 +70,16 @@ public static class WordPictureContour
             if (y >= height) break;
         }
         if (polygon.Count < 2) return null;
-        double edge = textOnRight ? 0 : width;
+        // percentages of the border box, not points: the float can be drawn smaller than its size (max-width:100% in a narrow
+        // column), and the outline must shrink with it; the gap to the text (shape-margin) stays in points as in Word
+        double edge = textOnRight ? 0 : 100;
         var css = new StringBuilder("shape-outside:polygon(");
-        css.Append(Css(edge)).Append("pt ").Append(Css(polygon[0].Y)).Append("pt");
-        foreach ((double x, double y) in polygon) css.Append(',').Append(Css(x)).Append("pt ").Append(Css(y)).Append("pt");
-        css.Append(',').Append(Css(edge)).Append("pt ").Append(Css(polygon[polygon.Count - 1].Y)).Append("pt) border-box;");
+        css.Append(Css(edge)).Append("% ").Append(Css(polygon[0].Y / height * 100)).Append('%');
+        foreach ((double x, double y) in polygon) css.Append(',').Append(Css(x / width * 100)).Append("% ").Append(Css(y / height * 100)).Append('%');
+        css.Append(',').Append(Css(edge)).Append("% ").Append(Css(polygon[polygon.Count - 1].Y / height * 100)).Append("%) border-box;");
         if (gap > 0) css.Append("shape-margin:").Append(Css(gap)).Append("pt;");
         return css.ToString();
     }
 
-    private static string Css(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+    private static string Css(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
 }

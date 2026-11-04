@@ -91,6 +91,8 @@ internal sealed class RtfShapePlacement
     public int WrapSide;
     /// <summary>\shpbxpage or posrelh 1 (rtfdispatchflag.cxx:1229-1232, rtfsdrimport.cxx:711-721): \shpleft counts from the page edge.</summary>
     public bool IsPageRelative;
+    /// <summary>posrelh 3: the horizontal offset is from the anchor character (RTF 1.9.1 shape property posrelh: 0 margin, 1 page, 2 column, 3 character).</summary>
+    public bool IsCharacterRelative;
     /// <summary>posh (0 = not given: placed at \shpleft).</summary>
     public int HorizontalPosition;
     /// <summary>dxWrapDistLeft, dyWrapDistTop, dxWrapDistRight, dyWrapDistBottom in EMU.</summary>
@@ -199,7 +201,7 @@ internal sealed class RtfShapePlacement
         switch (name)
         {
             case "posh": HorizontalPosition = (int)Math.Max(0, Math.Min(5, number)); break;
-            case "posrelh": IsPageRelative = number == 1; break;
+            case "posrelh": IsPageRelative = number == 1; IsCharacterRelative = number == 3; break;
             case "dxWrapDistLeft": WrapLeft = number; break;
             case "dyWrapDistTop": WrapTop = number; break;
             case "dxWrapDistRight": WrapRight = number; break;

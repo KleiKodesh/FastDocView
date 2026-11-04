@@ -5,7 +5,7 @@ namespace FastDocView.Odt;
 /// <summary>
 /// The page text width of each master page of an OpenDocument text: style:master-page
 /// (style:page-layout-name) -> style:page-layout -> style:page-layout-properties fo:page-width minus
-/// fo:margin-left, fo:margin-right (and LibreOffice's loext:margin-gutter). Read from styles.xml (or a
+/// fo:margin-left, fo:margin-right (LibreOffice writes its loext:margin-gutter inside them). Read from styles.xml (or a
 /// flat .fodt's head, stopping at office:body) with XmlReader: page layouts and master pages only.
 /// A paragraph or table whose style names a master page (style:master-page-name) starts a section with
 /// that page's width; the text before the first such block uses the default master page "Standard"
@@ -21,7 +21,7 @@ public sealed class OdtPageSetup
     private readonly Dictionary<string, int> _masterPageWidths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _masterPageColumnLefts = new(StringComparer.Ordinal);
 
-    /// <summary>Where the text column of a master page's layout starts on the page (fo:margin-left + loext:margin-gutter); null = not known.</summary>
+    /// <summary>Where the text column of a master page's layout starts on the page (fo:margin-left, which holds a left gutter); null = not known.</summary>
     public int? ColumnLeftOfMasterPage(string? masterPageName)
         => masterPageName is not null && _masterPageColumnLefts.TryGetValue(masterPageName, out int left) ? left : null;
 
@@ -82,13 +82,16 @@ public sealed class OdtPageSetup
                     int? margin = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin", FoNamespace));
                     int? left = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-left", FoNamespace)) ?? margin;
                     int? right = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-right", FoNamespace)) ?? margin;
-                    int? gutter = WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-gutter", LibreOfficeNamespace));
+                    // loext:margin-gutter is already inside fo:margin-left (or fo:margin-right with a right-to-left gutter,
+                    // fo:margin-top with GutterAtTop): LibreOffice writes the margin with the gutter and subtracts it on import
+                    // (xmloff PageMasterImportPropMapper.cxx:412-452), so the text width and the column start are the
+                    // margins as written, wherever the gutter is
                     // ODF has no default page size; LibreOffice's own default page style is A4 with 2 cm margins,
                     // but a layout without fo:page-width is rare - fall back to the Word default like other formats.
                     _layoutWidths[_currentLayout] = page is { } width
-                        ? WordDocumentPageSetup.TextWidth(width, left ?? 0, right ?? 0, gutter ?? 0)
+                        ? WordDocumentPageSetup.TextWidth(width, left ?? 0, right ?? 0, 0)
                         : WordDocumentPageSetup.DefaultTextWidthTwips;
-                    if (page is not null) _layoutColumnLefts[_currentLayout] = WordDocumentPageSetup.ColumnLeft(left ?? 0, gutter ?? 0);
+                    if (page is not null) _layoutColumnLefts[_currentLayout] = WordDocumentPageSetup.ColumnLeft(left ?? 0, 0);
                     break;
                 }
                 case "master-page":

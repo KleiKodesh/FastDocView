@@ -73,7 +73,7 @@ public static class DocxRandomAccessIndexBuilder
         long done = 0;
 
         DocxDocumentParts.DocxListLabeller labeller = parts.CreateListLabeller();
-        var scanner = new DocxBodyBlockScanner(labeller.Resolve, parts.Styles.HeadingLevelOf);
+        var scanner = new DocxBodyBlockScanner(labeller.Resolve, parts.Styles.HeadingLevelOf, parts.Compatibility.IsGutterAtTop);
         var cursor = new DocxEntryInflationCursor(package, body, checkpointSpanBytes, snapToSparseBoundaries: true);
         var anchors = new DocxIndexAnchorRecorder(scanner, labeller);
         if (copies is not null) copies[0] = new MemoryStream();

@@ -17,6 +17,7 @@ public static class WordFieldsFidelityTest
         TestReport.Step("Word fields: switches, formulas, docx rendering and search");
         Switches();
         Formulas();
+        FormulaLimits();
         Instructions();
         DocxRendering();
         DocxLookups();
@@ -215,6 +216,80 @@ public static class WordFieldsFidelityTest
                          && Field("= Amount * 2", properties) == "2501", "REF text and a bookmark in a formula (its leading number)");
         TestReport.Check(Field("= SUM(LEFT)", properties) == "3" && Field("= SUM(A1:B2)", properties) == "10" && Field("= A2*B2", properties) == "12" && Field("= SUM(R1C1:R2C1)", properties) == "4",
                          "table formulas: LEFT, A1:B2, cell product, R1C1 ranges");
+    }
+
+    /// <summary>
+    /// Inputs that used to throw or never finish (second production review, 2026-11-04), against Word 16's own results through
+    /// COM: overflow, malformed numbers, huge cell ranges, deep nesting, EQ arrays, DollarText at the edge of its range.
+    /// </summary>
+    private static void FormulaLimits()
+    {
+        // 1. numbers past the decimal range: Word computes in floating point and shows 14 significant digits
+        Check("= .", WordFieldExpression.SyntaxError + ".");
+        Check("= 1+.", WordFieldExpression.SyntaxError + ".");
+        Check("= .5", "0.5");
+        Check("= 10^30", "1" + new string('0', 30));
+        Check("= -10^30", "1" + new string('0', 30));                      // the sign binds tighter than ^
+        Check("= 123456789012345678901234567890", "123456789012350000000000000000");
+        Check("= 99999999999999999999*99999999999", "9999999999900000000000000000000");
+        Check("= 1234567890123456", "1234567890123500");
+        Check("= 123456789.123456789", "123456789.12346");
+        Check("= SUM(10^29,10^29)", "2" + new string('0', 29));
+        Check("= AVERAGE(10^29,10^29)", "1" + new string('0', 29));
+        Check("= PRODUCT(10^20,10^20)", "1" + new string('0', 40));
+        Check("= 10^62", "1" + new string('0', 62));
+        Check("= 10^63", WordFieldExpression.NumberTooLarge);
+        Check("= 10^300", WordFieldExpression.NumberTooLarge);
+        Check("= 2^3^2", "512");
+        Check("= ROUND(1.5,40)", "1.5");
+        Check("= ROUND(123,-40)", "0");
+        Check("= ROUND(10^20,-30)", "0");
+        Check("= ROUND(1.25,1)", "1.3");
+        TestReport.Check(Field("= ROUND(1,99999)").StartsWith(WordFieldExpression.SyntaxError, StringComparison.Ordinal)
+                         && Field("= ROUND(1,2147483647)").StartsWith(WordFieldExpression.SyntaxError, StringComparison.Ordinal), "ROUND with 32767 places or more: Word's syntax error");
+        // no field can fail its window: a context that throws leaves the field's saved result (nothing computed)
+        var throwing = new WordFieldContext { Culture = CultureInfo.GetCultureInfo("en-US"), BookmarkText = _ => throw new InvalidOperationException("broken source") };
+        TestReport.Check(WordFieldEvaluator.Compute(WordFieldInstruction.Parse("= Amount + 1"), throwing).IsEmpty, "a field whose source throws keeps its saved result");
+
+        // 2. a huge cell range walks only the table (2 x 2 here, Word 16: SUM(A1:B9) in a 2 x 2 table sums its four cells)
+        var table = new WordFieldContext { Culture = CultureInfo.GetCultureInfo("en-US"), Table = new Table([["3", "4"], ["5", ""]], 1, 1) };
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        string huge = Field("= SUM(A1:ZZ2000000000)", table), hugeR1C1 = Field("= SUM(R1C1:R2000000000C2000000000)", table), nine = Field("= SUM(A1:B9)", table);
+        clock.Stop();
+        TestReport.Check(huge == "12" && hugeR1C1 == "12" && nine == "12" && clock.ElapsedMilliseconds < 1000,
+                         $"huge cell ranges clamp to the table (12|12|12 in {clock.ElapsedMilliseconds} ms; got {huge}|{hugeR1C1}|{nine})");
+
+        // 3. nesting: Word's own bound (27 signs or parentheses compute, 28 are too complex), 50,000 deep is no crash
+        Check("= " + new string('-', 27) + "1", "-1");
+        Check("= " + new string('-', 28) + "1", WordFieldExpression.TooComplex);
+        Check("= " + new string('(', 27) + "1" + new string(')', 27), "1");
+        Check("= " + new string('(', 28) + "1" + new string(')', 28), WordFieldExpression.TooComplex);
+        Check("= " + new string('-', 50000) + "1", WordFieldExpression.TooComplex);
+        Check("= " + new string('(', 50000) + "1" + new string(')', 50000), WordFieldExpression.TooComplex);
+        Check("= " + string.Concat(Enumerable.Repeat("1+(", 9)) + "1" + new string(')', 9), "10");
+        Check("= " + string.Concat(Enumerable.Repeat("1+(", 10)) + "1" + new string(')', 10), WordFieldExpression.TooComplex);
+        Check("= " + string.Concat(Enumerable.Repeat("ABS(", 6)) + "1" + new string(')', 6), "1");
+        Check("= " + string.Concat(Enumerable.Repeat("ABS(", 7)) + "1" + new string(')', 7), WordFieldExpression.TooComplex);
+        Check("= " + string.Concat(Enumerable.Repeat("DEFINED(", 6)) + "1" + new string(')', 6), "1");
+        Check("= " + string.Concat(Enumerable.Repeat("DEFINED(", 7)) + "1" + new string(')', 7), WordFieldExpression.TooComplex);
+        Check("= " + string.Concat(Enumerable.Repeat("DEFINED(", 50000)) + "1" + new string(')', 50000), WordFieldExpression.TooComplex);
+        Check("= 1" + string.Concat(Enumerable.Repeat("+1", 500)), "501");
+        string deepEquation = WordFieldEvaluator.Compute(WordFieldInstruction.Parse("EQ " + string.Concat(Enumerable.Repeat("\\f(1,", 50000)) + "x" + new string(')', 50000)), English).Html ?? "";
+        string deepGroups = WordFieldEvaluator.Compute(WordFieldInstruction.Parse("EQ " + new string('(', 50000) + "x" + new string(')', 50000)), English).Html ?? "";
+        TestReport.Check(deepEquation.Contains("<mfrac>") && deepEquation.Contains("<mtext>x</mtext>") && deepGroups.Contains("<mtext>x</mtext>"), "EQ nested 50,000 deep renders (explicit stack, no stack overflow)");
+
+        // 4. EQ \a with more columns than elements: one row of the elements (no int overflow on i + columns)
+        string array = WordFieldEvaluator.Compute(WordFieldInstruction.Parse("EQ \\a \\co2147483647(1,2,3)"), English).Html ?? "";
+        int cells = array.Split("<mtd>").Length - 1, rows = array.Split("<mtr>").Length - 1;
+        TestReport.Check(cells == 3 && rows == 1, $"EQ \\a \\co2147483647: one row of three cells (got {rows} rows, {cells} cells)");
+        string grid = WordFieldEvaluator.Compute(WordFieldInstruction.Parse("EQ \\a \\co2(1,2,3,4)"), English).Html ?? "";
+        TestReport.Check(grid.Split("<mtr>").Length - 1 == 2 && grid.Split("<mtd>").Length - 1 == 4, "EQ \\a \\co2: two rows of two");
+
+        // 8. DollarText: the whole part is checked and spelled, the cents round without a carry (Word 16)
+        Check("= 999999.999 \\* DollarText", "nine hundred ninety-nine thousand nine hundred ninety-nine and 00/100");
+        Check("= 999999.994 \\* DollarText", "nine hundred ninety-nine thousand nine hundred ninety-nine and 99/100");
+        Check("= 0.5 \\* DollarText", "zero and 50/100");
+        Check("= 1000000 \\* DollarText", WordFieldFormat.NumberNotRepresentable);
     }
 
     private sealed class Table(string[][] cells, int row, int column) : IWordFieldTable

@@ -15,7 +15,7 @@ internal enum RtfWord : byte
     EndnoteNumberingArabic, EndnoteNumberingLowerAlpha, EndnoteNumberingUpperAlpha, EndnoteNumberingLowerRoman, EndnoteNumberingUpperRoman, EndnoteNumberingChicago,
     FootnoteStart, EndnoteStart, RightToLeftDocument,
     //  page setup (document defaults, then per section) 
-    PaperWidth, LeftMargin, RightMargin, Gutter, SectionDefault, SectionPageWidth, SectionLeftMargin, SectionRightMargin, SectionGutter,
+    PaperWidth, LeftMargin, RightMargin, Gutter, SectionDefault, SectionPageWidth, SectionLeftMargin, SectionRightMargin, SectionGutter, RightToLeftGutter, GutterAtTop,
     // ── destinations rendered ──
     Footnote, FootnoteIsEndnote, Field, FieldResult, FieldInstruction, FieldLock, FieldPrivate, FormField, FormFieldType, FormFieldResult,
     FormFieldDefaultResult, FormFieldListEntry, FormFieldDefaultText, BookmarkStart, BookmarkEnd, ListText, ParagraphNumberText, UnicodePair, UnicodeDestination,
@@ -101,7 +101,7 @@ internal static class RtfControlWords
         ("ftnstart", RtfWord.FootnoteStart), ("aftnstart", RtfWord.EndnoteStart), ("rtldoc", RtfWord.RightToLeftDocument),
         ("paperw", RtfWord.PaperWidth), ("margl", RtfWord.LeftMargin), ("margr", RtfWord.RightMargin), ("gutter", RtfWord.Gutter),
         ("sectd", RtfWord.SectionDefault), ("pgwsxn", RtfWord.SectionPageWidth), ("marglsxn", RtfWord.SectionLeftMargin),
-        ("margrsxn", RtfWord.SectionRightMargin), ("guttersxn", RtfWord.SectionGutter),
+        ("margrsxn", RtfWord.SectionRightMargin), ("guttersxn", RtfWord.SectionGutter), ("rtlgutter", RtfWord.RightToLeftGutter), ("gutterprl", RtfWord.GutterAtTop),
         ("footnote", RtfWord.Footnote), ("ftnalt", RtfWord.FootnoteIsEndnote), ("field", RtfWord.Field), ("fldrslt", RtfWord.FieldResult),
         ("fldinst", RtfWord.FieldInstruction), ("bkmkstart", RtfWord.BookmarkStart), ("bkmkend", RtfWord.BookmarkEnd),
         // fields: RTF 1.5 spec "Fields" <fieldmod> and "Form Fields" (LibreOffice rtfdispatchvalue.cxx:1426-1455 FFTYPE / FFDEFRES / FFRES)

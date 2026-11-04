@@ -92,6 +92,16 @@ public static class WordFieldEvaluator
     /// </summary>
     public static WordFieldOutput Compute(WordFieldInstruction instruction, WordFieldContext context, int? countedValue = null, WordFormFieldState? form = null)
     {
+        // no field can fail the window it is in: a field whose computation throws keeps the result Word saved (None)
+        try { return ComputeUnguarded(instruction, context, countedValue, form); }
+        catch (Exception error) when (error is not OutOfMemoryException and not WordDocumentSourceChangedException and not OperationCanceledException)
+        {
+            return WordFieldOutput.None;
+        }
+    }
+
+    private static WordFieldOutput ComputeUnguarded(WordFieldInstruction instruction, WordFieldContext context, int? countedValue, WordFormFieldState? form)
+    {
         switch (DisplayOf(instruction.Name))
         {
             case WordFieldDisplay.Hidden: return WordFieldOutput.None;

@@ -114,6 +114,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     // resets the section's values to the document's
     private int _paperWidth = 12240, _leftMargin = 1800, _rightMargin = 1800, _gutter;
     private int? _sectionPageWidth, _sectionLeftMargin, _sectionRightMargin, _sectionGutter;
+    private bool _sectionRightToLeftGutter, _isGutterAtTop;      // \rtlgutter (section), \gutterprl (document)
     private readonly List<int> _sectionLastBlocks = new(), _sectionTextWidths = new(), _sectionColumnLefts = new();
     private bool _isSectionEndPending;                          // a \sect inside a table row: the section ends with the row
 
@@ -308,7 +309,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         {
             SectionLastBlocks = SectionsFor(isPartial, known, _sectionLastBlocks, known - 1),
             SectionTextWidths = SectionsFor(isPartial, known, _sectionTextWidths, CurrentSectionTextWidth()),
-            SectionColumnLefts = SectionsFor(isPartial, known, _sectionColumnLefts, WordDocumentPageSetup.ColumnLeft(_sectionLeftMargin ?? _leftMargin, _sectionGutter ?? _gutter)),
+            SectionColumnLefts = SectionsFor(isPartial, known, _sectionColumnLefts, CurrentSectionColumnLeft()),
             // a bookmark after the last block's end (nothing followed it) marks the last block
             Bookmarks = isPartial
                 ? new WordDocumentBookmarkTable(_bookmarkNames.Where((_, i) => _bookmarkBlocks[i] < known).ToArray(), _bookmarkBlocks.Where(block => block < known).ToArray())
@@ -318,7 +319,11 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     }
 
     private int CurrentSectionTextWidth() => WordDocumentPageSetup.TextWidth(_sectionPageWidth ?? _paperWidth, _sectionLeftMargin ?? _leftMargin,
-                                                                            _sectionRightMargin ?? _rightMargin, _sectionGutter ?? _gutter);
+                                                                            _sectionRightMargin ?? _rightMargin, CurrentGutter().WidthGutter);
+
+    private int CurrentSectionColumnLeft() => WordDocumentPageSetup.ColumnLeft(_sectionLeftMargin ?? _leftMargin, CurrentGutter().LeftGutter);
+
+    private (int WidthGutter, int LeftGutter) CurrentGutter() => WordDocumentPageSetup.GutterPlacement(_sectionGutter ?? _gutter, _sectionRightToLeftGutter, _isGutterAtTop);
 
     /// <summary>A partial index closes the open section at the last known block (the values in effect there).</summary>
     private int[] SectionsFor(bool isPartial, int known, List<int> closed, int openValue)
@@ -520,7 +525,9 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             case RtfWord.LeftMargin: _leftMargin = value; break;
             case RtfWord.RightMargin: _rightMargin = value; break;
             case RtfWord.Gutter: _gutter = value; break;
-            case RtfWord.SectionDefault: _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = null; break;
+            case RtfWord.SectionDefault: _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = null; _sectionRightToLeftGutter = false; break;
+            case RtfWord.RightToLeftGutter: _sectionRightToLeftGutter = value != 0; break;
+            case RtfWord.GutterAtTop: _isGutterAtTop = value != 0; break;
             case RtfWord.SectionPageWidth: _sectionPageWidth = value; break;
             case RtfWord.SectionLeftMargin: _sectionLeftMargin = value; break;
             case RtfWord.SectionRightMargin: _sectionRightMargin = value; break;
@@ -537,7 +544,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         if (_sectionLastBlocks.Count > 0 && _sectionLastBlocks[_sectionLastBlocks.Count - 1] >= lastBlock) return;
         _sectionLastBlocks.Add(lastBlock);
         _sectionTextWidths.Add(width);
-        _sectionColumnLefts.Add(WordDocumentPageSetup.ColumnLeft(_sectionLeftMargin ?? _leftMargin, _sectionGutter ?? _gutter));
+        _sectionColumnLefts.Add(CurrentSectionColumnLeft());
     }
 
     public override void ParagraphEnd(in RtfGroupState state, bool isSectionEnd)

@@ -56,7 +56,7 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
         _totalBytes = BodyEntry.UncompressedSize + (footnotes?.UncompressedSize ?? 0) + (endnotes?.UncompressedSize ?? 0);
         _bodyCursor = new DocxEntryInflationCursor(package, BodyEntry, checkpointSpanBytes, snapToSparseBoundaries: true);
         DocxDocumentParts.DocxListLabeller labeller = parts.CreateListLabeller();
-        _scanner = new DocxBodyBlockScanner(labeller.Resolve, parts.Styles.HeadingLevelOf);
+        _scanner = new DocxBodyBlockScanner(labeller.Resolve, parts.Styles.HeadingLevelOf, parts.Compatibility.IsGutterAtTop);
         _anchors = new DocxIndexAnchorRecorder(_scanner, labeller);
         _footnotes = footnotes is null ? null : new DocxIncrementalNotesPart(package, footnotes, checkpointSpanBytes);
         _endnotes = endnotes is null ? null : new DocxIncrementalNotesPart(package, endnotes, checkpointSpanBytes);

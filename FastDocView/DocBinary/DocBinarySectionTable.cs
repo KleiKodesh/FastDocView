@@ -16,6 +16,8 @@ internal static class DocBinarySectionTable
     public static readonly int DefaultTextWidthTwips = WordDocumentPageSetup.TextWidth(DefaultPageWidthTwips, DefaultMarginTwips, DefaultMarginTwips, 0);
 
     private const ushort SprmSXaPage = 0xB01F, SprmSDxaLeft = 0xB021, SprmSDxaRight = 0xB022, SprmSDzaGutter = 0xB025;
+    /// <summary>sprmSFRTLGutter: the gutter is on the right (LibreOffice sprmids.hxx:589 SFRTLGutter 0x322A, one byte).</summary>
+    private const ushort SprmSFRightToLeftGutter = 0x322A;
     private const int SedSize = 12;
 
     /// <summary>The start CP of every section (PlcfSed's sorted CPs, clamped to 0) - the index pass records each one's block.</summary>
@@ -25,9 +27,11 @@ internal static class DocBinarySectionTable
             : [];
 
     /// <param name="firstBlocks">The block each section starts in, in the order of <see cref="ReadStartCps"/> (from the index).</param>
+    /// <param name="documentProperties">The Dop, for iGutterPos (gutter at the top - <see cref="IsGutterAtTop"/>).</param>
     public static IReadOnlyList<WordDocumentSection> Read(Stream wordDocument, Stream tableStream, (uint offset, uint length) plcfSed,
-                                                         IReadOnlyList<int> firstBlocks)
+                                                         IReadOnlyList<int> firstBlocks, (uint offset, uint length) documentProperties = default)
     {
+        bool isGutterAtTop = IsGutterAtTop(tableStream, documentProperties);
         var fallback = new[] { new WordDocumentSection(0, DefaultTextWidthTwips) };
         if (!TryReadPlc(tableStream, plcfSed, out byte[] plc, out int count, out int sedsAt)) return fallback;
         if (firstBlocks.Count != count) throw new InvalidDataException(".doc index: the section count does not match the document.");
@@ -36,7 +40,7 @@ internal static class DocBinarySectionTable
         for (int i = 0; i < count; i++)
         {
             uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * SedSize + 2);
-            (int width, int left) = PageSetupOf(wordDocument, fcSepx);
+            (int width, int left) = PageSetupOf(wordDocument, fcSepx, isGutterAtTop);
             starts.Add(new WordDocumentSection(firstBlocks[i], width, left));
         }
         return WordDocumentPageSetup.FromSectionStarts(starts);
@@ -55,10 +59,22 @@ internal static class DocBinarySectionTable
         return count > 0;
     }
 
-    /// <summary>The section's text width and where its column starts (left margin + gutter).</summary>
-    private static (int width, int columnLeft) PageSetupOf(Stream wordDocument, uint fcSepx)
+    /// <summary>
+    /// Dop iGutterPos: the gutter is at the top of the page - bit 15 of the 16-bit word at offset 0x52 of the Dop (LibreOffice
+    /// ww8scan.cxx:7741-7746 WW8Dop; ww8par.cxx:2117-2119 sets GUTTER_AT_TOP from it). Word 97 and later only: the Dop of a
+    /// Word 6 / 95 file is shorter and has other fields there.
+    /// </summary>
+    private static bool IsGutterAtTop(Stream tableStream, (uint offset, uint length) dop)
+    {
+        if (dop.length < 0x54 || dop.offset + 0x54L > tableStream.Length) return false;
+        return DocBinaryStructureReader.TryRead(tableStream, (dop.offset + 0x52, 2)) is { } word && (word[1] & 0x80) != 0;
+    }
+
+    /// <summary>The section's text width and where its column starts (left margin + a left gutter - <see cref="WordDocumentPageSetup.GutterPlacement"/>).</summary>
+    private static (int width, int columnLeft) PageSetupOf(Stream wordDocument, uint fcSepx, bool isGutterAtTop)
     {
         int page = DefaultPageWidthTwips, left = DefaultMarginTwips, right = DefaultMarginTwips, gutter = 0;
+        bool isRightToLeftGutter = false;
         if (fcSepx != 0xFFFFFFFF && DocBinaryStructureReader.TryRead(wordDocument, (fcSepx, 2)) is { } sizeBytes)
         {
             short cb = BitConverter.ToInt16(sizeBytes, 0);
@@ -66,6 +82,7 @@ internal static class DocBinarySectionTable
             {
                 foreach ((ushort opcode, int at, int length) in DocBinaryPropertyModifiers.Sprms(grpprl, 0, grpprl.Length))
                 {
+                    if (opcode == SprmSFRightToLeftGutter && length == 1) { isRightToLeftGutter = grpprl[at] != 0; continue; }
                     if (length != 2) continue;
                     int value = opcode == SprmSXaPage ? BitConverter.ToUInt16(grpprl, at) : BitConverter.ToInt16(grpprl, at);
                     switch (opcode)
@@ -78,6 +95,7 @@ internal static class DocBinarySectionTable
                 }
             }
         }
-        return (WordDocumentPageSetup.TextWidth(page, left, right, gutter), WordDocumentPageSetup.ColumnLeft(left, gutter));
+        var placement = WordDocumentPageSetup.GutterPlacement(gutter, isRightToLeftGutter, isGutterAtTop);
+        return (WordDocumentPageSetup.TextWidth(page, left, right, placement.WidthGutter), WordDocumentPageSetup.ColumnLeft(left, placement.LeftGutter));
     }
 }

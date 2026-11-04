@@ -39,12 +39,16 @@ public sealed class DocxCompatibilitySettings
 
     public static readonly DocxCompatibilitySettings Default = new(null);
 
+    /// <summary>w:gutterAtTop (ECMA-376 17.15.1.49): the gutter is at the top of the page and takes nothing from the text width.</summary>
+    public bool IsGutterAtTop { get; }
+
     /// <summary>w:defaultTabStop (ECMA-376 17.15.1.25): the interval of the default tab stops, twips; 720 when absent.</summary>
     public int DefaultTabStopTwips { get; } = 720;
 
     public DocxCompatibilitySettings(XDocument? settingsDocument)
     {
         if (DocxStyleCascade.TwipsAttribute(settingsDocument?.Root?.Element(W + "defaultTabStop"), "val") is > 0 and var tabStop) DefaultTabStopTwips = tabStop;
+        if (settingsDocument?.Root?.Element(W + "gutterAtTop") is { } gutterAtTop) IsGutterAtTop = DocxStyleCascade.IsOn(gutterAtTop.Attribute(W + "val"));
         XElement? compat = settingsDocument?.Root?.Element(W + "compat");
         if (compat is null) return;
         var present = new List<string>();

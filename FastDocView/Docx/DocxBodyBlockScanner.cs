@@ -16,7 +16,7 @@ internal sealed class DocxBodyBlockScanner
 {
     private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData, DocumentType }
 
-    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, SimpleField, DeletedContent, SectionProperties, PageSize, PageMargins, BookmarkStart }
+    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, SimpleField, DeletedContent, SectionProperties, PageSize, PageMargins, RightToLeftGutter, BookmarkStart }
 
     private const int MaxRootTagBytes = 1 << 16;
     private const int MaxHeadingTextBytes = 600;
@@ -77,6 +77,8 @@ internal sealed class DocxBodyBlockScanner
     private int _openParagraphPropertiesDepth = -1;   // depth of the w:pPr open now (a paragraph's, at any depth)
     private int _openTables;                          // w:tbl elements open now: a cell paragraph's w:sectPr is not a section break
     private int? _sectionPageWidth, _sectionLeftMargin, _sectionRightMargin, _sectionGutter;
+    private bool _sectionRightToLeftGutter;
+    private readonly bool _isGutterAtTop;
 
     /// <summary>Per section, in order: its last block (inclusive) and its text width in twips.</summary>
     public List<int> SectionLastBlocks { get; } = new();
@@ -101,8 +103,10 @@ internal sealed class DocxBodyBlockScanner
 
     private readonly Dictionary<string, short> _styleIdLookup = new(StringComparer.Ordinal);
 
-    public DocxBodyBlockScanner(DocxListLabelResolver? listLabelResolver = null, Func<string, int>? headingLevelOfStyle = null)
+    /// <param name="isGutterAtTop">settings.xml w:gutterAtTop (<see cref="WordDocumentPageSetup.GutterPlacement"/>).</param>
+    public DocxBodyBlockScanner(DocxListLabelResolver? listLabelResolver = null, Func<string, int>? headingLevelOfStyle = null, bool isGutterAtTop = false)
     {
+        _isGutterAtTop = isGutterAtTop;
         _listLabelResolver = listLabelResolver;
         _headingLevelOfStyle = headingLevelOfStyle;
     }
@@ -359,7 +363,7 @@ internal sealed class DocxBodyBlockScanner
             KnownTag.NumberingId or KnownTag.NumberingLevel => _depth == _bodyDepth + 3,
             KnownTag.FootnoteReference or KnownTag.EndnoteReference or KnownTag.FieldCharacter or KnownTag.SimpleField => _depth > _bodyDepth,
             KnownTag.BookmarkStart => _depth >= _bodyDepth,      // also between paragraphs (a body child of its own)
-            KnownTag.PageSize or KnownTag.PageMargins => _sectionDepth >= 0 && _depth == _sectionDepth + 1,
+            KnownTag.PageSize or KnownTag.PageMargins or KnownTag.RightToLeftGutter => _sectionDepth >= 0 && _depth == _sectionDepth + 1,
             _ => false,
         };
     }
@@ -392,7 +396,8 @@ internal sealed class DocxBodyBlockScanner
                 return KnownTag.Other;
             case 9: return name.SequenceEqual("w:fldChar"u8) ? KnownTag.FieldCharacter : KnownTag.Other;
             case 10: return name.SequenceEqual("w:moveFrom"u8) ? KnownTag.DeletedContent : KnownTag.Other;
-            case 11: return name.SequenceEqual("w:instrText"u8) ? KnownTag.FieldInstruction : name.SequenceEqual("w:fldSimple"u8) ? KnownTag.SimpleField : KnownTag.Other;
+            case 11: return name.SequenceEqual("w:instrText"u8) ? KnownTag.FieldInstruction : name.SequenceEqual("w:fldSimple"u8) ? KnownTag.SimpleField
+                          : name.SequenceEqual("w:rtlGutter"u8) ? KnownTag.RightToLeftGutter : KnownTag.Other;
             case 15: return name.SequenceEqual("w:bookmarkStart"u8) ? KnownTag.BookmarkStart : KnownTag.Other;
             case 18: return name.SequenceEqual("w:endnoteReference"u8) ? KnownTag.EndnoteReference : KnownTag.Other;
             case 19: return name.SequenceEqual("w:footnoteReference"u8) ? KnownTag.FootnoteReference : KnownTag.Other;
@@ -445,6 +450,7 @@ internal sealed class DocxBodyBlockScanner
         {
             _sectionDepth = _depth;
             _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = null;
+            _sectionRightToLeftGutter = false;
             if (isSelfClosing) OnSectionPropertiesClosed();
         }
         if (_tag == KnownTag.Text && !isSelfClosing) _isInsideTextRun = true;
@@ -625,6 +631,12 @@ internal sealed class DocxBodyBlockScanner
             _sectionGutter = WordDocumentPageSetup.ParseTwips(AttributeValue(attributes, "w:gutter="));
             return;
         }
+        if (_tag == KnownTag.RightToLeftGutter)
+        {
+            // CT_OnOff: present = on unless w:val is false / 0 / off
+            _sectionRightToLeftGutter = AttributeValue(attributes, "w:val=") is not ("0" or "false" or "off");
+            return;
+        }
         if (_tag is KnownTag.FootnoteReference or KnownTag.EndnoteReference)
             OnNoteReference(_tag == KnownTag.FootnoteReference ? WordDocumentNoteKind.Footnote : WordDocumentNoteKind.Endnote, attributes);
     }
@@ -722,12 +734,13 @@ internal sealed class DocxBodyBlockScanner
         bool isBodyLevel = _sectionDepth == _bodyDepth;
         _sectionDepth = -1;
         if (BlockStartOffsets.Count == 0) return;
+        var gutter = WordDocumentPageSetup.GutterPlacement(_sectionGutter ?? 0, _sectionRightToLeftGutter, _isGutterAtTop);
         int width = WordDocumentPageSetup.TextWidth(
             _sectionPageWidth ?? WordDocumentPageSetup.LetterPageWidthTwips,
             _sectionLeftMargin ?? WordDocumentPageSetup.DefaultMarginTwips,
             _sectionRightMargin ?? WordDocumentPageSetup.DefaultMarginTwips,
-            _sectionGutter ?? 0);
-        int columnLeft = WordDocumentPageSetup.ColumnLeft(_sectionLeftMargin ?? WordDocumentPageSetup.DefaultMarginTwips, _sectionGutter ?? 0);
+            gutter.WidthGutter);
+        int columnLeft = WordDocumentPageSetup.ColumnLeft(_sectionLeftMargin ?? WordDocumentPageSetup.DefaultMarginTwips, gutter.LeftGutter);
         // The body-level w:sectPr is itself a block (kind Other) at the end: it closes the last section.
         int lastBlock = BlockStartOffsets.Count - 1;
         if (SectionLastBlocks.Count > 0 && SectionLastBlocks[SectionLastBlocks.Count - 1] >= lastBlock)

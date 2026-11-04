@@ -52,6 +52,19 @@ public static class WordDocumentPageSetup
     /// <summary>The left margin plus a left gutter: where the text column starts on the page (twips).</summary>
     public static int ColumnLeft(int leftMarginTwips, int gutterTwips) => Math.Max(0, leftMarginTwips) + Math.Max(0, gutterTwips);
 
+    /// <summary>
+    /// Where the gutter goes. On the left by default; on the right with a right-to-left gutter (.docx w:rtlGutter, ECMA-376
+    /// 17.6.16; RTF \rtlgutter; .doc sprmSFRTLGutter 0x322A, LibreOffice ww8par6.cxx:480-487 "fRTLGutter is set if the
+    /// gutter is on the right"), where it still narrows the text but no longer moves the column's start; at the top of the
+    /// page with the document's gutter-at-top setting (.docx w:gutterAtTop, ECMA-376 17.15.1.49; RTF \gutterprl, LibreOffice
+    /// rtfdispatchflag.cxx:1363-1364; .doc Dop iGutterPos, ww8scan.cxx:7741-7746 and ww8par6.cxx:480-483 "placed on the left
+    /// unless the global dop options are to put it on top"; .odt GutterAtTop in settings.xml), where it takes nothing from the
+    /// width (LibreOffice PropertyMap.cxx:760-769 moves it to the top margin).
+    /// </summary>
+    /// <returns>The gutter that narrows the text width, and the gutter that moves the column's start.</returns>
+    public static (int WidthGutter, int LeftGutter) GutterPlacement(int gutterTwips, bool isRightToLeft, bool isAtTop)
+        => isAtTop ? (0, 0) : (gutterTwips, isRightToLeft ? 0 : gutterTwips);
+
     private static WordDocumentSection SectionAt(IReadOnlyList<WordDocumentSection> sections, int blockIndex)
     {
         int low = 0, high = sections.Count - 1, found = -1;      // the last section starting at or before the block

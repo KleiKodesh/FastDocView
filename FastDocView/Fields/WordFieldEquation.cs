@@ -25,43 +25,86 @@ public static class WordFieldEquation
     {
         private int _position;
 
-        /// <summary>Text and switches up to the end, a closing parenthesis or (inside an argument list) a separator.</summary>
+        /// <summary>An open sequence: the root, a bare "( ... )" group or one element of a switch's list.</summary>
+        private sealed class SequenceFrame(SequenceKind kind)
+        {
+            public readonly SequenceKind Kind = kind;
+            public readonly StringBuilder Html = new();
+            public readonly StringBuilder Text = new();
+            public bool StopAtSeparator => Kind == SequenceKind.Element;
+
+            public void FlushText()
+            {
+                if (Text.Length == 0) return;
+                Html.Append("<mtext>").Append(WordHtmlText.Encode(Text.ToString())).Append("</mtext>");
+                Text.Clear();
+            }
+        }
+
+        private enum SequenceKind { Root, Group, Element }
+
+        /// <summary>A switch whose element list is being read.</summary>
+        private sealed record SwitchFrame(string Name, List<(string name, string value)> Options, List<string> Elements);
+
+        /// <summary>
+        /// Text and switches up to the end. Nested groups and element lists are walked with an explicit stack (a deeply
+        /// nested EQ code must not overflow the thread's stack; Word 16 itself hangs on 300 nested \f, so it defines no limit).
+        /// </summary>
         public string Sequence(bool stopAtSeparator)
         {
-            var html = new StringBuilder();
-            var text = new StringBuilder();
-            void FlushText()
+            var sequences = new Stack<SequenceFrame>();
+            var switches = new Stack<SwitchFrame>();
+            sequences.Push(new SequenceFrame(stopAtSeparator ? SequenceKind.Element : SequenceKind.Root));
+            while (true)
             {
-                if (text.Length == 0) return;
-                html.Append("<mtext>").Append(WordHtmlText.Encode(text.ToString())).Append("</mtext>");
-                text.Clear();
-            }
-            while (_position < code.Length)
-            {
+                SequenceFrame current = sequences.Peek();
+                if (_position >= code.Length || code[_position] == ')' || current.StopAtSeparator && code[_position] is ',' or ';')
+                {
+                    current.FlushText();
+                    string body = current.Html.ToString();
+                    if (sequences.Count == 1) return body;
+                    sequences.Pop();
+                    if (current.Kind == SequenceKind.Group)
+                    {
+                        StringBuilder parent = sequences.Peek().Html;
+                        parent.Append(body);
+                        if (_position < code.Length && code[_position] == ')') { _position++; parent.Append("<mo>)</mo>"); }
+                        continue;
+                    }
+                    SwitchFrame open = switches.Peek();
+                    open.Elements.Add(body);
+                    if (_position < code.Length && code[_position++] != ')') { sequences.Push(new SequenceFrame(SequenceKind.Element)); continue; }
+                    switches.Pop();
+                    sequences.Peek().Html.Append(Render(open.Name, open.Options, open.Elements));
+                    continue;
+                }
                 char c = code[_position];
-                if (c == ')' || stopAtSeparator && c is ',' or ';') break;
                 if (c == '\\' && _position + 1 < code.Length)
                 {
                     char next = code[_position + 1];
-                    if (!char.IsLetter(next)) { text.Append(next); _position += 2; continue; }
-                    FlushText();
-                    html.Append(Switch());
+                    if (!char.IsLetter(next)) { current.Text.Append(next); _position += 2; continue; }
+                    current.FlushText();
+                    SwitchFrame started = SwitchStart();
+                    // the parenthesised element list after the switch and its options
+                    while (_position < code.Length && char.IsWhiteSpace(code[_position])) _position++;
+                    if (_position >= code.Length || code[_position] != '(') { current.Html.Append(Render(started.Name, started.Options, started.Elements)); continue; }
+                    _position++;
+                    switches.Push(started);
+                    sequences.Push(new SequenceFrame(SequenceKind.Element));
                     continue;
                 }
                 if (c == '(')
                 {
                     // a bare parenthesis group is text with its parentheses
                     _position++;
-                    FlushText();
-                    html.Append("<mo>(</mo>").Append(Sequence(false));
-                    if (_position < code.Length && code[_position] == ')') { _position++; html.Append("<mo>)</mo>"); }
+                    current.FlushText();
+                    current.Html.Append("<mo>(</mo>");
+                    sequences.Push(new SequenceFrame(SequenceKind.Group));
                     continue;
                 }
-                text.Append(c);
+                current.Text.Append(c);
                 _position++;
             }
-            FlushText();
-            return html.ToString();
         }
 
         private string ReadWord()
@@ -86,29 +129,12 @@ public static class WordFieldEquation
             return "";
         }
 
-        /// <summary>The parenthesised element list after a switch and its options.</summary>
-        private List<string> Elements()
-        {
-            var elements = new List<string>();
-            while (_position < code.Length && char.IsWhiteSpace(code[_position])) _position++;
-            if (_position >= code.Length || code[_position] != '(') return elements;
-            _position++;
-            while (true)
-            {
-                elements.Add(Sequence(stopAtSeparator: true));
-                if (_position >= code.Length) break;
-                char c = code[_position++];
-                if (c == ')') break;
-            }
-            return elements;
-        }
-
-        private string Switch()
+        /// <summary>A switch's name and options (\xxN or \xx\c before its element list).</summary>
+        private SwitchFrame SwitchStart()
         {
             _position++;                                  // the backslash
             string name = ReadSwitchName();
             var options = new List<(string name, string value)>();
-            // options follow as \xxN or \xx\c before the element list
             while (_position + 1 < code.Length && code[_position] == '\\' && char.IsLetter(code[_position + 1]))
             {
                 int save = _position;
@@ -118,7 +144,11 @@ public static class WordFieldEquation
                 string value = option is "lc" or "rc" or "bc" or "fc" or "vc" ? ReadCharacter() : ReadNumber().ToString(CultureInfo.InvariantCulture);
                 options.Add((option, value));
             }
-            List<string> elements = Elements();
+            return new SwitchFrame(name, options, []);
+        }
+
+        private static string Render(string name, List<(string name, string value)> options, List<string> elements)
+        {
             string? Option(string option) => options.Where(o => o.name == option).Select(o => o.value).Cast<string?>().FirstOrDefault();
             bool Has(string option) => options.Any(o => o.name == option);
             switch (name)
@@ -154,7 +184,8 @@ public static class WordFieldEquation
                 }
                 case "a":
                 {
-                    int columns = Math.Max(1, int.TryParse(Option("co"), out int co) ? co : 1);
+                    // more columns than elements is one row of all the elements (no empty cells; also keeps i + columns in range)
+                    int columns = Math.Min(Math.Max(1, int.TryParse(Option("co"), out int co) ? co : 1), Math.Max(1, elements.Count));
                     string align = Has("al") ? "left" : Has("ar") ? "right" : "center";
                     var table = new StringBuilder("<mtable columnalign=\"" + align + "\">");
                     for (int i = 0; i < elements.Count; i += columns)
