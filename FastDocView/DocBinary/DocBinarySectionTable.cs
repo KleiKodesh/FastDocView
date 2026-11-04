@@ -36,7 +36,8 @@ internal static class DocBinarySectionTable
         for (int i = 0; i < count; i++)
         {
             uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * SedSize + 2);
-            starts.Add(new WordDocumentSection(firstBlocks[i], TextWidthOf(wordDocument, fcSepx)));
+            (int width, int left) = PageSetupOf(wordDocument, fcSepx);
+            starts.Add(new WordDocumentSection(firstBlocks[i], width, left));
         }
         return WordDocumentPageSetup.FromSectionStarts(starts);
     }
@@ -54,7 +55,8 @@ internal static class DocBinarySectionTable
         return count > 0;
     }
 
-    private static int TextWidthOf(Stream wordDocument, uint fcSepx)
+    /// <summary>The section's text width and where its column starts (left margin + gutter).</summary>
+    private static (int width, int columnLeft) PageSetupOf(Stream wordDocument, uint fcSepx)
     {
         int page = DefaultPageWidthTwips, left = DefaultMarginTwips, right = DefaultMarginTwips, gutter = 0;
         if (fcSepx != 0xFFFFFFFF && DocBinaryStructureReader.TryRead(wordDocument, (fcSepx, 2)) is { } sizeBytes)
@@ -76,6 +78,6 @@ internal static class DocBinarySectionTable
                 }
             }
         }
-        return WordDocumentPageSetup.TextWidth(page, left, right, gutter);
+        return (WordDocumentPageSetup.TextWidth(page, left, right, gutter), WordDocumentPageSetup.ColumnLeft(left, gutter));
     }
 }

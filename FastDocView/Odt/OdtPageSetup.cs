@@ -19,9 +19,16 @@ public sealed class OdtPageSetup
     private const string LibreOfficeNamespace = "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0";
 
     private readonly Dictionary<string, int> _masterPageWidths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _masterPageColumnLefts = new(StringComparer.Ordinal);
+
+    /// <summary>Where the text column of a master page's layout starts on the page (fo:margin-left + loext:margin-gutter); null = not known.</summary>
+    public int? ColumnLeftOfMasterPage(string? masterPageName)
+        => masterPageName is not null && _masterPageColumnLefts.TryGetValue(masterPageName, out int left) ? left : null;
 
     /// <summary>The width of the text before any block names a master page.</summary>
     public int DefaultTextWidthTwips { get; private set; } = WordDocumentPageSetup.DefaultTextWidthTwips;
+    /// <summary>The default master page's column start on the page (twips); -1 = not known.</summary>
+    public int DefaultColumnLeftTwips { get; private set; } = -1;
 
     public static OdtPageSetup Empty { get; } = new();
 
@@ -53,6 +60,7 @@ public sealed class OdtPageSetup
     internal sealed class Collector
     {
         private readonly Dictionary<string, int> _layoutWidths = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _layoutColumnLefts = new(StringComparer.Ordinal);
         private readonly List<(string master, string layout)> _masterLayouts = new();
         private string? _currentLayout;
         private int _currentLayoutDepth = -1;
@@ -80,6 +88,7 @@ public sealed class OdtPageSetup
                     _layoutWidths[_currentLayout] = page is { } width
                         ? WordDocumentPageSetup.TextWidth(width, left ?? 0, right ?? 0, gutter ?? 0)
                         : WordDocumentPageSetup.DefaultTextWidthTwips;
+                    if (page is not null) _layoutColumnLefts[_currentLayout] = WordDocumentPageSetup.ColumnLeft(left ?? 0, gutter ?? 0);
                     break;
                 }
                 case "master-page":
@@ -93,9 +102,13 @@ public sealed class OdtPageSetup
         {
             var setup = new OdtPageSetup();
             foreach ((string master, string layout) in _masterLayouts)
+            {
                 if (_layoutWidths.TryGetValue(layout, out int width) && !setup._masterPageWidths.ContainsKey(master)) setup._masterPageWidths[master] = width;
-            if (setup.TextWidthOfMasterPage("Standard") is { } standard) setup.DefaultTextWidthTwips = standard;
-            else if (_masterLayouts.Count > 0 && setup.TextWidthOfMasterPage(_masterLayouts[0].master) is { } first) setup.DefaultTextWidthTwips = first;
+                if (_layoutColumnLefts.TryGetValue(layout, out int left) && !setup._masterPageColumnLefts.ContainsKey(master)) setup._masterPageColumnLefts[master] = left;
+            }
+            string? defaultMaster = setup.TextWidthOfMasterPage("Standard") is not null ? "Standard" : _masterLayouts.Count > 0 ? _masterLayouts[0].master : null;
+            if (setup.TextWidthOfMasterPage(defaultMaster) is { } width0) setup.DefaultTextWidthTwips = width0;
+            if (setup.ColumnLeftOfMasterPage(defaultMaster) is { } left0) setup.DefaultColumnLeftTwips = left0;
             return setup;
         }
     }

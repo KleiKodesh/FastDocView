@@ -346,6 +346,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     /// <summary>A floating shape's placement (meanings in RtfParser.OpenShape), size in points.</summary>
     /// <summary>The text width (points) of the section of the block being rendered: the column a floating object picks its nearer edge in (0 = unknown).</summary>
     public double ColumnWidthPt { get; set; }
+    /// <summary>Where that column starts from the page's left edge (points; -1 = not known).</summary>
+    public double ColumnLeftPt { get; set; } = -1;
 
     private WordPictureLayout ShapeLayout(RtfShapePlacement shape, double widthPt, double heightPt)
     {
@@ -367,7 +369,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         IReadOnlyList<IReadOnlyList<(double X, double Y)>>? contour = shape.Wrap is 4 or 5 ? WordPictureContour.FromWordUnits(shape.WrapPolygon, widthPt, heightPt) : null;
         return new WordPictureLayout(widthPt, heightPt, wrap, side, shape.WrapTop / EmuPerPoint, shape.WrapRight / EmuPerPoint,
                                      shape.WrapBottom / EmuPerPoint, shape.WrapLeft / EmuPerPoint, offset, sides, contour,
-                                     shape.IsPageRelative ? 0 : ColumnWidthPt);   // a page-relative offset includes the margin: no nearer-edge choice
+                                     ColumnWidthPt, shape.IsPageRelative ? WordPictureOffsetOrigin.Page : WordPictureOffsetOrigin.Column, ColumnLeftPt);
     }
 
     /// <summary>WordArt text centred in its font and size (msdffdef.hxx:121-125 gtextUNICODE / gtextSize / gtextFont), known once the shape closed.</summary>

@@ -133,7 +133,7 @@ public static class DocxRandomAccessIndexBuilder
             blockCount, anchors.Build(), groupTotals,
             scanner.Headings.ToArray(), scanner.NoteReferences.ToArray(),
             footnotesPart, endnotesPart).WithOpenFields(scanner.BlockOpenFieldIds, scanner.OpenFieldStacks.ToArray())
-                                        .WithSections(scanner.SectionLastBlocks.ToArray(), scanner.SectionTextWidths.ToArray())
+                                        .WithSections(scanner.SectionLastBlocks.ToArray(), scanner.SectionTextWidths.ToArray(), scanner.SectionColumnLefts.ToArray())
                                         .WithBookmarks(scanner.BookmarkNames.ToArray(), scanner.BookmarkBlocks.ToArray())
                                         .WithIndexEntries(scanner.IndexEntries.ToArray());
     }

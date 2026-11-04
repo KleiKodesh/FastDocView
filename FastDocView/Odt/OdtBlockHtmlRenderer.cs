@@ -62,6 +62,8 @@ public sealed partial class OdtBlockHtmlRenderer
     /// <summary>The block being rendered (its index names the pictures stored inside it); -1 when unknown.</summary>
     /// <summary>The text width (points) of the section of the block being rendered: the column a floating object picks its nearer edge in (0 = unknown).</summary>
     public double ColumnWidthPt { get; set; }
+    /// <summary>Where that column starts from the page's left edge (points; -1 = not known).</summary>
+    public double ColumnLeftPt { get; set; } = -1;
     public int CurrentBlockIndex { get; set; } = -1;
 
     /// <summary>
@@ -369,8 +371,15 @@ public sealed partial class OdtBlockHtmlRenderer
             top += Math.Max(0, y);
         WordPictureTextSides sides = wrapValue switch { "left" => WordPictureTextSides.LeftOnly, "right" => WordPictureTextSides.RightOnly, _ => WordPictureTextSides.Both };
         return new WordPictureLayout(width, height, wrap, side, top, Gap("right"), Gap("bottom"), Gap("left"), offset, sides,
-                                     // the nearer edge only for an offset from the paragraph / page text area (20.290 style:horizontal-rel); page / frame include more
-                                     ColumnWidthPt: Property(OdtStyleCascade.Style, "horizontal-rel") is null or "paragraph" or "paragraph-content" or "page-content" ? ColumnWidthPt : 0);
+                                     ColumnWidthPt: ColumnWidthPt, ColumnLeftPt: ColumnLeftPt,
+                                     // ODF 1.3 part 3 20.290 style:horizontal-rel: paragraph / page text area = the column; page / its start margin = the page edge; its end margin = the right margin area
+                                     OffsetOrigin: Property(OdtStyleCascade.Style, "horizontal-rel") switch
+                                     {
+                                         null or "paragraph" or "paragraph-content" or "page-content" => WordPictureOffsetOrigin.Column,
+                                         "page" or "page-start-margin" => WordPictureOffsetOrigin.Page,
+                                         "page-end-margin" => WordPictureOffsetOrigin.EndMargin,
+                                         _ => WordPictureOffsetOrigin.Other,
+                                     });
     }
 
     // -- text boxes and shapes -------------------------------------------------------------

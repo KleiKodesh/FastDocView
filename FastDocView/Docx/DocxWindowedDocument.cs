@@ -301,6 +301,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
             string? previousStyleKey = blockIndex > 0 ? _blocks.StyleIdOf(blockIndex - 1) ?? "" : null;
             if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex;
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
+            _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             string html = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), previousStyleKey, neighbours with { OpenFields = _blocks.OpenFieldsAt(groupStart) });
             result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, RenderNotesOf(blockIndex)));
         }
@@ -599,11 +600,11 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     {
         get
         {
-            if (_index is { } index) return _sections ??= WordDocumentPageSetup.FromSectionEnds(index.SectionLastBlocks, index.SectionTextWidths);
+            if (_index is { } index) return _sections ??= WordDocumentPageSetup.FromSectionEnds(index.SectionLastBlocks, index.SectionTextWidths, index.SectionColumnLefts);
             lock (_readLock)
             {
-                if (_builder is not { } builder) return _sections ??= WordDocumentPageSetup.FromSectionEnds(_index!.SectionLastBlocks, _index.SectionTextWidths);
-                return WordDocumentPageSetup.FromSectionEnds(builder.KnownSectionLastBlocks.ToArray(), builder.KnownSectionTextWidths.ToArray());
+                if (_builder is not { } builder) return _sections ??= WordDocumentPageSetup.FromSectionEnds(_index!.SectionLastBlocks, _index.SectionTextWidths, _index.SectionColumnLefts);
+                return WordDocumentPageSetup.FromSectionEnds(builder.KnownSectionLastBlocks.ToArray(), builder.KnownSectionTextWidths.ToArray(), builder.KnownSectionColumnLefts.ToArray());
             }
         }
     }

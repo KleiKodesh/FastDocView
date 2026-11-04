@@ -81,6 +81,8 @@ internal sealed class DocxBodyBlockScanner
     /// <summary>Per section, in order: its last block (inclusive) and its text width in twips.</summary>
     public List<int> SectionLastBlocks { get; } = new();
     public List<int> SectionTextWidths { get; } = new();
+    /// <summary>Per section: where the text column starts on the page (left margin + gutter, twips).</summary>
+    public List<int> SectionColumnLefts { get; } = new();
 
     public List<long> BlockStartOffsets { get; } = new();
     public List<WordDocumentBlockKind> BlockKinds { get; } = new();
@@ -725,15 +727,17 @@ internal sealed class DocxBodyBlockScanner
             _sectionLeftMargin ?? WordDocumentPageSetup.DefaultMarginTwips,
             _sectionRightMargin ?? WordDocumentPageSetup.DefaultMarginTwips,
             _sectionGutter ?? 0);
+        int columnLeft = WordDocumentPageSetup.ColumnLeft(_sectionLeftMargin ?? WordDocumentPageSetup.DefaultMarginTwips, _sectionGutter ?? 0);
         // The body-level w:sectPr is itself a block (kind Other) at the end: it closes the last section.
         int lastBlock = BlockStartOffsets.Count - 1;
         if (SectionLastBlocks.Count > 0 && SectionLastBlocks[SectionLastBlocks.Count - 1] >= lastBlock)
         {
-            if (!isBodyLevel) SectionTextWidths[SectionTextWidths.Count - 1] = width;
+            if (!isBodyLevel) { SectionTextWidths[SectionTextWidths.Count - 1] = width; SectionColumnLefts[SectionColumnLefts.Count - 1] = columnLeft; }
             return;
         }
         SectionLastBlocks.Add(lastBlock);
         SectionTextWidths.Add(width);
+        SectionColumnLefts.Add(columnLeft);
     }
 
     private static string? AttributeValue(string attributes, string attributeWithEquals)

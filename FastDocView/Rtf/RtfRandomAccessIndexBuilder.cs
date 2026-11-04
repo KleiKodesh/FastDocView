@@ -109,7 +109,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     // resets the section's values to the document's
     private int _paperWidth = 12240, _leftMargin = 1800, _rightMargin = 1800, _gutter;
     private int? _sectionPageWidth, _sectionLeftMargin, _sectionRightMargin, _sectionGutter;
-    private readonly List<int> _sectionLastBlocks = new(), _sectionTextWidths = new();
+    private readonly List<int> _sectionLastBlocks = new(), _sectionTextWidths = new(), _sectionColumnLefts = new();
     private bool _isSectionEndPending;                          // a \sect inside a table row: the section ends with the row
 
     // notes
@@ -249,6 +249,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         {
             SectionLastBlocks = _sectionLastBlocks.ToArray(),
             SectionTextWidths = _sectionTextWidths.ToArray(),
+            SectionColumnLefts = _sectionColumnLefts.ToArray(),
             // a bookmark after the last block's end (nothing followed it) marks the last block
             Bookmarks = new WordDocumentBookmarkTable(_bookmarkNames.ToArray(), _bookmarkBlocks.Select(block => Math.Min(block, Math.Max(0, _starts.Count - 1))).ToArray()),
             IndexEntries = _indexEntries.ToArray(),
@@ -462,6 +463,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         if (_sectionLastBlocks.Count > 0 && _sectionLastBlocks[_sectionLastBlocks.Count - 1] >= lastBlock) return;
         _sectionLastBlocks.Add(lastBlock);
         _sectionTextWidths.Add(width);
+        _sectionColumnLefts.Add(WordDocumentPageSetup.ColumnLeft(_sectionLeftMargin ?? _leftMargin, _sectionGutter ?? _gutter));
     }
 
     public override void ParagraphEnd(in RtfGroupState state, bool isSectionEnd)
