@@ -1089,6 +1089,7 @@ internal sealed class RtfParser
     {
         shape.HasText = true;
         shape.IsWordArt = true;
+        shape.WordArtText = text;
         _textBoxDepth = _depth;
         _sink.TextBoxStart(shape);
         ref RtfGroupState state = ref _stack[_depth];

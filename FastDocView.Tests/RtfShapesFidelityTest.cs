@@ -50,7 +50,8 @@ public static class RtfShapesFidelityTest
             + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom720\shpwr1", Property("shapeType", "3") + Property("fillType", "3") + @"{\sp{\sn fillBlip}{\sv {\pict\pngblip 89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c636060f80f0000010100005c1b0d8b0000000049454e44ae426082}}}") + @"\par",
         // 9 the shape's own geometry (pVerticies / pSegmentInfo: move, 2 lines, close, end) and WordArt (gtextUNICODE in Arial 36 pt)
         @"\pard " + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom1440\shpwr1", Property("shapeType", "0") + Property("pVerticies", "8;3;(0,0);(21600,0);(10800,21600)") + Property("pSegmentInfo", "2;4;16384;2;24577;32768"))
-            + Shape(@"\shpleft0\shptop0\shpright2880\shpbottom720\shpwr1", Property("shapeType", "136") + Property("fGtext", "1") + Property("fillColor", "255") + Property("gtextUNICODE", "WordArtText") + Property("gtextFont", "Arial") + Property("gtextSize", "2359296")) + @"\par",
+            + Shape(@"\shpleft0\shptop0\shpright2880\shpbottom720\shpwr1", Property("shapeType", "136") + Property("fGtext", "1") + Property("fillColor", "255") + Property("gtextUNICODE", "WordArtText") + Property("gtextFont", "Arial") + Property("gtextSize", "2359296"))
+            + Shape(@"\shpleft0\shptop0\shpright2880\shpbottom2880\shpwr1", Property("shapeType", "144") + Property("fGtext", "1") + Property("fillColor", "16711680") + Property("gtextUNICODE", "ArchText")) + @"\par",
         // 10 a text box holding a two-cell table, inside a one-cell outer table row (the box's \trowd must not replace the outer row's)
         @"\trowd\cellx3000\pard\intbl " + Shape(@"\shpleft0\shptop0\shpright2880\shpbottom1440\shpwr1", Property("shapeType", "202"),
             @"\trowd\cellx1000\cellx2000\pard\intbl cellA\cell cellB\cell\row\pard after table") + @" outer\cell\row",
@@ -136,8 +137,11 @@ public static class RtfShapesFidelityTest
                          "axial shade (focus 50): the start colour on the axis");
         TestReport.Check(Occurrences(html[8], "word-officeart-shade-") >= 4 && html[8].Contains("word-officeart-pattern-") && html[8].Contains("word-shape-fill-picture")
                          && html[8].Contains("data-word-picture=\"8:0\""), "rectangular shades, the 8 x 8 pattern, the picture fill clipped to the ellipse");
-        TestReport.Check(html[9].Contains("<path d=\"M0 0L72 0L36 72Z\"") && html[9].Contains("class=\"word-art\" style=\"display:block;text-align:center;font-family:'Arial';color:#ff0000;font-size:36pt;\"") && Occurrences(html[9], "<path") == 2
-                         && SearchCount(path, "WordArtText") == 1, "custom geometry from pVerticies / pSegmentInfo; WordArt text in its font and size, found once (" + html[9] + ")");
+        TestReport.Check(html[9].Contains("<path d=\"M0 0L72 0L36 72Z\"") && html[9].Contains("<text font-size=\"36\" dominant-baseline=\"central\" fill=\"#ff0000\" font-family=\"Arial\"><textPath href=\"#word-shape-textpath-")
+                         && html[9].Contains("\" textLength=\"144\" lengthAdjust=\"spacingAndGlyphs\">WordArtText</textPath>") && html[9].Contains("d=\"M0 18L2.25 18")
+                         && html[9].Contains(">ArchText</textPath>") && html[9].Contains("fill=\"#0000ff\"") && !html[9].Contains("word-art")
+                         && SearchCount(path, "ArchText") == 1
+                         && SearchCount(path, "WordArtText") == 1, "custom geometry from pVerticies / pSegmentInfo; WordArt on its outlines (plain text: the pair of outlines, the line between them; arch: along the arc), found once (" + html[9] + ")");
         TestReport.Check(html[10].Contains("<td style=\"width:150pt;\">") && html[10].Contains("<td style=\"width:50pt;\"><span class=\"text-box-paragraph\"")
                          && html[10].Contains("cellA") && html[10].Contains("cellB") && html[10].Contains("after table") && SearchCount(path, "cellA") == 1 && SearchCount(path, "cellB") == 1,
                          "a table inside a text box is a table; the outer row keeps its own width (" + html[10] + ")");

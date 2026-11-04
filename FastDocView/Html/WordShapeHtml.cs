@@ -84,6 +84,9 @@ public sealed class WordShape
     /// <summary>A fill drawn by its own format's SVG paint (OfficeArt rectangular shades, patterns, picture fills): the &lt;defs&gt;
     /// content (written once before the shape's fill) and the paint (e.g. "url(#id)") used instead of <see cref="FillColor"/>.</summary>
     internal string? FillDefinitions, FillPaint;
+    /// <summary>Text-effect (WordArt / Fontwork) lines set on paths (<see cref="WordOfficeArtFontwork"/>), drawn in their font and colour.</summary>
+    internal List<WordShapeTextOnPath>? TextOnPaths;
+    internal string? TextOnPathFont, TextOnPathColor;
     public WordLineCap LineCap;
     /// <summary>Per stop of <see cref="GradientStops"/> (null = all opaque).</summary>
     public List<double>? GradientStopOpacities;
@@ -160,6 +163,7 @@ public static class WordShapeHtml
         if (shape.Paths is not null)
         {
             AppendPaths(html, shape, stretches);
+            if (shape.TextOnPaths is { Count: > 0 }) AppendTextOnPaths(html, shape);
             html.Append("</g>");
             return;
         }
@@ -456,6 +460,22 @@ public static class WordShapeHtml
                 AppendWithLineEnds(html, subpath, shape, stroke.ToString(), line);
             }
             if (plain.Count > 0) html.Append("<path d=\"").Append(PathData(plain, closeAll: false)).Append('"').Append(stroke).Append("/>");
+        }
+    }
+
+    /// <summary>Each text-effect line along its path: SVG textPath places and turns every glyph, its centre on the path, the line stretched to the path's length.</summary>
+    private static void AppendTextOnPaths(StringBuilder html, WordShape shape)
+    {
+        if (shape.FillDefinitions is { } definitions) { html.Append("<defs>").Append(definitions).Append("</defs>"); shape.FillDefinitions = null; }
+        foreach (WordShapeTextOnPath line in shape.TextOnPaths!)
+        {
+            if (line.Text.Length == 0 || line.PathLength <= 0) continue;
+            string id = "word-shape-textpath-" + StableHash(line.PathData + line.Text);
+            html.Append("<defs><path id=\"").Append(id).Append("\" d=\"").Append(line.PathData).Append("\"/></defs>");
+            html.Append("<text font-size=\"").Append(Number(line.FontSizePt)).Append("\" dominant-baseline=\"central\" fill=\"").Append(shape.TextOnPathColor ?? "#000000").Append('"');
+            if (shape.TextOnPathFont is { Length: > 0 } font) html.Append(" font-family=\"").Append(WordHtmlText.Encode(font)).Append('"');
+            html.Append("><textPath href=\"#").Append(id).Append("\" textLength=\"").Append(Number(line.PathLength)).Append("\" lengthAdjust=\"spacingAndGlyphs\">")
+                .Append(WordHtmlText.Encode(line.Text)).Append("</textPath></text>");
         }
     }
 

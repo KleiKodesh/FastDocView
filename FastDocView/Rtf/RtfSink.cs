@@ -137,6 +137,8 @@ internal sealed class RtfShapePlacement
     public bool IsWordArt;
     /// <summary>fGtext ("True if the text effect properties (gtext*) are used", RTF shapes page): the shape is its text (a text path) - no outline drawn.</summary>
     public bool IsTextEffect;
+    /// <summary>The gtextUNICODE string itself (drawn on the outlines by a text effect).</summary>
+    public string? WordArtText;
     public string? WordArtFont;
     public double WordArtSizePt;
     public string? TextHtml;

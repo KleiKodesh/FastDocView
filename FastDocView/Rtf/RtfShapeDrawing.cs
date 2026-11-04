@@ -42,8 +42,8 @@ internal static class RtfShapeDrawing
     /// </summary>
     private static void TextEffect(WordShape drawn, RtfShapePlacement shape)
     {
-        drawn.Geometry = WordShapeGeometry.Path;
-        drawn.Paths = [];
+        if (shape.WordArtText is { } text) WordOfficeArtFontwork.Apply(drawn, text, shape.WordArtFont);
+        else { drawn.Geometry = WordShapeGeometry.Path; drawn.Paths = []; }
     }
 
     /// <summary>The shape's fill as .doc reads it from the same properties (see <see cref="WordOfficeArtFill"/>).</summary>
@@ -121,7 +121,7 @@ internal static class RtfShapeDrawing
             drawn.Geometry = WordShapeGeometry.Picture;
             drawn.PictureId = pictureId(picture);
         }
-        if (shape.HasText) { drawn.TextIndex = texts.Count; texts.Add(shape.TextHtml ?? ""); }
+        if (shape.HasText && !(shape.IsTextEffect && shape.WordArtText is not null)) { drawn.TextIndex = texts.Count; texts.Add(shape.TextHtml ?? ""); }
         shapes.Add(drawn);
     }
 }

@@ -62,7 +62,8 @@ public static class DocBinaryShapesFidelityTest
             string html = string.Concat(Render(wordArtDoc));
             int shown = Occurrences(Tags.Replace(html, ""), "FontworkText"), found = SearchCount(wordArtDoc, "FontworkText");
             TestReport.Check(shown == 1 && found == 1, $"LibreOffice .doc Fontwork: shown {shown}, found {found}, expected 1 / 1");
-            TestReport.Check(html.Contains("class=\"text-box-paragraph\" style=\"display:block;text-align:center;white-space:pre-wrap;") && !html.Contains("<path"), "LibreOffice .doc Fontwork: the WordArt string drawn centred in its font, no outline (a text path) (" + html + ")");
+            TestReport.Check(html.Contains("<textPath") && html.Contains(">FontworkText</textPath>") && !html.Contains("text-box-paragraph") && !html.Contains("fill-rule"),
+                             "LibreOffice .doc Fontwork: the WordArt string set on the shape's outlines, no outline drawn (" + html + ")");
         }
 
         TestReport.Step(".doc shapes: a header with a text box and a shape (PlcSpaHdr, the header text-box story) saved by LibreOffice");

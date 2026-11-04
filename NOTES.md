@@ -1500,3 +1500,19 @@ EnhancedCustomShapeGeometry.cxx (default filling / stroking tables :6155-6213); 
   the LibreOffice source that shows why (no dispatch case, paged-layout only, vertical text, Word 6 drawing objects).
 - `\lbrN` is now rendered: the next `\line` clears left / right / both floats (rtfdispatchvalue.cxx:1779-1800 LBR -> w:br clear),
   kept in two state bits, reset by `\plain`.
+
+### Text effects on their outlines (WordArt / Fontwork, RTF and .doc, 2026-11-04)
+
+- `Html/WordOfficeArtFontwork.cs` lays text effects out as LibreOffice's EnhancedCustomShapeFontWork.cxx does: the outlines are
+  the shape's evaluated sub-paths; odd count = single-line mode (one area per outline), even = pairs (upper, lower); lines are
+  shared out over the areas in order; a line's height is the shape's height / the most lines in an area; its width is fitted
+  to the outline length (SVG textLength, lengthAdjust spacingAndGlyphs). Single-line: SVG textPath turns every glyph along the
+  outline with its centre on it (several lines: the outline moved along its normals). Pairs: the text runs halfway between the
+  two outlines (fraction-by-length), sized to their mean gap.
+- Known differences from LibreOffice, both because an HTML writer has no glyph outlines or advance widths: in pair mode the
+  glyph shapes are not bent between the two curves (they follow the curve), and in single-line mode the line height is not
+  multiplied by LibreOffice's fit factor (path length / text width at that height).
+- The text-effect shape draws only its text, filled with its fill (gradients too); the outline is not drawn. Search unchanged
+  (.doc gtextUNICODE and RTF gtext text are still fed once).
+- `.docx`: VML WordArt (v:textpath on the same MSO shape types) and DrawingML prstTxWarp are not read by the .docx reader yet; the
+  shared `WordOfficeArtGeometry.Preset` + `WordOfficeArtFontwork.Apply` take an MSO type, its adjust values and the string.

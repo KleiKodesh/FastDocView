@@ -355,13 +355,14 @@ internal static class DocBinaryDrawnShapes
         // a text effect (fGtext 0x4000 of the gtext booleans 255, msdffimp.cxx:2517): LibreOffice draws Fontwork in place of the
         // outline (svx EnhancedCustomShapeEngine.cxx:236-262), the text filled with the shape's fill colour
         bool textEffect = Flag(p, 255, 0x4000) ?? (p.TryGetValue(255, out uint gtextFlags) && (gtextFlags & 0x4000) != 0);
-        if (TextOf(table, record, stories) is { } text)
+        DocBinaryShapeText? shapeText = TextOf(table, record, stories);
+        if (textEffect && shapeText?.Literal is { } wordArt) WordOfficeArtFontwork.Apply(shape, wordArt, shapeText.Value.FontFamily);
+        else if (shapeText is { } text)
         {
-            if (textEffect && text.Literal is not null) text = text with { Color = shape.FillColor };
             shape.TextIndex = texts.Count;
             texts.Add(text);
         }
-        if (textEffect) { shape.Geometry = WordShapeGeometry.Path; shape.Paths = []; }
+        if (textEffect && shapeText?.Literal is null) { shape.Geometry = WordShapeGeometry.Path; shape.Paths = []; }
         shapes.Add(shape);
     }
 
