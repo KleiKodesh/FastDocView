@@ -10,7 +10,9 @@ import { pathToFileURL } from 'node:url'
 // The demo runs the APP's own components: `@/` resolves to KitveiHakodesh's vue-frontend source and
 // the shared packages come from the app's node_modules (one Vue / Pinia / vue-i18n instance, the
 // app's versions). Only the service transport is swapped (src/appPage/fastDocViewDemoApi.ts).
-const APP_FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../KitveiHakodesh/vue-frontend')
+// FastDocView is a submodule of the app (KitveiHakodesh/FastDocView), so the app's vue-frontend is two levels up; a work copy
+// elsewhere (a worktree) names it with FASTDOCVIEW_APP_FRONTEND.
+const APP_FRONTEND = process.env.FASTDOCVIEW_APP_FRONTEND ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../vue-frontend')
 const APP_SOURCE = path.join(APP_FRONTEND, 'src')
 const APP_SOURCE_POSIX = APP_SOURCE.split(path.sep).join('/')
 const appRequire = createRequire(path.join(APP_FRONTEND, 'package.json'))

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? `http://localhost:${process.env.FASTDOCVIEW_DEMO_PORT ?? 5189}/`
 const filePath = process.argv[2]
 if (!filePath) { console.error('usage: node playwright/notesCheck.mjs <file> [--headed]'); process.exit(2) }
-const locales = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../KitveiHakodesh/vue-frontend/src/i18n/locales')
+const locales = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../vue-frontend/src/i18n/locales')
 const syncTitles = ['en', 'he'].flatMap(locale => {
   const json = JSON.parse(readFileSync(path.join(locales, locale, 'fastDocView.json'), 'utf8'))
   return [json.syncNotesOnTitle, json.syncNotesOffTitle]
