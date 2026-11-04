@@ -13,17 +13,29 @@ namespace FastDocView.DocBinary;
 /// </summary>
 public sealed class DocBinaryBookmarks
 {
-    public static readonly DocBinaryBookmarks Empty = new([], []);
+    public static readonly DocBinaryBookmarks Empty = new([], [], []);
 
     /// <summary>Names and start CPs, sorted by CP (PLC order).</summary>
     public string[] Names { get; }
     public int[] StartCps { get; }
+    /// <summary>The end CP of each (PlcfBkl at the FBKF's ibkl - ww8scan.cxx WW8PLCFx_Book; -1 when unknown): REF fields show the text between.</summary>
+    public int[] EndCps { get; }
     private Dictionary<string, int>? _byName;
 
-    private DocBinaryBookmarks(string[] names, int[] startCps)
+    private DocBinaryBookmarks(string[] names, int[] startCps, int[] endCps)
     {
         Names = names;
         StartCps = startCps;
+        EndCps = endCps;
+    }
+
+    /// <summary>The start and end CP of the first bookmark called <paramref name="name"/>, or null.</summary>
+    public (int start, int end)? RangeOf(string name)
+    {
+        if (StartOf(name) is not { } start) return null;
+        for (int i = 0; i < Names.Length; i++)
+            if (Names[i] == name && StartCps[i] == start) return (start, EndCps[i]);
+        return null;
     }
 
     public static DocBinaryBookmarks Read(Stream tableStream, DocBinaryFileInformationBlock fib)
@@ -35,6 +47,8 @@ public sealed class DocBinaryBookmarks
         int count = Math.Min(names.Count, (startBytes.Length - 4) / 8);
         var resultNames = new List<string>(count);
         var resultCps = new List<int>(count);
+        var resultEnds = new List<int>(count);
+        byte[]? endBytes = fib.BookmarkEnds.length >= 4 ? DocBinaryStructureReader.TryRead(tableStream, fib.BookmarkEnds) : null;
         for (int i = 0; i < count; i++)
         {
             int cp = BitConverter.ToInt32(startBytes, i * 4);
@@ -42,12 +56,16 @@ public sealed class DocBinaryBookmarks
             if (cp < 0 || names[i].Length == 0 || names[i].StartsWith("_GoBack", StringComparison.Ordinal)) continue;
             resultNames.Add(names[i]);
             resultCps.Add(cp);
+            // FBKF: ibkl (uint16), bkc - after the n + 1 CPs
+            int fbkf = ((startBytes.Length - 4) / 8 + 1) * 4 + i * 4;
+            int ibkl = fbkf + 2 <= startBytes.Length ? BitConverter.ToUInt16(startBytes, fbkf) : -1;
+            resultEnds.Add(endBytes is not null && ibkl >= 0 && ibkl * 4 + 4 <= endBytes.Length ? BitConverter.ToInt32(endBytes, ibkl * 4) : -1);
         }
         // PLC CPs are ascending; keep the order stable by CP should a damaged file break it
         int[] cps = resultCps.ToArray();
-        string[] sortedNames = resultNames.ToArray();
-        Array.Sort(cps, sortedNames);
-        return new DocBinaryBookmarks(sortedNames, cps);
+        int[] order = Enumerable.Range(0, cps.Length).ToArray();
+        Array.Sort(cps.ToArray(), order);
+        return new DocBinaryBookmarks(order.Select(i => resultNames[i]).ToArray(), order.Select(i => resultCps[i]).ToArray(), order.Select(i => resultEnds[i]).ToArray());
     }
 
     /// <summary>The start CP of the first bookmark called <paramref name="name"/> (PLC order), or null.</summary>

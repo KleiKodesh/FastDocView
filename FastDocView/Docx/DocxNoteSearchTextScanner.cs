@@ -116,6 +116,7 @@ internal sealed class DocxNoteSearchTextScanner
             ReadOnlySpan<byte> prefix = PrefixOf(xml.Slice(nameStartIndex, nameEnd - nameStartIndex), out ReadOnlySpan<byte> local);
             bool parentIsRun = _isRun.Count > 0 && _isRun[_isRun.Count - 1];
             if (Is(local, "drawing") || Is(local, "pict") || Is(local, "object")) return false;    // the parser strips these first
+            if (Is(local, "fldChar") || Is(local, "fldSimple") || Is(local, "instrText")) return false;   // fields: read through the field stack by the parsed path
             if (local.Length is 1 or 2 or 3 && Resolve(prefix) == NamespaceKind.Wordprocessing)
             {
                 if (local.Length == 1 && local[0] == (byte)'p')

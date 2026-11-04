@@ -23,6 +23,10 @@ internal enum RtfDestination : byte
     /// <summary>{\*\fldinst ...} and {\*\bkmkstart name}: their text is captured and reported when the group closes.</summary>
     FieldInstruction,
     BookmarkStart,
+    /// <summary>{\*\formfield ...} inside a field's code: \fftype / \ffres / \ffdefres read, no text.</summary>
+    FormField,
+    /// <summary>{\*\ffl entry} / {\*\ffdeftext text} inside a form field: their text is the entry / the default.</summary>
+    FormFieldText,
     /// <summary>{\shp} / {\shpgrp}, {\*\shpinst}, {\sp}, {\sn}, {\sv}: read for the shape's properties, no text.</summary>
     Shape,
     ShapeInstruction,

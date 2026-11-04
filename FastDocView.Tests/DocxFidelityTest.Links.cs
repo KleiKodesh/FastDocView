@@ -62,7 +62,7 @@ public static partial class DocxFidelityTest
         string Holding(string text) => cross.Single(block => block.Contains(text));
         int BlockHolding(string text) => cross.FindIndex(block => block.Contains(text));
         TestReport.Check(Holding("see chapter").Contains("href=\"#bookmark-_Toc1\"") && Holding("see chapter").Contains(">see chapter</a>"), "REF \\h becomes a link to its bookmark");
-        TestReport.Check(!Holding(">7<").Contains("<a "), "PAGEREF without \\h is not a link (as in Word)");
+        TestReport.Check(Holding("field-page-placeholder") is var pageReference && !pageReference.Contains("<a ") && !pageReference.Contains(">7<"), "PAGEREF without \\h: a page placeholder, not a link (as in Word), not the stale page number");
         TestReport.Check(Holding("in otzaria").Contains("class=\"link app-link\"") && Holding("in otzaria").Contains("href=\"otzaria://open/book/12?index=3\"") && !Holding("in otzaria").Contains("target=\"_blank\""),
                          "an otzaria:// link is kept as an app link for the host to route");
         foreach (bool onDemand in new[] { false, true })

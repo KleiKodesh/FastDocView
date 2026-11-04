@@ -223,6 +223,7 @@ internal sealed class WordXmlSearchText
     public const string DiagramNamespace = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
     public const string ChartNamespace = "http://schemas.openxmlformats.org/drawingml/2006/chart";
     public const string ChartExNamespace = "http://schemas.microsoft.com/office/drawing/2014/chartex";
+    public const string VmlNamespace = "urn:schemas-microsoft-com:vml";
     public const string RelationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     public const string OdfOfficeNamespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
     public const string OdfDrawingNamespace = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
@@ -338,12 +339,15 @@ internal sealed class WordXmlSearchText
     /// A .docx body block: the character content of w:t (w:delText, field codes w:instrText and everything else are not
     /// text Word shows); w:tab a space; w:br / w:cr and the end of each w:p separators; w:pPr / w:rPr and mc:Fallback skipped.
     /// </summary>
-    public void FeedOoxml(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher, List<string>? drawingRelationshipIds = null)
+    public void FeedOoxml(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher, List<string>? drawingRelationshipIds = null,
+                          Docx.DocxSearchFields? fields = null)
     {
         try
         {
             using XmlReader reader = Open(bytes, start, length);
             int textDepth = -1;
+            int instructionDepth = -1;             // the open w:instrText
+            var simpleFields = new List<(int depth, bool separated)>();   // open w:fldSimple elements
             bool skipped = false;                  // Skip() already moved to the next node
             while (skipped ? !reader.EOF : reader.Read())
             {
@@ -353,22 +357,72 @@ internal sealed class WordXmlSearchText
                     case XmlNodeType.Element:
                         // properties (w:pPr tab stops) and the fallback copy of mc:AlternateContent are not text
                         if (reader.LocalName == "Fallback" && reader.NamespaceURI == MarkupCompatibilityNamespace) { reader.Skip(); skipped = true; continue; }
+                        // VML WordArt: the v:textpath string is the text it shows
+                        if (reader.LocalName == "textpath" && reader.NamespaceURI == VmlNamespace && reader.GetAttribute("string") is { Length: > 0 } wordArt) { matcher.Separator(); matcher.Feed(wordArt.AsSpan()); matcher.Separator(); }
                         // a SmartArt (dgm:relIds r:dm) or chart (c:chart r:id) drawing: its part's text is fed after the block
                         if (drawingRelationshipIds is not null && reader.LocalName == "relIds" && reader.NamespaceURI == DiagramNamespace && reader.GetAttribute("dm", RelationshipsNamespace) is { } diagram) drawingRelationshipIds.Add(diagram);
                         if (drawingRelationshipIds is not null && reader.LocalName == "chart" && reader.NamespaceURI is ChartNamespace or ChartExNamespace && reader.GetAttribute("id", RelationshipsNamespace) is { } chart) drawingRelationshipIds.Add(chart);
                         if (!IsWordprocessing(reader.NamespaceURI)) break;
                         if (reader.LocalName is "pPr" or "rPr") { reader.Skip(); skipped = true; continue; }
+                        if (fields is not null)
+                        {
+                            // a w:fldSimple's result starts at its first run-level child (the renderer separates before rendering any)
+                            if (simpleFields.Count > 0 && !simpleFields[simpleFields.Count - 1].separated && reader.Depth == simpleFields[simpleFields.Count - 1].depth + 1
+                                && reader.LocalName is "r" or "hyperlink" or "fldSimple" or "smartTag" or "ins" or "sdt" or "customXml")
+                            {
+                                simpleFields[simpleFields.Count - 1] = (simpleFields[simpleFields.Count - 1].depth, true);
+                                fields.Separate(matcher);
+                            }
+                            switch (reader.LocalName)
+                            {
+                                case "fldChar":
+                                {
+                                    string? type = reader.GetAttribute("fldCharType", reader.NamespaceURI);
+                                    bool dirty = IsOn(reader.GetAttribute("dirty", reader.NamespaceURI)), locked = IsOn(reader.GetAttribute("fldLock", reader.NamespaceURI));
+                                    Fields.WordFormFieldState? form = null;
+                                    if (!reader.IsEmptyElement)
+                                    {
+                                        form = DocxHtml.DocxBlockHtmlRenderer.FormFieldState((XElement)XNode.ReadFrom(reader));
+                                        skipped = true;
+                                    }
+                                    if (type == "begin") fields.Begin(dirty, locked, form);
+                                    else if (type == "separate") fields.Separate(matcher);
+                                    else if (type == "end") fields.End(matcher);
+                                    continue;
+                                }
+                                case "instrText":
+                                    if (!reader.IsEmptyElement) instructionDepth = reader.Depth;
+                                    continue;
+                                case "fldSimple":
+                                    fields.Begin(IsOn(reader.GetAttribute("dirty", reader.NamespaceURI)), IsOn(reader.GetAttribute("fldLock", reader.NamespaceURI)), null);
+                                    fields.Instruction(reader.GetAttribute("instr", reader.NamespaceURI) ?? "");
+                                    if (reader.IsEmptyElement) fields.End(matcher);
+                                    else simpleFields.Add((reader.Depth, false));
+                                    continue;
+                                case "txbxContent":
+                                    if (!reader.IsEmptyElement) fields.EnterTextBox(reader.Depth);
+                                    continue;
+                            }
+                        }
                         if (reader.LocalName == "t" && !reader.IsEmptyElement) textDepth = reader.Depth;
-                        else if (reader.LocalName == "tab") matcher.Feed(' ');
-                        else if (reader.LocalName is "br" or "cr") matcher.Separator();
+                        else if (reader.LocalName == "tab") { if (fields is null || fields.Shows("\t")) matcher.Feed(' '); }
+                        else if (reader.LocalName is "br" or "cr") { if (fields is null || fields.Shows(null)) matcher.Separator(); }
                         else if (reader.LocalName == "p" && reader.IsEmptyElement) matcher.Separator();
                         break;
                     case XmlNodeType.EndElement:
                         if (reader.Depth == textDepth) textDepth = -1;
+                        else if (reader.Depth == instructionDepth) instructionDepth = -1;
                         else if (reader.LocalName == "p" && IsWordprocessing(reader.NamespaceURI)) matcher.Separator();
+                        else if (fields is not null && simpleFields.Count > 0 && reader.Depth == simpleFields[simpleFields.Count - 1].depth)
+                        {
+                            simpleFields.RemoveAt(simpleFields.Count - 1);
+                            fields.End(matcher);
+                        }
+                        fields?.Closed(reader.Depth);
                         break;
                     case XmlNodeType.Text or XmlNodeType.CDATA or XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace:
-                        if (textDepth >= 0) matcher.Feed(reader.Value.AsSpan());
+                        if (instructionDepth >= 0) fields?.Instruction(reader.Value);
+                        else if (textDepth >= 0 && (fields is null || fields.IsIdle || fields.Shows(reader.Value))) matcher.Feed(reader.Value.AsSpan());
                         break;
                 }
             }
@@ -376,9 +430,17 @@ internal sealed class WordXmlSearchText
         catch (XmlException) { /* keep what precedes the error */ }
     }
 
+    private static bool IsOn(string? value) => value is "1" or "true" or "on";
+
     /// <summary>A .docx note body (already parsed by the note reader): its w:t text, paragraphs separated.</summary>
-    public static void FeedOoxml(XElement note, WordDocumentSearchMatcher matcher)
+    public static void FeedOoxml(XElement note, WordDocumentSearchMatcher matcher, Fields.WordFieldContext? fieldContext = null)
     {
+        if (note.Descendants().Any(e => e.Name.LocalName is "fldChar" or "fldSimple" or "instrText"))
+        {
+            // fields: one pass in document order through the renderer's field stack (DocxBlockHtmlRenderer.RenderNote: fresh, no counters)
+            FeedFieldNodes(note, matcher, new Docx.DocxSearchFields(fieldContext, counts: false), new List<(XElement, bool)>());
+            return;
+        }
         foreach (XElement paragraph in note.DescendantsAndSelf().Where(e => e.Name.LocalName == "p" && IsWordprocessing(e.Name.NamespaceName)))
         {
             foreach (XElement element in paragraph.Descendants())
@@ -390,6 +452,58 @@ internal sealed class WordXmlSearchText
                 else if (element.Name.LocalName == "p") matcher.Separator();     // a nested paragraph (text box)
             }
             matcher.Separator();
+        }
+    }
+
+    /// <summary>A note's elements in document order with fields routed (the same rules as the byte reader's).</summary>
+    private static void FeedFieldNodes(XElement element, WordDocumentSearchMatcher matcher, Docx.DocxSearchFields fields, List<(XElement simple, bool separated)> simpleFields)
+    {
+        foreach (XElement child in element.Elements())
+        {
+            if (!IsWordprocessing(child.Name.NamespaceName))
+            {
+                if (child.Name.LocalName != "Fallback") FeedFieldNodes(child, matcher, fields, simpleFields);
+                continue;
+            }
+            string name = child.Name.LocalName;
+            if (name is "pPr" or "rPr" or "del" or "moveFrom") continue;
+            if (simpleFields.Count > 0 && !simpleFields[simpleFields.Count - 1].separated && child.Parent == simpleFields[simpleFields.Count - 1].simple
+                && name is "r" or "hyperlink" or "fldSimple" or "smartTag" or "ins" or "sdt" or "customXml")
+            {
+                simpleFields[simpleFields.Count - 1] = (simpleFields[simpleFields.Count - 1].simple, true);
+                fields.Separate(matcher);
+            }
+            XNamespace w = child.Name.Namespace;
+            switch (name)
+            {
+                case "fldChar":
+                {
+                    string? type = (string?)child.Attribute(w + "fldCharType");
+                    if (type == "begin") fields.Begin(IsOn((string?)child.Attribute(w + "dirty")), IsOn((string?)child.Attribute(w + "fldLock")), DocxHtml.DocxBlockHtmlRenderer.FormFieldState(child));
+                    else if (type == "separate") fields.Separate(matcher);
+                    else if (type == "end") fields.End(matcher);
+                    continue;
+                }
+                case "instrText": fields.Instruction(child.Value); continue;
+                case "fldSimple":
+                    fields.Begin(IsOn((string?)child.Attribute(w + "dirty")), IsOn((string?)child.Attribute(w + "fldLock")), null);
+                    fields.Instruction((string?)child.Attribute(w + "instr") ?? "");
+                    simpleFields.Add((child, false));
+                    FeedFieldNodes(child, matcher, fields, simpleFields);
+                    simpleFields.RemoveAt(simpleFields.Count - 1);
+                    fields.End(matcher);
+                    continue;
+                case "txbxContent":
+                    fields.EnterTextBox(0);
+                    FeedFieldNodes(child, matcher, fields, simpleFields);
+                    fields.Closed(0);
+                    continue;
+                case "t": if (fields.IsIdle || fields.Shows(child.Value)) matcher.Feed(child.Value.AsSpan()); continue;
+                case "tab": if (child.Parent?.Name.LocalName == "r" && fields.Shows("\t")) matcher.Feed(' '); continue;
+                case "br" or "cr": if (fields.Shows(null)) matcher.Separator(); continue;
+            }
+            FeedFieldNodes(child, matcher, fields, simpleFields);
+            if (name == "p") matcher.Separator();
         }
     }
 

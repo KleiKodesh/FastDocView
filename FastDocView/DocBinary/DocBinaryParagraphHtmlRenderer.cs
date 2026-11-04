@@ -46,6 +46,36 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// <summary>Bookmarks: each one's start renders as an empty &lt;span class="bookmark" id&gt; (the target of in-document links).</summary>
     public DocBinaryBookmarks Bookmarks { get; set; } = DocBinaryBookmarks.Empty;
 
+    /// <summary>The field tables (flags, fields open at a block start, counters); <see cref="DocBinaryFields.Empty"/> without them.</summary>
+    internal DocBinaryFields FieldTable { get; set; } = DocBinaryFields.Empty;
+
+    /// <summary>What fields Word saved without a result are computed from (document properties, bookmarks); null: the code only.</summary>
+    public Fields.WordFieldContext? FieldContext { get; set; }
+
+    /// <summary>A form field's FFData at a data-stream location (the 0x01 in its code), or null.</summary>
+    public Func<uint, Fields.WordFormFieldState?>? FormFieldData { get; set; }
+
+    /// <summary>The headings (CP, level) - SEQ \s resets at them.</summary>
+    public Func<IEnumerable<(int cp, int level)>>? HeadingPositions { get; set; }
+
+    private DocBinaryFieldReader? _fields;                 // the fields open where the story being rendered is
+
+    /// <summary>A field reader for a story starting at <paramref name="cp"/>; <paramref name="restore"/>: rebuild the fields open there (a main-text block).</summary>
+    internal DocBinaryFieldReader NewFieldReader(int cp, bool restore)
+    {
+        bool isMain = cp < _mainTextEnd;
+        var reader = new DocBinaryFieldReader(FieldTable, FieldContext,
+                                              isMain ? at => FieldTable.CountersBefore(at, _pieces.ReadText, HeadingPositions ?? (() => [])) : null)
+        { FormData = FormFieldData, DataLocationAt = DataLocationAt };
+        if (restore && isMain) reader.RestoreAt(cp, _pieces.ReadText);
+        return reader;
+    }
+
+    private int _mainTextEnd = int.MaxValue;
+
+    /// <summary>The main text's character count (ccpText): fields there count and run across blocks.</summary>
+    public int MainTextEnd { get => _mainTextEnd; set => _mainTextEnd = value; }
+
     private bool _isParagraphRightToLeft;   // the paragraph being rendered: a right-to-left run in a left-to-right one is embedded
 
     public (WordParagraphFormatting formatting, int styleIndex) ResolveParagraph(int cpStart, int cpEnd)
@@ -177,7 +207,10 @@ public sealed class DocBinaryParagraphHtmlRenderer
     public string Render(int cpStart, int cpEnd, string? previousStyleKey = null, string? noteLabel = null, string? listLabel = null)
     {
         var html = new StringBuilder(512);
+        DocBinaryFieldReader? outer = _fields;
+        if (_textBoxDepth == 0) _fields = NewFieldReader(cpStart, restore: true);
         AppendParagraph(html, cpStart, cpEnd, previousStyleKey, noteLabel, listLabel);
+        if (_textBoxDepth == 0) _fields = outer;
         return html.ToString();
     }
 
@@ -193,10 +226,11 @@ public sealed class DocBinaryParagraphHtmlRenderer
         _isParagraphRightToLeft = formatting.IsRightToLeft;
         if (listLabel is { Length: > 0 }) AppendListLabel(html, listLabel, formatting);
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
-        var fieldState = new FieldState();
+        DocBinaryFieldReader fields = _fields ??= NewFieldReader(cpStart, restore: _textBoxDepth == 0);
+        if (fields.ReopenLink() is { } openLink) html.Append(openLink);   // a link field that runs on from the paragraph before
         foreach ((WordRunFormatting runFormatting, string text, bool isSpecial, int runCp, uint? picture) in CharacterRuns(cpStart, cpEnd, formatting.RunFormatting, styleBase))
-            AppendRunHtml(html, runFormatting, formatting.RunFormatting, text, isSpecial, runCp, fieldState, noteLabel, picture);
-        if (fieldState.CloseOpenLink()) html.Append("</a>");          // a link field that goes on past the paragraph
+            AppendRunHtml(html, runFormatting, formatting.RunFormatting, text, isSpecial, runCp, fields, noteLabel, picture);
+        if (fields.CloseLinkAtParagraphEnd()) html.Append("</a>");    // a link field that goes on past the paragraph
         html.Append("</").Append(tag).Append('>');
         if (_textBoxDepth > 0) _isParagraphRightToLeft = outerRightToLeft;
         return formatting.StyleKey;
@@ -223,6 +257,14 @@ public sealed class DocBinaryParagraphHtmlRenderer
 
     /// <summary>One table row: cells end at cell marks, the row at its row-end mark (the last paragraph).</summary>
     public string RenderRow(int cpStart, int cpEnd)
+    {
+        DocBinaryFieldReader? outer = _fields;
+        if (_textBoxDepth == 0) _fields = NewFieldReader(cpStart, restore: true);
+        try { return RenderRowWithFields(cpStart, cpEnd); }
+        finally { if (_textBoxDepth == 0) _fields = outer; }
+    }
+
+    private string RenderRowWithFields(int cpStart, int cpEnd)
     {
         string text = _pieces.ReadText(cpStart, cpEnd);
         var paragraphs = new List<(int start, int end, bool endsCell)>();
@@ -294,6 +336,14 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// <summary>A footnote/endnote body: its paragraphs; the leading auto-number mark shows <paramref name="label"/>.</summary>
     public string RenderNote(int textStartCp, int textEndCp, string label)
     {
+        DocBinaryFieldReader? outer = _fields;
+        _fields = NewFieldReader(textStartCp, restore: false);
+        try { return RenderNoteWithFields(textStartCp, textEndCp, label); }
+        finally { _fields = outer; }
+    }
+
+    private string RenderNoteWithFields(int textStartCp, int textEndCp, string label)
+    {
         var html = new StringBuilder(256);
         string text = _pieces.ReadText(textStartCp, textEndCp);
         int paragraphStart = textStartCp;
@@ -312,17 +362,38 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// The search's view of [cpStart, cpEnd): the text Word shows (field codes hidden, results kept), a tab a space,
     /// paragraph / cell / row / line / page marks separators, other control characters (note references, pictures) dropped.
     /// </summary>
-    /// <summary>Feeds a CP range's text to the matcher, read from the piece table (notes; the golden reference for the body's one-pass search).</summary>
-    public void FeedSearchText(int cpStart, int cpEnd, WordDocumentSearchMatcher matcher)
-        => FeedSearchCharacters(_pieces.ReadText(cpStart, cpEnd).AsSpan(), matcher);
+    /// <summary>Feeds a CP range's text to the matcher, read from the piece table (notes, text boxes; the golden reference for the body's one-pass search).</summary>
+    /// <param name="isBlock">A main-text block: the fields open at its start are rebuilt, as the renderer does.</param>
+    public void FeedSearchText(int cpStart, int cpEnd, WordDocumentSearchMatcher matcher, bool isBlock = false)
+        => FeedSearchCharacters(_pieces.ReadText(cpStart, cpEnd).AsSpan(), cpStart, matcher, isBlock);
 
-    /// <summary>Feeds one block's (or note's) characters to the matcher: field codes skipped, tabs as spaces, marks as separators.</summary>
-    public static void FeedSearchCharacters(ReadOnlySpan<char> text, WordDocumentSearchMatcher matcher)
+    /// <summary>
+    /// Feeds one block's (or note's) characters to the matcher through the renderer's field reader: what shows is read (a
+    /// cached result once, a computed one instead of a missing / recomputed one), codes, page placeholders and hidden
+    /// fields are not; tabs as spaces, marks as separators. The characters' pictures (form-field data) are not known here:
+    /// a form field's state comes from its FFData only when rendered - a checkbox is not text either way; a drop-down's
+    /// shown entry is searched only through its cached result.
+    /// </summary>
+    public void FeedSearchCharacters(ReadOnlySpan<char> text, int cpStart, WordDocumentSearchMatcher matcher, bool isBlock)
     {
-        var fieldState = new FieldState();
+        DocBinaryFieldReader fields = NewFieldReader(cpStart, restore: isBlock);
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            DocBinaryFieldReader.Step step = fields.Consume(c, cpStart + i, null);
+            if (step.Output is { Text: { } shown, IsSearchable: true }) matcher.Feed(shown.AsSpan());
+            if (step.IsConsumed) continue;
+            if (c >= ' ') matcher.Feed(c);
+            else if (c == '\t') matcher.Feed(' ');
+            else if (c is '\r' or '\u0007' or '\u000B' or '\u000C') matcher.Separator();
+        }
+    }
+
+    /// <summary>Text with no fields to follow (a WordArt string): tabs as spaces, marks as separators.</summary>
+    public static void FeedLiteralSearchCharacters(ReadOnlySpan<char> text, WordDocumentSearchMatcher matcher)
+    {
         foreach (char c in text)
         {
-            if (fieldState.Consume(c, out _)) continue;           // search reads text only: link tags are not needed
             if (c >= ' ') matcher.Feed(c);
             else if (c == '\t') matcher.Feed(' ');
             else if (c is '\r' or '\u0007' or '\u000B' or '\u000C') matcher.Separator();
@@ -332,13 +403,35 @@ public sealed class DocBinaryParagraphHtmlRenderer
     public string PlainText(int cpStart, int cpEnd)
     {
         var text = new StringBuilder();
-        var fieldState = new FieldState();
-        foreach (char c in _pieces.ReadText(cpStart, cpEnd))
+        DocBinaryFieldReader fields = NewFieldReader(cpStart, restore: false);
+        string characters = _pieces.ReadText(cpStart, cpEnd);
+        for (int i = 0; i < characters.Length; i++)
         {
-            if (fieldState.Consume(c, out _)) continue;
+            char c = characters[i];
+            DocBinaryFieldReader.Step step = fields.Consume(c, cpStart + i, null);
+            if (step.Output.Text is { } shown) text.Append(shown);
+            if (step.IsConsumed) continue;
             if (c >= ' ' || c == '\t') text.Append(c == '\t' ? ' ' : c);
         }
         return text.ToString().Trim();
+    }
+
+    /// <summary>
+    /// The data location (sprmCPicLocation 0x6A03) of the character at <paramref name="cp"/>, whatever sprmCFData / sprmCFOle2 say:
+    /// a form field's 0x01 carries sprmCFData with the location of its FFData (LibreOffice ww8par3.cxx:2063-2080 reads the
+    /// location the same way, sprm 0x6A03, for form fields); null when none.
+    /// </summary>
+    internal uint? DataLocationAt(int cp)
+    {
+        foreach ((DocBinaryPieceTable.Piece piece, int segmentStart, _) in _pieces.SegmentsOf(cp, cp + 1))
+        {
+            uint? location = null;
+            if (_pages.CharacterRunAt(piece.FileOffsetOf(segmentStart)) is { GrpprlLength: > 0 } direct)
+                location = DocBinaryPropertyModifiers.PictureCharacterIn(direct.Page, direct.GrpprlStart, direct.GrpprlLength).pictureLocation;
+            if (piece.PrmGrpprl is { } prm && DocBinaryPropertyModifiers.PictureCharacterIn(prm, 0, prm.Length).pictureLocation is { } prmLocation) location = prmLocation;
+            return location;
+        }
+        return null;
     }
 
     private IEnumerable<(WordRunFormatting formatting, string text, bool isSpecial, int cp, uint? picture)> CharacterRuns(
@@ -389,7 +482,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
     }
 
     private void AppendRunHtml(StringBuilder html, WordRunFormatting formatting, WordRunFormatting paragraphBase,
-                               string text, bool isSpecial, int runCp, FieldState fieldState, string? noteLabel, uint? picture = null)
+                               string text, bool isSpecial, int runCp, DocBinaryFieldReader fieldState, string? noteLabel, uint? picture = null)
     {
         var visible = new StringBuilder(text.Length);
         string css = formatting.ToCss(paragraphBase) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft);
@@ -409,9 +502,19 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 Flush();
                 html.Append("<span class=\"bookmark\" id=\"").Append(WordHtmlText.Encode(DocxHtml.DocxBlockHtmlRenderer.BookmarkElementId(Bookmarks.Names[nextBookmark++]))).Append("\"></span>");
             }
-            if (fieldState.Consume(c, out string? linkTag))
+            DocBinaryFieldReader.Step step = fieldState.Consume(c, runCp + i, isSpecial ? picture : null);
+            if (step.IsConsumed)
             {
-                if (linkTag is not null) { Flush(); html.Append(linkTag); }
+                if (step.LinkClose) { Flush(); html.Append("</a>"); }
+                if (step.LinkOpen is { } linkOpen) { Flush(); html.Append(linkOpen); }
+                if (!step.Output.IsEmpty)
+                {
+                    // a computed result or placeholder, in the run's formatting, in the field's link when no link is open
+                    if (step.OutputLink is { } outputLink) { Flush(); html.Append(outputLink); }
+                    if (step.Output.Html is { } markup) { Flush(); html.Append(markup); }
+                    else visible.Append(WordHtmlText.Encode(step.Output.Text!));
+                    if (step.OutputLink is not null) { Flush(); html.Append("</a>"); }
+                }
                 continue;
             }
             switch (c)
@@ -501,6 +604,14 @@ public sealed class DocBinaryParagraphHtmlRenderer
             return;
         }
         (int start, int end) range = (story.Start, story.End);
+        DocBinaryFieldReader? outerFields = _fields;
+        _fields = NewFieldReader(range.start, restore: false);           // a text box's own fields
+        try { AppendStoryText(html, range); }
+        finally { _fields = outerFields; }
+    }
+
+    private void AppendStoryText(StringBuilder html, (int start, int end) range)
+    {
         string text = _pieces.ReadText(range.start, range.end);
         int paragraphStart = range.start;
         string? previousStyleKey = null;
@@ -562,80 +673,4 @@ public sealed class DocBinaryParagraphHtmlRenderer
             ? reference.Number.ToString(System.Globalization.CultureInfo.InvariantCulture)
             : DocxHtml.DocxNumberingDefinitions.FormatNumber(reference.Number, "lowerRoman");
 
-    /// <summary>
-    /// Field codes are hidden, field results shown: 0x13 begins a field, 0x14 separates code from result, 0x15 ends it
-    /// (LibreOffice ww8scan.cxx: the PlcfFldMom marks, data byte &amp; 0x1f, are these characters). Tracked per nesting level
-    /// so a nested field inside a result works. A field's code is collected; at its separator a HYPERLINK (\l = in-document)
-    /// or REF / PAGEREF / NOTEREF ... \h field opens a link, read with the .docx field rules
-    /// (DocxBlockHtmlRenderer.HyperlinkFieldTag: the same instruction text; LibreOffice ww8par5.cxx Read_F_Hyperlink reads
-    /// \l as "#name", Read_F_Ref takes the first plain token as the bookmark); its end closes it. Only safe targets become
-    /// links; a link inside a link renders its text only.
-    /// </summary>
-    private sealed class FieldState
-    {
-        private readonly List<(bool isCode, StringBuilder? code, bool isLink)> _fields = new();
-        private bool _isLinkOpen;
-
-        /// <summary>
-        /// Inside a SHAPE field's result: there a 0x01 is not a picture of its own unless another 0x01 follows - LibreOffice
-        /// ww8par.cxx:3594-3622 (IsInlineEscherHack, ww8par.hxx:1737-1738: the innermost field is 95) reads the shape from the 0x08
-        /// and skips the 0x01.
-        /// </summary>
-        public bool IsInShapeResult => _innermostIsShape && _fields.Count > 0 && !_fields[_fields.Count - 1].isCode;
-        private bool _innermostIsShape;
-        private readonly List<bool> _isShape = new();   // per open field: a SHAPE field (field 95, LibreOffice sw/source/filter/ww8/fields.cxx:129)
-
-        /// <summary>
-        /// True when the character is consumed (a field mark, or inside a field code); <paramref name="linkTag"/> is the
-        /// &lt;a&gt; or &lt;/a&gt; to write at this point, if any.
-        /// </summary>
-        public bool Consume(char c, out string? linkTag)
-        {
-            linkTag = null;
-            switch (c)
-            {
-                case '\u0013': _fields.Add((true, new StringBuilder(), false)); _isShape.Add(false); _innermostIsShape = false; return true;
-                case '\u0014':
-                    if (_fields.Count > 0 && _fields[_fields.Count - 1].isCode)
-                    {
-                        string code = _fields[_fields.Count - 1].code!.ToString();
-                        bool isShape = code.TrimStart().StartsWith("SHAPE", StringComparison.OrdinalIgnoreCase)
-                                       && (code.TrimStart().Length == 5 || !char.IsLetter(code.TrimStart()[5]));
-                        _isShape[_isShape.Count - 1] = isShape;
-                        _innermostIsShape = isShape;
-                        string? tag = _isLinkOpen ? null : DocxHtml.DocxBlockHtmlRenderer.HyperlinkFieldTag(code);
-                        _fields[_fields.Count - 1] = (false, null, tag is not null);
-                        if (tag is not null) { _isLinkOpen = true; linkTag = tag; }
-                    }
-                    return true;
-                case '\u0015':
-                    if (_fields.Count > 0)
-                    {
-                        bool wasLink = _fields[_fields.Count - 1].isLink;
-                        _fields.RemoveAt(_fields.Count - 1);
-                        if (_isShape.Count > 0) _isShape.RemoveAt(_isShape.Count - 1);
-                        _innermostIsShape = _isShape.Count > 0 && _isShape[_isShape.Count - 1];
-                        if (wasLink && _isLinkOpen) { _isLinkOpen = false; linkTag = "</a>"; }
-                    }
-                    return true;
-            }
-            if (_fields.Count > 0 && _fields[_fields.Count - 1].isCode)
-            {
-                // control characters are not instruction text: HYPERLINK codes carry a 0x01 object mark (Word's hyperlink data)
-                _fields[_fields.Count - 1].code!.Append(c < ' ' ? ' ' : c);
-                return true;
-            }
-            foreach ((bool isCode, _, _) in _fields) if (isCode) return true;
-            return false;
-        }
-
-        /// <summary>True when a link is still open (it is closed with the paragraph); afterwards none is.</summary>
-        public bool CloseOpenLink()
-        {
-            if (!_isLinkOpen) return false;
-            _isLinkOpen = false;
-            for (int i = 0; i < _fields.Count; i++) _fields[i] = (_fields[i].isCode, _fields[i].code, false);
-            return true;
-        }
-    }
 }

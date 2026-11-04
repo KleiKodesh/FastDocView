@@ -10,14 +10,20 @@ internal sealed class RtfSearchTextSink : RtfSink
     private readonly RtfParser _parser;
     private WordDocumentSearchMatcher? _matcher;
     private bool _includeNotes;
+    private readonly RtfFieldTracker _fields;
 
-    public RtfSearchTextSink(RtfDocumentTables tables) => _parser = new RtfParser(this, tables, readsHeaderTables: false);
+    public RtfSearchTextSink(RtfDocumentTables tables, Fields.WordFieldContext? fieldContext = null)
+    {
+        _parser = new RtfParser(this, tables, readsHeaderTables: false);
+        _fields = new RtfFieldTracker(fieldContext, counts: true);
+    }
 
     public void Feed(Stream file, RtfCompactBlockTable table, int blockIndex, WordDocumentSearchMatcher matcher, bool includeNotes)
     {
         _matcher = matcher;
         _includeNotes = includeNotes;
         _parser.RestoreSnapshot(table.SnapshotOf(blockIndex));
+        _fields.Restore(table.FieldStateOf(blockIndex));
         _parser.Run(file, table.BlockStartOffset(blockIndex), table.BlockEndOffset(blockIndex));
         _matcher = null;
     }
@@ -25,12 +31,27 @@ internal sealed class RtfSearchTextSink : RtfSink
     public override void Text(ReadOnlySpan<char> text, in RtfGroupState state)
     {
         if (_parser.IsInListText || (_parser.IsInFootnote && !_includeNotes)) return;
+        if (!_fields.IsIdle && !_fields.Shows(text)) return;
         foreach (char c in text)
         {
             if (c == '\t') _matcher!.Feed(' ');        // \tab arrives as a tab character; a space, as in the other formats
             else if (c is '\r' or '\n') _matcher!.Separator();
             else _matcher!.Feed(c);
         }
+    }
+
+    // fields: the renderer's rules (RtfFieldTracker) - codes never read, a computed result read where it shows
+    public override void FieldStart(int depth) => _fields.Start(depth);
+    public override void FieldModifier(RtfWord word) { if (word == RtfWord.FieldLock) _fields.Lock(); else _fields.Private(); }
+    public override void FormField(Fields.WordFormFieldState state) => _fields.Form(state);
+    public override void FieldInstruction(string instruction) => _fields.Instruction(instruction);
+    public override void FieldResultStart() => Feed(_fields.ResultStart(out _));
+    public override void GroupClosed(int depth) { if (!_fields.IsIdle) _fields.GroupClosed(depth, (output, _) => Feed(output)); }
+
+    private void Feed(Fields.WordFieldOutput output)
+    {
+        if (output is not { Text: { } text, IsSearchable: true } || _parser.IsInListText || (_parser.IsInFootnote && !_includeNotes)) return;
+        _matcher!.Feed(text.AsSpan());
     }
 
     public override void ParagraphEnd(in RtfGroupState state, bool isSectionEnd) => _matcher!.Separator();

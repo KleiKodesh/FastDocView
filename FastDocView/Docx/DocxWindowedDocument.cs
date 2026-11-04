@@ -187,6 +187,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets, PictureId)
         {
             RelatedPart = ReadRelatedPart, PictureSize = ReadPictureSize, PartPictureId = PartPictureId,
+            FieldContext = DocxFieldProperties.Context(() => new DocxFieldProperties(parts.ReadPartXml, parts.PartNames.Settings), filePath, BookmarkText),
         };
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
@@ -413,16 +414,26 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         }
     }
 
-    /// <summary>A note's SmartArt / chart drawings (dgm:relIds r:dm, c:chart r:id outside mc:Fallback), resolved against the note's part.</summary>
+    /// <summary>A note's SmartArt / chart drawings (dgm:relIds r:dm, c:chart r:id outside mc:Fallback), resolved against the note's part, and its VML WordArt text (v:textpath string).</summary>
     private void FeedNoteDrawings(XElement note, WordDocumentNoteKind kind, WordDocumentSearchMatcher matcher)
     {
+        // the note reader parses a note with its drawings stripped (DocxDrawingStripper): a drawing is then its layout element,
+        // its SmartArt / chart as shapes/diagram dm, shapes/chart id, shapes/chartex id, a VML WordArt as textpathString
         XNamespace relationships = WordXmlSearchText.RelationshipsNamespace;
         foreach (XElement element in note.Descendants())
         {
             if (element.Ancestors().Any(a => a.Name.LocalName == "Fallback" && a.Name.NamespaceName == WordXmlSearchText.MarkupCompatibilityNamespace)) continue;
-            string? id = element.Name.NamespaceName == WordXmlSearchText.DiagramNamespace && element.Name.LocalName == "relIds" ? (string?)element.Attribute(relationships + "dm")
-                       : element.Name.NamespaceName is WordXmlSearchText.ChartNamespace or WordXmlSearchText.ChartExNamespace && element.Name.LocalName == "chart" ? (string?)element.Attribute(relationships + "id") : null;
-            if (id is not null) FeedDrawing(kind, id, matcher);
+            string local = element.Name.LocalName;
+            bool stripped = element.Ancestors().Any(a => a.Name.LocalName == "shapes" && a.Parent?.Name.LocalName == DocxDrawingStripper.PictureLayoutElementName);
+            string? id = element.Name.NamespaceName == WordXmlSearchText.DiagramNamespace && local == "relIds" ? (string?)element.Attribute(relationships + "dm")
+                       : element.Name.NamespaceName is WordXmlSearchText.ChartNamespace or WordXmlSearchText.ChartExNamespace && local == "chart" ? (string?)element.Attribute(relationships + "id")
+                       : stripped && local == "diagram" ? (string?)element.Attribute("dm")
+                       : stripped && local is "chart" or "chartex" ? (string?)element.Attribute("id") : null;
+            if (id is not null) { FeedDrawing(kind, id, matcher); continue; }
+            // VML WordArt: the v:textpath string is the text it shows (raw, or kept as textpathString on the stripped layout / its vshapes)
+            string? wordArt = element.Name.NamespaceName == WordXmlSearchText.VmlNamespace && local == "textpath" ? (string?)element.Attribute("string")
+                            : local is DocxDrawingStripper.PictureLayoutElementName or "vshape" ? (string?)element.Attribute("textpathString") : null;
+            if (wordArt is { Length: > 0 }) { matcher.Separator(); matcher.Feed(wordArt.AsSpan()); matcher.Separator(); }
         }
     }
 
@@ -500,6 +511,34 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         }
     }
     private WordDocumentHeading[]? _headingsSnapshot;
+
+    /// <summary>
+    /// The text a bookmark marks, for a REF field Word saved without a result: from w:bookmarkStart to its w:bookmarkEnd (same
+    /// w:id) within the block that holds the start, or to the block's end; null when the bookmark does not exist.
+    /// </summary>
+    private string? BookmarkText(string name)
+    {
+        if (FindBookmark(name) is not { } block) return null;
+        XElement? element = null;
+        lock (_readLock)
+            foreach ((int _, XElement read) in _blockReader.ReadBlocks(block, 1)) element = read;
+        if (element is null) return null;
+        XNamespace w = element.Name.Namespace;
+        XElement? start = element.Descendants(w + "bookmarkStart").FirstOrDefault(b => (string?)b.Attribute(w + "name") == name);
+        if (start is null) return "";
+        string? id = (string?)start.Attribute(w + "id");
+        var text = new System.Text.StringBuilder();
+        bool inside = false;
+        foreach (XElement node in element.Descendants())
+        {
+            if (node == start) { inside = true; continue; }
+            if (!inside) continue;
+            if (node.Name == w + "bookmarkEnd" && (string?)node.Attribute(w + "id") == id) break;
+            if (node.Name == w + "t" && !node.Ancestors(w + "del").Any()) text.Append(node.Value);
+            else if (node.Name == w + "tab") text.Append('	');
+        }
+        return text.ToString();
+    }
 
     /// <summary>Page text width per section from the index; while scanning, the sections ended so far.</summary>
     public int? FindBookmark(string name)
@@ -599,6 +638,8 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                 if (fromBlock < end)
                 {
                     _searchText ??= new DocxSearchTextScanner(_blocks.RootOpenTag);
+                    _searchFields ??= new DocxSearchFields(_renderer.FieldContext);
+                    _searchText.Fields = _searchFields;
                     long pieceStartOffset = -1;            // a byte piece's start in the part while it is scanned: hit block starts are recorded
                     var pieceHitStarts = new List<long>();  // to verify the scanner's numbering if the piece fails
                     void BlockEnded(int blockIndex)
@@ -630,6 +671,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                             pieceStartOffset = startOffset;
                             matcher.Reset();
                             _searchText.DrawingRelationshipIds.Clear();
+                            _searchFields.Restore(_blocks.OpenFieldsAt(scanFrom));      // the fields open where the piece starts
                             WordSearchBlocksResult result = _searchText.FeedBlocks(buffer.AsSpan(start, length), scanFrom, pieceEnd, matcher, BlockEnded, out long stoppedAt);
                             pieceStartOffset = -1;
                             WordSearchPieceVerdict verdict = WordSearchPiece.Judge(result, isEndExact, stoppedAt, length);
@@ -666,7 +708,8 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                             matcher.Reset();
                             _searchText.DrawingRelationshipIds.Clear();
                             _referenceDrawingIds.Clear();
-                            if (mode == DocxSearchTextMode.ReferenceXmlReader) _referenceSearchText!.FeedOoxml(bytes, start, length, matcher, _referenceDrawingIds);
+                            _searchFields.Restore(_blocks.OpenFieldsAt(blockIndex));
+                            if (mode == DocxSearchTextMode.ReferenceXmlReader) _referenceSearchText!.FeedOoxml(bytes, start, length, matcher, _referenceDrawingIds, _searchFields);
                             else _searchText.Feed(bytes, start, length, matcher);
                             BlockEnded(blockIndex);
                         }
@@ -702,12 +745,12 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                     : _endnoteSearchText ??= new DocxNoteSearchTextScanner(rootOpenTag);
                 if (scanner.TryFeed(_noteSearchBuffer.AsSpan(0, length), matcher)) { NotesSearchedFromBytes++; continue; }
                 matcher.RestoreState(before);
-                if (_noteReader.Read(reference.Kind, reference.NoteId) is { } declined) { WordXmlSearchText.FeedOoxml(declined, matcher); FeedNoteDrawings(declined, reference.Kind, matcher); }
+                if (_noteReader.Read(reference.Kind, reference.NoteId) is { } declined) { WordXmlSearchText.FeedOoxml(declined, matcher, _renderer.FieldContext); FeedNoteDrawings(declined, reference.Kind, matcher); }
                 continue;
             }
             if (_noteReader.Read(reference.Kind, reference.NoteId) is not { } note) continue;
             matcher.Separator();
-            WordXmlSearchText.FeedOoxml(note, matcher);
+            WordXmlSearchText.FeedOoxml(note, matcher, _renderer.FieldContext);
             FeedNoteDrawings(note, reference.Kind, matcher);
         }
     }
@@ -718,6 +761,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     internal long NotesSearchedFromBytes { get; private set; }
 
     private DocxSearchTextScanner? _searchText;
+    private DocxSearchFields? _searchFields;
     private WordXmlSearchText? _referenceSearchText;
 
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;

@@ -132,6 +132,12 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         _renderer.DefaultTabStopTwips = ReadDefaultTabStop(_tableStream, FileInformationBlock.DocumentProperties);
         Bookmarks = DocBinaryBookmarks.Read(_tableStream, FileInformationBlock);
         _renderer.Bookmarks = Bookmarks;
+        // fields: the PlcFld tables (flags, open fields at a block start, counters), the property streams, FFData, bookmarks' text
+        _renderer.FieldTable = DocBinaryFields.Read(_tableStream, FileInformationBlock);
+        _renderer.MainTextEnd = FileInformationBlock.MainTextCharacterCount;
+        _renderer.FieldContext = FieldContext(displayPath);
+        _renderer.FormFieldData = FormFieldData;
+        _renderer.HeadingPositions = () => _index is null || _table is null ? [] : Headings.Select(heading => (_table.BlockStartCp(heading.BlockIndex), heading.Level));
         _renderer.Pictures = new DocBinaryPictures(_dataStream);
         _renderer.FloatingPictures = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock);
         HeaderDrawings = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock, isHeader: true);
@@ -149,6 +155,79 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         Sections = DocBinarySectionTable.Read(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, _index.SectionFirstBlocks);
         IsRightToLeft = DetectRightToLeft();
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(0).RunFormatting, IsRightToLeft);
+    }
+
+    private Fields.WordFieldContext FieldContext(string path)
+    {
+        DocBinaryFieldProperties? properties = null;
+        DocBinaryFieldProperties Properties() => properties ??= new DocBinaryFieldProperties(ReadPropertyStream);
+        long? size = null;
+        try { size = File.Exists(path) ? new FileInfo(path).Length : null; } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        return new Fields.WordFieldContext
+        {
+            DocumentProperty = name => Properties().Property(name),
+            DocumentDate = name => Properties().Date(name),
+            FileName = Path.GetFileName(path),
+            FilePath = path,
+            FileSize = size,
+            BookmarkText = BookmarkText,
+        };
+    }
+
+    private byte[]? ReadPropertyStream(string name)
+    {
+        using Stream? stream = _compoundFile.OpenRootStream(name);
+        if (stream is null) return null;
+        var bytes = new MemoryStream();
+        stream.CopyTo(bytes);
+        return bytes.ToArray();
+    }
+
+    /// <summary>The text a bookmark marks (PlcfBkf start to PlcfBkl end) as the reader shows it, for a REF Word saved without a result.</summary>
+    private string? BookmarkText(string name)
+    {
+        // a REF inside its own bookmark (or a formula naming it) would come back here: not followed again
+        if (_isReadingBookmarkText || Bookmarks.RangeOf(name) is not { } range) return null;
+        int end = range.end >= range.start ? range.end : range.start;
+        _isReadingBookmarkText = true;
+        try { return _renderer.PlainText(range.start, Math.Min(end, range.start + 64 * 1024)); }
+        finally { _isReadingBookmarkText = false; }
+    }
+
+    private bool _isReadingBookmarkText;
+
+    /// <summary>
+    /// A form field's FFData ([MS-DOC] FFData, read as LibreOffice's WW8FormulaControl::FormulaRead, ww8par3.cxx:2127-2240): at
+    /// the 0x01's picture location, after the 68-byte PICF (ww8graf2.cxx:442-457 PicRead): version 0xFFFFFFFF; bits (iType in
+    /// bits 0-1: 0 text, 1 checkbox, 2 drop-down; iRes in bits 2-6: a checkbox's state unless 25, a drop-down's selection);
+    /// cch; hps; xstzName; xstzTextDef (text) or wDef (checkbox default); five more strings; a drop-down's SSTB of entries.
+    /// </summary>
+    private Fields.WordFormFieldState? FormFieldData(uint location)
+    {
+        if (_dataStream is null || location + 68 + 10 > _dataStream.Length) return null;
+        try
+        {
+            var reader = new BinaryReader(_dataStream, System.Text.Encoding.Unicode, leaveOpen: true);
+            _dataStream.Position = location + 68;
+            if (reader.ReadUInt32() != 0xFFFFFFFF) return null;
+            byte bits = reader.ReadByte();
+            reader.ReadByte();
+            int type = bits & 0x3, result = (bits & 0x7C) >> 2;
+            reader.ReadUInt16(); reader.ReadUInt16();                       // cch, hps
+            string Xstz() { int length = reader.ReadUInt16(); string text = new(reader.ReadChars(length)); reader.ReadUInt16(); return text; }
+            Xstz();                                                         // xstzName
+            if (type == 0) return new Fields.WordFormFieldState { DefaultText = Xstz() };
+            ushort defaultValue = reader.ReadUInt16();
+            if (type == 1) return new Fields.WordFormFieldState { IsChecked = (result != 25 ? result : defaultValue) != 0 };
+            for (int i = 0; i < 5; i++) Xstz();                             // format, help, status, entry macro, exit macro
+            if (reader.ReadUInt16() != 0xFFFF) return null;                  // SSTB fExtend
+            int count = reader.ReadUInt16();
+            reader.ReadUInt16();                                            // cbExtra
+            var entries = new List<string>(count);
+            for (int i = 0; i < count; i++) entries.Add(new string(reader.ReadChars(reader.ReadUInt16())));
+            return new Fields.WordFormFieldState { Entries = entries, SelectedEntry = result };
+        }
+        catch (EndOfStreamException) { return null; }
     }
 
     /// <summary>
@@ -262,20 +341,20 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
                     if (cursor is not null)
                     {
                         cursor.TryNext(out start, out blockEnd, out ReadOnlySpan<char> text);
-                        DocBinaryParagraphHtmlRenderer.FeedSearchCharacters(text, matcher);
+                        _renderer.FeedSearchCharacters(text, start, matcher, isBlock: true);
                     }
                     else
                     {
                         start = _table.BlockStartCp(blockIndex);
                         blockEnd = _table.BlockEndCp(blockIndex);
-                        _renderer.FeedSearchText(start, blockEnd, matcher);
+                        _renderer.FeedSearchText(start, blockEnd, matcher, isBlock: true);
                     }
                     // text-box text belongs to the block that anchors its shape (the story is not in the main text: found once)
                     if (_renderer.FloatingPictures is { } drawings)
                         foreach (DocBinaryShapeText text in drawings.TextRangesIn(start, blockEnd))
                         {
                             matcher.Separator();
-                            if (text.Literal is { } literal) DocBinaryParagraphHtmlRenderer.FeedSearchCharacters(literal.AsSpan(), matcher);
+                            if (text.Literal is { } literal) DocBinaryParagraphHtmlRenderer.FeedLiteralSearchCharacters(literal.AsSpan(), matcher);
                             else _renderer.FeedSearchText(text.Start, text.End, matcher);
                         }
                     if (options.IncludeNotes)

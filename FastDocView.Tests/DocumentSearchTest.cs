@@ -70,7 +70,7 @@ public static class DocumentSearchTest
           + "<w:tbl><w:tr><w:tc><w:p>" + R("split") + "</w:p><w:p>" + R("here") + "</w:p></w:tc><w:tc><w:p>" + R("cell") + "</w:p></w:tc></w:tr></w:tbl>" // 3: table
           + "<w:p>" + R("\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9") + "</w:p>"                                                             // 4: maqaf, gershayim
           + "<w:p>" + R("kept ") + "<w:del w:id=\"9\" w:author=\"a\"><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"                   // 5: deleted text
-          + "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + R("7") + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>" // 6: field
+          + "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText>AUTHOR</w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" + R("7") + "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>" // 6: field
           + "<w:p>" + R("xy ") + R("xy xy", "<w:i/>") + R(" xxx") + "</w:p>";                                                                // 7: several matches in one block
         string footnotes = "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>"
                          + "<w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>"
@@ -84,7 +84,7 @@ public static class DocumentSearchTest
         TestReport.Check(noteBlocks.SequenceEqual([2]) && noteCounts.SequenceEqual([3]), $"docx: matches in a note body are counted with the block's ({Show(noteCounts)})");
         TestReport.Check(All(document, "gone").Length == 0, "docx: deleted text (w:delText) is not matched");
         TestReport.Check(All(document, "kept").SequenceEqual([5]), "docx: the paragraph around a deletion still matches");
-        TestReport.Check(All(document, "PAGE").Length == 0, "docx: a field code (w:instrText) is not matched");
+        TestReport.Check(All(document, "AUTHOR").Length == 0, "docx: a field code (w:instrText) is not matched");
         TestReport.Check(All(document, "7").SequenceEqual([6]), "docx: a field result is matched");
     }
 

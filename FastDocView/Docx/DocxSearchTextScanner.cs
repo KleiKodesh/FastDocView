@@ -23,7 +23,14 @@ namespace FastDocView.Docx;
 /// </summary>
 internal sealed class DocxSearchTextScanner
 {
-    private enum NamespaceKind : byte { Other, Wordprocessing, MarkupCompatibility, Diagram, Chart }
+    private enum NamespaceKind : byte { Other, Wordprocessing, MarkupCompatibility, Diagram, Chart, Vml }
+
+    /// <summary>
+    /// Fields (null: field characters are not followed - the text of codes still is not, results are read as plain text).
+    /// The caller restores it at the first block it feeds (<see cref="DocxSearchFields.Restore"/>); it runs on across the
+    /// blocks of a <see cref="FeedBlocks"/> call as the index pass did.
+    /// </summary>
+    public DocxSearchFields? Fields { get; set; }
 
     /// <summary>The r:ids of the SmartArt (dgm:relIds r:dm) and chart (c:chart r:id) drawings met since the caller last cleared it (outside mc:Fallback), as the reference reader reports them.</summary>
     public List<string> DrawingRelationshipIds { get; } = new();
@@ -37,6 +44,7 @@ internal sealed class DocxSearchTextScanner
         WordXmlSearchText.WordprocessingNamespace or WordXmlSearchText.WordprocessingStrictNamespace => NamespaceKind.Wordprocessing,
         WordXmlSearchText.MarkupCompatibilityNamespace => NamespaceKind.MarkupCompatibility,
         WordXmlSearchText.DiagramNamespace => NamespaceKind.Diagram,
+        WordXmlSearchText.VmlNamespace => NamespaceKind.Vml,
         WordXmlSearchText.ChartNamespace or WordXmlSearchText.ChartExNamespace => NamespaceKind.Chart,
         _ => NamespaceKind.Other,
     };
@@ -76,19 +84,36 @@ internal sealed class DocxSearchTextScanner
         int depth = 0;          // open elements; an element's XmlReader depth = depth before it opens
         int textDepth = -1;     // depth of the open w:t
         int skipDepth = -1;     // depth of the open skipped element (w:pPr, w:rPr, mc:Fallback)
+        int instructionDepth = -1;     // depth of the open w:instrText
+        int formDepth = -1;            // depth of the open w:fldChar whose w:ffData is being read
+        string? pendingFieldType = null;   // that w:fldChar's type, dirty and lock flags
+        bool pendingDirty = false, pendingLocked = false;
+        DocxSearchFields.FormDataReader? form = null;
+        string? formParent = null;
+        List<(int depth, bool separated)>? simpleFields = null;   // open w:fldSimple elements
+        DocxSearchFields? fields = Fields;
         stoppedAt = 0;
         while (position < end)
         {
             int next = xml.Slice(position).IndexOfAny((byte)'<', (byte)'&');
             int stop = next < 0 ? end : position + next;
-            if (stop > position && textDepth >= 0 && skipDepth < 0) matcher.FeedUtf8(xml.Slice(position, stop - position));
+            if (stop > position && skipDepth < 0)
+            {
+                if (instructionDepth >= 0) fields!.Instruction(Encoding.UTF8.GetString(xml.Slice(position, stop - position).ToArray()));
+                else if (textDepth >= 0)
+                {
+                    if (fields is null || fields.IsIdle) matcher.FeedUtf8(xml.Slice(position, stop - position));
+                    else if (fields.Shows(Encoding.UTF8.GetString(xml.Slice(position, stop - position).ToArray()))) matcher.FeedUtf8(xml.Slice(position, stop - position));
+                }
+            }
             if (next < 0) break;
             position = stop;
             if (xml[position] == (byte)'&')
             {
                 int semicolon = xml.Slice(position).IndexOf((byte)';');
                 if (semicolon < 0 || !TryDecodeEntity(xml.Slice(position + 1, semicolon - 1), out int codePoint)) return Fail(block, out stoppedAt);
-                if (textDepth >= 0 && skipDepth < 0) matcher.FeedCodePoint(codePoint);
+                if (instructionDepth >= 0 && skipDepth < 0) fields!.Instruction(char.ConvertFromUtf32(codePoint));
+                else if (textDepth >= 0 && skipDepth < 0 && (fields is null || fields.IsIdle || fields.Shows(char.ConvertFromUtf32(codePoint)))) matcher.FeedCodePoint(codePoint);
                 position += semicolon + 1;
                 continue;
             }
@@ -109,7 +134,8 @@ internal sealed class DocxSearchTextScanner
                 {
                     int close = rest.Slice(9).IndexOf("]]>"u8);
                     if (close < 0) return Fail(block, out stoppedAt);
-                    if (textDepth >= 0 && skipDepth < 0) matcher.FeedUtf8(rest.Slice(9, close));
+                    if (instructionDepth >= 0 && skipDepth < 0) fields!.Instruction(Encoding.UTF8.GetString(rest.Slice(9, close).ToArray()));
+                    else if (textDepth >= 0 && skipDepth < 0 && (fields is null || fields.IsIdle || fields.Shows(Encoding.UTF8.GetString(rest.Slice(9, close).ToArray())))) matcher.FeedUtf8(rest.Slice(9, close));
                     position += 9 + close + 3;
                     continue;
                 }
@@ -130,6 +156,22 @@ internal sealed class DocxSearchTextScanner
                 position = nameStart + close + 1;
                 depth--;
                 if (depth < 0) return Fail(segmented ? firstBlock : block, out stoppedAt);     // an element closed that the range did not open: not the index's layout (no block of the piece can be trusted)
+                if (fields is not null && skipDepth < 0)
+                {
+                    if (depth == instructionDepth) instructionDepth = -1;
+                    if (depth == formDepth)
+                    {
+                        FieldCharacter(fields, pendingFieldType, pendingDirty, pendingLocked, form!.State(), matcher);
+                        formDepth = -1;
+                        form = null;
+                    }
+                    if (simpleFields is { Count: > 0 } && simpleFields[simpleFields.Count - 1].depth == depth)
+                    {
+                        simpleFields.RemoveAt(simpleFields.Count - 1);
+                        fields.End(matcher);
+                    }
+                    fields.Closed(depth);
+                }
                 if (skipDepth >= 0)
                 {
                     if (depth == skipDepth) skipDepth = -1;
@@ -184,6 +226,43 @@ internal sealed class DocxSearchTextScanner
             if (skipDepth < 0)
             {
                 ReadOnlySpan<byte> elementPrefix = PrefixOf(xml.Slice(elementNameStart, elementNameEnd - elementNameStart), out ReadOnlySpan<byte> local);
+                if (fields is not null && IsFieldMarkup(local) && Resolve(elementPrefix) == NamespaceKind.Wordprocessing)
+                {
+                    ReadOnlySpan<byte> attributes = xml.Slice(elementNameEnd, cursor - elementNameEnd);
+                    // a w:fldSimple's result starts at its first run-level child (the renderer separates before rendering any)
+                    if (simpleFields is { Count: > 0 } && !simpleFields[simpleFields.Count - 1].separated && elementDepth == simpleFields[simpleFields.Count - 1].depth + 1
+                        && (Is(local, "r") || Is(local, "hyperlink") || Is(local, "fldSimple") || Is(local, "smartTag") || Is(local, "ins") || Is(local, "sdt") || Is(local, "customXml")))
+                    {
+                        simpleFields[simpleFields.Count - 1] = (simpleFields[simpleFields.Count - 1].depth, true);
+                        fields.Separate(matcher);
+                    }
+                    if (formDepth >= 0)
+                    {
+                        string name = Encoding.UTF8.GetString(local.ToArray());
+                        form!.Element(name, AttributeValue(attributes, "val"u8) is { } v ? System.Net.WebUtility.HtmlDecode(v) : null, formParent);
+                        if (name is "checkBox" or "ddList" or "textInput") formParent = name;
+                    }
+                    else if (Is(local, "fldChar"))
+                    {
+                        pendingFieldType = AttributeValue(attributes, "fldCharType"u8);
+                        pendingDirty = IsOn(AttributeValue(attributes, "dirty"u8));
+                        pendingLocked = IsOn(AttributeValue(attributes, "fldLock"u8));
+                        if (isEmpty) FieldCharacter(fields, pendingFieldType, pendingDirty, pendingLocked, null, matcher);
+                        else { formDepth = elementDepth; form = new DocxSearchFields.FormDataReader(); formParent = null; }
+                    }
+                    else if (Is(local, "instrText")) { if (!isEmpty) instructionDepth = elementDepth; }
+                    else if (Is(local, "fldSimple"))
+                    {
+                        fields.Begin(IsOn(AttributeValue(attributes, "dirty"u8)), IsOn(AttributeValue(attributes, "fldLock"u8)), null);
+                        fields.Instruction(AttributeValue(attributes, "instr"u8) is { } instruction ? System.Net.WebUtility.HtmlDecode(instruction) : "");
+                        if (isEmpty) fields.End(matcher);
+                        else (simpleFields ??= new()).Add((elementDepth, false));
+                    }
+                    else if (Is(local, "txbxContent")) { if (!isEmpty) fields.EnterTextBox(elementDepth); }
+                }
+                if (fields is not null && !fields.IsIdle && Resolve(elementPrefix) == NamespaceKind.Wordprocessing
+                    && (Is(local, "tab") && !fields.Shows("\t") || (Is(local, "br") || Is(local, "cr")) && !fields.Shows(null)))
+                    local = default;                                      // inside a code or a replaced result: not shown
                 switch (local.Length)
                 {
                     case 1 when local[0] == (byte)'t':
@@ -200,6 +279,10 @@ internal sealed class DocxSearchTextScanner
                         break;
                     case 3 when (Is(local, "pPr") || Is(local, "rPr")) && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
                         if (!isEmpty) skipDepth = elementDepth;
+                        break;
+                    case 8 when Is(local, "textpath") && Resolve(elementPrefix) == NamespaceKind.Vml && hasAttributes:
+                        // VML WordArt: the v:textpath string is the text it shows (the reference reader feeds it the same way)
+                        if (UnprefixedAttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "string"u8) is { Length: > 0 } wordArt) { matcher.Separator(); matcher.Feed(wordArt.AsSpan()); matcher.Separator(); }
                         break;
                     case 6 when Is(local, "relIds") && Resolve(elementPrefix) == NamespaceKind.Diagram && hasAttributes:
                         if (AttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "dm"u8) is { } diagram) DrawingRelationshipIds.Add(diagram);
@@ -253,6 +336,51 @@ internal sealed class DocxSearchTextScanner
             position = quoteAt + 1 + close + 1;
         }
         return null;
+    }
+
+    /// <summary>The value of the unprefixed attribute <paramref name="name"/> in an open tag's attribute text, entities decoded; null when none.</summary>
+    private static string? UnprefixedAttributeValue(ReadOnlySpan<byte> attributes, ReadOnlySpan<byte> name)
+    {
+        int position = 0;
+        while (position < attributes.Length)
+        {
+            int equals = attributes.Slice(position).IndexOf((byte)'=');
+            if (equals < 0) return null;
+            ReadOnlySpan<byte> attribute = attributes.Slice(position, equals);
+            while (attribute.Length > 0 && attribute[0] <= (byte)' ') attribute = attribute.Slice(1);
+            while (attribute.Length > 0 && attribute[attribute.Length - 1] <= (byte)' ') attribute = attribute.Slice(0, attribute.Length - 1);
+            int quoteAt = position + equals + 1;
+            while (quoteAt < attributes.Length && attributes[quoteAt] is not ((byte)'"' or (byte)'\'')) quoteAt++;
+            if (quoteAt >= attributes.Length) return null;
+            int close = attributes.Slice(quoteAt + 1).IndexOf(attributes[quoteAt]);
+            if (close < 0) return null;
+            if (attribute.SequenceEqual(name))
+                return System.Net.WebUtility.HtmlDecode(Encoding.UTF8.GetString(attributes.Slice(quoteAt + 1, close).ToArray()));
+            position = quoteAt + 1 + close + 1;
+        }
+        return null;
+    }
+
+    private static bool IsOn(string? value) => value is "1" or "true" or "on";
+
+    /// <summary>Local names the field reading looks at (cheap length filter first).</summary>
+    private static bool IsFieldMarkup(ReadOnlySpan<byte> local) => local.Length switch
+    {
+        1 => local[0] == (byte)'r',
+        3 => Is(local, "ins") || Is(local, "sdt"),
+        6 => Is(local, "result") || Is(local, "ddList"),
+        7 => Is(local, "fldChar") || Is(local, "default") || Is(local, "checked"),
+        8 => Is(local, "checkBox") || Is(local, "smartTag"),
+        9 => Is(local, "instrText") || Is(local, "fldSimple") || Is(local, "hyperlink") || Is(local, "customXml") || Is(local, "listEntry") || Is(local, "textInput"),
+        11 => Is(local, "txbxContent"),
+        _ => false,
+    };
+
+    private static void FieldCharacter(DocxSearchFields fields, string? type, bool dirty, bool locked, Fields.WordFormFieldState? form, WordDocumentSearchMatcher matcher)
+    {
+        if (type == "begin") fields.Begin(dirty, locked, form);
+        else if (type == "separate") fields.Separate(matcher);
+        else if (type == "end") fields.End(matcher);
     }
 
     private static WordSearchBlocksResult Fail(int block, out long stoppedAt) { stoppedAt = block; return WordSearchBlocksResult.Failed; }
