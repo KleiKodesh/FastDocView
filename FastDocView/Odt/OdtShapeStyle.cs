@@ -93,7 +93,7 @@ internal sealed class OdtShapeStyle
             {
                 int steps = int.TryParse(Get(Draw + "gradient-step-count"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int s) ? s : 0;
                 if (OdtFillPaint.Gradient(_styles.Gradient(Get(Draw + "fill-gradient-name")), isOpacity: false, _gradientAngleIsTenths, steps) is not { } gradient) { shape.FillColor = color; break; }
-                shape.FillPainter = brightness => OdtFillPaint.GradientPaint(gradient, transparency, range.X, range.Y, range.W, range.H, Adapter(brightness));
+                shape.FillPainter = brightness => OdtFillPaint.GradientPaint(gradient, transparency, range.X, range.Y, range.W, range.H, Adapter(brightness), shape.FillOpacity < 1);
                 return;
             }
             case "hatch":
@@ -129,7 +129,7 @@ internal sealed class OdtShapeStyle
             (double r, double g, double b) = ParseColor(solid) ?? (0, 0, 0);
             single.Stops.Add(new OdtFillPaint.Stop(0, r, g, b)); single.Stops.Add(new OdtFillPaint.Stop(1, r, g, b));
             shape.FillColor = null;
-            shape.FillPainter = brightness => OdtFillPaint.GradientPaint(single, transparency, range.X, range.Y, range.W, range.H, Adapter(brightness));
+            shape.FillPainter = brightness => OdtFillPaint.GradientPaint(single, transparency, range.X, range.Y, range.W, range.H, Adapter(brightness), isSolidFill: true);
         }
     }
 
