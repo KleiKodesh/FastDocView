@@ -23,6 +23,17 @@ public static class DocxThemeAndUnderlineTest
         TestReport.Check(WordHtmlColor.Css("FF0000").StartsWith("light-dark(#FF0000,", StringComparison.Ordinal)
                          && WordHtmlColor.Css("yellow").StartsWith("light-dark(#ffff00,", StringComparison.Ordinal)
                          && WordHtmlColor.Css("transparent") == "transparent", "Css: light-dark(original, variant); unknown values unchanged");
+        string markup = WordHtmlColor.ThemeAwareMarkup("<svg><rect fill=\"#FFFFFF\" stroke='#000' style=\"fill:url(#g1)\"/><use href=\"#abc\"/></svg><span style=\"background:linear-gradient(#ff0000,#00ff00);color:light-dark(#000000,#ffffff)\">#ffffff text</span>");
+        string named = WordHtmlColor.ThemeAwareMarkup("<svg><path fill=\"yellow\" stroke=\"none\" class=\"red\"/></svg><span style=\"background:navy;font-family:Red\">red</span>");
+        TestReport.Check(named.Contains("fill=\"light-dark(#ffff00,") && named.Contains("stroke=\"none\"") && named.Contains("class=\"red\"")
+                         && named.Contains("background:light-dark(#000080,") && named.Contains("font-family:Red") && named.Contains(">red<"),
+                         "ThemeAwareMarkup: named paint colours remapped only as paint values");
+        TestReport.Check(WordHtmlColor.ThemeAwareMarkup("<span title=\"a&#160;b\" style=\"color:fed\">x</span>") == "<span title=\"a&#160;b\" style=\"color:fed\">x</span>",
+                         "ThemeAwareMarkup: character references and hex-letter words are not colours");
+        TestReport.Check(markup.Contains("fill=\"light-dark(#FFFFFF,") && markup.Contains("stroke='light-dark(#000,#ffffff)'")
+                         && markup.Contains("url(#g1)") && markup.Contains("href=\"#abc\"") && markup.Contains("linear-gradient(light-dark(#ff0000,")
+                         && markup.Contains("color:light-dark(#000000,#ffffff)\"") && markup.Contains(">#ffffff text<"),
+                         "ThemeAwareMarkup: SVG / CSS colours in tags remapped; references, text and existing light-dark kept");
         string path = Path.Combine(TestReport.OutputDirectory, "synthetic-theme-v1-120.docx");
         SyntheticDocxGenerator.Write(path, 120, withThemeSamples: true);
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };

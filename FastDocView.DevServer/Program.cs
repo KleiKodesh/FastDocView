@@ -1,3 +1,4 @@
+using FastDocView.Html;
 // Localhost JSON host for the Vite demo. Endpoints (all JSON, CORS open — dev only):
 //   GET  /api/folder?path=…                  policy decision for every Word file under a folder
 //   POST /api/documents  { path, forceSidecar? }   opens (indexing if needed) → document summary
@@ -137,8 +138,8 @@ app.MapGet("/api/documents/{id}/blocks", (string id, int first, int count, HttpR
     response.Headers["X-Render-Milliseconds"] = watch.Elapsed.TotalMilliseconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Known-Block-Count"] = document.KnownBlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Index-Complete"] = document.IsIndexComplete ? "true" : "false";
-    return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, b.Html,
-        b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList(), b.IsProvisional)).ToList());
+    return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, WordHtmlColor.ThemeAwareMarkup(b.Html),
+        b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, WordHtmlColor.ThemeAwareMarkup(n.Html))).ToList(), b.IsProvisional)).ToList());
 }));
 
 // One picture of a rendered block, by the id its <img data-word-picture> carries (the app service's GET
@@ -149,7 +150,7 @@ app.MapGet("/api/documents/{id}/pictures", (string id, string pictureId) => UseD
 // The notes pane's own windows: notes [first, first + count) of note-references (body order), each read on its own.
 app.MapGet("/api/documents/{id}/notes", (string id, int first, int count) => UseDocument(id, document =>
     Results.Ok(document.RenderNotes(first, Math.Min(count, 500))
-        .Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())));
+        .Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, WordHtmlColor.ThemeAwareMarkup(n.Html))).ToList())));
 
 // A first open keeps building its index: the demo calls this until it is complete. Each call indexes up to `blocks` more
 // blocks within the app service's time budget (renders and sends nothing), so a block fetch never waits long for the lock.

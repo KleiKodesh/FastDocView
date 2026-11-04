@@ -1764,3 +1764,12 @@ formula is not published). Auto colours are never written and inherit the page t
 colours are `var(--fdv-*, Word's value)`: `--fdv-text`, `--fdv-link`, `--fdv-muted`, `--fdv-muted-strong`,
 `--fdv-rule`, `--fdv-table-border`, `--fdv-frame-border`; a host maps them to its theme. Not remapped: shape / text-box
 fills and the text inside them (OfficeArt), which would need the fill and text remapped together.
+Update (same day): shapes, text boxes, drawings, charts and SmartArt are covered too. Hosts pass every block and note
+HTML through `WordHtmlColor.ThemeAwareMarkup` at their transport (Core's `FastDocViewOpenDocuments`, the dev server):
+one pass over the tags rewrites each bare hex colour and each named paint colour (fill / stroke / stop-color /
+colour properties; the 16 HTML names VML uses) to `light-dark()`, so a fill, its line and the auto text on it are
+remapped together. Text content, `url(#id)`, `href="#id"` and values already in `light-dark()` are kept; pictures are
+`<img>` and never change (as in Word). The renderers keep writing plain colours, which the fidelity harness checks.
+Live (2026-11-04, shapes / ODT / RTF / chartex / SmartArt fixtures): fills and strokes remap, HTML identical across
+themes. Known: saturated mid-lightness fills (pure red, accent blue) stay mid-lightness under L' = 110 - L, so light
+auto text on them is about 2-2.6:1 - the same as Chromium's own dark mode.
