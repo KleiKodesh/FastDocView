@@ -45,6 +45,59 @@ public static class OdtExtrusionTest
         TestReport.Check(ok, $"extrusion: {what} ({dump})");
     }
 
+
+    // The live rig's fixture (vue-demo/playwright/odtExtrusionCheck.mjs): a 2 x 1 in rectangle custom shape extruded six ways.
+    private static readonly (string Name, string Style, string Attributes)[] FixtureShapes =
+    [
+        ("parallel", "Filled", ""),
+        ("perspective", "Filled", "dr3d:projection=\"perspective\" draw:extrusion-viewpoint=\"(1in -1in 10in)\""),
+        ("rotated", "Filled", "draw:extrusion-rotation-angle=\"20 30\""),
+        ("draft", "Filled", "dr3d:shade-mode=\"draft\""),
+        ("unfilled", "Unfilled", ""),
+        ("shaded", "Filled", "draw:shade-mode=\"gouraud\" draw:extrusion-specularity=\"80%\" draw:extrusion-shininess=\"80%\" draw:extrusion-metal=\"true\" draw:extrusion-color=\"true\""),
+    ];
+
+    /// <summary>Writes TestOutput/fidelity-v1-odt-extrusion.fodt (rewritten only when its text changes) and returns its path.</summary>
+    public static string WriteFixture()
+    {
+        string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-odt-extrusion.fodt");
+        string body = string.Concat(FixtureShapes.Select(shape =>
+            "<text:p>" + shape.Name + "<draw:custom-shape draw:style-name=\"" + shape.Style + "\" text:anchor-type=\"as-char\" svg:width=\"2in\" svg:height=\"1in\">"
+            + "<draw:enhanced-geometry svg:viewBox=\"0 0 21600 21600\" draw:type=\"rectangle\" draw:enhanced-path=\"M 0 0 L 21600 0 21600 21600 0 21600 Z N\" "
+            + "draw:extrusion=\"true\" draw:extrusion-depth=\"0.5in 0\" " + shape.Attributes + "/></draw:custom-shape></text:p>"));
+        string document = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+            + "xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+            + "xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" xmlns:dr3d=\"urn:oasis:names:tc:opendocument:xmlns:dr3d:1.0\" "
+            + "xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" office:version=\"1.3\" office:mimetype=\"application/vnd.oasis.opendocument.text\">"
+            + "<office:automatic-styles>"
+            + "<style:style style:name=\"Filled\" style:family=\"graphic\"><style:graphic-properties draw:fill=\"solid\" draw:fill-color=\"#729fcf\" svg:stroke-color=\"#3465a4\"/></style:style>"
+            + "<style:style style:name=\"Unfilled\" style:family=\"graphic\"><style:graphic-properties draw:fill=\"none\" draw:stroke=\"solid\" svg:stroke-color=\"#c9211e\"/></style:style>"
+            + "</office:automatic-styles><office:body><office:text>" + body + "</office:text></office:body></office:document>";
+        if (!File.Exists(path) || File.ReadAllText(path) != document) File.WriteAllText(path, document, new System.Text.UTF8Encoding(false));
+        return path;
+    }
+
+    private static void CheckFixture()
+    {
+        TestReport.Step("ODT custom-shape 3-D extrusion: fixture (parallel, perspective, rotated, draft, unfilled, shaded)");
+        List<string> blocks = OdtDrawingFidelityTest.Render(WriteFixture());
+        TestReport.Check(blocks.Count == FixtureShapes.Length, $"fixture: {blocks.Count} blocks, one per shape");
+        for (int i = 0; i < Math.Min(blocks.Count, FixtureShapes.Length); i++)
+        {
+            int paths = System.Text.RegularExpressions.Regex.Matches(blocks[i], "<path ").Count;
+            TestReport.Check(blocks[i].Contains("<svg") && paths >= 2, $"fixture {FixtureShapes[i].Name}: SVG with {paths} faces");
+        }
+        if (blocks.Count < FixtureShapes.Length) return;
+        static string Geometry(string html) => string.Join("|", System.Text.RegularExpressions.Regex.Matches(html, " d=\"([^\"]*)\"").Select(m => m.Groups[1].Value));
+        TestReport.Check(Geometry(blocks[1]) != Geometry(blocks[0]) && Geometry(blocks[2]) != Geometry(blocks[0]), "fixture: perspective and rotated faces differ from parallel");
+        TestReport.Check(!System.Text.RegularExpressions.Regex.IsMatch(blocks[3], "<path [^>]*fill=\"#"), "fixture draft: faces drawn as outlines, no fill");
+        static List<string> Fills(string html) => System.Text.RegularExpressions.Regex.Matches(html, "fill=\"#([0-9a-fA-F]{6})\"").Select(m => m.Groups[1].Value).ToList();
+        static bool Reddish(string hex) => Convert.ToInt32(hex[..2], 16) > Convert.ToInt32(hex[4..], 16);
+        List<string> unfilled = Fills(blocks[4]);
+        TestReport.Check(unfilled.Count > 0 && unfilled.All(Reddish), $"fixture unfilled: faces lit in the line colour #c9211e, not the fill ({string.Join(",", unfilled)})");
+        TestReport.Check(!Fills(blocks[5]).SequenceEqual(Fills(blocks[0])), "fixture shaded: specular / metal / extrusion colour change the face colours");
+    }
+
     public static void Run()
     {
         TestReport.Step("ODT custom-shape 3-D extrusion");
@@ -82,7 +135,16 @@ public static class OdtExtrusionTest
         var unfilled = Faces(false, ("shade-mode", "draft"));
         TestReport.Check(unfilled.Count > 0 && unfilled.All(f => f.Kind == "side"), $"extrusion: unfilled draft shape has sides only ({string.Join(",", unfilled.Select(f => f.Kind))})");
 
-        // 5. no draw:extrusion: drawn flat (Read returns null)
+        // 5. perspective, viewpoint at z 0 = the front plane (z' = 0): front points have no projection and are skipped (:797-798),
+        //    so the front face is not drawn; the back face's points (f = 0) collapse onto the viewpoint, so every side keeps fewer than
+        //    3 points: nothing is drawn, no degenerate ring. A viewpoint at z 20pt (front 4 points projected) keeps the front face.
+        var atViewpoint = Faces(("projection", "perspective"), ("extrusion-viewpoint", "(0pt 0pt 0pt)"), ("extrusion-origin", "0 0"));
+        var behind = Faces(("projection", "perspective"), ("extrusion-viewpoint", "(0pt 0pt -20pt)"), ("extrusion-origin", "0 0"));
+        TestReport.Check(behind.Count > 0 && behind.All(f => f.Rings.All(r => r.Count >= 3)), $"extrusion: viewpoint inside the solid: faces drawn, every ring has 3+ points ({behind.Count})");
+        TestReport.Check(atViewpoint.Count == 0, $"extrusion: points at the viewpoint's depth are skipped, no degenerate face ({atViewpoint.Count} faces)");
+
+        // 6. no draw:extrusion: drawn flat (Read returns null)
         TestReport.Check(OdtExtrusion.Read(new XElement(Draw + "enhanced-geometry")) is null, "extrusion: absent without draw:extrusion=\"true\"");
+        CheckFixture();
     }
 }

@@ -1246,7 +1246,7 @@ Sources: LibreOffice core master read 2026-11-04 (cited file:line in each class)
   two lights, soft lights, ambient brightness, diffusion, specularity, shininess and metal (lights as 8-bit colours). The faces replace
   the outline, back to front; the box is placed by its centre without rotating or mirroring again. Needs a real 3-D renderer, so
   approximated: Gouraud / Phong (flat colour per face instead), the z-buffer (painter's order by mean depth - differs only for concave
-  outlines), lit bitmap / gradient textures (front face drawn with the unlit fill), wide-line contours (centre line extruded).
+  outlines), lit bitmap / gradient textures (front face drawn with the unlit fill), wide-line contours (centre line extruded). Fill / caps follow the shape's fill style; a point at the viewpoint's depth is skipped; projection / shade-mode read in draw: or dr3d:. Checked by `fidelity-v1-odt-extrusion.fodt` (parallel, perspective, rotated, draft, unfilled, shaded) in --fidelity and live by `vue-demo/playwright/odtExtrusionCheck.mjs`.
 - **Objects** (`Odt/OdtShapeBuilder.cs`): rect (draw:corner-radius only, as LibreOffice), circle / ellipse kinds, line, polygon,
   polyline, path (open = not filled), connector (svg:d when its ends match, else `OdtConnectorRoute` = ImpCalcEdgeTrack; ends
   connected to shapes are routed as free ends - the other shape may sit in another block, never read), measure

@@ -87,7 +87,9 @@ internal sealed class OdtExtrusion
     {
         if (geometry is null || (string?)geometry.Attribute(Draw + "extrusion") != "true") return null;
         var e = new OdtExtrusion();
-        string? A(string name) => (string?)geometry.Attribute(Draw + name);
+        // LibreOffice matches these attributes by local name only, whatever the prefix (EASGet(getNameFromToken),
+        // xmloff/source/draw/EnhancedCustomShapeToken.cxx); ODF puts projection / shade-mode in dr3d:, LibreOffice files use draw:
+        string? A(string name) => (string?)geometry.Attribute(Draw + name) ?? (string?)geometry.Attribute(XNamespace.Get("urn:oasis:names:tc:opendocument:xmlns:dr3d:1.0") + name);
         var noNames = new Dictionary<string, int>();
         bool Pair(string? value, out double first, out double second)
         {
@@ -339,12 +341,15 @@ internal sealed class OdtExtrusion
             vy = -ViewPoint.Y + originY;
             vz = ViewPoint.Z;
         }
-        (double X, double Y) Project2((double X, double Y, double Z) p)
+        // a point whose line to the viewpoint is parallel to the xy plane has no projection (division by zero). LibreOffice skips such a
+        // point only for the 2-D bound volume's corners (EnhancedCustomShape3d.cxx:797-798); its 3-D renderer draws the faces. Here the
+        // point is left out of its ring, and a ring or face left with fewer than 3 points is not drawn (our own guard).
+        (double X, double Y)? Project2((double X, double Y, double Z) p)
         {
             var q = m.Point(p);
             if (!Perspective) return (q.X, q.Y);
             double div = q.Z - vz;
-            if (div == 0) return (q.X, q.Y);
+            if (div == 0) return null;
             double f = -vz / div;
             return ((q.X - vx) * f + vx, (q.Y - vy) * f + vy);
         }
@@ -354,14 +359,22 @@ internal sealed class OdtExtrusion
 
         foreach (Face face in faces)
         {
-            var projectedFacing = face.Facing.Select(Project2).ToList();
+            var projectedFacing = face.Facing.Select(Project2).OfType<(double X, double Y)>().ToList();
+            if (projectedFacing.Count < 3) continue;
             // y up here: counter-clockwise = the face's normal points at the viewer
             bool facesViewer = SignedArea(projectedFacing, q => q) > 0;
             if (!face.DoubleSided && !facesViewer) continue;
             var outFace = new OdtExtrusionFace { Kind = face.Kind, OutlineOnly = draft };
+            var kept = new List<(double X, double Y, double Z)>();
             foreach (var ring in face.Rings)
-                outFace.Rings.Add(ring.Select(Project2).Select(p => (p.X + cx, -p.Y + cy)).ToList());
-            outFace.Depth = face.Rings.SelectMany(r => r).Average(p => m.Point(p).Z);
+            {
+                var projected = ring.Where(p => Project2(p) is not null).ToList();
+                if (projected.Count < 3) continue;
+                kept.AddRange(projected);
+                outFace.Rings.Add(projected.Select(p => Project2(p)!.Value).Select(p => (p.X + cx, -p.Y + cy)).ToList());
+            }
+            if (outFace.Rings.Count == 0) continue;
+            outFace.Depth = kept.Average(p => m.Point(p).Z);
             if (draft) outFace.Color = Hex(line);
             else if (face.Textured) outFace.Color = null;
             else
