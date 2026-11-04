@@ -1687,7 +1687,8 @@ User decision 2026-11-04: text on both sides of an object (.docx wrapText bothSi
 CSS cannot put text on both sides of a float (CSS Shapes 1 s.2), so the object floats flush to its side (left / right as
 placed; centred = left, our choice for the tie), its horizontal offset dropped, and the text wraps fully along the other
 side. A one-sided wrap (left / right only) floats opposite its text and keeps its offset. `WordPictureLayout.TextSides` +
-`WordPictureHtml.AppendPlacement` / `FloatsRight`. Limit: an object placed by an absolute offset alone (no alignment)
+`WordPictureHtml.AppendPlacement` / `FloatsRight`. .doc reads the side from posh (0x038F in the 0xF122 record,
+msdffimp.cxx:5199-5216; inside / outside as on an odd page). Limit: an object placed by an absolute offset alone (no alignment)
 floats left - the flow view has no column width to tell which edge is nearer.
 
 Contour wrap = CSS `shape-outside:polygon(...)` from `WordPictureContour.ShapeOutsideCss` (the outline's extreme on the

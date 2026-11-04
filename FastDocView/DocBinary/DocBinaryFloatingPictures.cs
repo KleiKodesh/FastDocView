@@ -116,12 +116,16 @@ internal sealed class DocBinaryFloatingPictures
     }
 
     /// <summary>
-    /// wr 4 / 5 (tight / through) wrap along a contour (ww8graf.cxx:2721-2725 bContour): the shape's pWrapPolygonVertices
+    /// A two-sided wrap floats to the side its alignment puts it. wr 4 / 5 (tight / through) wrap along a contour (ww8graf.cxx:2721-2725 bContour): the shape's pWrapPolygonVertices
     /// (<see cref="DocBinaryDrawnShapes.WrapPolygon"/>, ww8graf.cxx:2067-2128 scales it by the 21600 space), else
     /// <paramref name="outline"/> (a drawing's own shapes; a picture: its box, the layout as it is).
     /// </summary>
     private WordPictureLayout WithContour(WordPictureLayout layout, int flags, (long start, long end, bool isGroup) container, Func<IReadOnlyList<IReadOnlyList<(double X, double Y)>>?>? outline)
     {
+        if (layout.Wrap == WordPictureWrap.Square && layout.TextSides == WordPictureTextSides.Both
+            && DocBinaryDrawnShapes.HorizontalAlignment(_tableStream, container.start, container.end, container.isGroup) is var align and > 0)
+            // placed by alignment (posh 1 left, 2 centre, 3 right, 4 inside, 5 outside - odd page taken): the side it floats to
+            layout = layout with { Side = align is 3 or 5 ? WordPictureSide.Right : align == 2 ? WordPictureSide.Center : WordPictureSide.Left, OffsetPt = 0 };
         if ((flags >> 5 & 0xF) is not (4 or 5) || layout.Wrap != WordPictureWrap.Square) return layout;
         var contour = WordPictureContour.FromWordUnits(DocBinaryDrawnShapes.WrapPolygon(_tableStream, container.start, container.end, container.isGroup), layout.WidthPt, layout.HeightPt)
                       ?? outline?.Invoke();

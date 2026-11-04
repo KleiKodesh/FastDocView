@@ -93,6 +93,34 @@ internal static class DocBinaryDrawnShapes
         return points.Count > 2 ? points : null;
     }
 
+    /// <summary>
+    /// The shape's horizontal alignment posh (0x038F in the 0xF122 tertiary property record, 6-byte entries u16 id / u32 value -
+    /// LibreOffice msdffimp.cxx:5199-5216 nXAlign; ww8graf.cxx:2326 "abs. Position, Left, Centered, Right, Inside, Outside"), the
+    /// group's own shape for a group; 0 (absolute) when not given.
+    /// </summary>
+    public static int HorizontalAlignment(Stream table, long start, long end, bool isGroup)
+    {
+        if (isGroup)
+        {
+            if (DocBinaryPictures.RecordHeader(table, start) is not { Type: 0xF004 } first) return 0;
+            end = Math.Min(end, start + 8 + first.Length);
+            start += 8;
+        }
+        for (long position = start; position + 8 <= end;)
+        {
+            if (DocBinaryPictures.RecordHeader(table, position) is not { } record) break;
+            if (record.Type == 0xF122)
+            {
+                byte[] entries = DocBinaryPictures.Read(table, position + 8, (int)Math.Min(record.Length, end - position - 8));
+                for (int at = 0; at + 6 <= entries.Length; at += 6)
+                    if (BitConverter.ToUInt16(entries, at) == 0x038F) return (int)Math.Min(5, BitConverter.ToUInt32(entries, at + 2));
+                return 0;
+            }
+            position += 8 + record.Length;
+        }
+        return 0;
+    }
+
     /// <summary>The text-box ranges of every shape in a drawing (the search: each story part once, where its shape is anchored).</summary>
     public static IEnumerable<DocBinaryShapeText> TextRanges(Stream table, long start, long end, bool isGroup, DocBinaryTextBoxStories stories)
     {
