@@ -13,11 +13,13 @@ public static class NotesWindowTest
         string directory = Path.Combine(TestReport.OutputDirectory, "notes-window");
         Directory.CreateDirectory(directory);
         string docx = Path.Combine(directory, "notes.docx"), odt = Path.Combine(directory, "notes.odt"), rtf = Path.Combine(directory, "notes.rtf");
+        string fodt = Path.Combine(directory, "notes.fodt");
         if (!File.Exists(docx)) SyntheticDocxGenerator.Write(docx, 600);
         if (!File.Exists(odt)) SyntheticOdtGenerator.WritePackage(odt, 600);
         if (!File.Exists(rtf)) SyntheticRtfGenerator.Write(rtf, 600);
+        if (!File.Exists(fodt)) SyntheticOdtGenerator.WriteFlat(fodt, 600);
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(directory, "index-cache") };
-        foreach (string path in new[] { docx, odt, rtf }.Concat(realPaths))
+        foreach (string path in new[] { docx, odt, rtf, fodt }.Concat(realPaths))
         {
             TestReport.Step($"Notes windows: {Path.GetFileName(path)}");
             using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
@@ -25,7 +27,7 @@ public static class NotesWindowTest
             var expected = new List<WordDocumentNoteHtml>();
             for (int block = 0; block < document.BlockCount; block += 200) foreach (WordDocumentBlockHtml rendered in document.RenderBlocks(block, 200)) expected.AddRange(rendered.Notes);
             int noteCount = document.NoteReferences.Count;
-            bool isSynthetic = path == docx || path == odt || path == rtf;              // generated with notes; a real file may have none
+            bool isSynthetic = path == docx || path == odt || path == rtf || path == fodt;              // generated with notes; a real file may have none
             TestReport.Check((noteCount > 0 || !isSynthetic) && expected.Count == noteCount, $"{noteCount} references, the blocks deliver {expected.Count} notes");
             var windowed = new List<WordDocumentNoteHtml>();
             for (int first = 0; first < noteCount; first += 7) windowed.AddRange(document.RenderNotes(first, 7));

@@ -42,4 +42,30 @@ public static partial class DocxFidelityTest
         TestReport.Check(!html[2].Contains("gone-row") && !html[2].Contains("gone-cell"), "deleted rows and cells are gone");
         TestReport.Check(html[2].Contains("in cell") && html[2].Split("<p").Length - 1 == 1, "a deleted mark inside a cell joins its sibling paragraph");
     }
+
+    /// <summary>
+    /// Search sees what is rendered: a tracked move's source (w:moveFrom, hidden in Word's final view) is neither shown nor
+    /// found; a ruby (§17.3.3.25) shows its base with the guide text above it (HTML ruby) and only the base is searched - in the
+    /// body and in a note.
+    /// </summary>
+    private static void MoveFromAndRubySearch()
+    {
+        const string Move = "w:id=\"7\" w:author=\"a\" w:date=\"2026-01-01T00:00:00Z\"";
+        string ruby = "<w:r><w:ruby><w:rubyPr><w:rubyAlign w:val=\"center\"/><w:hps w:val=\"10\"/><w:hpsRaise w:val=\"18\"/><w:hpsBaseText w:val=\"20\"/><w:lid w:val=\"ja-JP\"/></w:rubyPr>"
+                    + "<w:rt><w:r><w:t>guidetext</w:t></w:r></w:rt><w:rubyBase><w:r><w:t>basetext</w:t></w:r></w:rubyBase></w:ruby></w:r>";
+        string body = $"<w:p><w:moveFrom {Move}><w:r><w:t>movedaway</w:t></w:r></w:moveFrom><w:r><w:t xml:space=\"preserve\">kept </w:t></w:r>{ruby}</w:p>"
+                    + $"<w:p><w:moveTo {Move.Replace("7", "8")}><w:r><w:t>movedhere</w:t></w:r></w:moveTo><w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>";
+        string note = $"<w:footnote w:id=\"1\"><w:p><w:r><w:footnoteRef/></w:r><w:moveFrom {Move.Replace("7", "9")}><w:r><w:t>notemoved</w:t></w:r></w:moveFrom>{ruby.Replace("basetext", "notebase").Replace("guidetext", "noteguide")}</w:p></w:footnote>";
+        var notes = new List<string>();
+        int Hits(IWordWindowedDocument document, string query) => document.Search(query, WordDocumentSearchOptions.Default, 0, 100).HitCounts.Sum();
+        var found = new Dictionary<string, int>();
+        List<string> html = RenderAll("movefrom-ruby", body, footnotes: note, noteHtml: notes,
+            inspect: document => { foreach (string q in new[] { "movedaway", "movedhere", "basetext", "guidetext", "kept basetext", "notemoved", "notebase", "noteguide" }) found[q] = Hits(document, q); });
+        TestReport.Check(!html[0].Contains("movedaway") && html[1].Contains("movedhere"), "moveFrom hidden, moveTo shown");
+        TestReport.Check(found["movedaway"] == 0 && found["movedhere"] == 1, $"search: moveFrom not found, moveTo found ({found["movedaway"]}, {found["movedhere"]})");
+        TestReport.Check(html[0].Contains("<ruby>") && html[0].Contains("basetext") && html[0].Contains("<rt>") && html[0].Contains("guidetext"), "a ruby renders its base with its guide text (HTML ruby)");
+        TestReport.Check(found["basetext"] == 1 && found["kept basetext"] == 1 && found["guidetext"] == 0, $"search: the ruby base is found in line, the guide is not ({found["basetext"]}, {found["kept basetext"]}, {found["guidetext"]})");
+        TestReport.Check(notes.Count == 1 && !notes[0].Contains("notemoved") && notes[0].Contains("<ruby>") && notes[0].Contains("noteguide"), "in a note: moveFrom hidden, ruby rendered");
+        TestReport.Check(found["notemoved"] == 0 && found["notebase"] == 1 && found["noteguide"] == 0, $"search in a note: the same rules ({found["notemoved"]}, {found["notebase"]}, {found["noteguide"]})");
+    }
 }

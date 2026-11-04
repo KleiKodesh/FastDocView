@@ -135,6 +135,7 @@ public static class OdtDrawingFidelityTest
 
     public static void Run()
     {
+        UnpaddedBinaryPicture();
         TestReport.Step("ODT drawing: formulas and paths");
         CheckFormulas();
         TestReport.Step("ODT drawing: hand-written .fodt");
@@ -373,4 +374,23 @@ public static class OdtDrawingFidelityTest
     }
 
     private static string Clip(string html) => html.Length > 1500 ? html.Substring(0, 1500) + "..." : html;
+
+    /// <summary>
+    /// office:binary-data without its '=' padding (LibreOffice's own tdf145542 .fodt files): LibreOffice decodes the complete
+    /// groups (comphelper Base64::decodeSomeChars), so the picture shows; the id the block carries must be served, never a 404.
+    /// </summary>
+    private static void UnpaddedBinaryPicture()
+    {
+        TestReport.Step("ODT drawing: a binary picture without base64 padding");
+        string unpadded = Png.TrimEnd('=') + "\n  ";
+        string path = Path.Combine(TestReport.OutputDirectory, "odt-unpadded-picture-v1.fodt");
+        File.WriteAllText(path, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document " + Namespaces + " office:version=\"1.3\" office:mimetype=\"application/vnd.oasis.opendocument.text\"><office:body><office:text>"
+            + "<text:p>a<draw:frame text:anchor-type=\"as-char\" svg:width=\"1cm\" svg:height=\"1cm\"><draw:image><office:binary-data>\n  " + unpadded + "</office:binary-data></draw:image></draw:frame>b</text:p>"
+            + "</office:text></office:body></office:document>");
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") });
+        string html = document.RenderBlocks(0, 1)[0].Html;
+        string? id = System.Text.RegularExpressions.Regex.Match(html, "data-word-picture=\"([^\"]*)\"") is { Success: true } m ? m.Groups[1].Value : null;
+        WordDocumentPicture? picture = id is null ? null : document.ReadPicture(id);
+        TestReport.Check(id is not null && picture is { ContentType: "image/png" } && picture.Bytes.Length > 8, $"the picture's id ({id}) is served as a PNG ({picture?.Bytes.Length ?? 0} bytes)");
+    }
 }

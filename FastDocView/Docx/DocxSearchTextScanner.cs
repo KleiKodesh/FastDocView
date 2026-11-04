@@ -13,7 +13,7 @@ namespace FastDocView.Docx;
 /// - text = character content of w:t (any depth inside it), entities and character references decoded, CDATA kept;
 ///   everything else (w:delText, w:instrText, attributes, comments) is not text;
 /// - w:tab = a space; w:br / w:cr, an empty w:p and the end of every w:p = separators;
-/// - w:pPr / w:rPr and mc:Fallback are skipped whole;
+/// - w:pPr / w:rPr, w:moveFrom (a tracked move's source), w:rt (a ruby's guide text) and mc:Fallback are skipped whole;
 /// - element names are resolved by namespace (the part root's declarations plus any declared inside the block), not by
 ///   prefix, and only for the few local names that matter;
 /// - an undefined entity or unterminated markup ends the block there (the reference reader throws there and keeps
@@ -277,6 +277,8 @@ internal sealed class DocxSearchTextScanner
                     case 3 when Is(local, "tab") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
                         matcher.Feed(' ');
                         break;
+                    case 2 when Is(local, "rt") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:          // a ruby's guide text: shown above its base, not searched
+                    case 8 when Is(local, "moveFrom") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:    // a tracked move's source: hidden in Word's final view
                     case 3 when (Is(local, "pPr") || Is(local, "rPr")) && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
                         if (!isEmpty) skipDepth = elementDepth;
                         break;

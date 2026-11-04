@@ -274,19 +274,34 @@ public sealed partial class OdtBlockHtmlRenderer
     }
 
     /// <summary>The bytes of an office:binary-data picture (base64), or null when they do not decode.</summary>
-    public static byte[]? BinaryPictureBytes(XElement binary)
+    public static byte[]? BinaryPictureBytes(XElement binary) => DecodeBase64LikeLibreOffice(binary.Value);
+
+    /// <summary>
+    /// office:binary-data decoded as LibreOffice decodes it (comphelper/source/misc/base64.cxx Base64::decodeSomeChars):
+    /// characters outside the base64 alphabet (white space) are skipped, only complete groups of four are decoded, an
+    /// unfinished last group (missing '=' padding, as in LibreOffice's own tdf145542 test files) is dropped, not refused.
+    /// Null when nothing decodes.
+    /// </summary>
+    private static bool IsBase64Character(char c) => c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '+' or '/' or '=';
+
+    internal static byte[]? DecodeBase64LikeLibreOffice(string text)
     {
-        try { return Convert.FromBase64String(binary.Value); }
+        var kept = new System.Text.StringBuilder(text.Length);
+        foreach (char c in text)
+            if (IsBase64Character(c)) kept.Append(c);
+        kept.Length -= kept.Length % 4;
+        if (kept.Length == 0) return null;
+        try { return Convert.FromBase64String(kept.ToString()); }
         catch (FormatException) { return null; }
     }
 
     /// <summary>True when an office:binary-data picture is a format a browser shows (its first bytes' signature).</summary>
     private static bool BinaryPictureFormatIsShown(XElement binary)
     {
-        // the first 16 base64 characters are 12 bytes: enough for every signature WordPictureHtml.ExtensionOf knows
-        string head = new string(binary.Value.Where(c => !char.IsWhiteSpace(c)).Take(16).ToArray());
-        try { return WordPictureHtml.ExtensionOf(Convert.FromBase64String(head)).Length > 0; }
-        catch (FormatException) { return false; }
+        // the first 16 base64 characters are 12 bytes: enough for every signature WordPictureHtml.ExtensionOf knows; decoded the
+        // way ReadPicture decodes the whole (white space skipped, an unpadded end tolerated)
+        string head = new string(binary.Value.Where(IsBase64Character).Take(16).ToArray());
+        return DecodeBase64LikeLibreOffice(head) is { } bytes && WordPictureHtml.ExtensionOf(bytes).Length > 0;
     }
 
     /// <summary>

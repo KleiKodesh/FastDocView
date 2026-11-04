@@ -11,6 +11,7 @@ namespace FastDocView.Docx;
 /// - per w:p: the text of its w:t (entities and character references decoded, CDATA kept; a whitespace-only text node
 ///   dropped unless xml:space="preserve" is in scope, as the note parser drops it), w:tab inside a run a space, w:br / w:cr
 ///   separators, the end of the w:p a separator; text outside paragraphs is not text;
+/// - w:moveFrom and w:rt (not searched) are left to the reference;
 /// - names resolved by namespace (the part root's declarations plus any declared in the note).
 /// <see cref="TryFeed"/> declines (returns false, the caller rolls the matcher back and parses the note) where the
 /// reference does something a forward scan cannot copy cheaply: a paragraph inside a paragraph (a text box - the
@@ -117,6 +118,7 @@ internal sealed class DocxNoteSearchTextScanner
             bool parentIsRun = _isRun.Count > 0 && _isRun[_isRun.Count - 1];
             if (Is(local, "drawing") || Is(local, "pict") || Is(local, "object")) return false;    // the parser strips these first
             if (Is(local, "fldChar") || Is(local, "fldSimple") || Is(local, "instrText")) return false;   // fields: read through the field stack by the parsed path
+            if (Is(local, "moveFrom") || Is(local, "rt")) return false;   // a tracked move's source / a ruby's guide: not searched - the parsed path skips them
             if (local.Length is 1 or 2 or 3 && Resolve(prefix) == NamespaceKind.Wordprocessing)
             {
                 if (local.Length == 1 && local[0] == (byte)'p')

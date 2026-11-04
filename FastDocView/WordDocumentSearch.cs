@@ -363,7 +363,9 @@ internal sealed class WordXmlSearchText
                         if (drawingRelationshipIds is not null && reader.LocalName == "relIds" && reader.NamespaceURI == DiagramNamespace && reader.GetAttribute("dm", RelationshipsNamespace) is { } diagram) drawingRelationshipIds.Add(diagram);
                         if (drawingRelationshipIds is not null && reader.LocalName == "chart" && reader.NamespaceURI is ChartNamespace or ChartExNamespace && reader.GetAttribute("id", RelationshipsNamespace) is { } chart) drawingRelationshipIds.Add(chart);
                         if (!IsWordprocessing(reader.NamespaceURI)) break;
-                        if (reader.LocalName is "pPr" or "rPr") { reader.Skip(); skipped = true; continue; }
+                        // properties, the source of a tracked move (Word's final view hides it) and a ruby's guide text (shown above
+                        // its base, not searched - as text:ruby-text in .odt) are not text
+                        if (reader.LocalName is "pPr" or "rPr" or "moveFrom" or "rt") { reader.Skip(); skipped = true; continue; }
                         if (fields is not null)
                         {
                             // a w:fldSimple's result starts at its first run-level child (the renderer separates before rendering any)
@@ -446,6 +448,7 @@ internal sealed class WordXmlSearchText
             foreach (XElement element in paragraph.Descendants())
             {
                 if (!IsWordprocessing(element.Name.NamespaceName)) continue;
+                if (element.Ancestors().TakeWhile(a => a != paragraph).Any(a => IsWordprocessing(a.Name.NamespaceName) && a.Name.LocalName is "moveFrom" or "rt" or "del")) continue;   // not shown
                 if (element.Name.LocalName == "t") matcher.Feed(element.Value.AsSpan());
                 else if (element.Name.LocalName == "tab" && element.Parent?.Name.LocalName == "r") matcher.Feed(' ');
                 else if (element.Name.LocalName is "br" or "cr") matcher.Separator();
@@ -466,7 +469,7 @@ internal sealed class WordXmlSearchText
                 continue;
             }
             string name = child.Name.LocalName;
-            if (name is "pPr" or "rPr" or "del" or "moveFrom") continue;
+            if (name is "pPr" or "rPr" or "del" or "moveFrom" or "rt") continue;
             if (simpleFields.Count > 0 && !simpleFields[simpleFields.Count - 1].separated && child.Parent == simpleFields[simpleFields.Count - 1].simple
                 && name is "r" or "hyperlink" or "fldSimple" or "smartTag" or "ins" or "sdt" or "customXml")
             {

@@ -34,6 +34,7 @@ public static partial class DocxFidelityTest
         yield return Hyperlinks;
         yield return BorderGroups;
         yield return DeletedMarksRowsAndCells;
+        yield return MoveFromAndRubySearch;
         yield return CompatibilityLayout;
         yield return RunDirection;
         yield return RtfRunDirection;
