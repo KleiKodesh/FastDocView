@@ -18,7 +18,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 9;     // 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
+    private const int FormatVersion = 10;    // 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
     /// <summary>Body bytes between span anchors: a random block rescans at most this much on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
 
@@ -43,6 +43,10 @@ public sealed class OdtRandomAccessIndex
     public int[] SectionTextWidths { get; init; } = [];
     /// <summary>Bookmarks and reference marks (name -> block), see OdtBodyBlockScanner.BookmarkNames.</summary>
     public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
+    /// <summary>The blocks holding shapes with an id (OdtBodyBlockScanner.ConnectedShapeBlocks) - only while <see cref="ConnectedShapes"/> is still to be recorded; not stored.</summary>
+    internal int[] ConnectedShapeBlocks { get; init; } = [];
+    /// <summary>The shapes connectors may be glued to, by id; null until recorded from <see cref="ConnectedShapeBlocks"/> (OdtWindowedDocument, before the index is saved).</summary>
+    public OdtConnectedShapeTable? ConnectedShapes { get; internal set; }
     private readonly WordListCounterState.DeltaChain _scanStates;
 
     public OdtRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, bool isFlat, ZipEntryLocation? contentEntry,
@@ -175,6 +179,8 @@ public sealed class OdtRandomAccessIndex
         IndexBinaryArrays.WriteCompressedStrings(writer, Bookmarks.Names);
         new EliasFanoSequence(Bookmarks.Blocks).Write(writer);
         Section($"bookmarks ({Bookmarks.Names.Length})");
+        (ConnectedShapes ?? throw new InvalidOperationException("OpenDocument index: connected shapes not recorded yet.")).Write(writer);
+        Section($"connected shapes ({ConnectedShapes.Count})");
         writer.Flush();
     }
 
@@ -235,12 +241,14 @@ public sealed class OdtRandomAccessIndex
         int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
         if (bookmarkBlocks.Length != bookmarkNames.Length || bookmarkBlocks.Any(block => block < 0 || block >= Math.Max(1, blockCount)))
             throw new InvalidDataException("OpenDocument index: bookmark table does not match the blocks.");
+        OdtConnectedShapeTable connectedShapes = OdtConnectedShapeTable.Read(reader);
         return new OdtRandomAccessIndex(sourceLength, sourceTicks, isFlat, entry, checkpoints, rootOpenTag, styleSections, usedListStyles,
                                         blockCount, lastBlockEnd, anchors, groupTotals, headings, notes)
         {
             SectionFirstBlocks = sectionFirstBlocks,
             SectionTextWidths = sectionTextWidths,
             Bookmarks = new WordDocumentBookmarkTable(bookmarkNames, bookmarkBlocks),
+            ConnectedShapes = connectedShapes,
         };
     }
 

@@ -62,7 +62,7 @@ for (int i = 0; i < args.Length; i++)
         case "--skip-synthetic": skipSynthetic = true; break;
         case "--search": searchOnly = true; while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) searchPaths.Add(args[++i]); break;   // in-document search checks (+ timings on the given files)
         case "--index-cache": WordDocumentIndexCacheTest.Run(); skipSynthetic = true; break;   // sidecar cache LRU: eviction, caps, stale / orphan cleanup, concurrency (seconds)
-        case "--connector-route": OdtConnectorRouteTest.Run(); skipSynthetic = true; break;   // only the connector routing checks (seconds)
+        case "--connector-route": OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); skipSynthetic = true; break;   // only the connector routing checks (seconds)
         case "--fields": WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); skipSynthetic = true; break;   // only the Word field checks (seconds)
         case "--fidelity": fidelityOnly = true; break;                                  // only the small Word-fidelity checks (seconds)
         case "--page-width": pageWidthOnly = true; break;                               // only the page-text-width checks (+ --real files)                                  // only the small Word-fidelity checks (seconds)
@@ -135,7 +135,7 @@ if (rereadPaths.Count > 0) { RereadCostTest.Run(rereadPaths.Where(File.Exists));
 if (docReadPaths.Count > 0) { DocBinaryReadCountTest.Run(docReadPaths.Where(File.Exists)); skipSynthetic = true; }
 if (compactReportPaths.Count > 0) { CompactIndexReport.Run(compactReportPaths.Where(File.Exists)); skipSynthetic = true; }
 if (searchOnly) { DocumentSearchTest.Run(searchPaths); skipSynthetic = true; }
-if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); PagePlacementFidelityTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); DocBinaryFloatingPicturesTest.Run(); OdtShapesFidelityTest.Run(); OdtDrawingFidelityTest.Run(); RtfShapesFidelityTest.Run(); WrapSidesAndContourFidelityTest.Run(); WordOfficeArtGeometryTest.Run(); DocBinaryShapesFidelityTest.Run(); OdtFirstOpenTiming.RunSynthetic(); OdtConnectorRouteTest.Run(); OdtMeasureCaptionTest.Run(); OdtExtrusionTest.Run(); OdtShapeTextFidelityTest.Run(); skipSynthetic = true; }
+if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); PagePlacementFidelityTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); DocBinaryFloatingPicturesTest.Run(); OdtShapesFidelityTest.Run(); OdtDrawingFidelityTest.Run(); RtfShapesFidelityTest.Run(); WrapSidesAndContourFidelityTest.Run(); WordOfficeArtGeometryTest.Run(); DocBinaryShapesFidelityTest.Run(); OdtFirstOpenTiming.RunSynthetic(); OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); OdtMeasureCaptionTest.Run(); OdtExtrusionTest.Run(); OdtShapeTextFidelityTest.Run(); skipSynthetic = true; }
 if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
 if (!skipSynthetic)
 {

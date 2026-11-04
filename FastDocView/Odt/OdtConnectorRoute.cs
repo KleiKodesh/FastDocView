@@ -158,6 +158,47 @@ internal static class OdtConnectorRoute
         return new OdtConnectorGluePoint(ToPt(p.X), ToPt(p.Y), CalcEscAngle(snap, p));
     }
 
+    /// <summary>
+    /// A user glue point (draw:glue-point) made absolute as SdrGluePoint::GetAbsolutePos does (svx/source/svdraw/svdglue.cxx:48-86): the offset
+    /// (1/100 mm) is from the snap rectangle's centre, or from the edge / corner draw:align names (alignment map ximpshap.cxx:107-119 ->
+    /// SdrAlign, svx/source/unodraw/gluepts.cxx:136-170); without draw:align it is relative (ximpshap.cxx:262-297: IsRelative, centre, until
+    /// an alignment is read) - 1/100 % of the rectangle's size; clamped to the rectangle.
+    /// </summary>
+    internal static OdtConnectorGluePoint UserGluePoint((double X, double Y, double Width, double Height) rectPt, long xHmm, long yHmm, string? align, OdtGlueEscape escape)
+    {
+        var r = LR.FromPointSize(ToHmm(rectPt.X), ToHmm(rectPt.Y), ToHmm(rectPt.Width), ToHmm(rectPt.Height));
+        bool percent = align is not ("top-left" or "top" or "top-right" or "left" or "center" or "right" or "bottom-left" or "bottom" or "bottom-right");   // an unknown value stays relative (ximpshap.cxx:290-297)
+        bool left = align is "top-left" or "left" or "bottom-left", right = align is "top-right" or "right" or "bottom-right";
+        bool top = align is "top-left" or "top" or "top-right", bottom = align is "bottom-left" or "bottom" or "bottom-right";
+        LP ofs = r.Center;
+        if (left) ofs.X = r.L;
+        if (right) ofs.X = r.R;
+        if (top) ofs.Y = r.T;
+        if (bottom) ofs.Y = r.B;
+        long x = xHmm, y = yHmm;
+        if (percent)
+        {
+            long xMul = r.R - r.L, yMul = r.B - r.T;
+            if (xMul != 10000) x = x * xMul / 10000;
+            if (yMul != 10000) y = y * yMul / 10000;
+        }
+        var p = new LP(x + ofs.X, y + ofs.Y);
+        if (p.X < r.L) p.X = r.L;
+        if (p.X > r.R) p.X = r.R;
+        if (p.Y < r.T) p.Y = r.T;
+        if (p.Y > r.B) p.Y = r.B;
+        return new OdtConnectorGluePoint(ToPt(p.X), ToPt(p.Y), escape);
+    }
+
+    /// <summary>Where a routed track starts or ends, in points.</summary>
+    internal static (double X, double Y) EndOf(List<WordShapeSubpath> track, bool start)
+    {
+        var s = track[0];
+        if (start || s.Segments.Count == 0) return (s.StartX, s.StartY);
+        var last = s.Segments[s.Segments.Count - 1];
+        return (last.X, last.Y);
+    }
+
     private static LP VertexGluePointHmm(LR r, int index)
     {
         // svdobj.cxx:2569-2577: position relative to the centre ...

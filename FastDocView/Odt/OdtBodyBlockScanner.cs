@@ -87,6 +87,8 @@ internal sealed class OdtBodyBlockScanner
     /// <summary>Bookmarks and reference marks (text:bookmark / -start, text:reference-mark / -start: text:name) and the block each is in.</summary>
     public List<string> BookmarkNames { get; } = new();
     public List<int> BookmarkBlocks { get; } = new();
+    /// <summary>The blocks holding a drawing object with an id (a shape a connector may be glued to), ascending, each once.</summary>
+    public List<int> ConnectedShapeBlocks { get; } = new();
     /// <summary>Sections in block order: the first block of each and its page text width (the first starts at block 0).</summary>
     public List<WordDocumentSection> SectionStarts { get; } = new();
     public bool IsBodyComplete { get; private set; }
@@ -434,6 +436,11 @@ internal sealed class OdtBodyBlockScanner
                 break;
         }
         _frames.Add(frame);
+        // a drawing object with an id (draw:id / xml:id - LibreOffice writes one only on a shape something refers to, such as a connector's
+        // draw:start-shape) - its block is read once the index is final to record the shape's geometry (OdtConnectedShapeTable)
+        if (name == Name.Drawing && _currentBlock >= 0 && (ConnectedShapeBlocks.Count == 0 || ConnectedShapeBlocks[ConnectedShapeBlocks.Count - 1] != _currentBlock)
+            && (Attribute(tag, nameEnd, "draw:id") is { Length: > 0 } || Attribute(tag, nameEnd, "xml:id") is { Length: > 0 }))
+            ConnectedShapeBlocks.Add(_currentBlock);
     }
 
     private Frame BlockLevel(Name name, ReadOnlySpan<byte> tag, int nameEnd, long tagEndOffset, bool isListItemParagraph)

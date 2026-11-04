@@ -73,6 +73,8 @@ public static class OdtRandomAccessIndexBuilder
             SectionFirstBlocks = scanner.SectionStarts.Select(section => section.FirstBlockIndex).ToArray(),
             SectionTextWidths = scanner.SectionStarts.Select(section => section.TextWidthTwips).ToArray(),
             Bookmarks = new WordDocumentBookmarkTable(scanner.BookmarkNames.ToArray(), scanner.BookmarkBlocks.ToArray()),
+            ConnectedShapeBlocks = scanner.ConnectedShapeBlocks.ToArray(),
+            ConnectedShapes = scanner.ConnectedShapeBlocks.Count == 0 ? OdtConnectedShapeTable.Empty : null,
         };
     }
 }
