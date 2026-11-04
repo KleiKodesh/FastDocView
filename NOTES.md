@@ -1726,3 +1726,19 @@ its text on one side). The contour:
 LibreOffice's extra 15-twip shift of Word polygons (WrapPolygonHandler.cxx:99-114) is its own guess and not applied.
 Checks: `--fidelity` WrapSidesAndContourFidelityTest (synthetic .rtf, picture-wrap-polygon.docx / .rtf, tdf128501.doc),
 PagePlacementFidelityTest (centred wrapSquare floats left), OdtShapesFidelityTest / OdtDrawingFidelityTest (ODF).
+
+### Production fixes (2026-11-04)
+
+- **.docx w:moveFrom / w:ruby: search = what is rendered.** w:moveFrom (a tracked move's source) is hidden by the renderer
+  (Word's final view) and now skipped by every search path too (byte scanner, reference reader, note scanners). w:ruby used to
+  render nothing; it now renders as HTML `<ruby>base<rt>guide</rt></ruby>`; search feeds the base only (w:rt skipped, as
+  text:ruby-text already is in .odt). The note byte scanner leaves notes with w:moveFrom / w:rt to the parsed path.
+  Check: `DocxFidelityTest.MoveFromAndRubySearch` (body + note).
+- **ODT office:binary-data without '=' padding** (LibreOffice's tdf145542 .fodt files) gave a picture id whose read failed
+  (404, broken image in the page): the head check decoded 16 characters, the read decoded the whole and threw. Both now decode
+  as LibreOffice does (comphelper/source/misc/base64.cxx `Base64::decodeSomeChars`, read online 2026-11-04: non-alphabet
+  characters skipped, complete 4-character groups decoded, an unfinished last group dropped).
+  Check: `OdtDrawingFidelityTest.UnpaddedBinaryPicture`.
+- **Notes pane for .rtf / .odt / .fodt**: RenderNotes = the blocks' notes verified for all three (`NotesWindowTest` now
+  includes a synthetic .fodt) and live in the notes pane. Still not done: a notes-only render (the body HTML of a note's block is
+  built and dropped) - a speed item, not a correctness one.

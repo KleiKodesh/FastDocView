@@ -426,7 +426,7 @@ public sealed class DocxBlockHtmlRenderer
             bool isBreak = element.Name == W + "cr" || element.Name == W + "br" && (string?)element.Attribute(W + "type") is null or "textWrapping";
             if (!isBreak || element.Parent?.Name != W + "r") continue;
             XElement? owner = element.Parent.Parent;
-            while (owner is not null && owner.Name != W + "p" && owner.Name != W + "del" && owner.Name != W + "moveFrom") owner = owner.Parent;
+            while (owner is not null && owner.Name != W + "p" && owner.Name != W + "del" && owner.Name != W + "moveFrom" && owner.Name != W + "ruby") owner = owner.Parent;
             if (owner == paragraph) last = element;
         }
         return last;
@@ -632,7 +632,7 @@ public sealed class DocxBlockHtmlRenderer
             if (element.Name != W + "tab" && element.Name != W + "ptab") continue;
             if (element.Parent?.Name != W + "r") continue;                      // w:tabs/w:tab are stop definitions, not tab characters
             XElement? owner = element.Parent.Parent;
-            while (owner is not null && owner.Name != W + "p" && owner.Name != W + "del" && owner.Name != W + "moveFrom") owner = owner.Parent;
+            while (owner is not null && owner.Name != W + "p" && owner.Name != W + "del" && owner.Name != W + "moveFrom" && owner.Name != W + "ruby") owner = owner.Parent;
             if (owner == paragraph) last = element;
         }
         if (last is null) return (null, null);
@@ -816,6 +816,21 @@ public sealed class DocxBlockHtmlRenderer
                     if (_currentNoteLabel is not null)
                         html.Append("<span class=\"note-mark\">").Append(WordHtmlText.Encode(_currentNoteLabel)).Append("</span>");
                     break;
+                case "ruby":
+                {
+                    // w:ruby (phonetic guide): the base text with its guide above it - HTML ruby; the guide is shown, not searched
+                    // (search feeds the base only, as the reference reader and the byte scanner skip w:rt)
+                    html.Append("<ruby>");
+                    if (child.Element(W + "rubyBase") is { } rubyBase) yield return new(RenderInlineChildren(rubyBase, html, formatting));
+                    if (child.Element(W + "rt") is { } rubyText)
+                    {
+                        html.Append("<rt>");
+                        yield return new(RenderInlineChildren(rubyText, html, formatting));
+                        html.Append("</rt>");
+                    }
+                    html.Append("</ruby>");
+                    break;
+                }
                 case "drawing": case "pict": case "object":
                     yield return new(AppendDrawing(html, child));
                     break;
