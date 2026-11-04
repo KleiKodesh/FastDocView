@@ -18,7 +18,7 @@ public enum DocxListLabelSuffix : byte { Tab, Space, Nothing }
 /// <param name="LevelParagraphXml">The level's w:pPr as XML ("" when none): its indents and tab stops reach the paragraph.</param>
 /// <param name="Alignment">w:lvlJc: left / start, center, right / end.</param>
 public readonly record struct DocxListLabel(string Text, DocxListLabelSuffix Suffix, string LevelCss, string LevelParagraphXml = "",
-                                            Html.WordListLabelAlignment Alignment = Html.WordListLabelAlignment.Start)
+                                            Html.WordListLabelAlignment Alignment = Html.WordListLabelAlignment.Start, string? Context = null)
 {
     public static Html.WordListLabelAlignment AlignmentOf(string? value) => value switch
     {

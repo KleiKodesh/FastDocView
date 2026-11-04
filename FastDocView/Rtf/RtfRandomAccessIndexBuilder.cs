@@ -221,6 +221,14 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     public IReadOnlyList<WordDocumentBlockKind> Kinds => _kinds;
     public IReadOnlyList<int> TextLengths => _textLengths;
     public IReadOnlyList<byte> ListLevels => _listLevels;
+
+    // the paragraph style (\sN) of each block's first paragraph, from the scan itself (span rescans recompute it: no index storage)
+    private readonly List<int> _blockStyles = new();
+    private int _blockStyle = -1;
+    public IReadOnlyList<int> BlockStyles => _blockStyles;
+    private readonly List<int> _blockLists = new();
+    private int _blockList = -1;
+    public IReadOnlyList<int> BlockLists => _blockLists;
     public byte[] SnapshotOf(int localIndex) => _states[_stateIds[localIndex]];
     public string? LabelOf(int localIndex) => _labelIds[localIndex] >= 0 ? _labels[_labelIds[localIndex]] : null;
 
@@ -260,6 +268,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _hasContent = false;
         _isRow = false;
         _textLength = 0;
+        _blockStyle = -1;
+        _blockList = -1;
         _rowCells = 0;
         _paragraphText.Clear();
         _hasListText = false;
@@ -279,6 +289,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _stateIds.Add(_stateId);
         _fieldStateIds.Add(_fieldStateId);
         _listLevels.Add(listLabel is null ? (byte)255 : (byte)Math.Max(0, Math.Min(254, listLevel)));
+        _blockStyles.Add(_blockStyle);
+        _blockLists.Add(_blockList);
         _labelIds.Add(listLabel is null ? -1 : InternLabel(listLabel));
         if (_search is not null && blockIndex >= _searchFrom) _search.BlockEnded(blockIndex);
         if (_isSpanScan && !final && _starts.Count >= _pauseAtBlockCount) _parser.RequestPause();
@@ -456,6 +468,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     {
         if (IsSearching) _search!.Separator();
         if (_parser.IsInFootnote || _parser.IsInListText) return;
+        if (_blockStyle < 0 && !_parser.IsInTextBox) { _blockStyle = state.Style; _blockList = state.ListOverride; }   // the block's (first) paragraph style and list (\ls) - STYLEREF, REF \r \w
         _hasContent = true;
         string? label = CountList(state, out bool hasListParagraph);
         // in a row until the row mark; a stray cell mark or in-table flag without one must not swallow the rest of the file

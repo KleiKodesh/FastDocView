@@ -35,12 +35,13 @@ for (const file of files) {
       fractionWidth: viewport?.querySelector('math')?.getBoundingClientRect().width ?? 0,
     }
   })
-  check(view.placeholders >= 2 && view.linkedPlaceholder, `page placeholders drawn (${view.placeholders}), PAGEREF \\h one inside its link`)
-  check(view.fraction && view.fractionWidth > 0, 'EQ \\f(1,2) laid out as MathML')
-  check(view.text.includes('Press here') && view.text.includes('Blueberry') && view.text.includes('Moshe Cohen'), 'computed MACROBUTTON, drop-down entry, AUTHOR shown')
-  check(!/MACROBUTTON|FORMCHECKBOX|hiddenentry|nestedno/.test(view.text), 'no field code, hidden field or unchosen IF branch shown')
+  const isFixture = !file.includes('fields-lists')   // the harness's TOC / list fixture: only its link is checked
+  if (isFixture) check(view.placeholders >= 2 && view.linkedPlaceholder, `page placeholders drawn (${view.placeholders}), PAGEREF \\h one inside its link`)
+  if (isFixture) check(view.fraction && view.fractionWidth > 0, 'EQ \\f(1,2) laid out as MathML')
+  if (isFixture) check(view.text.includes('Press here') && view.text.includes('Blueberry') && view.text.includes('Moshe Cohen'), 'computed MACROBUTTON, drop-down entry, AUTHOR shown')
+  if (isFixture) check(!/MACROBUTTON|FORMCHECKBOX|hiddenentry|nestedno/.test(view.text), 'no field code, hidden field or unchosen IF branch shown')
   // a field link jumps to its bookmark in the document
-  const jumped = await page.evaluate(async () => {
+  const jumped = !isFixture || await page.evaluate(async () => {
     const link = document.querySelector('.windowed-scroller-viewport a[href="#bookmark-Target"]')
     if (!link) return false
     window.__fastDocViewTest.scrollToBlock(Math.max(0, window.__fastDocViewTest.state().blockCount - 1))
@@ -53,6 +54,24 @@ for (const file of files) {
   })
   check(jumped, 'a REF / HYPERLINK \\l field link brings its bookmark into view')
   // search: computed text found, field codes never
+  // a TOC FastDocView built (\h): "#block-N" jumps to the heading's block through the app page
+  const blockLink = await page.evaluate(() => document.querySelector('.windowed-scroller-viewport a[href^="#block-"]')?.getAttribute('href') ?? null)
+  if (blockLink) {
+    const target = Number(blockLink.slice('#block-'.length))
+    await page.evaluate(() => window.__fastDocViewTest.scrollToBlock(window.__fastDocViewTest.state().blockCount - 1))
+    await page.waitForTimeout(300)
+    await page.evaluate(() => window.__fastDocViewTest.scrollToBlock(0))
+    await page.waitForTimeout(300)
+    await page.click(`.windowed-scroller-viewport a[href="${blockLink}"]`)
+    await page.waitForTimeout(800)
+    const shown = await page.evaluate(index => {
+      const row = document.querySelector(`.windowed-scroller-viewport [data-index="${index}"]`)
+      const box = row?.getBoundingClientRect()
+      return !!box && box.bottom > 0 && box.top < window.innerHeight
+    }, target)
+    check(shown, `TOC \h link ${blockLink} brings its heading block into view`)
+  }
+  if (!isFixture) continue
   await page.click('.windowed-scroller-viewport')
   await page.keyboard.press('Control+f')
   await waitFor(() => !!document.querySelector('.search-bar input'))

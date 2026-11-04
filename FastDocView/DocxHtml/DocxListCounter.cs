@@ -113,6 +113,32 @@ public sealed class DocxListCounter
     private static ulong Zigzag(int value) => (ulong)(uint)((value << 1) ^ (value >> 31));
     private static int Unzigzag(ulong value) => (int)((uint)value >> 1) ^ -(int)((uint)value & 1);
 
+    /// <summary>
+    /// The paragraph's number in full context, as REF / STYLEREF \w and \r need it (17.16.5.47): one entry per level from
+    /// the top, each level's own lvlText with the current counters (Word 16: levels "%1)" "%2)" "%3)" at 2 / b / i →
+    /// "2)b)i)"); an upper level whose number the deeper level's text already holds (%1 in "%1.%2.") is not repeated.
+    /// The first entry is the list's abstract id ("#3"), so contexts of different lists never share a prefix. Call after
+    /// <see cref="NextWithDefinition"/> for the same paragraph.
+    /// </summary>
+    public string[] ContextOf(int numId, int level)
+    {
+        if (numId <= 0 || _definitions.AbstractIdOf(numId) is not { } abstractId || !_countersByAbstractId.TryGetValue(abstractId, out int[]? counters)) return [];
+        level = Math.Max(0, Math.Min(MaxLevels - 1, level));
+        DocxNumberingDefinitions.LevelDefinition?[] levels = _definitions.LevelsOf(numId, abstractId);
+        var included = new List<string>();
+        var covered = new HashSet<int>();
+        for (int k = level; k >= 0; k--)
+        {
+            if (covered.Contains(k)) continue;
+            included.Insert(0, k.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\u0002" + _definitions.FormatLabel(numId, abstractId, k, counters));
+            string text = levels[k]?.Text ?? "";
+            for (int i = 0; i + 1 < text.Length; i++)
+                if (text[i] == '%' && text[i + 1] is >= '1' and <= '9') covered.Add(text[i + 1] - '1');
+        }
+        included.Insert(0, "#" + abstractId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return included.ToArray();
+    }
+
     public (string label, DocxNumberingDefinitions.LevelDefinition? definition)? NextWithDefinition(int numId, int level)
     {
         if (numId <= 0 || _definitions.AbstractIdOf(numId) is not { } abstractId) return null;

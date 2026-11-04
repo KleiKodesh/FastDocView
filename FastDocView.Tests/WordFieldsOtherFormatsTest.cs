@@ -96,8 +96,10 @@ public static class WordFieldsOtherFormatsTest
     {
         // fields Word never saves this way: no \fldrslt (computed), \fldlock with a stale result, \fldpriv, a dropdown form field,
         // SEQ counting across many blocks (the counters ride the index's anchors), a hyperlink result across paragraphs
-        var rtf = new StringBuilder(@"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Arial;}}{\info{\title Hand title}{\author Rivka}{\creatim\yr2024\mo3\dy5\hr10\min21}}{\*\userprops {\propname Client}\proptype30{\staticval Acme RTF}}{\*\docvar {Var1}{RtfVariable}}");
+        var rtf = new StringBuilder(@"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Arial;}}{\stylesheet{\s0 Normal;}{\s5 Quote Style;}}{\info{\title Hand title}{\author Rivka}{\creatim\yr2024\mo3\dy5\hr10\min21}}{\*\userprops {\propname Client}\proptype30{\staticval Acme RTF}}{\*\docvar {Var1}{RtfVariable}}");
         rtf.Append(@"\pard {\*\bkmkstart Target}Target text{\*\bkmkend Target} not in the bookmark\par ");
+        rtf.Append(@"\pard\s5 quoted line\par ");
+        rtf.Append(@"\pard sref {\field{\*\fldinst STYLEREF ""Quote Style"" }}\par ");
         rtf.Append(@"\pard calc {\field{\*\fldinst = 6*7 }}\par ");
         rtf.Append(@"\pard locked {\field\fldlock{\*\fldinst = 1+1 }{\fldrslt staleresult}}\par ");
         rtf.Append(@"\pard private {\field\fldpriv{\*\fldinst PRIVATE data }{\fldrslt binarydata}}\par ");
@@ -126,6 +128,7 @@ public static class WordFieldsOtherFormatsTest
             TestReport.Check(block.Length > 0 && check(block), $".rtf (hand-written): {what} (got [{Strip(block)}])");
         }
         Expect("calc ", b => Strip(b) == "calc 42", "a field without \\fldrslt is computed");
+        Expect("sref ", b => Strip(b) == "sref quoted line", "STYLEREF of any style: the nearest paragraph in \\s5 (by its stylesheet name)");
         Expect("locked ", b => Strip(b) == "locked staleresult", "\\fldlock keeps its result");
         Expect("private ", b => Strip(b).Trim() == "private", "\\fldpriv: the result is not shown");
         Expect("props ", b => Strip(b) == "props Hand title/Rivka/Acme RTF/RtfVariable/2024-03-05", "{\\info}, \\userprops and \\docvar properties");

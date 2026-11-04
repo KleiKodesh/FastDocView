@@ -131,6 +131,10 @@ internal sealed class RtfCompactBlockTable
     /// <summary>What a span search computes field results from (the renderer's context).</summary>
     public Fields.WordFieldContext? FieldContext { get; set; }
     public string? ListLabelOf(int blockIndex) => SpanOf(blockIndex, out int local).LabelOf(local);
+    /// <summary>The style number (\sN) of the block's first paragraph; -1 when none.</summary>
+    public int StyleOf(int blockIndex) => SpanOf(blockIndex, out int local).BlockStyles[local];
+    /// <summary>The list override (\lsN) of the block's first paragraph; -1 when none.</summary>
+    public int ListOf(int blockIndex) => SpanOf(blockIndex, out int local).BlockLists[local];
 
     public int ListLevelOf(int blockIndex)
     {

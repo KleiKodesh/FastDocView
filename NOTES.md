@@ -1613,19 +1613,27 @@ One engine in `Fields/` for .docx, .doc and .rtf; each format only finds the fie
 - Switches: \* Arabic ArabicDash alphabetic / ALPHABETIC roman / ROMAN Ordinal OrdText CardText DollarText Hex hebrew1
   (up to 392) hebrew2 (one ת per 22 - Word's field rule, not the list rule) Upper Lower FirstCap Caps; a \* number format
   wins over \#; \# pictures (0 # x . , - + 'text', ; sections, half away from zero); \@ date pictures.
-- Computed from the index too (2026-11-04, second pass): REF \n \r \w (the bookmarked paragraph's list label without its
-  trailing period - Word 16 wrote "1" for "1."; our label is the shown one, so relative / full context of multi-level lists
-  is that label) and \p ("above" / "below" against the field's block - English; Word writes the text's language);
-  NOTEREF (the first note mark in the bookmark's block; \f as a note reference, \p); STYLEREF (back from the field's block,
-  then forward - a flow view has no page for Word's page-relative search or \l; Word's Hebrew error when no paragraph has
-  the style; .docx by the index's per-block style ids and w:name, .doc by each paragraph's istd and STD name, .rtf through
-  the headings only - its index keeps no style per block - so "heading N" / N); TOC (\o / \n levels, built from the
-  index's headings inside the field's block, page numbers as placeholders; \h is not followed: the app jumps to bookmarks
-  only and a heading Word has not indexed has no _Toc bookmark); INDEX (XE "main:sub", \t, \e, \f; entries collected at
-  index time: .docx format 15, .rtf format 8, .doc read once from PlcFld on first need) and TOA (TA \l by \c category);
-  BARCODE as POSTNET bars in SVG (two-of-five places 7 4 2 1 0, check digit to a multiple of 10 - Wikipedia "POSTNET" from
-  USPS Publication 25; FIM \f patterns not drawn, no source at hand); ADVANCE \u / \d raise / lower the paragraph's later
-  runs (position: relative) - \x / \y are page positions (paged view TODO).
+- Computed from the index too (2026-11-04): REF \n \r \w as Word 16 writes them (COM: a list "%1)" "%2)" "%3)" at 2) b) i)
+  → \n "i)", \w "2)b)i)", \r "i)" both from inside 2)b) and from outside the list; a trailing period dropped, "1." → "1").
+  .docx builds the full context in the list counter (each level's own lvlText with the counters; an upper level already in a
+  deeper level's text, %1 in "%1.%2.", is not repeated); .rtf walks back over the blocks' list levels to the nearest
+  paragraph of each upper level; .doc keeps no level per block, so its \r / \w are the paragraph's own label. \p writes
+  "above" / "below", or Word 16's Hebrew "מעל" / "מתחת" when the document is right-to-left (Word follows the field's text
+  language; the readers know the document's direction, not each run's language, before any text). NOTEREF (\f \p);
+  STYLEREF (back from the field's block, then forward - flow view has no page for Word's page-relative search or \l; Word's
+  Hebrew error when no paragraph has the style; .docx by the index's per-block style ids and w:name, .doc by each
+  paragraph's istd and STD name, .rtf by each block's first-paragraph \sN from the span scans and its \stylesheet name);
+  TOC (\o / \n levels, built from the index's headings inside the field's block, page numbers as placeholders, \h entries
+  link "#block-<index>" - the app's FastDocViewPage jumps there like a bookmark); INDEX (XE "main:sub", \t, \e, \f; entries
+  collected at index time: .docx format 15, .rtf format 8, .doc read once from PlcFld) and TOA (TA \l by \c category);
+  BARCODE as POSTNET bars in SVG (Wikipedia "POSTNET" from USPS Publication 25) and \f A-E as Facing Identification Marks
+  (A 110010011, B 101101101, C 110101011, D 111010111, E 101000101 - Wikipedia "Facing Identification Mark" from the USPS
+  Domestic Mail Manual 708.9 / 202); ADVANCE \u / \d raise / lower the paragraph's later runs (position: relative) - \x / \y
+  are page positions (paged view TODO).
+- RTF  \w walk back at most 4096 blocks and stop at another list's paragraph (\ls per block from the span scans);
+  STYLEREF looks at most 4096 blocks each way - every block read is a span rescan (no per-style table in the index).
+- RTF field lookups read through a second block table whose rescans compute no fields: a lookup runs while the document's
+  table is mid-rescan and must not re-enter it.
 - Bookmark lookups during a render never scan on: while the first open is still indexing, a bookmark not found yet is
   unknown (the field shows nothing until the index completes), not missing. .doc SEQ \s heading positions are read once.
 - Still not computed: INCLUDETEXT / INCLUDEPICTURE (never fetched), USERNAME / USERINITIALS / USERADDRESS without an

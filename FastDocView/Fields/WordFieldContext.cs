@@ -69,6 +69,18 @@ public sealed class WordFieldContext
     /// <summary>A block's list label as shown ("2.a.", "ג."); null when the block is not a list item (REF / STYLEREF \n \r \w).</summary>
     public Func<int, string?>? ListLabelOfBlock { get; init; }
 
+    /// <summary>
+    /// A block's list number in full context: the list's id ("#3") then each level's own label from the top, joined by
+    /// U+0001 (REF / STYLEREF \w and \r); null when the format keeps none for the block.
+    /// </summary>
+    public Func<int, string?>? ListContextOfBlock { get; init; }
+
+    /// <summary>
+    /// Whether the text the fields stand in is right-to-left (Hebrew): REF / NOTEREF / STYLEREF \p write "מעל" / "מתחת"
+    /// then, as Word 16 writes them in Hebrew text. The document's direction (each reader knows it before any text).
+    /// </summary>
+    public bool IsRightToLeftText { get; set; }
+
     /// <summary>The mark of the first note referenced in the bookmark's block (NOTEREF); null when none.</summary>
     public Func<string, string?>? NoteMarkOfBookmark { get; init; }
 

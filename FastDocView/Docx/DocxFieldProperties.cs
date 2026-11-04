@@ -14,7 +14,8 @@ namespace FastDocView.Docx;
 /// <summary>What a field looks up in the document's index (shared by the three formats' field contexts).</summary>
 internal sealed record FieldLookups(Func<string, int?> BookmarkBlock, Func<bool> IsBookmarkListComplete, Func<int, string?> ListLabelOfBlock,
                                     Func<string, string?> NoteMarkOfBookmark, Func<string, int, bool, (int block, string text)?> StyledParagraph,
-                                    Func<IReadOnlyList<WordDocumentHeading>> Headings, Func<IReadOnlyList<(int block, string code)>> IndexEntries)
+                                    Func<IReadOnlyList<WordDocumentHeading>> Headings, Func<IReadOnlyList<(int block, string code)>> IndexEntries,
+                                    Func<int, string?>? ListContextOfBlock = null)
 {
     /// <summary>A stored XE / TA entry, "block U+0001 code".</summary>
     public static (int block, string code) ParseEntry(string entry)
@@ -109,6 +110,7 @@ internal sealed class DocxFieldProperties
             BookmarkBlock = lookups.BookmarkBlock,
             IsBookmarkListComplete = lookups.IsBookmarkListComplete,
             ListLabelOfBlock = lookups.ListLabelOfBlock,
+            ListContextOfBlock = lookups.ListContextOfBlock,
             NoteMarkOfBookmark = lookups.NoteMarkOfBookmark,
             StyledParagraph = lookups.StyledParagraph,
             Headings = lookups.Headings,

@@ -226,16 +226,44 @@ public static class WordFieldEvaluator
         }
         if (context.BookmarkBlock?.Invoke(bookmark) is not { } block) return context.BookmarkBlock is null || !isListComplete ? null : WordFieldValue.OfText(ReferenceNotFound);
         var parts = new List<string>();
-        if (number && ParagraphNumber(block, context) is { Length: > 0 } label) parts.Add(label);
+        if (number && ParagraphNumber(block, NumberContext(instruction), context) is { Length: > 0 } label) parts.Add(label);
         if (position && Position(block, context) is { } where) parts.Add(where);
         return parts.Count == 0 ? null : WordFieldValue.OfText(string.Join(" ", parts));
     }
 
-    private static string? ParagraphNumber(int block, WordFieldContext context)
-        => context.ListLabelOfBlock?.Invoke(block)?.Trim().TrimEnd('.');
+    private enum NumberForm : byte { Own, Relative, Full }
 
+    private static NumberForm NumberContext(WordFieldInstruction instruction)
+        => instruction.Has("\\w") ? NumberForm.Full : instruction.Has("\\r") ? NumberForm.Relative : NumberForm.Own;
+
+    /// <summary>
+    /// A paragraph's number (17.16.5.47 \n \r \w) as Word 16 writes it (COM, 2026-11-04, a three-level list "%1)" "%2)" "%3)" at
+    /// 2) b) i)): \n its own level ("i)"); \w full context ("2)b)i)"); \r relative to the field's own paragraph - the levels
+    /// they share left out ("i)" from inside 2)b)), and from outside the list its own level ("i)"); a trailing period is
+    /// dropped in all three ("1." → "1").
+    /// </summary>
+    private static string? ParagraphNumber(int block, NumberForm form, WordFieldContext context)
+    {
+        string? own = context.ListLabelOfBlock?.Invoke(block)?.Trim();
+        if (own is null) return null;
+        string[]? target = form == NumberForm.Own ? null : context.ListContextOfBlock?.Invoke(block)?.Split('\u0001');
+        if (target is not { Length: > 1 }) return own.TrimEnd('.');
+        static string Label(string entry) => entry.Substring(entry.IndexOf('\u0002') + 1);
+        if (form == NumberForm.Full) return string.Concat(target.Skip(1).Select(Label)).TrimEnd('.');
+        string[]? here = context.CurrentBlock is { } current ? context.ListContextOfBlock?.Invoke(current)?.Split('\u0001') : null;
+        if (here is not { Length: > 1 } || here[0] != target[0]) return own.TrimEnd('.');
+        // the levels the field's own paragraph shares (same level, same number) are left out; the rest from the first that differs
+        var hereLevels = new HashSet<string>(here.Skip(1));
+        int first = 1;
+        while (first < target.Length - 1 && hereLevels.Contains(target[first])) first++;
+        return string.Concat(target.Skip(first).Select(Label)).TrimEnd('.');
+    }
+
+    /// <summary>\p: "above" / "below" - in Hebrew text "מעל" / "מתחת" (Word 16 wrote those for a Hebrew-language field).</summary>
     private static string? Position(int block, WordFieldContext context)
-        => context.CurrentBlock is { } here ? (block <= here ? "above" : "below") : null;
+        => context.CurrentBlock is { } here
+            ? (block <= here ? (context.IsRightToLeftText ? "מעל" : "above") : (context.IsRightToLeftText ? "מתחת" : "below"))
+            : null;
 
     /// <summary>NOTEREF (17.16.5.37): the note's mark; \f as a note reference (superscript); \p above / below; \h links (HyperlinkFieldTag).</summary>
     private static WordFieldOutput NoteReference(WordFieldInstruction instruction, WordFieldContext context)
@@ -265,7 +293,7 @@ public static class WordFieldEvaluator
         bool number = instruction.Has("\\n") || instruction.Has("\\r") || instruction.Has("\\w");
         if (!number && !instruction.Has("\\p")) return WordFieldValue.OfText(paragraph.text);
         var parts = new List<string>();
-        if (number && ParagraphNumber(paragraph.block, context) is { Length: > 0 } label) parts.Add(label);
+        if (number && ParagraphNumber(paragraph.block, NumberContext(instruction), context) is { Length: > 0 } label) parts.Add(label);
         if (instruction.Has("\\p") && Position(paragraph.block, context) is { } where) parts.Add(where);
         return WordFieldValue.OfText(string.Join(" ", parts));
     }
@@ -273,8 +301,7 @@ public static class WordFieldEvaluator
     /// <summary>
     /// A TOC Word saved without a result, built from the document's headings (17.16.5.68): \o "a-b" heading levels (default
     /// 1-9 as Word's \o without levels), \n "a-b" levels without page numbers, page numbers as placeholders (no pages in a
-    /// flow view); one line per heading inside the field's block. \h is not followed: in-document links go to bookmarks
-    /// (the app's only jump), and a heading Word has not indexed yet has no _Toc bookmark.
+    /// flow view); one line per heading inside the field's block; \h links each entry to its heading's block ("#block-N").
     /// </summary>
     private static WordFieldOutput TableOfContents(WordFieldInstruction instruction, WordFieldContext context)
     {
@@ -287,13 +314,17 @@ public static class WordFieldEvaluator
         }
         (int from, int to) levels = Levels(instruction.SwitchArgument("\\o"), (1, 9));
         (int from, int to)? noNumbers = instruction.Has("\\n") ? Levels(instruction.SwitchArgument("\\n"), (1, 9)) : null;
+        bool links = instruction.Has("\\h");
         var html = new StringBuilder("<span class=\"field-toc\" style=\"display:block\">");
         var text = new StringBuilder();
         foreach (WordDocumentHeading heading in headings)
         {
             if (heading.Level < levels.from || heading.Level > levels.to) continue;
             html.Append("<span class=\"toc-line\" style=\"display:block;padding-inline-start:").Append((heading.Level - 1) * 1.5).Append("em\">");
+            // \h: the entry links to its heading's block (the app's FastDocViewPage jumps by "#block-<index>")
+            if (links) html.Append("<a class=\"link\" href=\"#block-").Append(heading.BlockIndex.ToString(CultureInfo.InvariantCulture)).Append("\">");
             html.Append(WordHtmlText.Encode(heading.Text));
+            if (links) html.Append("</a>");
             if (noNumbers is not { } skip || heading.Level < skip.from || heading.Level > skip.to)
                 html.Append("<span class=\"toc-leader\"> </span><span class=\"field-page-placeholder\" title=\"PAGEREF\">#</span>");
             html.Append("</span>");
@@ -319,7 +350,8 @@ public static class WordFieldEvaluator
         {
             WordFieldInstruction entry = WordFieldInstruction.Parse(code);
             if (entry.Name != "XE" || entry.Arguments.Count == 0) continue;
-            if (entry.SwitchArgument("\\f") != type) continue;            // INDEX \f type: only entries of that type; without it the untyped ones
+            string entryType = entry.SwitchArgument("\\f") is { Length: > 0 } t ? t : "I";      // XE's default type is "I" (17.16.5.76)
+            if (!string.Equals(entryType, type ?? "I", StringComparison.OrdinalIgnoreCase)) continue;
             string[] levels = entry.Arguments[0].Split(':').Select(level => level.Trim()).ToArray();
             for (int depth = 1; depth <= levels.Length; depth++)
             {
@@ -372,12 +404,27 @@ public static class WordFieldEvaluator
     /// BARCODE (17.16.5.4) as POSTNET bars in SVG: the ZIP / ZIP+4 / delivery-point digits (the argument, or with \b the
     /// bookmark's text; the last 5, 9 or 11 digits found), a check digit making the digit sum a multiple of 10, two-of-five
     /// bars per digit (full bars for the places 7 4 2 1 0; 0 = 11000) between two frame bars - the encoding as Wikipedia's
-    /// "POSTNET" gives it from USPS Publication 25 (2003). The FIM patterns (\f A / B / C) are not drawn: no source for them at hand.
+    /// "POSTNET" gives it from USPS Publication 25 (2003); \f draws a Facing Identification Mark instead.
     /// </summary>
     private static WordFieldOutput Barcode(WordFieldInstruction instruction, WordFieldContext context)
     {
+        // \f A..E: a Facing Identification Mark, nine places, 1 = a full bar (A 110010011, B 101101101, C 110101011,
+        // D 111010111, E 101000101 - Wikipedia "Facing Identification Mark", from the USPS Domestic Mail Manual 708.9 / 202)
+        if (instruction.SwitchArgument("\\f") is { Length: > 0 } fim)
+        {
+            string? pattern = fim.Trim().ToUpperInvariant() switch
+            {
+                "A" => "110010011", "B" => "101101101", "C" => "110101011", "D" => "111010111", "E" => "101000101", _ => null,
+            };
+            if (pattern is null) return WordFieldOutput.None;
+            var mark = new StringBuilder("<svg class=\"field-barcode field-fim\" role=\"img\" aria-label=\"FIM ").Append(fim.Trim().ToUpperInvariant())
+                .Append("\" viewBox=\"0 0 27 10\" style=\"height:1.2em;width:2.7em;vertical-align:baseline\">");
+            for (int i = 0; i < pattern.Length; i++)
+                if (pattern[i] == '1') mark.Append("<rect x=\"").Append(i * 3).Append("\" y=\"0\" width=\"1.4\" height=\"10\" fill=\"currentColor\"/>");
+            return new(null, mark.Append("</svg>").ToString(), false);
+        }
         if (instruction.Arguments.Count == 0) return WordFieldOutput.None;
-        string source = instruction.Has("\b") ? context.BookmarkText?.Invoke(instruction.Arguments[0]) ?? "" : instruction.Arguments[0];
+        string source = instruction.Has("\\b") ? context.BookmarkText?.Invoke(instruction.Arguments[0]) ?? "" : instruction.Arguments[0];
         string digits = new string(source.Where(char.IsDigit).ToArray());
         int length = digits.Length >= 11 ? 11 : digits.Length >= 9 ? 9 : digits.Length >= 5 ? 5 : 0;
         if (length == 0) return WordFieldOutput.None;

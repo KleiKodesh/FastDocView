@@ -154,6 +154,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         _table = new DocBinaryCompactBlockTable(_index, PieceTable, _renderer, _styles, ListDefinitions);
         Sections = DocBinarySectionTable.Read(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, _index.SectionFirstBlocks);
         IsRightToLeft = DetectRightToLeft();
+        if (_renderer.FieldContext is { } fieldContext) fieldContext.IsRightToLeftText = IsRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(0).RunFormatting, IsRightToLeft);
     }
 

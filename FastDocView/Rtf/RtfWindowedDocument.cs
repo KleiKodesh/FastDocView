@@ -170,6 +170,13 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     }
     private RtfSearchTextSink? _searchSink;
 
+    /// <summary>
+    /// The block table field lookups read (REF, STYLEREF, NOTEREF, list numbers): its own span cache, whose rescans compute
+    /// no fields - a lookup runs while the document's own table is mid-rescan, and must not re-enter that rescan.
+    /// </summary>
+    private RtfCompactBlockTable LookupTable => _lookupTable ??= new RtfCompactBlockTable(_index, _file);
+    private RtfCompactBlockTable? _lookupTable;
+
     private static string PlainHtmlText(string html) => System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", ""));
     private readonly Fields.WordFieldContext _fieldContext;
     private bool _isReadingBookmarkText;
@@ -194,10 +201,11 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             FileName = Path.GetFileName(path), FilePath = path, FileSize = size,
             BookmarkText = BookmarkText,
             BookmarkBlock = FindBookmark,
-            ListLabelOfBlock = block => block >= 0 && block < _index.BlockCount ? _table.ListLabelOf(block) : null,
+            ListLabelOfBlock = block => block >= 0 && block < _index.BlockCount ? LookupTable.ListLabelOf(block) : null,
+            ListContextOfBlock = ListContext,
+            IsRightToLeftText = _index.IsRightToLeft,
             NoteMarkOfBookmark = name => FindBookmark(name) is { } block && _index.NoteReferencesInBlock(block) is { Length: > 0 } notes ? notes[0].Label : null,
-            // the index keeps no paragraph style per block: STYLEREF finds heading styles ("heading N" / N) through the headings
-            StyledParagraph = (style, from, forward) => HeadingParagraph(style, from, forward),
+            StyledParagraph = StyledParagraph,
             Headings = () => _index.Headings,
             IndexEntries = () => _index.IndexEntries.Select(Docx.FieldLookups.ParseEntry).ToList(),
         };
@@ -208,6 +216,56 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     /// {\*kmkstart} only - RTF 1.5 "Bookmarks" - so the paragraph's rest stands for the bookmarked text); null when there
     /// is no such bookmark.
     /// </summary>
+    /// <summary>
+    /// A block's number in full context (REF \w \r): its label, then for each upper level the nearest earlier list paragraph
+    /// of that level (the RTF index keeps a level per block, not the list's counters).
+    /// </summary>
+    private string? ListContext(int block)
+    {
+        if (block < 0 || block >= _index.BlockCount || LookupTable.ListLabelOf(block) is not { } own) return null;
+        int need = LookupTable.ListLevelOf(block);
+        if (need < 0) return null;
+        int list = LookupTable.ListOf(block);
+        var labels = new List<string> { need.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\u0002" + own };
+        need--;
+        // back to the nearest paragraph of each upper level in the same list (\ls); another list's paragraph ends the walk, and
+        // so does ListWalkLimit blocks - a list that starts below level 1 has no upper paragraph to find
+        for (int earlier = block - 1; earlier >= 0 && earlier >= block - ListWalkLimit && need >= 0; earlier--)
+        {
+            int level = LookupTable.ListLevelOf(earlier);
+            if (level < 0) continue;
+            if (LookupTable.ListOf(earlier) != list) break;
+            if (level > need || LookupTable.ListLabelOf(earlier) is not { } label) continue;
+            labels.Insert(0, level.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\u0002" + label);
+            need = level - 1;
+        }
+        labels.Insert(0, "#ls" + list.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return string.Join("\u0001", labels);
+    }
+
+    /// <summary>STYLEREF: the nearest block whose first paragraph has the named style (\sN from the span scans, the name from \stylesheet).</summary>
+    /// <summary>
+    /// How far REF \r \w and STYLEREF look from a block (each block read is a span rescan of the RTF, whose index keeps no
+    /// per-style or per-list table): a paragraph further away counts as not found.
+    /// </summary>
+    private const int ListWalkLimit = 4096, StyleSearchLimit = 4096;
+
+    private (int block, string text)? StyledParagraph(string styleName, int from, bool forward)
+    {
+        var numbers = new HashSet<int>(_index.Tables.Styles.Where(style => string.Equals(style.Value.Name.Trim(), styleName.Trim(), StringComparison.OrdinalIgnoreCase)).Select(style => style.Key));
+        if (numbers.Count == 0) return HeadingParagraph(styleName, from, forward);
+        int limit = forward ? Math.Min(_index.BlockCount, from + 1 + StyleSearchLimit) : Math.Max(-1, from - StyleSearchLimit);
+        for (int block = forward ? from + 1 : Math.Min(from, _index.BlockCount - 1); forward ? block < limit : block > limit; block += forward ? 1 : -1)
+        {
+            if (!numbers.Contains(LookupTable.StyleOf(block))) continue;
+            var renderer = new RtfBlockHtmlRenderer(_index.Tables) { FieldContext = null };
+            long position = _file.Position;
+            try { return (block, PlainHtmlText(renderer.Render(_file, _index, LookupTable, block).html).Trim()); }
+            finally { _file.Position = position; }
+        }
+        return null;
+    }
+
     private (int block, string text)? HeadingParagraph(string style, int from, bool forward)
     {
         string lower = style.Trim().ToLowerInvariant();
@@ -232,7 +290,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             var renderer = new RtfBlockHtmlRenderer(_index.Tables) { FieldContext = _fieldContext };
             long position = _file.Position;
             string html;
-            try { html = renderer.Render(_file, _index, _table, block).html; }
+            try { html = renderer.Render(_file, _index, LookupTable, block).html; }
             finally { _file.Position = position; }
             string marker = "id=\"" + Html.WordHtmlText.Encode(DocxHtml.DocxBlockHtmlRenderer.BookmarkElementId(name)) + "\"></span>";
             string endMarker = "<span class=\"bookmark-end\" data-bookmark=\"" + Html.WordHtmlText.Encode(name) + "\"></span>";
@@ -247,7 +305,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
                 text.Append(PlainHtmlText(after));
                 if (next >= _index.BlockCount || text.Length > 64 * 1024) break;
                 long nextPosition = _file.Position;
-                try { after = renderer.Render(_file, _index, _table, next).html; }
+                try { after = renderer.Render(_file, _index, LookupTable, next).html; }
                 finally { _file.Position = nextPosition; }
                 text.Append(' ');
             }

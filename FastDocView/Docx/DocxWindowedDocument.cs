@@ -189,10 +189,11 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
             RelatedPart = ReadRelatedPart, PictureSize = ReadPictureSize, PartPictureId = PartPictureId,
             FieldContext = DocxFieldProperties.Context(() => new DocxFieldProperties(parts.ReadPartXml, parts.PartNames.Settings), filePath, BookmarkText,
                                                        new FieldLookups(KnownBookmark, () => _index is not null, block => _blocks.ListLabelOf(block)?.Text, NoteMarkOfBookmark,
-                                                                        StyledParagraph, () => Headings, IndexEntries)),
+                                                                        StyledParagraph, () => Headings, IndexEntries, block => _blocks.ListLabelOf(block)?.Context)),
         };
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
+        if (_renderer.FieldContext is { } fieldContext) fieldContext.IsRightToLeftText = IsRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
     }
 

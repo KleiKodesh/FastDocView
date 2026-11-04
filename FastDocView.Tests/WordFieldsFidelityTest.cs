@@ -20,6 +20,7 @@ public static class WordFieldsFidelityTest
         Instructions();
         DocxRendering();
         DocxLookups();
+        DocxListContexts();
     }
 
     private static readonly WordFieldContext English = new() { Culture = CultureInfo.GetCultureInfo("en-US"), Now = new DateTime(2024, 3, 5, 14, 7, 9) };
@@ -371,6 +372,44 @@ public static class WordFieldsFidelityTest
             int[] bytes = Hits(document, query, DocxWindowedDocument.DocxSearchTextMode.Bytes), reference = Hits(document, query, DocxWindowedDocument.DocxSearchTextMode.ReferenceXmlReader);
             TestReport.Check(bytes.SequenceEqual(expected) && reference.SequenceEqual(expected), $"search \"{query}\": [{string.Join(",", expected)}] (bytes [{string.Join(",", bytes)}], reference [{string.Join(",", reference)}])");
         }
+    }
+
+    /// <summary>
+    /// REF \n \r \w on a three-level list and \p in Hebrew text, against Word 16 (COM, 2026-11-04: levels "%1)" "%2)" "%3)" at
+    /// 2) b) i) → \n i), \w 2)b)i), \r i) from inside 2)b) and from outside the list; Hebrew \p "מעל"), TOC \h block links,
+    /// BARCODE \f FIM patterns.
+    /// </summary>
+    private static void DocxListContexts()
+    {
+        const string numbering = """
+            <w:abstractNum w:abstractNumId="1">
+              <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1)"/></w:lvl>
+              <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2)"/></w:lvl>
+              <w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="lowerRoman"/><w:lvlText w:val="%3)"/></w:lvl>
+            </w:abstractNum>
+            <w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>
+            """;
+        const string styles = """<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style>""";
+        string Item(int level, string text, string extra = "") => $"<w:p><w:pPr><w:numPr><w:ilvl w:val=\"{level}\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>{Run(text)}{extra}</w:p>";
+        string body =
+            /* 0 */ "<w:p>" + Complex(" TOC \\o \"1-1\" \\h ", null) + "</w:p>"
+            /* 1 */ + "<w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr>" + Run("Heading A") + "</w:p>"
+            /* 2 */ + Item(0, "one")
+            /* 3 */ + Item(0, "two")
+            /* 4 */ + Item(1, "sub a")
+            /* 5 */ + Item(1, "sub b ", Complex(" REF deep \\r ", null))
+            /* 6 */ + "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"2\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr><w:bookmarkStart w:id=\"9\" w:name=\"deep\"/>" + Run("subsub") + "<w:bookmarkEnd w:id=\"9\"/></w:p>"
+            /* 7 */ + "<w:p>" + Complex(" REF deep \\n ", null) + Run(" | ") + Complex(" REF deep \\w ", null) + Run(" | ") + Complex(" REF deep \\r ", null) + "</w:p>"
+            /* 8 */ + "<w:p>" + Complex(" BARCODE \"1\" \\f A ", null) + Complex(" BARCODE \"1\" \\f C ", null) + "</w:p>";
+        List<string> html = DocxFidelityTest.RenderAll("fields-lists-v1", body, styles, numbering);
+        TestReport.Check(Strip(html[7]) == "i) | 2)b)i) | i)", $"REF \\n / \\w / \\r from outside the list (Word 16: i), 2)b)i), i)): {Strip(html[7])}");
+        TestReport.Check(Strip(html[5]).EndsWith("sub b i)"), $"REF \\r from inside 2)b): the shared levels left out (Word 16: i)): {Strip(html[5])}");
+        TestReport.Check(html[0].Contains("href=\"#block-1\""), "TOC \\h: the entry links to its heading's block");
+        TestReport.Check(html[8].Contains("aria-label=\"FIM A\"") && html[8].Split("<rect").Length - 1 == 5 + 6, "BARCODE \\f A / C: FIM A (5 bars, 110010011), FIM C (6 bars, 110101011)");
+        var hebrew = new WordFieldContext { IsRightToLeftText = true, CurrentBlock = 5, BookmarkBlock = _ => 2, ListLabelOfBlock = _ => "1." };
+        TestReport.Check(Field("REF x \\p", hebrew) == "מעל" && Field("REF x \\n \\p", hebrew) == "1 מעל", "\\p in Hebrew text: מעל (Word 16 wrote it for a Hebrew field)");
+        hebrew.CurrentBlock = 1;
+        TestReport.Check(Field("REF x \\p", hebrew) == "מתחת", "\\p in Hebrew text below: מתחת");
     }
 
     private static int[] Hits(DocxWindowedDocument document, string query, DocxWindowedDocument.DocxSearchTextMode mode)
