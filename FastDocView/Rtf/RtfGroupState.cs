@@ -55,6 +55,9 @@ internal enum RtfStateFlags : uint
     HasStartIndent = 1 << 24, HasEndIndent = 1 << 25,
     ParagraphMask = 0xFFu << 20,
     // group
+    // \lbrN: the clearing of the next \line (1 left, 2 right, 3 all; LibreOffice rtfdispatchvalue.cxx:1779-1800 LBR -> w:br clear),
+    // a character property kept in two bits (not in CharacterMask: \plain resets it explicitly)
+    LineBreakClearLeft = 1u << 28, LineBreakClearRight = 1u << 29, LineBreakClearMask = LineBreakClearLeft | LineBreakClearRight,
     DropText = 1u << 30,          // the ANSI half of \upr (the \ud half is used)
 }
 
@@ -104,7 +107,7 @@ internal struct RtfGroupState
     /// <summary>Character properties back to the document defaults (\plain).</summary>
     public void ResetCharacter(short defaultFont, ushort defaultCodePage)
     {
-        Flags &= ~RtfStateFlags.CharacterMask;
+        Flags &= ~(RtfStateFlags.CharacterMask | RtfStateFlags.LineBreakClearMask);
         RunType = RtfRunType.None;
         Underline = RtfUnderline.None;
         Font = defaultFont; ComplexFont = defaultFont;

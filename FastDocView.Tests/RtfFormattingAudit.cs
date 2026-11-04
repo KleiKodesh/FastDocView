@@ -106,6 +106,24 @@ public static class RtfFormattingAudit
             "version", "vern", "edmins", "nofpages", "nofwords", "nofchars", "nofcharsws", "id", "yr", "mo", "dy", "hr", "min", "sec", "nextfile", "doccomm",
             "hlinkbase", "operator", "company", "manager", "category", "keywords", "comment", "title", "subject", "author", "creatim", "revtim", "printim",
             "buptim", "dbch"]),
+        ("words LibreOffice reads but does not act on - in its keyword table (rtftokenizer.cxx) with no case in rtfdispatchflag.cxx / "
+         + "rtfdispatchvalue.cxx / rtfdispatchsymbol.cxx / rtfdocumentimpl.cxx (master, read 2026-11-04): no cell shading, negative frame offsets, "
+         + "protection, Asian character-unit indent, annotation mark, section endnote numbering, compatibility flags, section expansion", [
+            "clshdrawnil", "posnegx", "posnegy", "protect", "culi", "chatn", "saftnnrlc", "nojkernpunct", "cvmme", "sprsspbf", "swpbdr", "fracwidth",
+            "margmirsxn", "sectexpand"]),
+        ("paged-layout only: page-number format (rtfdispatchflag.cxx:1338-1344 PGNLCRM -> sectPr pgNumType), page borders (:732-760 PGBRDRT.. -> "
+         + "page border sprms), the page number \\chpgn (rtfdispatchsymbol.cxx:598-605: an empty PAGE field - the flow view has no pages, so no result)", [
+            "pgnlcrm", "pgbrdrt", "pgbrdrl", "pgbrdrb", "pgbrdrr", "chpgn"]),
+        ("vertical-text and old drawing-object geometry: \\horzvert sets eastAsianLayout vert (rtfdispatchvalue.cxx:962-970: horizontal text inside "
+         + "vertical text - this view lays text out horizontally), \\dpx is a Word 6 drawing object's left edge (:1558-1559) outside a \\do object here", [
+            "horzvert", "dpx", "dpy", "dpxsize", "dpysize", "dpptx", "dppty", "dplinecob", "dplinew"]),
+        ("read by LibreOffice but without a case in its rtfdispatch*.cxx (master 2026-11-04): the date symbol \\chdate, old paragraph-numbering "
+         + "\\level, picture DPI \\blipupi, \\allprot, shape anchor words (\\shpbypara / \\shpbyignore / \\shpbxcolumn / \\shpbxignore), frame no-overlap "
+         + "\\absnoovrlp, font number \\fn", [
+            "chdate", "level", "blipupi", "allprot", "shpbypara", "shpbyignore", "shpbxcolumn", "shpbxignore", "absnoovrlp", "fn"]),
+        ("paged layout only: page-number formats (rtfdispatchflag.cxx:1314-1344 PGNUCLTR / PGNLCLTR / PGNUCRM -> sectPr pgNumType) and line "
+         + "numbering (:921 LINECONT, rtfdispatchvalue.cxx:1386 LINESTARTS -> lnNumType) - no pages or line numbers in the flow view", [
+            "pgnucltr", "pgnlcltr", "pgnucrm", "linecont", "linestarts"]),
     ];
 
     private static readonly Dictionary<string, string> IgnoredReasonByWord = BuildIgnored();
@@ -121,6 +139,8 @@ public static class RtfFormattingAudit
     private sealed class AuditSink : RtfSink
     {
         public readonly Dictionary<string, int> Unhandled = new(StringComparer.Ordinal);
+        /// <summary>Words that are not RTF control words at all for LibreOffice (not in its keyword table): ignored as it ignores them.</summary>
+        public readonly Dictionary<string, int> UnknownToReaders = new(StringComparer.Ordinal);
         public readonly Dictionary<string, int> Ignored = new(StringComparer.Ordinal);
         public readonly Dictionary<string, int> Skipped = new(StringComparer.Ordinal);
         public override bool WantsText => false;
@@ -129,6 +149,9 @@ public static class RtfFormattingAudit
         public override void UnhandledWord(ReadOnlySpan<byte> name)
         {
             string word = System.Text.Encoding.ASCII.GetString(name.ToArray());
+            // a word LibreOffice's tokenizer does not know (misspelt or damaged input, another tool's word, a wrongly cased one - RTF
+            // control words are case sensitive) is ignored, as LibreOffice ignores it (rtftokenizer.cxx:2169-2175 "unknown keyword")
+            if (!LibreOfficeRtfKeywords.All.Contains(word)) { Increment(UnknownToReaders, word); return; }
             Increment(IgnoredReasonByWord.ContainsKey(word) ? Ignored : Unhandled, word);
         }
 
@@ -166,6 +189,7 @@ public static class RtfFormattingAudit
         var unhandled = new Dictionary<string, int>(StringComparer.Ordinal);
         var unhandledFiles = new Dictionary<string, int>(StringComparer.Ordinal);
         var ignored = new Dictionary<string, int>(StringComparer.Ordinal);
+        var unknown = new Dictionary<string, int>(StringComparer.Ordinal);
         var skipped = new Dictionary<string, int>(StringComparer.Ordinal);
         var failures = new List<string>();
         var suspectEncoding = new List<string>();
@@ -187,6 +211,7 @@ public static class RtfFormattingAudit
                 AuditSink sink = AuditFile(path);
                 foreach (KeyValuePair<string, int> pair in sink.Unhandled) { unhandled[pair.Key] = unhandled.GetValueOrDefault(pair.Key) + pair.Value; Increment(unhandledFiles, pair.Key); }
                 foreach (KeyValuePair<string, int> pair in sink.Ignored) ignored[pair.Key] = ignored.GetValueOrDefault(pair.Key) + pair.Value;
+                foreach (KeyValuePair<string, int> pair in sink.UnknownToReaders) unknown[pair.Key] = unknown.GetValueOrDefault(pair.Key) + pair.Value;
                 foreach (KeyValuePair<string, int> pair in sink.Skipped) skipped[pair.Key] = skipped.GetValueOrDefault(pair.Key) + pair.Value;
             }
             catch (Exception exception) { failures.Add($"audit {exception.GetType().Name}: {exception.Message} - {path}"); }
@@ -220,6 +245,8 @@ public static class RtfFormattingAudit
         Console.WriteLine($"   done in {watch.Elapsed:mm\\:ss}: {opened:N0} opened + rendered, {blocks:N0} blocks, {notRtf} not RTF, {unavailable} not readable (cloud placeholders)");
         Console.WriteLine($"   largest: {slowest.bytes >> 10} KB, open {slowest.openMs:0} ms, 3 windows {slowest.windowMs:0} ms");
         Print(unhandled, ignored, skipped, unhandledFiles);
+        Console.WriteLine($"   not RTF control words (unknown to LibreOffice's tokenizer, ignored as it ignores them): {unknown.Count} - "
+                          + string.Join(" ", unknown.OrderByDescending(p => p.Value).Take(40).Select(p => "\\" + p.Key)));
         Console.WriteLine("   failures:");
         if (failures.Count == 0) Console.WriteLine("      none");
         foreach (string failure in failures.Take(30)) Console.WriteLine("      " + Ascii(failure));

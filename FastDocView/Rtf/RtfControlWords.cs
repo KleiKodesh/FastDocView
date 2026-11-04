@@ -36,7 +36,7 @@ internal enum RtfWord : byte
     Plain, Bold, Italic, AssociatedBold, AssociatedItalic, Underline, UnderlineDouble, UnderlineDotted, UnderlineDashed, UnderlineWave,
     UnderlineThick, UnderlineWords, UnderlineNone, Strike, StrikeDouble, FontSize, AssociatedFontSize, ForegroundColor, BackgroundColor,
     CharacterShading, Highlight, Superscript, Subscript, NoSuperSubscript, RaisedPosition, LoweredPosition, Hidden, AllCaps, SmallCaps,
-    Outline, Shadow, Emboss, Imprint, CharacterSpacing, RightToLeftCharacters, LeftToRightCharacters,
+    Outline, Shadow, Emboss, Imprint, CharacterSpacing, RightToLeftCharacters, LeftToRightCharacters, LineBreakClear,
 }
 
 /// <summary>
@@ -134,6 +134,7 @@ internal static class RtfControlWords
         ("nosupersub", RtfWord.NoSuperSubscript), ("up", RtfWord.RaisedPosition), ("dn", RtfWord.LoweredPosition), ("v", RtfWord.Hidden),
         ("caps", RtfWord.AllCaps), ("scaps", RtfWord.SmallCaps), ("outl", RtfWord.Outline), ("shad", RtfWord.Shadow), ("embo", RtfWord.Emboss),
         ("impr", RtfWord.Imprint), ("expndtw", RtfWord.CharacterSpacing), ("rtlch", RtfWord.RightToLeftCharacters), ("ltrch", RtfWord.LeftToRightCharacters),
+        ("lbr", RtfWord.LineBreakClear),
     ];
 
     static RtfControlWords()

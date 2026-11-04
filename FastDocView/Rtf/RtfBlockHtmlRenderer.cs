@@ -269,7 +269,14 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         FlushRun();
         StringBuilder target = _listTextTarget ?? _flow.Inline;
         if (word == RtfWord.Page) target.Append("<span class=\"page-break\"></span>");
-        else if (word == RtfWord.Line) target.Append("<br>");
+        else if (word == RtfWord.Line)
+            target.Append((state.Flags & RtfStateFlags.LineBreakClearMask) switch
+            {
+                RtfStateFlags.LineBreakClearLeft => "<br style=\"clear:left\">",
+                RtfStateFlags.LineBreakClearRight => "<br style=\"clear:right\">",
+                RtfStateFlags.LineBreakClearMask => "<br style=\"clear:both\">",
+                _ => "<br>",
+            });
         _flow.HasInline = true;
     }
 

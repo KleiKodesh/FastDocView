@@ -76,6 +76,15 @@ public static class RtfShapesFidelityTest
         }
         catch (Exception exception) { TestReport.Check(false, "the index and a window segment alike: " + exception.Message); }
 
+        TestReport.Step(@"RTF: \lbrN clears the next \line (LibreOffice rtfdispatchvalue.cxx:1779-1800 LBR -> w:br clear)");
+        string clear = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-rtf-line-break-clear.rtf");
+        File.WriteAllText(clear, @"{\rtf1\ansi{\fonttbl{\f0 Arial;}}\pard one\lbr3\line two\lbr1\line three{\plain\line four}\par}");
+        {
+            using IWordWindowedDocument breaks = WordWindowedDocumentOpener.Open(clear, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+            string lines = breaks.RenderBlocks(0, breaks.BlockCount)[0].Html;
+            TestReport.Check(lines.Contains("one<br style=\"clear:both\">two<br style=\"clear:left\">three") && lines.Contains("<br>four"), "line break clearing: all, left, reset by \\plain (" + lines + ")");
+        }
+
         TestReport.Step("RTF shapes: the .odt shapes fixture saved as .rtf by LibreOffice");
         string fodt = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-odt-shapes.fodt");
         if (!File.Exists(fodt)) OdtShapesFidelityTest.Run();

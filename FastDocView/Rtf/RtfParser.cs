@@ -837,6 +837,10 @@ internal sealed class RtfParser
                     case RtfWord.Row: _sink.RowEnd(state, isNested: false); return;
                     default: _sink.RowEnd(state, isNested: true); return;
                 }
+            case RtfWord.LineBreakClear:
+                state.Flags = (state.Flags & ~RtfStateFlags.LineBreakClearMask)
+                              | (parameter is >= 1 and <= 3 ? (RtfStateFlags)((uint)parameter << 28) : 0);
+                return;
             case RtfWord.Page: case RtfWord.Line: case RtfWord.Column:
                 if (IsTextDestination(state)) _sink.Break(word, state);
                 return;
