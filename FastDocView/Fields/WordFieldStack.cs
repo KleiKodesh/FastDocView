@@ -28,6 +28,8 @@ public sealed class WordFieldStack
         public bool IsSeparated;
         public bool IsDirty;
         public bool IsLocked;
+        /// <summary>The result is private data, not for display (.doc FLD fPrivateResult 0x20, RTF ldpriv): it never shows.</summary>
+        public bool IsPrivateResult;
         public WordFormFieldState? Form;
         /// <summary>The cached result is not shown (placeholder, hidden, recomputed, or inside another field's code).</summary>
         public bool SuppressesResult;
@@ -88,7 +90,9 @@ public sealed class WordFieldStack
         field.Parsed = WordFieldInstruction.Parse(field.Instruction.ToString());
         field.IsInsideInstruction = IsInsideInstruction(_fields.Count - 1);
         if (field.IsInsideInstruction) return;
-        field.SuppressesResult = WordFieldEvaluator.DisplayOf(field.Parsed.Name) != WordFieldDisplay.Result;
+        // as Finish decided at the separator: a placeholder / hidden field, or one drawn from its code, replaced its cached result
+        field.SuppressesResult = WordFieldEvaluator.DisplayOf(field.Parsed.Name) != WordFieldDisplay.Result
+                                 || WordFieldEvaluator.IsDrawnFromCode(field.Parsed.Name) && field.Parsed.Name != "SYMBOL";
         field.LinkTag = LinkTagOf?.Invoke(field.Instruction.ToString());
     }
 
@@ -181,8 +185,9 @@ public sealed class WordFieldStack
         string code = field.Instruction.ToString();
         WordFieldInstruction instruction = field.Parsed = WordFieldInstruction.Parse(code);
         field.IsInsideInstruction = IsInsideInstruction(_fields.IndexOf(field));
+        // a counted field inside another field's code is part of that code, not counted (as the index passes count)
         int? counted = null;
-        if (Counters is not null && WordFieldEvaluator.IsCounted(instruction.Name)) counted = WordFieldEvaluator.Count(instruction, Counters);
+        if (Counters is not null && !field.IsInsideInstruction && WordFieldEvaluator.IsCounted(instruction.Name)) counted = WordFieldEvaluator.Count(instruction, Counters);
         if (field.IsInsideInstruction)
         {
             // the cached result (or a computed one at End) becomes part of the enclosing code
@@ -190,6 +195,13 @@ public sealed class WordFieldStack
             return WordFieldOutput.None;
         }
         field.LinkTag = LinkTagOf?.Invoke(code);
+        // a private result is not for display (Word marks form fields so: RTF {ieldldpriv{\*ldinst FORMCHECKBOX ...}}); a field
+        // drawn from its code still draws
+        if (field.IsPrivateResult)
+        {
+            field.SuppressesResult = true;
+            return WordFieldEvaluator.IsDrawnFromCode(instruction.Name) && !field.IsLocked ? WordFieldEvaluator.Compute(instruction, Context, counted, field.Form) : WordFieldOutput.None;
+        }
         WordFieldDisplay display = WordFieldEvaluator.DisplayOf(instruction.Name);
         if (display != WordFieldDisplay.Result)
         {

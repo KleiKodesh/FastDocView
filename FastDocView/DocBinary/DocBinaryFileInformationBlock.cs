@@ -41,6 +41,7 @@ public sealed class DocBinaryFileInformationBlock
     public (uint offset, uint length) DocumentProperties { get; }  // Dop (index 31)
     public (uint offset, uint length) BookmarkNames { get; }       // SttbfBkmk (index 21; LibreOffice ww8scan.cxx WW8Fib read order)
     public (uint offset, uint length) BookmarkStarts { get; }      // PlcfBkf (index 22)
+    public (uint offset, uint length) BookmarkEnds { get; }        // PlcfBkl (index 23; ww8scan.cxx WW8Fib read order: Plcfbkf, Plcfbkl)
     public (uint offset, uint length) MainShapeAnchors { get; }    // PlcSpaMom (index 40; LibreOffice ww8scan.cxx:6117 read order)
     public (uint offset, uint length) DrawingGroup { get; }        // OfficeArtContent at fcDggInfo (index 50; ww8scan.cxx:6138)
     public (uint offset, uint length) TextBoxTexts { get; }        // PlcftxbxTxt (index 56; ww8scan.cxx:6138-6150 read order)
@@ -112,6 +113,7 @@ public sealed class DocBinaryFileInformationBlock
         DocumentProperties = FcLcb(fib, 31);
         BookmarkNames = FcLcb(fib, 21);
         BookmarkStarts = FcLcb(fib, 22);
+        BookmarkEnds = FcLcb(fib, 23);
         MainShapeAnchors = FcLcb(fib, 40);
         DrawingGroup = FcLcb(fib, 50);
         TextBoxTexts = FcLcb(fib, 56);
@@ -119,7 +121,13 @@ public sealed class DocBinaryFileInformationBlock
         HeaderShapeAnchors = FcLcb(fib, 41);
         HeaderTextBoxTexts = FcLcb(fib, 58);
         HeaderTextBoxBreaks = FcLcb(fib, 76);
+        foreach (int pair in (int[])[16, 17, 18, 48, 57, 59]) _fieldTables[pair] = FcLcb(fib, pair);
     }
+
+    private readonly Dictionary<int, (uint, uint)> _fieldTables = new();
+
+    /// <summary>A PlcFld (FibRgFcLcb97 pair 16 main, 17 headers, 18 footnotes, 48 endnotes, 57 text boxes, 59 header text boxes - see DocBinaryFields); (0, 0) when absent.</summary>
+    public (uint offset, uint length) FieldTable(int pair) => _fieldTables.TryGetValue(pair, out var table) ? table : (0, 0);
 
     private readonly int _fcLcbCount;
 

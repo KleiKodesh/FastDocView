@@ -16,7 +16,7 @@ internal sealed class DocxBodyBlockScanner
 {
     private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData, DocumentType }
 
-    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, DeletedContent, SectionProperties, PageSize, PageMargins, BookmarkStart }
+    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, SimpleField, DeletedContent, SectionProperties, PageSize, PageMargins, BookmarkStart }
 
     private const int MaxRootTagBytes = 1 << 16;
     private const int MaxHeadingTextBytes = 600;
@@ -355,7 +355,7 @@ internal sealed class DocxBodyBlockScanner
         {
             KnownTag.ParagraphStyle => _depth == _bodyDepth + 2,
             KnownTag.NumberingId or KnownTag.NumberingLevel => _depth == _bodyDepth + 3,
-            KnownTag.FootnoteReference or KnownTag.EndnoteReference or KnownTag.FieldCharacter => _depth > _bodyDepth,
+            KnownTag.FootnoteReference or KnownTag.EndnoteReference or KnownTag.FieldCharacter or KnownTag.SimpleField => _depth > _bodyDepth,
             KnownTag.BookmarkStart => _depth >= _bodyDepth,      // also between paragraphs (a body child of its own)
             KnownTag.PageSize or KnownTag.PageMargins => _sectionDepth >= 0 && _depth == _sectionDepth + 1,
             _ => false,
@@ -390,7 +390,7 @@ internal sealed class DocxBodyBlockScanner
                 return KnownTag.Other;
             case 9: return name.SequenceEqual("w:fldChar"u8) ? KnownTag.FieldCharacter : KnownTag.Other;
             case 10: return name.SequenceEqual("w:moveFrom"u8) ? KnownTag.DeletedContent : KnownTag.Other;
-            case 11: return name.SequenceEqual("w:instrText"u8) ? KnownTag.FieldInstruction : KnownTag.Other;
+            case 11: return name.SequenceEqual("w:instrText"u8) ? KnownTag.FieldInstruction : name.SequenceEqual("w:fldSimple"u8) ? KnownTag.SimpleField : KnownTag.Other;
             case 15: return name.SequenceEqual("w:bookmarkStart"u8) ? KnownTag.BookmarkStart : KnownTag.Other;
             case 18: return name.SequenceEqual("w:endnoteReference"u8) ? KnownTag.EndnoteReference : KnownTag.Other;
             case 19: return name.SequenceEqual("w:footnoteReference"u8) ? KnownTag.FootnoteReference : KnownTag.Other;
@@ -584,6 +584,15 @@ internal sealed class DocxBodyBlockScanner
             return;
         }
         if (BlockStyleIds.Count == 0) return;
+        if (_tag == KnownTag.SimpleField)
+        {
+            // a w:fldSimple SEQ / AUTONUM / LISTNUM counts like a complex one (the renderer and the search count it)
+            if (_deletedContentDepth > 0) return;
+            foreach ((_, bool isSeparated) in _openFields) if (!isSeparated) return;
+            var parsed = Fields.WordFieldInstruction.Parse(System.Net.WebUtility.HtmlDecode(AttributeValue(attributes, "w:instr=") ?? ""));
+            if (Fields.WordFieldEvaluator.IsCounted(parsed.Name)) Fields.WordFieldEvaluator.Count(parsed, _fieldCounters);
+            return;
+        }
         if (_tag == KnownTag.FieldCharacter)
         {
             if (_deletedContentDepth > 0) return;                // the renderer skips deleted runs: their field characters do not count

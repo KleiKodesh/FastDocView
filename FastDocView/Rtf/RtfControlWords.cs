@@ -17,7 +17,8 @@ internal enum RtfWord : byte
     //  page setup (document defaults, then per section) 
     PaperWidth, LeftMargin, RightMargin, Gutter, SectionDefault, SectionPageWidth, SectionLeftMargin, SectionRightMargin, SectionGutter,
     // ── destinations rendered ──
-    Footnote, FootnoteIsEndnote, Field, FieldResult, FieldInstruction, BookmarkStart, ListText, ParagraphNumberText, UnicodePair, UnicodeDestination,
+    Footnote, FootnoteIsEndnote, Field, FieldResult, FieldInstruction, FieldLock, FieldPrivate, FormField, FormFieldType, FormFieldResult,
+    FormFieldDefaultResult, FormFieldListEntry, FormFieldDefaultText, BookmarkStart, ListText, ParagraphNumberText, UnicodePair, UnicodeDestination,
     Picture, ShapePicture, NonShapePicture, Shape, ShapeGroup, ShapeInstruction, ShapeResult, ShapeText, ShapeProperty, ShapePropertyName, ShapePropertyValue,
     ShapeLeft, ShapeTop, ShapeRight, ShapeBottom, ShapeWrap, ShapeWrapSide, ObjectGroup, MathGroup, NestedTableProperties,
     // ── unicode / special characters ──
@@ -103,6 +104,9 @@ internal static class RtfControlWords
         ("margrsxn", RtfWord.SectionRightMargin), ("guttersxn", RtfWord.SectionGutter),
         ("footnote", RtfWord.Footnote), ("ftnalt", RtfWord.FootnoteIsEndnote), ("field", RtfWord.Field), ("fldrslt", RtfWord.FieldResult),
         ("fldinst", RtfWord.FieldInstruction), ("bkmkstart", RtfWord.BookmarkStart),
+        // fields: RTF 1.5 spec "Fields" <fieldmod> and "Form Fields" (LibreOffice rtfdispatchvalue.cxx:1426-1455 FFTYPE / FFDEFRES / FFRES)
+        ("fldlock", RtfWord.FieldLock), ("fldpriv", RtfWord.FieldPrivate), ("formfield", RtfWord.FormField), ("fftype", RtfWord.FormFieldType),
+        ("ffres", RtfWord.FormFieldResult), ("ffdefres", RtfWord.FormFieldDefaultResult), ("ffl", RtfWord.FormFieldListEntry), ("ffdeftext", RtfWord.FormFieldDefaultText),
         ("listtext", RtfWord.ListText), ("pntext", RtfWord.ParagraphNumberText), ("upr", RtfWord.UnicodePair), ("ud", RtfWord.UnicodeDestination),
         ("pict", RtfWord.Picture), ("shppict", RtfWord.ShapePicture), ("nonshppict", RtfWord.NonShapePicture), ("shp", RtfWord.Shape),
         ("shpgrp", RtfWord.ShapeGroup), ("shpinst", RtfWord.ShapeInstruction), ("shprslt", RtfWord.ShapeResult), ("shptxt", RtfWord.ShapeText),

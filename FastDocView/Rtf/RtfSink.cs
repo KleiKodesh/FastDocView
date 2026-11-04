@@ -63,6 +63,10 @@ internal abstract class RtfSink
     public virtual void FieldInstruction(string instruction) { }
     /// <summary>The field's {\fldrslt ...} group opened: what follows is the shown result.</summary>
     public virtual void FieldResultStart() { }
+    /// <summary>\fldlock / \fldpriv in the field's group (RTF 1.5 spec "Fields" &lt;fieldmod&gt;).</summary>
+    public virtual void FieldModifier(RtfWord word) { }
+    /// <summary>The field's {\*\formfield} data, when its group closed (reported before the code's <see cref="FieldInstruction"/>).</summary>
+    public virtual void FormField(Fields.WordFormFieldState state) { }
     /// <summary>{\*\bkmkstart name} closed: a bookmark starts here.</summary>
     public virtual void BookmarkStart(string name) { }
 }

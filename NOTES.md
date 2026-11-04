@@ -219,7 +219,7 @@ roman, hebrew1 (gematria with geresh/gershayim), hebrew2, bullets, `%1.%2` patte
 Deliberately not done yet:
 
 - **Images** — drawn since 2026-11-03 (see "Pictures, tables, list gaps" below); .doc pictures and floating RTF \shp are still `[image]`.
-- **Fields** — `w:fldSimple`/`instrText` show their result text only.
+- **Fields** — done 2026-11-04: see "Word fields (all formats)" below.
 - **Word 6/95, encrypted, MHTML-as-.doc** — rejected with a clear message (RTF, also when saved as .doc, opens as RTF).
 
 ## Coverage plan — "full flow-preview coverage" (estimate 2–3 weeks, not months)
@@ -242,7 +242,7 @@ Ordered by value for text-heavy Hebrew documents:
    Wrap on both sides of a centred object is not possible in CSS: CSS Shapes 1 section 2 ("does not allow content to wrap
    on both sides of a float"); a centred square wrap stays top-and-bottom.
 6. Paragraph borders/shading, tab stops (`w:tabs` positions), character spacing/scale, caps/small caps, underline styles, `w:lvlRestart`, legal numbering.
-7. Fields — `fldSimple`/`fldChar` result text (done) + `HYPERLINK`, `REF`, `PAGEREF` targets as anchors; `TOC` left as text.
+7. ~~Fields~~ — done for .docx / .doc / .rtf (see "Word fields (all formats)").
 8. Tracked changes toggle (show/hide `w:ins`/`w:del`), comments ignored.
 9. Math (`m:oMath`) → MathML (ECMA-376 §22.1 maps almost 1:1).
 10. `.doc`: ~~fonts (Sttbfffn), lists (PlcfLst/LFO → the same label counter), footnotes (PlcffndRef/Txt), tables~~ done; the remaining common sprms.
@@ -1084,9 +1084,7 @@ and the app schemes (otzaria, zayit, kitveihakodeshapp, seforimapp) become links
 
 - On-demand indexes (.docx, .odt) scan on only until the bookmark turns up (`WordDocumentBookmarkScanLookup`).
 - `_GoBack` is skipped (.docx, .doc). Reference marks share the bookmark lookup (first name wins).
-- Known limits: an RTF / .doc link field whose result spans paragraphs links in each paragraph it
-  reaches only if the field started in that block (no per-block open-field state for these formats
-  yet - .docx has it); .doc bookmarks in notes / headers are not targets; RTF bookmarks inside a
+- Known limits (fixed 2026-11-04: .doc and .rtf now restore the fields open at a block start, see "Word fields"); .doc bookmarks in notes / headers are not targets; RTF bookmarks inside a
   footnote mark the block holding the note.
 - Harness: `LinksAllFormatsTest` (odt, rtf), `DocBinaryLinksTest` (.doc written by LibreOffice from a
   small .odt; skipped without LibreOffice), in `--fidelity`.
@@ -1544,3 +1542,51 @@ EnhancedCustomShapeGeometry.cxx (default filling / stroking tables :6155-6213); 
   gradient spans the text, not the shape's box. The page copies the paint over the union of the bent ink and the single-line
   text boxes (linear gradients laid out again at their angle, rectangular shades mapped, patterns keep their tile); live check
   on the inflate fixture (its gradient runs from the ink's top to its bottom).
+
+## Word fields (all formats) (branch work/word-fields, 2026-11-04)
+
+One engine in `Fields/` for .docx, .doc and .rtf; each format only finds the field marks:
+
+| Format | Begin / separator / end | Flags | Open fields at a block start |
+|---|---|---|---|
+| .docx | w:fldChar begin / separate / end (any run, any paragraph), w:fldSimple w:instr | w:dirty, w:fldLock; w:ffData form state | open-field stacks + a `C` counters entry per block (index format 14) |
+| .doc | 0x13 / 0x14 / 0x15 in the text | PlcFld per story (FibRgFcLcb97 16 / 17 / 18 / 48 / 57 / 59, ww8scan.cxx WW8Fib read order): fResultDirty 0x04, fLocked 0x10, fPrivateResult 0x20 (POI FLDAbstractType.java:34-41; LibreOffice ww8par5.cxx:1628); FFData at the code's 0x01 data location + 68 (PICF, ww8graf2.cxx:442-457; ww8par3.cxx:2127-2240) | rebuilt per block from PlcFld (`DocBinaryFields.OpenAt`: parent chain, code re-read); counters computed once on first need |
+| .rtf | {\field ... {\*\fldinst} {\fldrslt}} | \fldlock, \fldpriv (\flddirty is a formatting mark in RTF 1.5 "Fields", not a recalculation); {\*\formfield} \fftype \ffres \ffdefres {\*\ffl} {\*\ffdeftext} (RTF 1.5 "Form Fields"; LibreOffice rtfdispatchvalue.cxx:1426-1455) | anchor heads carry the open fields + counters, span rescans track them per block (index format 7) |
+
+- `WordFieldStack` decides what shows: codes never; a nested field's result inside a code is part of that code
+  ({ IF { = 2+2 } = 4 ...}); a cached result once; a page-number field (PAGE, PAGEREF, NUMPAGES, SECTION, SECTIONPAGES)
+  is a placeholder `<span class="field-page-placeholder">#</span>` (PAGEREF \h still links); XE / TC / TA / RD / SET /
+  ASK / PRIVATE / NEXT / NEXTIF / SKIPIF / PRINT show nothing; a private result (.doc fPrivateResult, RTF \fldpriv - Word
+  marks form fields so) never shows. Computed: a field with no result, a dirty one that is not locked (.docx w:dirty, .doc
+  fResultDirty) and the fields Word draws from their code (EQ, MACROBUTTON, GOTOBUTTON, LISTNUM, AUTONUM*, ADVANCE,
+  FORMCHECKBOX, FORMDROPDOWN, SYMBOL - their result text is empty in Word 16). Locked = never recomputed.
+- Search reads exactly that: a cached result once, computed text, never codes, placeholders or hidden fields. Every
+  reader runs the same stack: .docx byte scanner + reference XmlReader (notes with fields go to the parsed path), .doc one
+  pass + per-block ranges, .rtf span search + per-block reparse.
+- Computed (Word 16 on the dev machine is the reference: COM Fields.Add + Update; values in WordFieldsFidelityTest):
+  `=` formulas (17.16.3; -2^2 = 4; the default result rounds to max(2, decimals written); table cells A1 / A1:B2 / RnCn /
+  LEFT / RIGHT / ABOVE / BELOW; bookmarks; Word's error texts), IF, COMPARE (wildcards), QUOTE (an unquoted number is a
+  character code), SYMBOL (symbol fonts through U+F0xx), MERGEFIELD «name», DATE / TIME (the system culture's short
+  patterns), CREATEDATE / SAVEDATE / PRINTDATE and AUTHOR ... NUMWORDS / DOCPROPERTY / DOCVARIABLE / INFO / FILENAME /
+  FILESIZE from the document's properties (docProps core / app / custom + settings docVars; OLE SummaryInformation +
+  DocumentSummaryInformation, PIDs from POI PropertyIDMap.java; RTF {\info} \userprops \docvar), SEQ (\r \c \h \s, counted
+  at index time), AUTONUM* and LISTNUM (one counter / one level set shared by all list names, as Word 16 counts), REF
+  (bookmark text), form fields (checkbox ☒ / ☐, drop-down entry, text default), MACROBUTTON / GOTOBUTTON text
+  (GOTOBUTTON links), EQ as MathML Core (\a \b \d \f \i \l \o \r \s \x), ADVANCE \l / \r as a gap.
+- Switches: \* Arabic ArabicDash alphabetic / ALPHABETIC roman / ROMAN Ordinal OrdText CardText DollarText Hex hebrew1
+  (up to 392) hebrew2 (one ת per 22 - Word's field rule, not the list rule) Upper Lower FirstCap Caps; a \* number format
+  wins over \#; \# pictures (0 # x . , - + 'text', ; sections, half away from zero); \@ date pictures.
+- Not computed (the cached result shows; with none, nothing - as Word shows a field it has not updated): TOC / INDEX /
+  TOA building (a built table is new paragraphs, and the windowed block index cannot grow blocks inside a field - the
+  CLAUDE.md paradigm), STYLEREF, NOTEREF, REF \n \r \w \p (paragraph numbers), BARCODE, INCLUDETEXT / INCLUDEPICTURE (never
+  fetched), USERNAME / USERINITIALS / USERADDRESS without an argument (Word's user settings, not the document's).
+  ADVANCE \u \d \x \y move text in a page layout only. DATE \h / \s: Word 16 on a Hebrew system wrote the same Gregorian
+  date with \h. Number words are English (Word 16 wrote English CardText for Hebrew text too); DollarText's "and" follows
+  Word's UI language (the Hebrew UI wrote "ו-"; we write "and"); error texts are Word 16's Hebrew ones.
+- RTF REF without a result reads the bookmark's paragraph from {\*\bkmkstart} on (the parser does not read \bkmkend).
+- **Paged view TODO**: PAGE / NUMPAGES / SECTION / SECTIONPAGES / PAGEREF placeholders get their numbers when the paged
+  view lays out pages.
+- Harness: `--fields` (seconds; also in `--fidelity`): WordFieldsFidelityTest (switches, formulas, counters, .docx render
+  + both search readers), WordFieldsOtherFormatsTest (test-data/word-fields/fields-v1.doc / .rtf saved by Word 16 with
+  make-fields-fixtures.ps1, and hand-written RTF: no \fldrslt, \fldlock, \fldpriv, \formfield, counters across index
+  anchors).

@@ -88,6 +88,9 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         _table = new RtfCompactBlockTable(index, file);
         Decision = decision;
         _renderer = new RtfBlockHtmlRenderer(index.Tables);
+        _fieldContext = FieldContextFor(filePath);
+        _renderer.FieldContext = _fieldContext;
+        _table.FieldContext = _fieldContext;
         foreach (RtfNoteReference note in index.NoteReferences)
             if (note.Kind == WordDocumentNoteKind.Footnote) _footnoteCount++; else _endnoteCount++;
         Stylesheet = WordDocumentHtmlStylesheet.Build(RtfBlockHtmlRenderer.DocumentRunFormatting(index.Tables), IsRightToLeft);
@@ -151,7 +154,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
                 int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
                 var hits = new List<int>();
                 var counts = new List<int>();
-                _searchSink ??= new RtfSearchTextSink(_index.Tables);
+                _searchSink ??= new RtfSearchTextSink(_index.Tables, _fieldContext);
                 for (int blockIndex = fromBlock; blockIndex < end; blockIndex++)
                 {
                     matcher.Reset();
@@ -164,6 +167,55 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         }
     }
     private RtfSearchTextSink? _searchSink;
+    private readonly Fields.WordFieldContext _fieldContext;
+    private bool _isReadingBookmarkText;
+
+    private Fields.WordFieldContext FieldContextFor(string path)
+    {
+        RtfFieldProperties? properties = null;
+        RtfFieldProperties Properties()
+        {
+            if (properties is not null) return properties;
+            long position = _file.Position;
+            try { return properties = new RtfFieldProperties(_file); }
+            finally { _file.Position = position; }
+        }
+        long? size = null;
+        try { size = File.Exists(path) ? new FileInfo(path).Length : null; } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        return new Fields.WordFieldContext
+        {
+            DocumentProperty = name => Properties().Property(name),
+            DocumentDate = name => Properties().Date(name),
+            DocumentVariable = name => Properties().Variable(name),
+            FileName = Path.GetFileName(path), FilePath = path, FileSize = size,
+            BookmarkText = BookmarkText,
+        };
+    }
+
+    /// <summary>
+    /// A REF Word saved without a result: the text after the bookmark's start in the block that holds it (the parser reads
+    /// {\*kmkstart} only - RTF 1.5 "Bookmarks" - so the paragraph's rest stands for the bookmarked text); null when there
+    /// is no such bookmark.
+    /// </summary>
+    private string? BookmarkText(string name)
+    {
+        if (_isReadingBookmarkText || FindBookmark(name) is not { } block) return null;
+        _isReadingBookmarkText = true;
+        try
+        {
+            // its own renderer: this runs while the document's renderer is mid-block
+            var renderer = new RtfBlockHtmlRenderer(_index.Tables) { FieldContext = _fieldContext };
+            long position = _file.Position;
+            string html;
+            try { html = renderer.Render(_file, _index, _table, block).html; }
+            finally { _file.Position = position; }
+            string marker = "id=\"" + Html.WordHtmlText.Encode(DocxHtml.DocxBlockHtmlRenderer.BookmarkElementId(name)) + "\"></span>";
+            int at = html.IndexOf(marker, StringComparison.Ordinal);
+            string after = at < 0 ? html : html.Substring(at + marker.Length);
+            return System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Replace(after, "<[^>]+>", "")).Trim();
+        }
+        finally { _isReadingBookmarkText = false; }
+    }
 
     public IReadOnlyList<WordDocumentBlockHtml> RenderBlocks(int firstBlockIndex, int count)
     {

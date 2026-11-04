@@ -56,6 +56,7 @@ internal sealed class RtfCompactBlockTable
         WordIndexSpanAnchor anchor = Anchors[anchorIndex];
         RtfRandomAccessIndexBuilder scanner = RtfRandomAccessIndexBuilder.ResumableSpan(_file, _index.Tables, anchor.Position, _index.ScanStateOf(anchorIndex),
                                                                                         SpanEnd(anchorIndex), isLast: anchorIndex + 1 >= Anchors.Length);
+        scanner.FieldContext = FieldContext;
         var span = new Span { Anchor = anchorIndex, Scanner = scanner, LastUse = ++_useCounter };
         _spans[anchorIndex] = span;
         return span;
@@ -124,6 +125,11 @@ internal sealed class RtfCompactBlockTable
     public int BlockTextLengthOf(int blockIndex) => SpanOf(blockIndex, out int local).TextLengths[local];
     /// <summary>The parser's group-state snapshot at the block's first byte (what a window restores before parsing its bytes).</summary>
     public byte[] SnapshotOf(int blockIndex) => SpanOf(blockIndex, out int local).SnapshotOf(local);
+    /// <summary>The fields open where a block starts and the field counters there (RtfFieldTracker.Serialize).</summary>
+    public string FieldStateOf(int blockIndex) => SpanOf(blockIndex, out int local).FieldStateOf(local);
+
+    /// <summary>What a span search computes field results from (the renderer's context).</summary>
+    public Fields.WordFieldContext? FieldContext { get; set; }
     public string? ListLabelOf(int blockIndex) => SpanOf(blockIndex, out int local).LabelOf(local);
 
     public int ListLevelOf(int blockIndex)

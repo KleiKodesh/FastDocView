@@ -455,3 +455,18 @@ window) and the p95 (a slow path hit by more than one window in twenty); the wor
   lcl_getNormalizedCircleAngleRad); the earlier parametric reading put 45-degree arcs on 2:1 ellipses off the 45-degree ray.
   A theme a:ln without its own fill draws no line (getActualLineProperties) - fixtures need the solidFill phClr Word writes.
 
+
+## 2026-11-04: Word fields - what Word 16 really does
+
+- Word marks form fields \fldpriv in RTF (fPrivateResult in .doc): a "private result" rule that hides results must not
+  hide the checkbox / drop-down Word draws from the code.
+- A .doc form field's 0x01 carries sprmCFData, which the picture reader takes as "an object, no picture"; the FFData
+  location must be read regardless (DocBinaryParagraphHtmlRenderer.DataLocationAt).
+- Field hebrew2 is not list hebrew2: 23 → תא, 45 → תתא (one ת per full 22). Field hebrew1 stops at 392 with an error.
+- A formula's default precision is max(2, decimals written in it): = 1/3 → 0.33 but = 0.001 → 0.001.
+- MACROBUTTON keeps the code's trailing space; GOTOBUTTON shows only the first word unless quoted.
+- Error and DollarText strings follow Word's UI language (Hebrew on the dev machine); day / month names follow the
+  system's regional settings, not the text's language.
+- The harness's minimal .docx packages open in our readers but Word calls them damaged: build Word fixtures with Word
+  itself (test-data/word-fields/make-fields-fixtures.ps1), not by converting the harness's files.
+- Old harness checks used PAGE as "a field with a result": page fields are placeholders now, so such fixtures use AUTHOR.

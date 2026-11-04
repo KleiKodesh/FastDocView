@@ -49,14 +49,24 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     private string? _indexListLabel;
     private bool _isFirstParagraph;
 
-    // fields open in this block: the \field group depth, its instruction, and the flow its link was opened in (null: no link)
-    private readonly List<(int depth, string instruction, Flow? linkFlow)> _fields = new();
+    // fields open here (restored per block from the index), and per open field the flow its link was opened in (null: no link)
+    private RtfFieldTracker _fields;
+    private readonly List<(int depth, Flow? linkFlow)> _fieldLinks = new();
+
+    /// <summary>What fields Word saved without a result are computed from (the {\info} properties, bookmarks); null: the code only.</summary>
+    public Fields.WordFieldContext? FieldContext
+    {
+        get => _fieldContext;
+        set { _fieldContext = value; _fields = new RtfFieldTracker(value, counts: true); }
+    }
+    private Fields.WordFieldContext? _fieldContext;
 
     public RtfBlockHtmlRenderer(RtfDocumentTables tables)
     {
         _tables = tables;
         _parser = new RtfParser(this, tables, readsHeaderTables: false);
         _documentRun = DocumentRunFormatting(tables);
+        _fields = new RtfFieldTracker(null, counts: true);
     }
 
     /// <summary>The run formatting the stylesheet gives the whole document (\deff font, 12 pt — \fs default 24).</summary>
@@ -77,7 +87,11 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _renderedNotes = notes.Length == 0 ? null : new List<WordDocumentNoteHtml>(notes.Length);
         _indexListLabel = table.ListLabelOf(blockIndex);
         _isFirstParagraph = true;
-        _fields.Clear();
+        _fields.Restore(table.FieldStateOf(blockIndex));
+        _fieldLinks.Clear();
+        for (int i = 0; i < _fields.Depth; i++) _fieldLinks.Add((0, null));
+        // a link field whose result runs in from an earlier block stays a link here
+        if (_fields.ActiveLink is { } runningLink && _fieldLinks.Count > 0) { _flow.OpenLink = runningLink; _flow.Inline.Append(runningLink); _fieldLinks[_fieldLinks.Count - 1] = (0, _flow); }
         _textBoxOuterFlow = null;
         _textBoxShape = null;
 
@@ -97,6 +111,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     public override void Text(ReadOnlySpan<char> text, in RtfGroupState state)
     {
+        if (!_fields.IsIdle && !_fields.Shows(text)) return;                 // a replaced result (page placeholder, recomputed, hidden)
         if (_runText.Length > 0 && !HasSameCharacterFormatting(_runState, state)) FlushRun();
         _runState = state;
         _runText.Append(text.ToArray());
@@ -462,11 +477,37 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     // fields and bookmarks
 
-    public override void FieldStart(int depth) => _fields.Add((depth, "", null));
-
-    public override void FieldInstruction(string instruction)
+    public override void FieldStart(int depth)
     {
-        if (_fields.Count > 0) _fields[_fields.Count - 1] = (_fields[_fields.Count - 1].depth, instruction, null);
+        _fields.Start(depth);
+        _fieldLinks.Add((depth, null));
+    }
+
+    public override void FieldModifier(RtfWord word)
+    {
+        if (word == RtfWord.FieldLock) _fields.Lock(); else _fields.Private();
+    }
+
+    public override void FormField(Fields.WordFormFieldState state) => _fields.Form(state);
+
+    public override void FieldInstruction(string instruction) => _fields.Instruction(instruction);
+
+    /// <summary>A computed result or placeholder, in the current run's formatting, in the field's link when no link is open.</summary>
+    private void AppendFieldOutput(Fields.WordFieldOutput output, string? link)
+    {
+        if (output.IsEmpty || _listTextTarget is not null) return;
+        FlushRun();
+        bool wrap = link is not null && _flow.OpenLink is null;
+        if (wrap) _flow.Inline.Append(link);
+        if (output.Html is { } markup) _flow.Inline.Append(markup);
+        else
+        {
+            string css = RunFormatting(_parser.Current, IsComplexScript(output.Text!)).ToCss(_documentRun);
+            string encoded = WordHtmlText.Encode(output.Text!);
+            if (css.Length == 0) _flow.Inline.Append(encoded); else _flow.Inline.Append("<span style=\"").Append(css).Append("\">").Append(encoded).Append("</span>");
+        }
+        if (wrap) _flow.Inline.Append("</a>");
+        _flow.HasInline = true;
     }
 
     /// <summary>
@@ -476,26 +517,33 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     /// </summary>
     public override void FieldResultStart()
     {
-        if (_fields.Count == 0 || _listTextTarget is not null || _flow.OpenLink is not null) return;
-        (int depth, string instruction, _) = _fields[_fields.Count - 1];
-        if (DocxBlockHtmlRenderer.HyperlinkFieldTag(instruction) is not { } tag) return;
+        if (_fields.Depth == 0) return;
+        Fields.WordFieldOutput output = _fields.ResultStart(out string? link);
+        AppendFieldOutput(output, link);
+        if (_listTextTarget is not null || _flow.OpenLink is not null || _fields.Innermost is not { SuppressesResult: false, IsInsideInstruction: false, LinkTag: { } tag }) return;
+        if (!_fields.Shows(default)) return;
         FlushRun();
         _flow.Inline.Append(tag);
         _flow.OpenLink = tag;
-        _fields[_fields.Count - 1] = (depth, instruction, _flow);
+        _fieldLinks[_fieldLinks.Count - 1] = (_fieldLinks[_fieldLinks.Count - 1].depth, _flow);
     }
 
     public override void GroupClosed(int depth)
     {
-        while (_fields.Count > 0 && _fields[_fields.Count - 1].depth > depth)
+        if (_fields.IsIdle) return;
+        int before = _fields.Depth;
+        var outputs = new List<(Fields.WordFieldOutput output, string? link)>();
+        _fields.GroupClosed(depth, (output, link) => outputs.Add((output, link)));
+        for (int ended = before - _fields.Depth; ended > 0 && _fieldLinks.Count > 0; ended--)
         {
-            Flow? linkFlow = _fields[_fields.Count - 1].linkFlow;
-            _fields.RemoveAt(_fields.Count - 1);
+            Flow? linkFlow = _fieldLinks[_fieldLinks.Count - 1].linkFlow;
+            _fieldLinks.RemoveAt(_fieldLinks.Count - 1);
             if (linkFlow is null) continue;
             FlushRun();
             linkFlow.Inline.Append("</a>");
             linkFlow.OpenLink = null;
         }
+        foreach ((Fields.WordFieldOutput output, string? link) in outputs) AppendFieldOutput(output, link);
     }
 
     /// <summary>{\*\bkmkstart name}: the jump target of in-document links.</summary>

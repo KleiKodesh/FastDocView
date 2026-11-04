@@ -36,6 +36,13 @@ internal sealed class RtfParser
     // contexts that end with their group
     private int _footnoteDepth = -1, _listTextDepth = -1, _unicodePairDepth = -1, _nestedTablePropertiesDepth = -1;
     private int _captureDepth = -1;                 // a {\*\fldinst} / {\*\bkmkstart} group whose text is captured
+    // a {\*\formfield} inside a field's code: its type, result, default, list entries and default text
+    private int _formFieldDepth = -1, _formTextDepth = -1;
+    private int _formType, _formResult = 25, _formDefault;
+    private bool _formTextIsEntry;
+    private readonly List<string> _formEntries = new();
+    private string? _formDefaultText;
+    private readonly System.Text.StringBuilder _formText = new();
     private readonly StringBuilder _captured = new();
     private bool _isEndnote;
 
@@ -353,6 +360,24 @@ internal sealed class RtfParser
         if (_depth == _listTextDepth) { _listTextDepth = -1; _sink.ListTextEnd(); }
         if (_depth == _unicodePairDepth) _unicodePairDepth = -1;
         if (_depth == _nestedTablePropertiesDepth) _nestedTablePropertiesDepth = -1;
+        if (_depth == _formTextDepth)
+        {
+            _formTextDepth = -1;
+            if (_formTextIsEntry) _formEntries.Add(_formText.ToString()); else _formDefaultText = _formText.ToString();
+            _formText.Clear();
+        }
+        if (_depth == _formFieldDepth)
+        {
+            _formFieldDepth = -1;
+            // \ffres 25 = undefined: the default holds ([MS-DOC] FFDataBits, as LibreOffice rtfdispatchvalue.cxx:1449-1455 reads it)
+            int result = _formResult == 25 ? _formDefault : _formResult;
+            _sink.FormField(_formType switch
+            {
+                1 => new Fields.WordFormFieldState { IsChecked = result != 0 },
+                2 => new Fields.WordFormFieldState { Entries = _formEntries.ToList(), SelectedEntry = result },
+                _ => new Fields.WordFormFieldState { DefaultText = _formDefaultText },
+            });
+        }
         if (_depth == _captureDepth)
         {
             _captureDepth = -1;
@@ -502,13 +527,14 @@ internal sealed class RtfParser
             return;
         }
         if (state.Destination >= RtfDestination.Shape) return;
-        if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart)
+        if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart or RtfDestination.FormFieldText)
         {
             if (_chars.Length < bytes.Length) _chars = new char[Math.Max(bytes.Length, _chars.Length * 2)];
             int decoded = RtfCodePages.Decode(bytes, state.CodePage, _chars);
-            _captured.Append(_chars, 0, decoded);
+            (state.Destination == RtfDestination.FormFieldText ? _formText : _captured).Append(_chars, 0, decoded);
             return;
         }
+        if (state.Destination == RtfDestination.FormField) return;
         if (_readsHeaderTables) HeaderText(bytes, state.CodePage);
     }
 
@@ -523,6 +549,7 @@ internal sealed class RtfParser
             else _sink.TextLength(1, state);
         }
         else if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart) _captured.Append(character);
+        else if (state.Destination == RtfDestination.FormFieldText) _formText.Append(character);
         else if (state.Destination is RtfDestination.ShapePropertyName or RtfDestination.ShapePropertyValue) _shapePropertyText.Append(character);
         else if (_readsHeaderTables && _headerDepth >= 0) HeaderCharacter(character);
     }
@@ -692,6 +719,23 @@ internal sealed class RtfParser
             // are ignored) are captured as jump targets.
             case RtfWord.Field: if (IsTextDestination(state)) _sink.FieldStart(_depth); return;
             case RtfWord.FieldResult: if (IsTextDestination(state)) _sink.FieldResultStart(); return;
+            case RtfWord.FieldLock: case RtfWord.FieldPrivate: if (IsTextDestination(state)) _sink.FieldModifier(word); return;
+            case RtfWord.FormField:
+                if (state.Destination != RtfDestination.FieldInstruction || _formFieldDepth >= 0) { SkipGroup(name); return; }
+                state.Destination = RtfDestination.FormField;
+                _formFieldDepth = _depth;
+                _formType = 0; _formResult = 25; _formDefault = 0; _formEntries.Clear(); _formDefaultText = null;
+                return;
+            case RtfWord.FormFieldType: if (state.Destination == RtfDestination.FormField) _formType = parameter; return;
+            case RtfWord.FormFieldResult: if (state.Destination == RtfDestination.FormField) _formResult = parameter; return;
+            case RtfWord.FormFieldDefaultResult: if (state.Destination == RtfDestination.FormField) _formDefault = parameter; return;
+            case RtfWord.FormFieldListEntry: case RtfWord.FormFieldDefaultText:
+                if (state.Destination != RtfDestination.FormField || _formTextDepth >= 0) { SkipGroup(name); return; }
+                state.Destination = RtfDestination.FormFieldText;
+                _formTextDepth = _depth;
+                _formTextIsEntry = word == RtfWord.FormFieldListEntry;
+                _formText.Clear();
+                return;
             case RtfWord.FieldInstruction: case RtfWord.BookmarkStart:
                 if (_captureDepth >= 0 || state.Destination is not (RtfDestination.Body or RtfDestination.Footnote or RtfDestination.TextBox)) { SkipGroup(name); return; }
                 state.Destination = word == RtfWord.BookmarkStart ? RtfDestination.BookmarkStart : RtfDestination.FieldInstruction;

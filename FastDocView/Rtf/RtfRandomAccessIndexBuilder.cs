@@ -36,6 +36,64 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     private readonly List<string> _bookmarkNames = new();
     private readonly List<int> _bookmarkBlocks = new();
 
+    // fields open at each block start and the SEQ / AUTONUM / LISTNUM counters there (RtfFieldTracker), interned: the
+    // renderer and the search restore them, so a field running across blocks and a result-less counted field read right
+    private RtfFieldTracker _fields = new(null, counts: true);
+    private readonly List<int> _fieldStateIds = new();
+    private readonly List<string> _fieldStates = new() { "" };
+    private readonly Dictionary<string, int> _fieldStateIdByText = new() { [""] = 0 };
+    private int _fieldStateId;
+
+    /// <summary>What a field without a result is computed from, for the text a span search reads (the renderer's context).</summary>
+    public Fields.WordFieldContext? FieldContext
+    {
+        set
+        {
+            string state = _fields.Serialize();
+            _fields = new RtfFieldTracker(value, counts: true);
+            _fields.Restore(state);
+        }
+    }
+
+    /// <summary>The fields open where span-local block <paramref name="localIndex"/> starts (<see cref="RtfFieldTracker.Serialize"/>).</summary>
+    public string FieldStateOf(int localIndex) => _fieldStates[_fieldStateIds[localIndex]];
+
+    private int InternFieldState()
+    {
+        string state = _fields.Serialize();
+        if (!_fieldStateIdByText.TryGetValue(state, out int id))
+        {
+            id = _fieldStates.Count;
+            _fieldStates.Add(state);
+            _fieldStateIdByText[state] = id;
+        }
+        return id;
+    }
+
+    /// <summary>
+    /// An anchor's head: the parser snapshot and the field state, as varint(snapshot length) + snapshot + the field state in
+    /// UTF-8 (index format 7).
+    /// </summary>
+    internal static byte[] AnchorHead(byte[] snapshot, string fieldState)
+    {
+        var bytes = new List<byte>(snapshot.Length + fieldState.Length + 4);
+        IndexBinaryArrays.AppendVarint(bytes, (uint)snapshot.Length);
+        bytes.AddRange(snapshot);
+        bytes.AddRange(Encoding.UTF8.GetBytes(fieldState));
+        return bytes.ToArray();
+    }
+
+    internal static (byte[] snapshot, string fieldState) SplitAnchorHead(byte[] head)
+    {
+        if (head.Length == 0) return ([], "");
+        int position = 0;
+        int length = (int)IndexBinaryArrays.ReadVarint(head, ref position);
+        if (length < 0 || length > head.Length - position) throw new InvalidDataException("RTF index: anchor head damaged.");
+        byte[] snapshot = new byte[length];
+        Buffer.BlockCopy(head, position, snapshot, 0, length);
+        return (snapshot, Encoding.UTF8.GetString(head, position + length, head.Length - position - length));
+    }
+
     // the block being read
     private bool _hasStart, _hasContent, _isRow;
     private long _start;
@@ -79,9 +137,11 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _tables = tables;
         _parser = new RtfParser(this, tables, readsHeaderTables: false);
         _isSpanScan = true;
-        (byte[] snapshot, byte[] numbering) = WordIndexScanState.Split(scanState);
+        (byte[] head, byte[] numbering) = WordIndexScanState.Split(scanState);
+        (byte[] snapshot, string fieldState) = SplitAnchorHead(head);
         if (snapshot.Length == 0) throw new InvalidDataException("RTF index: an anchor without a parser snapshot.");
         _parser.RestoreSnapshot(snapshot);
+        _fields.Restore(fieldState);
         _lists = new RtfListNumbering(tables);
         _lists.ImportState(numbering);
         TakeStart(anchorOffset);
@@ -194,6 +254,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     {
         _start = position;
         _stateId = InternState();
+        _fieldStateId = InternFieldState();
         _hasStart = true;
         _hasContent = false;
         _isRow = false;
@@ -203,7 +264,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _hasListText = false;
         _listText.Clear();
         if (!_isSpanScan && (_starts.Count == 0 || _start >= _nextAnchorAt))
-            _pendingAnchor = (_starts.Count, _start, WordIndexScanState.Join(_states[_stateId], _lists?.ExportState() ?? []));
+            _pendingAnchor = (_starts.Count, _start, WordIndexScanState.Join(AnchorHead(_states[_stateId], _fieldStates[_fieldStateId]), _lists?.ExportState() ?? []));
     }
 
     private void EndBlock(long end, bool final = false, string? listLabel = null, int listLevel = -1)
@@ -215,6 +276,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _kinds.Add(_isRow ? WordDocumentBlockKind.TableRow : WordDocumentBlockKind.Paragraph);
         _textLengths.Add(_textLength);
         _stateIds.Add(_stateId);
+        _fieldStateIds.Add(_fieldStateId);
         _listLevels.Add(listLabel is null ? (byte)255 : (byte)Math.Max(0, Math.Min(254, listLevel)));
         _labelIds.Add(listLabel is null ? -1 : InternLabel(listLabel));
         if (_search is not null && blockIndex >= _searchFrom) _search.BlockEnded(blockIndex);
@@ -291,14 +353,27 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void GroupClosed(int depth)
     {
+        if (!_fields.IsIdle) _fields.GroupClosed(depth, (output, _) => SearchOutput(output));
         if (depth == 0 && _hasStart && !_hasContent) TakeStart();          // header tables and other root-level groups before the text
+    }
+
+    // fields: tracked for the block-start state, and for the text a span search reads (the renderer's rules)
+    public override void FieldStart(int depth) => _fields.Start(depth);
+    public override void FieldModifier(RtfWord word) { if (word == RtfWord.FieldLock) _fields.Lock(); else _fields.Private(); }
+    public override void FormField(Fields.WordFormFieldState state) => _fields.Form(state);
+    public override void FieldInstruction(string instruction) => _fields.Instruction(instruction);
+    public override void FieldResultStart() => SearchOutput(_fields.ResultStart(out _));
+
+    private void SearchOutput(Fields.WordFieldOutput output)
+    {
+        if (IsSearching && output is { Text: { } text, IsSearchable: true }) _search!.Text(text.AsSpan(), _parser);
     }
 
     public override void Text(ReadOnlySpan<char> text, in RtfGroupState state)
     {
         if (IsSearching)
         {
-            _search!.Text(text, _parser);
+            if (_fields.IsIdle || _fields.Shows(text)) _search!.Text(text, _parser);
             if (!IndexWantsText) { TextLength(_parser.TextByteCount, state); return; }   // what the index pass saw
         }
         if (_parser.IsInTextBox) return;              // text-box text: searched, not the block's own text (the shape counts as a placeholder)
