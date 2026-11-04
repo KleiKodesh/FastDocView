@@ -307,9 +307,10 @@ internal sealed class OdtShapeBuilder
         foreach (WordShapePath path in shape.Paths ?? [])
         {
             // a path with neither fill nor line is a placeholder that is removed (:415-416, :1083-1086); the shape's own colours are used,
-            // not the path's darken / lighten (the 3-D object takes the shape's item set, :418)
-            bool filled = path.Fill != WordShapePathFill.None;
-            if (!filled && !path.Stroke) continue;
+            // not the path's darken / lighten (the 3-D object takes the shape's item set, :418); filled or not follows the shape's fill
+            // style, not the path's (aLocalFillStyle, EnhancedCustomShape3d.cxx:378, :606-613)
+            if (path.Fill == WordShapePathFill.None && !path.Stroke) continue;
+            bool filled = drawn.Style.IsFilled;
             var source = new OdtExtrusionSource { Filled = filled };
             foreach (WordShapeSubpath subpath in path.Subpaths)
                 source.Rings.Add((OdtShapeStyle.Flatten(subpath), filled || subpath.Closed));
@@ -334,6 +335,7 @@ internal sealed class OdtShapeBuilder
             }
             paths.Add(path);
         }
+        if (paths.Count == 0) return;   // nothing to extrude: no scene, the flat 2-D shape stays (EnhancedCustomShape3d.cxx:620)
         shape.Paths = paths;
         if (extrusion.ShadeMode == "draft") { shape.LineColor = OdtShapeStyle.Hex(line); shape.Dash = null; }
         else shape.LineColor = null;

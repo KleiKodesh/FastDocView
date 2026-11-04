@@ -232,7 +232,9 @@ internal sealed class OdtExtrusion
         double depth = Math.Max(backward + forward, Hundredth);
         bool draft = ShadeMode == "draft";
         // :379-404
-        bool twoFillStyles = !draft && (fillTextured || UseExtrusionColor);
+        // an unfilled shape never gets two fill styles: else-if after the FillStyle_NONE branch (:386-389)
+        bool shapeFilled = sources.Any(s => s.Filled);
+        bool twoFillStyles = !draft && shapeFilled && (fillTextured || UseExtrusionColor);
         bool doubleSidedScene = draft || twoFillStyles || mirrorX != mirrorY;
         bool twoSidedLighting = !draft && (twoFillStyles || mirrorX != mirrorY);
         double cx = width / 2, cy = height / 2;
@@ -245,7 +247,7 @@ internal sealed class OdtExtrusion
             var rings = source.Rings.Where(r => r.Points.Count >= 2).ToList();
             if (rings.Count == 0) continue;
             foreach (var ring in rings) foreach (var p in ring.Points) { minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X); minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y); }
-            bool caps = source.Filled || draft;
+            bool caps = source.Filled;   // draft keeps the object's fill style (:378-383)
             var capColour = source.Filled ? fill : line;
             var sideColour = !source.Filled ? line : UseExtrusionColor ? secondaryFill : fill;
             // 3-D object coordinates: y mirrored (extrud3d.cxx:61-64), back at z = 0, front at z = depth
@@ -319,10 +321,11 @@ internal sealed class OdtExtrusion
         double vx = 0, vy = 0, vz = 25000 * Hundredth;
         if (Perspective)
         {
-            var corners = new[] { (minX, minY), (maxX, minY), (maxX, maxY), (minX, maxY) }.Select(p =>
+            // the range of the transformed outline itself, aTotalPolyPoly.getB2DRange() (:719-725), not of its box's corners
+            var corners = sources.SelectMany(src => src.Rings).Where(r => r.Points.Count >= 2).SelectMany(r => r.Points).Select(p =>
             {
                 // aPolyPolyTransform (:651-669): translate(-c), rotate(-z) (y down), mirror, translate(c)
-                double x = p.Item1 - cx, y = p.Item2 - cy;
+                double x = p.X - cx, y = p.Y - cy;
                 double c = Math.Cos(-zRotate), s = Math.Sin(-zRotate);
                 (x, y) = (c * x - s * y, s * x + c * y);
                 if (mirrorX) x = -x;

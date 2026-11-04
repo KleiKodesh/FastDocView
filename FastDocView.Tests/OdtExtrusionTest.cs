@@ -19,12 +19,14 @@ public static class OdtExtrusionTest
     private static readonly XNamespace Draw = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
     private static bool Near(double a, double b) => Math.Abs(a - b) < 1e-3;
 
-    private static List<OdtExtrusionFace> Faces(params (string Name, string Value)[] attributes)
+    private static List<OdtExtrusionFace> Faces(params (string Name, string Value)[] attributes) => Faces(true, attributes);
+
+    private static List<OdtExtrusionFace> Faces(bool filled, params (string Name, string Value)[] attributes)
     {
         var geometry = new XElement(Draw + "enhanced-geometry", new XAttribute(Draw + "extrusion", "true"), new XAttribute(Draw + "extrusion-depth", "40pt 0"));
         foreach (var (name, value) in attributes) geometry.Add(new XAttribute(Draw + name, value));
         OdtExtrusion extrusion = OdtExtrusion.Read(geometry)!;
-        var source = new OdtExtrusionSource();
+        var source = new OdtExtrusionSource { Filled = filled };
         source.Rings.Add((new List<(double X, double Y)> { (0, 0), (100, 0), (100, 50), (0, 50) }, true));
         return extrusion.Project([source], 100, 50, 0, false, false, (114 / 255.0, 159 / 255.0, 207 / 255.0), (114 / 255.0, 159 / 255.0, 207 / 255.0), (0, 0, 0), false);
     }
@@ -76,7 +78,11 @@ public static class OdtExtrusionTest
             ("side", "#6f9bca", [(100, 0), (100, 50), (105.7692, 45.1923), (105.7692, -2.8846)]),
             ("front", "#435d7a", [(0, 0), (100, 0), (100, 50), (0, 50)]));
 
-        // 4. no draw:extrusion: drawn flat (Read returns null)
+        // 4. unfilled shape (draw:fill none), draft: no front / back caps even in draft - the object keeps its fill style (:378-383, :606-613)
+        var unfilled = Faces(false, ("shade-mode", "draft"));
+        TestReport.Check(unfilled.Count > 0 && unfilled.All(f => f.Kind == "side"), $"extrusion: unfilled draft shape has sides only ({string.Join(",", unfilled.Select(f => f.Kind))})");
+
+        // 5. no draw:extrusion: drawn flat (Read returns null)
         TestReport.Check(OdtExtrusion.Read(new XElement(Draw + "enhanced-geometry")) is null, "extrusion: absent without draw:extrusion=\"true\"");
     }
 }
