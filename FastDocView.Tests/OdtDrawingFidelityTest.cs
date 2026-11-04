@@ -158,9 +158,12 @@ public static class OdtDrawingFidelityTest
             + "<draw:gradient draw:name=\"Turned\" draw:style=\"linear\" draw:start-color=\"#ff0000\" draw:end-color=\"#0000ff\" draw:angle=\"900\" draw:border=\"0%\"/>"
             + "<draw:gradient draw:name=\"Auto\" draw:style=\"linear\" draw:start-color=\"#ff0000\" draw:end-color=\"#0000ff\" draw:angle=\"0deg\" draw:border=\"0%\"/>"
             + "<style:style style:name=\"FillTurned\" style:family=\"graphic\"><style:graphic-properties style:wrap=\"none\" style:horizontal-pos=\"left\" draw:fill=\"gradient\" draw:fill-gradient-name=\"Turned\" draw:gradient-step-count=\"2\"/></style:style>"
-            + "<style:style style:name=\"FillAuto\" style:family=\"graphic\"><style:graphic-properties style:wrap=\"none\" style:horizontal-pos=\"left\" draw:fill=\"gradient\" draw:fill-gradient-name=\"Auto\"/></style:style>"
+            + "<style:style style:name=\"FillAuto\" style:family=\"graphic\"><style:graphic-properties style:wrap=\"none\" style:horizontal-pos=\"left\" draw:fill=\"gradient\" draw:fill-gradient-name=\"Auto\" draw:opacity=\"50%\"/></style:style>"
+            + "<draw:gradient draw:name=\"Ring\" draw:style=\"radial\" draw:cx=\"50%\" draw:cy=\"50%\" draw:start-color=\"#ff0000\" draw:end-color=\"#0000ff\" draw:border=\"20%\"/>"
+            + "<style:style style:name=\"FillRing\" style:family=\"graphic\"><style:graphic-properties style:wrap=\"none\" style:horizontal-pos=\"left\" draw:fill=\"gradient\" draw:fill-gradient-name=\"Ring\"/></style:style>"
+            + "<style:style style:name=\"FillSmooth\" style:family=\"graphic\"><style:graphic-properties style:wrap=\"none\" style:horizontal-pos=\"left\" draw:fill=\"gradient\" draw:fill-gradient-name=\"Auto\"/></style:style>"
             + "</office:styles>",
-            "<text:p>" + Rect("FillTurned") + "</text:p><text:p>" + Rect("FillAuto") + "</text:p>");
+            "<text:p>" + Rect("FillTurned") + "</text:p><text:p>" + Rect("FillAuto") + "</text:p><text:p>" + Rect("FillSmooth") + "</text:p><text:p>" + Rect("FillRing") + "</text:p>");
 
     private static void CheckGradientAnglesAndSteps()
     {
@@ -203,11 +206,20 @@ public static class OdtDrawingFidelityTest
             TestReport.Check(html.Count >= 1 && html[0].Contains(rotation), $".fodt by {label}: draw:angle=\"900\" draws as {rotation} ({(html.Count > 0 ? Clip(html[0]) : "")})");
             if (generator != oldWriter) continue;
 
-            // automatic steps (no draw:gradient-step-count = 0): red to blue is a colour distance of 1 = 128 bands (gradienttools.cxx:479-497),
+            // automatic steps (no draw:gradient-step-count = 0) under a uniform transparency (a gradient with alpha: decomposed): red to blue is a colour distance of 1 = 128 bands (gradienttools.cxx:479-497),
             // band k coloured interpolate(start, end, k / 127) (texture.cxx:169-222): band 1 = #fd0002, two stops per band
             string auto = html.Count > 1 ? html[1] : "";
             TestReport.Check(Count(auto, "<stop ") == 256 && auto.Contains("stop-color=\"#fd0002\"") && auto.Contains("stop-color=\"#0000ff\""),
-                             $"automatic steps: 128 bands as LibreOffice's decomposition draws them ({Count(auto, "<stop ")} stops)");
+                             $"automatic steps with transparency: 128 bands as LibreOffice's decomposition draws them ({Count(auto, "<stop ")} stops)");
+            // the same without transparency: Skia draws it natively, smooth (OdtFillPaint.IsDrawnSmoothBySkia: gdiimpl.cxx drawGradient)
+            string smooth = html.Count > 2 ? html[2] : "";
+            TestReport.Check(Count(smooth, "<stop ") == 2 && smooth.Contains("<stop offset=\"0\" stop-color=\"#ff0000\"/><stop offset=\"1\" stop-color=\"#0000ff\"/>"),
+                             $"automatic steps, plain two-colour linear: smooth as Skia draws it ({Count(smooth, "<stop ")} stops)");
+            // radial with a 20 % border, as Skia draws it (gdiimpl.cxx:2006-2014): radius half the diagonal (1 in square: 50.91 pt),
+            // the end colour solid out to 20 % of it, then smooth to the start colour
+            string ring = html.Count > 3 ? html[3] : "";
+            TestReport.Check(ring.Contains("<stop offset=\"0\" stop-color=\"#0000ff\"/><stop offset=\"0.2\" stop-color=\"#0000ff\"/><stop offset=\"1\" stop-color=\"#ff0000\"/>")
+                             && ring.Contains("scale(50.911688 50.911688)"), $"radial with border: Skia's layout ({Clip(ring)})");
 
             string package = Path.ChangeExtension(flat, ".odt");
             if (File.Exists(package)) File.Delete(package);
@@ -302,19 +314,18 @@ public static class OdtDrawingFidelityTest
         TestReport.Check(html[9].Contains("L72 0L72 ") && html[9].Contains("<path d=\"M0 0L21.6 7.2L21.6 -7.2Z\""), "connector: its routed svg:d with its markers (" + Clip(html[9]) + ")");
         TestReport.Check(html[10].Contains("matrix(0.866025 -0.5 0.5 0.866025 ") && html[10].Contains(">turnedtext</span>"), "rotate 30 degrees: counter-clockwise; the text turns with it (" + Clip(html[10]) + ")");
         TestReport.Check(html[11].Contains("matrix(1 0 1 1 "), "skewX(-45 degrees): x' = x + y (" + Clip(html[11]) + ")");
-        TestReport.Check(html[12].Contains("><stop offset=\"0\" stop-color=\"#ffffff\"/>") && html[12].Contains("<stop offset=\"0.5\" stop-color=\"#000000\"/>")
-                         && html[12].Contains("<stop offset=\"1\" stop-color=\"#ffffff\"/>") && Count(html[12], "<stop ") == 511,
-                         "axial: the start colour in the middle, the end colour at both edges, 128 automatic bands each side (" + Clip(html[12]) + ")");
-        TestReport.Check(html[13].Contains("gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\"><stop offset=\"0\" stop-color=\"#ffffff\"/>")
-                         && html[13].Contains("<stop offset=\"1\" stop-color=\"#000000\"/>") && Count(html[13], "<stop ") == 256
+        TestReport.Check(html[12].Contains("<stop offset=\"0\" stop-color=\"#ffffff\"/><stop offset=\"0.5\" stop-color=\"#000000\"/><stop offset=\"1\" stop-color=\"#ffffff\"/>"),
+                         "axial: the start colour in the middle, the end colour at both edges, smooth (Skia) (" + Clip(html[12]) + ")");
+        TestReport.Check(html[13].Contains("gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\"><stop offset=\"0\" stop-color=\"#ffffff\"/><stop offset=\"1\" stop-color=\"#000000\"/>")
                          && html[13].Contains("scale(50.911688 50.911688)"), "radial: the end colour in the centre, radius half the diagonal (72 sqrt 2 / 2 = 50.91) (" + Clip(html[13]) + ")");
-        TestReport.Check(html[14].Contains("scale(50.911688 50.911688)"), "ellipsoid: the box times sqrt 2, half of it (" + Clip(html[14]) + ")");
+        TestReport.Check(html[14].Contains("scale(50.911688 50.911688)") && Count(html[14], "<stop ") == 256,
+                         "ellipsoid: the box times sqrt 2, half of it; automatic steps banded (not drawn by Skia natively) (" + Clip(html[14]) + ")");
         TestReport.Check(Count(html[15], "<linearGradient") == 4 && Count(html[16], "<linearGradient") == 4, "square / rectangular: four edge regions");
         // 17: border 20 %, angle 90 (start on the left), 4 steps, start intensity 50 %: start #800000 (half red)
         TestReport.Check(html[17].Contains("rotate(-90)") && html[17].Contains("<stop offset=\"0.2\" stop-color=\"#800000\"/><stop offset=\"0.4\" stop-color=\"#800000\"/>"),
                          "linear: 90 degrees, 20 % border, four bands, start intensity (" + Clip(html[17]) + ")");
         TestReport.Check(html[18].Contains("stop-color=\"#00ff00\""), "LibreOffice multi-colour gradient stops (" + Clip(html[18]) + ")");
-        TestReport.Check(html[19].Contains("<mask") && html[19].Contains("stop-color=\"#ffffff\"") && html[19].Contains("stop-color=\"#000000\""), "transparency gradient: a luminance mask from opaque to clear (" + Clip(html[19]) + ")");
+        TestReport.Check(html[19].Contains("<mask") && html[19].Contains("stop-color=\"#ffffff\"") && html[19].Contains("stop-color=\"#000000\"") && Count(html[19], "<stop ") == 4, "transparency gradient: a smooth luminance mask (Skia draws the alpha gradient natively) from opaque to clear (" + Clip(html[19]) + ")");
         TestReport.Check(html[20].Contains("fill-opacity=\"0.4\""), "draw:opacity 40 %");
         TestReport.Check(html[21].Contains("fill=\"#ffff00\"") && html[21].Contains("stroke=\"#0000ff\"") && html[21].Contains("rotate(-45)") && html[21].Contains("rotate(45)"),
                          "hatch: double (45 and -45 degrees), its colour, the solid background (" + Clip(html[21]) + ")");

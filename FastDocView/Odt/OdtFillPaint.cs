@@ -23,13 +23,11 @@ namespace FastDocView.Odt;
 ///   outside the unit area the start colour (alpha 0);
 /// - steps: BColorStops::getInterpolatedBColor (bgradient.cxx:85-190) with calculateNumberOfSteps (gradienttools.cxx:479-497):
 ///   draw:gradient-step-count bands of interpolate(start, end, k / (n - 1)) per stop range, one band of the start colour when
-///   n = 1; 0 (automatic) = as many as the colour distance allows (distance * 127.5 rounded, at least 1) - banded too, as the
+///   n = 1; 0 (automatic) = as many as the colour distance allows (distance * 127.5 rounded, at least 1) - banded as the
 ///   primitive decomposition draws every style (drawinglayer texture.cxx:169-222 GeoTexSvxGradientLinear and the same loop
-///   for axial :316-357, radial :425-461, elliptical :532-571, square :638-674, rect :745-784), which the Windows VCL / Skia
-///   processor uses for every gradient that is rotated, multi-stop, transparent or reaches outside its box
-///   (vclpixelprocessor2d.cxx:911-960; plain ones go to OutputDevice::DrawGradient, whose automatic count follows the device
-///   resolution - not reproduced, a document has no device); the Cairo renderer draws automatic steps smooth
-///   (cairopixelprocessor2d.cxx:3492-3504);
+///   for axial :316-357, radial :425-461, elliptical :532-571, square :638-674, rect :745-784), except a plain two-colour
+///   linear / axial / radial fill without transparency, which Windows LibreOffice draws smooth through Skia
+///   (<see cref="IsDrawnSmoothBySkia"/>) - transparency gradients alike unless they share the fill's definition;
 /// - hatches: drawinglayer fillhatchprimitive2d.cxx:36-130 and texture.cxx:810-930 GeoTexSvxHatch (lines along the box grown
 ///   for the rotation, every draw:distance from its top, rotated by -draw:rotation about the centre; double adds the set at
 ///   rotation - 90 degrees, triple also rotation - 45; hairlines; draw:fill-hatch-solid fills the background first);
@@ -126,7 +124,7 @@ internal static class OdtFillPaint
     }
 
     /// <summary>The (offset, colour) breakpoints of the stops over 0..1, banded as LibreOffice bands them; a band is two stops at its ends.</summary>
-    private static List<(double T, double R, double G, double B)> Breakpoints(GradientModel model, Func<(double, double, double), (double, double, double)> adapt)
+    private static List<(double T, double R, double G, double B)> Breakpoints(GradientModel model, Func<(double, double, double), (double, double, double)> adapt, bool smooth)
     {
         var result = new List<(double T, double R, double G, double B)>();
         List<Stop> stops = model.Stops;
@@ -142,6 +140,7 @@ internal static class OdtFillPaint
         {
             Stop a = stops[i], b = stops[i + 1];
             if (b.Offset <= a.Offset) continue;
+            if (smooth) { Add(a.Offset, (a.R, a.G, a.B)); Add(b.Offset, (b.R, b.G, b.B)); continue; }
             int n = StepCount(model.Steps, a, b);
             for (int k = 0; k < n; k++)
             {
@@ -154,6 +153,33 @@ internal static class OdtFillPaint
         Stop last = stops[stops.Count - 1];
         Add(1, (last.R, last.G, last.B));
         return result;
+    }
+
+    /// <summary>
+    /// True when LibreOffice on Windows draws this fill gradient smooth: Skia is the only renderer there (vcl/skia/SkiaHelper.cxx:446-447
+    /// "macOS/win can __only__ render via skia"); VclPixelProcessor2D hands a FillGradientPrimitive2D without alpha to
+    /// OutputDevice::DrawGradient (vclpixelprocessor2d.cxx:911-1051) unless FillGradientAttribute::cannotBeHandledByVCL - more or
+    /// other than two stops at 0 and 1, or a style other than linear / axial / radial (fillgradientattribute.cxx:144-176); the
+    /// definition range is the outline's own range (svx sdrdecompositiontools.cxx createPolyPolygonFillPrimitive without a range),
+    /// so it always holds the output range. DrawGradient first asks the graphics to draw it natively (vcl/source/outdev/gradient.cxx:108-113)
+    /// and SkiaSalGraphicsImpl::drawGradient (vcl/skia/gdiimpl.cxx:1942-2023) does, as one Skia linear / radial shader, whenever
+    /// the step count is 0 - so the banded fallback (GetGradientSteps, gradient.cxx:569-591: height / 4 bands) never runs on
+    /// Windows. A uniform fill transparency, or a transparency gradient of the same definition (sameDefinitionThanAlpha,
+    /// fillgradientattribute.cxx:226-257), makes it a gradient with alpha (sdrdecompositiontools.cxx createPolyPolygonFillPrimitive),
+    /// which the processor decomposes into bands (vclpixelprocessor2d.cxx:914-919). The Cairo renderer (Linux) also draws
+    /// automatic steps smooth for these and more styles (cairopixelprocessor2d.cxx:3492-3504).
+    /// </summary>
+    private static bool IsDrawnSmoothBySkia(GradientModel model)
+        => model.Steps == 0 && model.Style is "linear" or "axial" or "radial"
+           && model.Stops.Count == 2 && model.Stops[0].Offset == 0 && model.Stops[1].Offset == 1;
+
+    /// <summary>FillGradientAttribute::sameDefinitionThanAlpha (fillgradientattribute.cxx:226-257).</summary>
+    private static bool HasSameDefinition(GradientModel fill, GradientModel alpha)
+    {
+        if (fill.Style != alpha.Style || fill.Border != alpha.Border || fill.Steps != alpha.Steps) return false;
+        if (fill.Style is not ("linear" or "axial") && (fill.CenterX != alpha.CenterX || fill.CenterY != alpha.CenterY)) return false;
+        if (fill.Style != "radial" && fill.AngleRadians != alpha.AngleRadians) return false;
+        return fill.Stops.Count == alpha.Stops.Count && fill.Stops.Select(stop => stop.Offset).SequenceEqual(alpha.Stops.Select(stop => stop.Offset));
     }
 
     /// <summary>calculateNumberOfSteps (gradienttools.cxx:479-497): at most the colour distance times 127.5 (rounded), at least 1.</summary>
@@ -177,11 +203,18 @@ internal static class OdtFillPaint
     /// gradient, uniform opacity handled by the caller. <paramref name="adapt"/> changes every colour (a path's brightness).
     /// </summary>
     public static (string Definitions, string Paint) GradientPaint(GradientModel gradient, GradientModel? transparency, double x, double y, double w, double h,
-                                                                 Func<(double, double, double), (double, double, double)> adapt)
+                                                                 Func<(double, double, double), (double, double, double)> adapt, bool hasUniformTransparency = false,
+                                                                 bool isSolidFill = false)
     {
         var defs = new StringBuilder();
-        string content = GradientContent(gradient, x, y, w, h, adapt, defs);
-        return Pattern(defs, content, transparency, x, y, w, h);
+        // isSolidFill: one colour under a transparency gradient - no fill gradient, so never "the same definition" (sdrdecompositiontools.cxx:428-449)
+        bool sharesDefinition = !isSolidFill && transparency is not null && HasSameDefinition(gradient, transparency);
+        bool smooth = IsDrawnSmoothBySkia(gradient) && !hasUniformTransparency && !sharesDefinition;
+        string content = GradientContent(gradient, x, y, w, h, adapt, defs, smooth);
+        // a transparency gradient of another definition is its own FillGradientPrimitive2D (sdrdecompositiontools.cxx:532), drawn
+        // by the same processor into the alpha buffer (vclprocessor2d.cxx:1045-1065 RenderTransparencePrimitive2D) - smooth too
+        bool isMaskSmooth = transparency is not null && IsDrawnSmoothBySkia(transparency) && !sharesDefinition;
+        return Pattern(defs, content, transparency, x, y, w, h, isMaskSmooth);
     }
 
     /// <summary>A hatch (lines over an optional background colour) as a paint, with an optional transparency gradient.</summary>
@@ -219,14 +252,14 @@ internal static class OdtFillPaint
         if (style == "triple") Set(angleRadians - Math.PI / 4);
         if (style is "triple" or "double") Set(angleRadians - Math.PI / 2);
         Set(angleRadians);
-        return Pattern(defs, content.ToString(), transparency, x, y, w, h);
+        return Pattern(defs, content.ToString(), transparency, x, y, w, h, transparency is not null && IsDrawnSmoothBySkia(transparency));
     }
 
     /// <summary>A transparency gradient alone as an SVG luminance mask in the shape's points (for a picture fill): its definitions and id.</summary>
     public static (string Definitions, string Id) Mask(GradientModel transparency, double x, double y, double w, double h)
     {
         var defs = new StringBuilder();
-        string content = GradientContent(transparency, x, y, w, h, c => c, defs);
+        string content = GradientContent(transparency, x, y, w, h, c => c, defs, IsDrawnSmoothBySkia(transparency));
         double reach = Reach(w, h);
         string mask = "<mask maskUnits=\"userSpaceOnUse\" x=\"" + N(x - reach) + "\" y=\"" + N(y - reach) + "\" width=\"" + N(w + 2 * reach) + "\" height=\"" + N(h + 2 * reach) + "\">" + content + "</mask>";
         string id = "odt-fill-mask-" + WordShapeHtml.StableHashOf(defs + mask);
@@ -234,13 +267,14 @@ internal static class OdtFillPaint
         return (defs.ToString(), id);
     }
 
-    private static (string Definitions, string Paint) Pattern(StringBuilder defs, string content, GradientModel? transparency, double x, double y, double w, double h)
+    private static (string Definitions, string Paint) Pattern(StringBuilder defs, string content, GradientModel? transparency, double x, double y, double w, double h,
+                                                              bool isMaskSmooth)
     {
         string masked = content;
         if (transparency is not null)
         {
             var maskDefs = new StringBuilder();
-            string maskContent = GradientContent(transparency, x, y, w, h, c => c, maskDefs);
+            string maskContent = GradientContent(transparency, x, y, w, h, c => c, maskDefs, isMaskSmooth);
             double reach = Reach(w, h);
             string mask = "<mask maskUnits=\"userSpaceOnUse\" x=\"" + N(x - reach) + "\" y=\"" + N(y - reach) + "\" width=\"" + N(w + 2 * reach) + "\" height=\"" + N(h + 2 * reach) + "\">" + maskContent + "</mask>";
             string maskId = "odt-fill-mask-" + WordShapeHtml.StableHashOf(maskDefs + mask);
@@ -260,9 +294,10 @@ internal static class OdtFillPaint
     private static double Reach(double w, double h) => 4 * Math.Max(Math.Max(w, h), 1) + 100;
 
     /// <summary>The gradient's SVG content over a huge area around the box: the start colour as a base, the gradient over it.</summary>
-    private static string GradientContent(GradientModel model, double x, double y, double w, double h, Func<(double, double, double), (double, double, double)> adapt, StringBuilder defs)
+    private static string GradientContent(GradientModel model, double x, double y, double w, double h, Func<(double, double, double), (double, double, double)> adapt, StringBuilder defs,
+                                          bool smooth)
     {
-        List<(double T, double R, double G, double B)> points = Breakpoints(model, adapt);
+        List<(double T, double R, double G, double B)> points = Breakpoints(model, adapt, smooth);
         string ColorAt(int i) => Css(points[i].R, points[i].G, points[i].B);
         double reach = Reach(w, h);
         string Huge(string fill) => "<rect x=\"" + N(x - reach) + "\" y=\"" + N(y - reach) + "\" width=\"" + N(w + 2 * reach) + "\" height=\"" + N(h + 2 * reach) + "\" fill=\"" + fill + "\"/>";
@@ -325,11 +360,15 @@ internal static class OdtFillPaint
                 double sizeX, sizeY;
                 if (circular) { double diagonal = Math.Sqrt(w * w + h * h); sizeX = sizeY = diagonal; }
                 else { sizeX = Math.Sqrt(2) * w; sizeY = Math.Sqrt(2) * h; }
-                double unitX = (1 - border) / 2 * sizeX, unitY = (1 - border) / 2 * sizeY;
+                // Skia's native radial (gdiimpl.cxx:2006-2014): radius half the diagonal, the end colour solid out to the border,
+                // then smooth to the start colour - not the decomposition's (1 - border) unit radius
+                bool skiaRadial = smooth && circular;
+                double unitX = (skiaRadial ? 1 : 1 - border) / 2 * sizeX, unitY = (skiaRadial ? 1 : 1 - border) / 2 * sizeY;
                 double cx = x + w / 2 + (model.CenterX - 0.5) * w, cy = y + h / 2 + (model.CenterY - 0.5) * h;
                 double rotation = circular ? 0 : angle;
                 // alpha = 1 - radius: offset q = 1 - t
-                var stops = points.Select((p, i) => (1 - p.T, ColorAt(i))).Reverse();
+                var stops = skiaRadial ? new[] { (0.0, ColorAt(points.Count - 1)), (border, ColorAt(points.Count - 1)), (1.0, ColorAt(0)) }
+                                       : points.Select((p, i) => (1 - p.T, ColorAt(i))).Reverse();
                 double aspect = sizeY == 0 ? 1 : sizeX / sizeY;
                 string scale = circular ? "" : aspect > 1 ? " gradientTransform=\"scale(" + N(aspect) + " 1)\"" : aspect > 0 ? " gradientTransform=\"scale(1 " + N(1 / aspect) + ")\"" : "";
                 string gradient = Define("<radialGradient gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\"" + scale + ">" + StopsHtml(stops) + "</radialGradient>");
