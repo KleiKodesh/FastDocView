@@ -590,8 +590,14 @@ internal sealed class DocxBodyBlockScanner
             switch (AttributeValue(attributes, "w:fldCharType="))
             {
                 case "begin": _openFields.Add((new MemoryStream(), false)); break;
-                case "separate" when _openFields.Count > 0: _openFields[_openFields.Count - 1] = (_openFields[_openFields.Count - 1].instruction, true); break;
-                case "end" when _openFields.Count > 0: _openFields.RemoveAt(_openFields.Count - 1); break;
+                case "separate" when _openFields.Count > 0:
+                    CountField(_openFields[_openFields.Count - 1].instruction);
+                    _openFields[_openFields.Count - 1] = (_openFields[_openFields.Count - 1].instruction, true);
+                    break;
+                case "end" when _openFields.Count > 0:
+                    if (!_openFields[_openFields.Count - 1].isSeparated) CountField(_openFields[_openFields.Count - 1].instruction);
+                    _openFields.RemoveAt(_openFields.Count - 1);
+                    break;
             }
             return;
         }
@@ -629,10 +635,25 @@ internal sealed class DocxBodyBlockScanner
     /// The fields open where a block starts (a HYPERLINK field result can run across paragraphs; a renderer that starts at
     /// this block needs it), interned: a table of contents field open over thousands of blocks is one string.
     /// </summary>
+    /// <summary>
+    /// SEQ / AUTONUM / LISTNUM counters as they stand: every counted field advances them where it is (its result cached or
+    /// not), so a window that starts later computes a result-less one right (Fields/WordFieldStack, NOTES.md "Fields").
+    /// </summary>
+    private readonly Fields.WordFieldSequenceCounters _fieldCounters = new();
+
+    private void CountField(MemoryStream instruction)
+    {
+        for (int i = 0; i < _openFields.Count - 1; i++) if (!_openFields[i].isSeparated) return;   // inside another field's code: part of that code
+        string code = System.Net.WebUtility.HtmlDecode(Encoding.UTF8.GetString(instruction.GetBuffer(), 0, (int)instruction.Length));
+        var parsed = Fields.WordFieldInstruction.Parse(code);
+        if (Fields.WordFieldEvaluator.IsCounted(parsed.Name)) Fields.WordFieldEvaluator.Count(parsed, _fieldCounters);
+    }
+
     private int OpenFieldStackId()
     {
-        if (_openFields.Count == 0) return -1;
+        if (_openFields.Count == 0 && _fieldCounters.IsEmpty) return -1;
         var stack = new StringBuilder();
+        if (!_fieldCounters.IsEmpty) stack.Append(Fields.WordFieldStack.CountersEntryPrefix).Append(_fieldCounters.Serialize());
         foreach ((MemoryStream instruction, bool isSeparated) in _openFields)
         {
             if (stack.Length > 0) stack.Append('\u0001');
@@ -651,6 +672,7 @@ internal sealed class DocxBodyBlockScanner
 
     private void CloseHeading()
     {
+        if (_currentHeadingLevel > 0) _fieldCounters.Heading(_currentHeadingLevel);
         if (_currentHeadingLevel > 0 && BlockStartOffsets.Count > 0)
         {
             string text = System.Net.WebUtility.HtmlDecode(Encoding.UTF8.GetString(_headingText.GetBuffer(), 0, (int)_headingText.Length)).Trim();

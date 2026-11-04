@@ -1,0 +1,332 @@
+using System.Globalization;
+using System.Text;
+using FastDocView.Docx;
+using FastDocView.Fields;
+
+namespace FastDocView.Tests;
+
+/// <summary>
+/// Word fields (Fields/*): switches and formulas against Word 16's own results (COM automation on the dev machine,
+/// 2026-11-04: Fields.Add + Fields.Update, Range.Text of each result - the values below are what Word wrote), then the .docx
+/// renderer and both .docx search readers on hand-written documents. .doc / .rtf: <see cref="WordFieldsOtherFormatsTest"/>.
+/// </summary>
+public static class WordFieldsFidelityTest
+{
+    public static void Run()
+    {
+        TestReport.Step("Word fields: switches, formulas, docx rendering and search");
+        Switches();
+        Formulas();
+        Instructions();
+        DocxRendering();
+    }
+
+    private static readonly WordFieldContext English = new() { Culture = CultureInfo.GetCultureInfo("en-US"), Now = new DateTime(2024, 3, 5, 14, 7, 9) };
+
+    private static string Field(string code, WordFieldContext? context = null, int? counted = null)
+        => WordFieldEvaluator.Compute(WordFieldInstruction.Parse(code), context ?? English, counted) is { } output ? output.Text ?? output.Html ?? "" : "";
+
+    private static void Check(string code, string expected)
+    {
+        string actual = Field(code);
+        TestReport.Check(actual == expected, $"{code} → [{expected}] (got [{actual}])");
+    }
+
+    private static void Switches()
+    {
+        // \* number and text formats (Word 16)
+        Check("= 21 \\* CardText", "twenty-one");
+        Check("= 21 \\* OrdText", "twenty-first");
+        Check("= 21 \\* Ordinal", "21st");
+        Check("= 5 \\* Ordinal", "5th");
+        Check("= 12 \\* Ordinal", "12th");
+        Check("= 23 \\* Ordinal", "23rd");
+        Check("= 101 \\* OrdText", "one hundred first");
+        Check("= 112 \\* OrdText", "one hundred twelfth");
+        Check("= 1234 \\* CardText", "one thousand two hundred thirty-four");
+        Check("= 0 \\* CardText", "zero");
+        Check("= 1000000 \\* CardText", WordFieldFormat.NumberNotRepresentable);
+        Check("= 1234.5 \\* DollarText", "one thousand two hundred thirty-four and 50/100");   // Word's "and" is localized: Hebrew UI wrote "ו-"
+        Check("= 0.25 \\* DollarText", "zero and 25/100");
+        Check("= 255 \\* Hex", "FF");
+        Check("= 28 \\* ALPHABETIC", "BB");
+        Check("= 1 \\* alphabetic", "a");
+        Check("= 52 \\* alphabetic", "zz");
+        Check("= 53 \\* alphabetic", "aaa");
+        Check("= 1999 \\* roman", "mcmxcix");
+        Check("= 4000 \\* roman", "mmmm");
+        Check("= 2.5 \\* roman", "iii");
+        Check("= 1.5 \\* Arabic", "2");
+        Check("= 21 \\* ArabicDash", "- 21 -");
+        Check("= 15 \\* hebrew1", "טו");
+        Check("= 115 \\* hebrew1", "קטו");
+        Check("= 270 \\* hebrew1", "רע");
+        Check("= 272 \\* hebrew1", "רעב");
+        Check("= 392 \\* hebrew1", "שצב");
+        Check("= 393 \\* hebrew1", WordFieldFormat.NumberNotRepresentable);
+        Check("= 3 \\* hebrew2", "ג");
+        Check("= 22 \\* hebrew2", "ת");
+        Check("= 23 \\* hebrew2", "תא");
+        Check("= 44 \\* hebrew2", "תת");
+        Check("= 45 \\* hebrew2", "תתא");
+        Check("= 21 \\* CardText \\* Upper", "TWENTY-ONE");
+        Check("= 21 \\* CardText \\* FirstCap", "Twenty-one");
+        Check("= 21 \\* CardText \\* Caps", "Twenty-One");
+        Check("QUOTE \"abc def\" \\* FirstCap", "Abc def");
+        Check("QUOTE \"abc def\" \\* Caps", "Abc Def");
+        Check("QUOTE \"ABC\" \\* Lower", "abc");
+        Check("= 2 \\# \"00\" \\* roman", "ii");                         // a \* number format wins over \#
+        // \# numeric pictures (Word 16)
+        Check("= 1234.567 \\# \"#,##0.00\"", "1,234.57");
+        Check("= -5 \\# \"0.0;(0.0)\"", "(5.0)");
+        Check("= 0.256 \\# \"0%\"", "0%");
+        Check("= 3 \\# \"00\"", "03");
+        Check("= 1234.5 \\# \"$#,##0.00\"", "$1,234.50");
+        Check("= 2.5 \\# \"0\"", "3");
+        Check("= -2.5 \\# \"0\"", "-3");
+        Check("= 12 \\# \"x##\"", " 12");
+        Check("= 1234 \\# \"#,##0\"", "1,234");
+        Check("= 0.5 \\# \"#.##\"", " .5 ");
+        Check("= 1.005 \\# \"0.00\"", "1.01");
+        Check("= 2.675 \\# \"0.00\"", "2.68");
+        Check("= 1234.5 \\# \"#,##0.00;-#,##0.00;'zero'\"", "1,234.50");
+        Check("= 0 \\# \"#,##0.00;-#,##0.00;'zero'\"", "zero");
+        Check("= 5 \\# \"'Total: '0\"", "Total: 5");
+        Check("= 10.5 \\# 0", "11");
+        Check("= 1234.567 \\# \"0.0\"", "1234.6");
+        Check("= 5 \\# \"+0;-0\"", "+5");
+        Check("= -5 \\# \"+0;-0\"", "-5");
+        Check("= 5 \\# \"##%\"", " 5%");
+        Check("= 5 \\# \"0.00 'USD'\"", "5.00 USD");
+        Check("= -1234.5 \\# \"#,##0.00\"", "-1,234.50");
+        Check("= -0.4 \\# \"0\"", "0");
+        Check("= 1234.5678 \\# \",0.0\"", "1,234.6");
+        Check("= 12345 \\# \"00,000\"", "12,345");
+        // \@ date pictures (en-US names; Word takes names from the system: a Hebrew system wrote Hebrew names)
+        Check("QUOTE \"2024-03-05 14:07\" \\@ \"dddd, MMMM d, yyyy h:mm am/pm\"", "Tuesday, March 5, 2024 2:07 pm");
+        Check("QUOTE \"2024-03-05\" \\@ \"d/M/yyyy\"", "5/3/2024");
+        Check("QUOTE \"2024-03-05 14:07:09\" \\@ \"HH:mm:ss\"", "14:07:09");
+        Check("QUOTE \"2024-03-05\" \\@ \"dd.MM.yy 'week'\"", "05.03.24 week");
+        Check("QUOTE \"2024-03-05\" \\@ \"ddd MMM yy\"", "Tue Mar 24");
+        Check("DATE \\@ \"yyyy-MM-dd\"", "2024-03-05");
+        Check("TIME \\@ \"H:mm\"", "14:07");
+        var hebrew = new WordFieldContext { Culture = CultureInfo.GetCultureInfo("he-IL") };
+        string hebrewDate = Field("QUOTE \"2024-03-05\" \\@ \"dddd d MMMM yyyy\"", hebrew);
+        TestReport.Check(hebrewDate == "יום שלישי 5 מרץ 2024", $"date names follow the system culture (Word 16 on a Hebrew system: יום שלישי 5 מרץ 2024; got {hebrewDate})");
+    }
+
+    private static void Formulas()
+    {
+        Check("= 1/7", "0.14");
+        Check("= 2/3*1000", "666.67");
+        Check("= 1/8", "0.13");
+        Check("= 1234567", "1234567");
+        Check("= 0.001", "0.001");
+        Check("= 0.001*3", "0.003");
+        Check("= 1.2345/3", "0.4115");
+        Check("= 10/3+0.001", "3.334");
+        Check("= 2.50", "2.5");
+        Check("= 3.0", "3");
+        Check("= 0.1+0.2", "0.3");
+        Check("= 1,000 + 1", "1,001");
+        Check("= 2^10", "1024");
+        Check("= -2^2", "4");
+        Check("= 2+3*4", "14");
+        Check("= (2+3)*4", "20");
+        Check("= 5%", "0.05");
+        Check("= 10 > 5", "1");
+        Check("= 3 = 3", "1");
+        Check("= 3 <> 3", "0");
+        Check("= TRUE", "1");
+        Check("= MOD(7,3)", "1");
+        Check("= ROUND(2.567,2)", "2.57");
+        Check("= IF(1>2,5,6)", "6");
+        Check("= AVERAGE(1,2,3,4)", "2.5");
+        Check("= PRODUCT(2,3,4)", "24");
+        Check("= MAX(1,5,3)", "5");
+        Check("= COUNT(1,2,3)", "3");
+        Check("= ABS(-4)", "4");
+        Check("= AND(1,0)", "0");
+        Check("= OR(1,0)", "1");
+        Check("= NOT(0)", "1");
+        Check("= SIGN(-3)", "-1");
+        Check("= INT(-2.5)", "-2");
+        Check("= SUM(1.5,2.25)", "3.75");
+        Check("= DEFINED(xyz)", "0");
+        Check("= 1/0", WordFieldExpression.ZeroDivide);
+        Check("= 3 +", WordFieldExpression.UnexpectedEnd);
+        Check("= xyz + 1", WordFieldExpression.UndefinedBookmark + "XYZ");
+        Check("= 7 MOD 3", WordFieldExpression.SyntaxError + "MOD");
+        Check("= 1e3", WordFieldExpression.SyntaxError + "1E3");
+        Check("= SUM(1;2)", WordFieldExpression.SyntaxError + ";");
+        // IF / COMPARE / QUOTE / SYMBOL / MERGEFIELD / buttons / counters (Word 16)
+        Check("IF 3 > 2 \"yes\" \"no\"", "yes");
+        Check("IF \"abc\" = \"ABC\" \"yes\" \"no\"", "no");
+        Check("IF \"abc\" <> \"ab?\" \"yes\" \"no\"", "no");
+        Check("IF 1 = 1 \"a b\" \"c\"", "a b");
+        Check("IF 1 = 2 \"a\" ", "");
+        Check("COMPARE 3 > 2", "1");
+        Check("COMPARE \"abc\" = \"a*\"", "1");
+        Check("COMPARE \"abc\" = \"a?c\"", "1");
+        Check("COMPARE \"a\" = \"b\"", "0");
+        Check("QUOTE \"a\" \"b\"", "ab");
+        Check("QUOTE 65", "A");
+        Check("MERGEFIELD Name", "«Name»");
+        Check("MACROBUTTON NoMacro Click here now", "Click here now");
+        Check("GOTOBUTTON bm Go there", "Go");
+        Check("TITLE \"x\"", "x");
+        var counters = new WordFieldSequenceCounters();
+        string Count(string code) => Field(code, English, WordFieldEvaluator.Count(WordFieldInstruction.Parse(code), counters));
+        string sequence = string.Join("|", new[] { "SEQ Fig", "SEQ Fig", "SEQ Fig \\c", "SEQ Fig \\h", "SEQ Fig", "SEQ Fig \\r 10", "SEQ Fig \\* roman" }.Select(Count));
+        TestReport.Check(sequence == "1|2|2||4|10|xi", $"SEQ counts as Word 16 (1|2|2||4|10|xi; got {sequence})");
+        counters = new WordFieldSequenceCounters();
+        string autonumbers = string.Join("|", new[] { "AUTONUM", "AUTONUM", "AUTONUM \\s :", "AUTONUMLGL", "AUTONUMOUT" }.Select(Count));
+        TestReport.Check(autonumbers == "1.|2.|3:|4.|5.", $"AUTONUM* count as Word 16 (1.|2.|3:|4.|5.; got {autonumbers})");
+        counters = new WordFieldSequenceCounters();
+        string listNumbers = string.Join("|", new[] { "LISTNUM", "LISTNUM", "LISTNUM \\l 2", "LISTNUM NumberDefault \\l 1 \\s 5", "LISTNUM LegalDefault", "LISTNUM OutlineDefault" }.Select(Count));
+        TestReport.Check(listNumbers == "1)|2)|a)|5)|6.|VII.", $"LISTNUM counts as Word 16 (1)|2)|a)|5)|6.|VII.; got {listNumbers})");
+        string symbol = WordFieldEvaluator.Compute(WordFieldInstruction.Parse("SYMBOL 65 \\f Arial \\s 12"), English).Html ?? "";
+        TestReport.Check(symbol.Contains("font-family:'Arial'") && symbol.Contains("font-size:12pt") && symbol.Contains(">A<"), "SYMBOL: the character in its font and size");
+        string wingding = WordFieldEvaluator.Compute(WordFieldInstruction.Parse("SYMBOL 0x4A \\f Wingdings"), English).Html ?? "";
+        TestReport.Check(wingding.Contains("\uF04A"), "SYMBOL in a symbol font maps to U+F0xx like w:sym");
+        string equation = WordFieldEvaluator.Compute(WordFieldInstruction.Parse("EQ \\f(1,2) + \\r(3,x) \\b\\bc\\[(y) \\s\\up8(2)"), English).Html ?? "";
+        TestReport.Check(equation.Contains("<mfrac><mrow><mtext>1</mtext></mrow><mrow><mtext>2</mtext></mrow></mfrac>") && equation.Contains("<mroot><mrow><mtext>x</mtext></mrow><mrow><mtext>3</mtext></mrow></mroot>")
+                         && equation.Contains(">[</mo>") && equation.Contains(">]</mo>") && equation.Contains("voffset=\"8pt\""), "EQ: fraction, radical with index, mirrored brackets, raised text as MathML");
+        string integral = WordFieldEvaluator.Compute(WordFieldInstruction.Parse("EQ \\i\\su(i=1,n,i)"), English).Html ?? "";
+        TestReport.Check(integral.Contains("<munderover>") && integral.Contains("∑"), "EQ \\i\\su: a sum with limits");
+        TestReport.Check(WordFieldEvaluator.Compute(WordFieldInstruction.Parse("PAGE"), English).Html!.Contains("field-page-placeholder"), "PAGE: a placeholder");
+        TestReport.Check(WordFieldEvaluator.Compute(WordFieldInstruction.Parse("XE \"entry\""), English).IsEmpty, "XE: nothing shows");
+        var properties = new WordFieldContext
+        {
+            DocumentProperty = name => name switch { "AUTHOR" => "Moshe", "NUMWORDS" => "65", "Client" => "Acme", _ => null },
+            DocumentDate = name => name == "CREATEDATE" ? new DateTime(2024, 3, 5, 10, 21, 0) : null,
+            Culture = CultureInfo.GetCultureInfo("en-US"), FileName = "a.docx", FilePath = "C:\\x\\a.docx",
+            BookmarkText = name => name == "Amount" ? "1,250.50 NIS" : name == "Chapter" ? "The chapter" : null,
+            Table = new Table([["1", "2", ""], ["3", "4", ""]], 0, 2),
+        };
+        TestReport.Check(Field("AUTHOR", properties) == "Moshe" && Field("NUMWORDS \\* CardText", properties) == "sixty-five" && Field("DOCPROPERTY Client", properties) == "Acme"
+                         && Field("CREATEDATE \\@ \"d MMM yyyy\"", properties) == "5 Mar 2024" && Field("FILENAME", properties) == "a.docx" && Field("FILENAME \\p", properties) == "C:\\x\\a.docx"
+                         && Field("INFO Author", properties) == "Moshe", "document property fields (AUTHOR, NUMWORDS, DOCPROPERTY, CREATEDATE, FILENAME, INFO)");
+        TestReport.Check(Field("REF Chapter \\* Upper", properties) == "THE CHAPTER" && Field("REF Missing", properties) == WordFieldEvaluator.ReferenceNotFound
+                         && Field("= Amount * 2", properties) == "2501", "REF text and a bookmark in a formula (its leading number)");
+        TestReport.Check(Field("= SUM(LEFT)", properties) == "3" && Field("= SUM(A1:B2)", properties) == "10" && Field("= A2*B2", properties) == "12" && Field("= SUM(R1C1:R2C1)", properties) == "4",
+                         "table formulas: LEFT, A1:B2, cell product, R1C1 ranges");
+    }
+
+    private sealed class Table(string[][] cells, int row, int column) : IWordFieldTable
+    {
+        public int RowCount => cells.Length;
+        public int ColumnCount(int r) => cells[r].Length;
+        public string? CellText(int r, int c) => r < cells.Length && c < cells[r].Length ? cells[r][c] : null;
+        public int CurrentRow => row;
+        public int CurrentColumn => column;
+    }
+
+    private static void Instructions()
+    {
+        var parsed = WordFieldInstruction.Parse(" HYPERLINK \"http://a/b c\" \\l \"Part 2\" \\o \"tip \\\"q\\\"\" \\* MERGEFORMAT ");
+        TestReport.Check(parsed.Name == "HYPERLINK" && parsed.Arguments.Single() == "http://a/b c" && parsed.SwitchArgument("\\l") == "Part 2" && parsed.SwitchArgument("\\o") == "tip \"q\""
+                         && parsed.GeneralFormats.Single() == "MERGEFORMAT", "instruction tokens: quoted argument, switch arguments, escaped quote, general switch (DomainMapper_Impl.cxx lcl_ExtractToken)");
+        var seq = WordFieldInstruction.Parse("SEQ Figure \\r 3 \\c \\* ARABIC");
+        TestReport.Check(seq.Arguments.Single() == "Figure" && seq.SwitchArgument("\\r") == "3" && seq.Has("\\c") && seq.SwitchArgument("\\c") == "", "SEQ: \\r takes an argument, \\c does not");
+        TestReport.Check(WordFieldInstruction.Parse("=2+3 \\# \"0.0\"").FormulaExpression.Trim() == "2+3" && WordFieldInstruction.Parse("=2+3 \\# \"0.0\"").NumericPicture == "0.0",
+                         "formula: the expression stops at its first general switch");
+    }
+
+    // ---------------------------------------------------------------- .docx
+
+    private static string Run(string text) => $"<w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r>";
+    private static string Begin(string attributes = "", string inner = "") => $"<w:r><w:fldChar w:fldCharType=\"begin\"{attributes}>{inner}</w:fldChar></w:r>";
+    private static string Code(string code) => $"<w:r><w:instrText xml:space=\"preserve\">{code}</w:instrText></w:r>";
+    private const string Separate = "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>";
+    private const string End = "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>";
+    private static string Complex(string code, string? result, string beginAttributes = "") => Begin(beginAttributes) + Code(code) + (result is null ? "" : Separate + Run(result)) + End;
+
+    private static void DocxRendering()
+    {
+        string table = "<w:tbl><w:tblGrid><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1000\"/></w:tblGrid>"
+                     + "<w:tr><w:tc><w:p>" + Run("1") + "</w:p></w:tc><w:tc><w:p>" + Run("2") + "</w:p></w:tc><w:tc><w:p>" + Complex(" =SUM(LEFT) ", "3") + "</w:p></w:tc></w:tr>"
+                     + "<w:tr><w:tc><w:p>" + Run("10") + "</w:p></w:tc><w:tc><w:p>" + Run("20") + "</w:p></w:tc><w:tc><w:p>" + Complex(" = SUM(ABOVE) ", null) + "</w:p></w:tc></w:tr></w:tbl>";
+        string checkBox = "<w:ffData><w:name w:val=\"Check1\"/><w:enabled/><w:checkBox><w:sizeAuto/><w:default w:val=\"0\"/><w:checked/></w:checkBox></w:ffData>";
+        string dropDown = "<w:ffData><w:name w:val=\"Drop1\"/><w:ddList><w:result w:val=\"1\"/><w:listEntry w:val=\"Red\"/><w:listEntry w:val=\"Blueberry\"/></w:ddList></w:ffData>";
+        string body =
+            /* 0 */ "<w:p><w:bookmarkStart w:id=\"1\" w:name=\"Target\"/>" + Run("Target text") + "<w:bookmarkEnd w:id=\"1\"/></w:p>"
+            /* 1 */ + "<w:p>" + Run("cached ") + Complex(" REF Target \\h ", "Cached ref") + Run(" end") + "</w:p>"
+            /* 2 */ + "<w:p>" + Run("page ") + Complex(" PAGE ", "57") + Run(" of ") + Complex(" NUMPAGES ", "99") + Run(" see ") + Complex(" PAGEREF Target \\h ", "31") + "</w:p>"
+            /* 3 */ + "<w:p>" + Begin() + Code(" IF ") + Complex(" = 2+2 ", "4") + Code(" = 4 \"nestedyes\" \"nestedno\" ") + End + "</w:p>"
+            /* 4 */ + "<w:p>" + Run("Figure ") + Complex(" SEQ Figure ", "1") + "</w:p>"
+            /* 5 */ + "<w:p>" + Run("Figure ") + Complex(" SEQ Figure ", null) + Run(" and ") + Complex(" SEQ Figure \\* roman ", null) + "</w:p>"
+            /* 6 */ + "<w:p>" + Complex(" = 1+1 ", "staleresult", " w:dirty=\"true\"") + Run(" | ") + Complex(" = 1+1 ", "lockedresult", " w:dirty=\"true\" w:fldLock=\"true\"") + "</w:p>"
+            /* 7 */ + table
+            /* 8 */ + "<w:p>" + Complex(" AUTHOR ", null) + Run(" / ") + Complex(" DOCPROPERTY Client ", null) + Run(" / ") + Complex(" DOCVARIABLE Var1 ", null) + "</w:p>"
+            /* 9 */ + "<w:p>" + Begin("", checkBox) + Code(" FORMCHECKBOX ") + End + Begin("", dropDown) + Code(" FORMDROPDOWN ") + End + "</w:p>"
+            /* 10 */ + "<w:p>" + Complex(" MACROBUTTON NoMacro Press here ", null) + Run(" ") + Complex(" GOTOBUTTON Target Go ", null) + "</w:p>"
+            /* 11 */ + "<w:p>" + Run("index") + Complex(" XE \"hiddenentry\" ", null) + Complex(" TC \"hiddentoc\" ", null) + "</w:p>"
+            /* 12 */ + "<w:p>" + Complex(" EQ \\f(1,2) ", null) + "</w:p>"
+            /* 13 */ + "<w:p>" + Complex(" MERGEFIELD FirstName ", null) + "<w:fldSimple w:instr=\" = 6*7 \"/>" + "<w:fldSimple w:instr=\" QUOTE simplecached \">" + Run("simplecached") + "</w:fldSimple></w:p>"
+            /* 14 */ + "<w:p>" + Complex(" REF Target ", null) + Run(" | ") + Complex(" HYPERLINK \\l \"Target\" ", "go to target") + "</w:p>"
+            /* 15 */ + "<w:p>" + Begin() + Code(" QUOTE \"multi") + "</w:p>"
+            /* 16 */ + "<w:p>" + Code("paragraph\" ") + Separate + Run("multiresult") + End + Run(" after") + "</w:p>"
+            /* 17 */ + "<w:p>" + Run("Figure ") + Complex(" SEQ Figure ", null) + "</w:p>";
+        const string coreProperties = "<?xml version=\"1.0\"?><cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:creator>Moshe Cohen</dc:creator></cp:coreProperties>";
+        const string customProperties = "<?xml version=\"1.0\"?><Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/custom-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\"><property fmtid=\"{D5CDD505-2E9C-101B-9397-08002B2CF9AE}\" pid=\"2\" name=\"Client\"><vt:lpwstr>Acme Ltd</vt:lpwstr></property></Properties>";
+        var parts = new Dictionary<string, byte[]>
+        {
+            ["docProps/core.xml"] = Encoding.UTF8.GetBytes(coreProperties),
+            ["docProps/custom.xml"] = Encoding.UTF8.GetBytes(customProperties),
+        };
+        string settings = "<w:docVars><w:docVar w:name=\"Var1\" w:val=\"VariableValue\"/></w:docVars>";
+        List<string> html = DocxFidelityTest.RenderAll("fields-v1", body, settings: settings, binaryParts: parts);
+        TestReport.Check(html[1].Contains("Cached ref") && html[1].Contains("href=\"#bookmark-Target\"") && !html[1].Contains("REF"), "REF \\h: the cached result shows, as a link, the code does not");
+        TestReport.Check(!html[2].Contains("57") && !html[2].Contains("99") && !html[2].Contains(">31<") && html[2].Split("field-page-placeholder").Length == 4
+                         && html[2].Contains("<a class=\"link\" href=\"#bookmark-Target\"") , "PAGE / NUMPAGES / PAGEREF: placeholders (PAGEREF \\h still links), page numbers not shown");
+        TestReport.Check(html[3].Contains("nestedyes") && !html[3].Contains(">4<") && !html[3].Contains("nestedno"), "nested field in a code: its result is part of the code; IF without a result computed");
+        TestReport.Check(html[4].Contains(">1<") || html[4].Contains("1"), "SEQ with a cached result shows it");
+        TestReport.Check(html[5].Contains("Figure 2") && html[5].Contains(" iii"), $"SEQ without a result counts on from the index's counters (2, then iii): {Strip(html[5])}");
+        TestReport.Check(Strip(html[17]).Contains("Figure 4"), $"SEQ counters reach a later block (Figure 4): {Strip(html[17])}");
+        TestReport.Check(html[6].Contains("2") && !html[6].Contains("staleresult") && html[6].Contains("lockedresult"), "dirty field recomputed, dirty + locked field keeps its result");
+        TestReport.Check(Strip(html[7]).EndsWith("10203"), $"table formula: SUM(ABOVE) over the cell above (3): {Strip(html[7])}");
+        TestReport.Check(html[8].Contains("Moshe Cohen") && html[8].Contains("Acme Ltd") && html[8].Contains("VariableValue"), "AUTHOR / DOCPROPERTY / DOCVARIABLE from the package's properties");
+        TestReport.Check(html[9].Contains("☒") && html[9].Contains("Blueberry") && !html[9].Contains("Red"), "form fields: checked box, selected drop-down entry");
+        TestReport.Check(html[10].Contains("Press here") && html[10].Contains("href=\"#bookmark-Target\"") && html[10].Contains(">Go<"), "MACROBUTTON text, GOTOBUTTON link");
+        TestReport.Check(!html[11].Contains("hidden"), "XE / TC: nothing shows");
+        TestReport.Check(html[12].Contains("<mfrac>"), "EQ drawn as MathML");
+        TestReport.Check(Strip(html[13]) == "«FirstName»42simplecached", "MERGEFIELD, empty fldSimple formula, fldSimple cached result: " + Strip(html[13]));
+        TestReport.Check(html[14].Contains("Target text") && html[14].Contains(">go to target</a>"), "REF without a result: the bookmark's text; HYPERLINK \\l links");
+        TestReport.Check(!html[15].Contains("multi") && html[16].Contains("multiresult") && !html[16].Contains("paragraph"), "a code across paragraphs stays hidden (index-time open-field state)");
+
+        // search: the byte scanner and the reference reader agree, and find what shows, never codes / page numbers / hidden fields
+        string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-fields-v1.docx");
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-fields") };
+        using var document = (DocxWindowedDocument)WordWindowedDocumentOpener.Open(path, policy);
+        (string query, int[] expectedBlocks)[] queries =
+        [
+            ("Cached ref", [1]), ("REF", []), ("57", []), ("99", []), ("nestedyes", [3]), ("nestedno", []), ("Figure 2", [5]), ("iii", [5]), ("Figure 4", [17]),
+            ("staleresult", []), ("lockedresult", [6]), ("Moshe Cohen", [8]), ("Acme Ltd", [8]), ("VariableValue", [8]), ("Blueberry", [9]), ("Press here", [10]),
+            ("hiddenentry", []), ("«FirstName»", [13]), ("42", [13]), ("Target text", [0, 14]), ("multiresult", [16]), ("paragraph", []), ("MERGEFIELD", []),
+        ];
+        foreach ((string query, int[] expected) in queries)
+        {
+            int[] bytes = Hits(document, query, DocxWindowedDocument.DocxSearchTextMode.Bytes);
+            int[] reference = Hits(document, query, DocxWindowedDocument.DocxSearchTextMode.ReferenceXmlReader);
+            TestReport.Check(bytes.SequenceEqual(expected) && reference.SequenceEqual(expected),
+                             $"search \"{query}\": blocks [{string.Join(",", expected)}] (bytes [{string.Join(",", bytes)}], reference [{string.Join(",", reference)}])");
+        }
+    }
+
+    private static int[] Hits(DocxWindowedDocument document, string query, DocxWindowedDocument.DocxSearchTextMode mode)
+    {
+        var hits = new List<int>();
+        int from = 0;
+        while (true)
+        {
+            WordDocumentSearchBatch result = document.Search(query, WordDocumentSearchOptions.Default, from, 3, mode);
+            hits.AddRange(result.HitBlocks);
+            if (result.ReachedEnd) break;
+            from = result.NextBlock;
+        }
+        return hits.ToArray();
+    }
+
+    internal static string Strip(string html) => System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", ""));
+}

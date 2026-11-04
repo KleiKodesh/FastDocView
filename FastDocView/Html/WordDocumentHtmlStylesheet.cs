@@ -25,6 +25,9 @@ public static class WordDocumentHtmlStylesheet
             .word-document .note-reference { font-size: 0.7em; line-height: 0; color: #06c; cursor: pointer; padding: 0 1px; }
             .word-document .note-mark { vertical-align: super; font-size: 0.7em; line-height: 0; color: #06c; margin-inline-end: 0.25em; }
             .word-document .page-break { display: block; border-top: 1px dashed #bbb; margin: 6pt 0; }
+            .word-document .field-page-placeholder { color: #888; border: 1px dotted #bbb; border-radius: 2px; padding: 0 0.15em; font-size: 0.9em; user-select: none; }
+            .word-document .form-checkbox { font-family: 'Segoe UI Symbol', sans-serif; }
+            .word-document math.field-equation { font-family: inherit; }
             .word-document .text-box { display: inline-block; vertical-align: top; max-width: 100%; border: 1px solid #c8c8c8; padding: 2pt 6pt; margin: 2pt; }
             .word-document .section-break { border: 0; border-top: 3px double #bbb; margin: 8pt 0; }
             .word-document table.table-row { width: 100%; margin: 0; }

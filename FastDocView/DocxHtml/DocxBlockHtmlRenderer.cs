@@ -38,7 +38,10 @@ public sealed class DocxBlockHtmlRenderer
     private readonly IReadOnlyDictionary<string, string>? _endnoteHyperlinkTargets;    // endnotes.xml.rels
     private IReadOnlyDictionary<string, string>? _currentHyperlinkTargets;      // the relationships of the part being rendered
     private string? _activeLinkOpenTag;                                         // inside a w:hyperlink or a HYPERLINK field result: its <a> tag
-    private readonly List<DocxField> _openFields = new();                       // complex fields begun in this block (w:fldChar begin … end)
+    private Fields.WordFieldStack _fields;                                      // complex fields open here (w:fldChar begin … end, w:fldSimple)
+
+    /// <summary>What fields Word saved without a result are computed from (document properties, bookmarks); null: nothing beyond the code.</summary>
+    public Fields.WordFieldContext? FieldContext { get; init; }
     private readonly PictureSource? _pictures;
     private WordDocumentNoteKind? _currentPicturePart;                         // null = the main part; a note kind = that notes part
 
@@ -54,13 +57,6 @@ public sealed class DocxBlockHtmlRenderer
     /// <summary>The id of a picture another part (a diagram drawing) names by r:embed.</summary>
     public Func<string, string, string?>? PartPictureId { get; init; }
 
-    private sealed class DocxField
-    {
-        public readonly StringBuilder Instruction = new();
-        public bool IsSeparated;
-        public string? LinkOpenTag;
-    }
-
     public DocxBlockHtmlRenderer(DocxStyleCascade styles, NoteLabelResolver? noteLabels = null, IReadOnlyDictionary<string, string>? hyperlinkTargets = null,
                                  IReadOnlyDictionary<string, string>? footnoteHyperlinkTargets = null, IReadOnlyDictionary<string, string>? endnoteHyperlinkTargets = null,
                                  PictureSource? pictures = null)
@@ -71,7 +67,11 @@ public sealed class DocxBlockHtmlRenderer
         _hyperlinkTargets = hyperlinkTargets;
         _footnoteHyperlinkTargets = footnoteHyperlinkTargets;
         _endnoteHyperlinkTargets = endnoteHyperlinkTargets;
+        _fields = new Fields.WordFieldStack();
     }
+
+    private Fields.WordFieldStack NewFieldStack(bool counts)
+        => new(FieldContext) { LinkTagOf = HyperlinkFieldTag, Counters = counts ? new Fields.WordFieldSequenceCounters() : null };
 
     /// <param name="listLabel">The label counted at index time ("3.", "ב."), or null when the block is not a list item.</param>
     /// <param name="previousStyleKey">The paragraph style of the block before (for contextual spacing), from the index.</param>
@@ -88,16 +88,10 @@ public sealed class DocxBlockHtmlRenderer
         _previousStyleKey = previousStyleKey;
         _currentHyperlinkTargets = _hyperlinkTargets;
         _currentPicturePart = null;
-        _openFields.Clear();
-        // Fields begun in an earlier block (recorded at index time): a HYPERLINK result that runs on into this block stays a link.
-        if (neighbours.OpenFields is { } openFields)
-            foreach (string open in openFields.Split('\u0001'))
-            {
-                var field = new DocxField { IsSeparated = open.Length > 0 && open[0] == 'S' };
-                field.Instruction.Append(open, Math.Min(1, open.Length), Math.Max(0, open.Length - 1));
-                if (field.IsSeparated) field.LinkOpenTag = HyperlinkFieldTag(field.Instruction.ToString());
-                _openFields.Add(field);
-            }
+        // Fields begun in an earlier block and the field counters there (recorded at index time): a HYPERLINK result that runs
+        // on into this block stays a link, a code that runs on stays hidden, a SEQ without a result counts on from there.
+        _fields = NewFieldStack(counts: true);
+        _fields.Restore(neighbours.OpenFields);
         Run(RenderBlock(block, html));
         _blockNeighbours = default;
         _activeLinkOpenTag = null;
@@ -117,7 +111,7 @@ public sealed class DocxBlockHtmlRenderer
         // a note's r:ids point into its own part's relationships (footnotes.xml.rels / endnotes.xml.rels)
         _currentHyperlinkTargets = kind == WordDocumentNoteKind.Footnote ? _footnoteHyperlinkTargets : _endnoteHyperlinkTargets;
         _currentPicturePart = kind;
-        _openFields.Clear();
+        _fields = NewFieldStack(counts: false);
         Run(RenderBlocks(note.Elements(), html));
         _activeLinkOpenTag = null;
         _currentNoteLabel = null;
@@ -369,7 +363,10 @@ public sealed class DocxBlockHtmlRenderer
             switch (name)
             {
                 case "r": yield return new(RenderRun(child, html, paragraphBase)); break;
-                case "hyperlink" or "fldSimple" when LinkOpenTagOf(child) is { } linkTag:
+                case "fldSimple":
+                    yield return new(RenderSimpleField(child, html, paragraphBase));
+                    break;
+                case "hyperlink" when LinkOpenTagOf(child) is { } linkTag:
                 {
                     string? outerLink = _activeLinkOpenTag;
                     _activeLinkOpenTag = linkTag;
@@ -380,7 +377,7 @@ public sealed class DocxBlockHtmlRenderer
                 case "bookmarkStart" when (string?)child.Attribute(W + "name") is { Length: > 0 } bookmark && !bookmark.StartsWith("_GoBack", StringComparison.Ordinal):
                     html.Append("<span class=\"bookmark\" id=\"").Append(WordHtmlText.Encode(BookmarkElementId(bookmark))).Append("\"></span>");
                     break;
-                case "hyperlink": case "ins": case "moveTo": case "smartTag": case "sdt": case "customXml": case "fldSimple": case "dir": case "bdo":
+                case "hyperlink": case "ins": case "moveTo": case "smartTag": case "sdt": case "customXml": case "dir": case "bdo":
                     XElement inner = name == "sdt" ? child.Element(W + "sdtContent") ?? child : child;
                     yield return new(RenderInlineChildren(inner, html, paragraphBase));
                     break;
@@ -434,18 +431,84 @@ public sealed class DocxBlockHtmlRenderer
     private string? _leaderCss;                             // the filler's CSS (the stop's leader)
     private readonly List<(string open, string close)> _openInline = new();   // inline tags around the current position (closed and reopened at the leader tab)
 
-    /// <summary>The innermost HYPERLINK field whose result is being rendered, as an &lt;a&gt; tag.</summary>
-    private string? ActiveFieldLink()
+    /// <summary>A table for formula fields: cells by row and cell index (w:tc order), their text as the reading view shows it.</summary>
+    private sealed class DocxFieldTable(List<XElement> rows, int row, int column) : Fields.IWordFieldTable
     {
-        for (int i = _openFields.Count - 1; i >= 0; i--)
-            if (_openFields[i].IsSeparated && _openFields[i].LinkOpenTag is { } tag) return tag;
+        private readonly Dictionary<int, List<XElement>> _cells = new();
+        private List<XElement> Cells(int r) => _cells.TryGetValue(r, out var cells) ? cells : _cells[r] = rows[r].Elements(W + "tc").ToList();
+        public int RowCount => rows.Count;
+        public int ColumnCount(int r) => Cells(r).Count;
+        public string? CellText(int r, int c) => r < rows.Count && c < Cells(r).Count ? PlainText(Cells(r)[c]) : null;
+        public int CurrentRow => row;
+        public int CurrentColumn => column;
+    }
+
+    /// <summary>The innermost HYPERLINK field whose result is being rendered, as an &lt;a&gt; tag.</summary>
+    private string? ActiveFieldLink() => _fields.ActiveLink;
+
+    private bool FieldOutputShows() => _fields.OutputShows;
+
+    /// <summary>
+    /// w:fldSimple (17.16.19): the instruction in w:instr, its runs the cached result; w:dirty / w:fldLock as on w:fldChar.
+    /// Rendered through the same field stack as complex fields.
+    /// </summary>
+    private IEnumerable<RenderStep> RenderSimpleField(XElement field, StringBuilder html, WordRunFormatting paragraphBase)
+    {
+        _fields.Begin(IsOn(field.Attribute(W + "dirty")), IsOn(field.Attribute(W + "fldLock")));
+        _fields.AppendInstruction((string?)field.Attribute(W + "instr") ?? "");
+        bool hasResult = HasSimpleFieldResult(field);
+        if (hasResult)
+        {
+            Fields.WordFieldOutput output = _fields.Separate();
+            if (FieldOutputShows()) AppendFieldOutput(html, output, _fields.CurrentFieldLink);
+            yield return new(RenderInlineChildren(field, html, paragraphBase));
+        }
+        Fields.WordFieldOutput end = _fields.End(out string? linkTag);
+        if (_fields.Route() == Fields.WordFieldTextRoute.Visible) AppendFieldOutput(html, end, linkTag);
+    }
+
+    /// <summary>Whether a w:fldSimple holds a result (any run content inside it).</summary>
+    internal static bool HasSimpleFieldResult(XElement field) => field.Elements().Any(e => e.Name.LocalName is "r" or "hyperlink" or "fldSimple" or "smartTag" or "ins" or "sdt" or "customXml");
+
+    internal static bool IsOn(XAttribute? attribute) => attribute is not null && (string)attribute is "1" or "true" or "on";
+
+    /// <summary>A field's computed result or page placeholder, in the field's link when it has one and no link is open.</summary>
+    private void AppendFieldOutput(StringBuilder html, Fields.WordFieldOutput output, string? linkTag)
+    {
+        if (output.IsEmpty) return;
+        bool wrap = linkTag is not null && _activeLinkOpenTag is null && ActiveFieldLink() is null;
+        if (wrap) html.Append(linkTag);
+        if (output.Html is { } markup) html.Append(markup);
+        else html.Append(WordHtmlText.Encode(output.Text!));
+        if (wrap) html.Append("</a>");
+    }
+
+    /// <summary>w:ffData of a form field's w:fldChar begin (17.16.17): checkbox state, drop-down entries and selection, text default.</summary>
+    internal static Fields.WordFormFieldState? FormFieldState(XElement fieldCharacter)
+    {
+        if (fieldCharacter.Element(W + "ffData") is not { } data) return null;
+        if (data.Element(W + "checkBox") is { } checkBox)
+        {
+            // w:checked overrides w:default (17.16.7 / 17.16.11); a bare w:checked is on
+            XElement? state = checkBox.Element(W + "checked") ?? checkBox.Element(W + "default");
+            bool isChecked = state is not null && ((string?)state.Attribute(W + "val") is null or "1" or "true" or "on");
+            return new Fields.WordFormFieldState { IsChecked = isChecked };
+        }
+        if (data.Element(W + "ddList") is { } list)
+        {
+            var entries = list.Elements(W + "listEntry").Select(e => (string?)e.Attribute(W + "val") ?? "").ToList();
+            // w:result (17.16.29) is the selected entry, else w:default (17.16.12), else the first
+            int selected = int.TryParse((string?)list.Element(W + "result")?.Attribute(W + "val") ?? (string?)list.Element(W + "default")?.Attribute(W + "val"), out int s) ? s : 0;
+            return new Fields.WordFormFieldState { Entries = entries, SelectedEntry = selected };
+        }
+        if (data.Element(W + "textInput") is { } input)
+            return new Fields.WordFormFieldState { DefaultText = (string?)input.Element(W + "default")?.Attribute(W + "val") };
         return null;
     }
 
     /// <summary>w:hyperlink (r:id → the relationship's target, w:anchor → a bookmark, w:tooltip) or a w:fldSimple HYPERLINK, as an &lt;a&gt; tag; null when it has no safe target.</summary>
     private string? LinkOpenTagOf(XElement element)
     {
-        if (element.Name.LocalName == "fldSimple") return HyperlinkFieldTag((string?)element.Attribute(W + "instr") ?? "");
         string? target = null;
         XNamespace relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
         if ((string?)element.Attribute(relationships + "id") is { } id && _currentHyperlinkTargets is not null) _currentHyperlinkTargets.TryGetValue(id, out target);
@@ -469,6 +532,9 @@ public sealed class DocxBlockHtmlRenderer
             return parts.Count > 1 && !parts[1].StartsWith("\\", StringComparison.Ordinal) && parts.Skip(2).Any(part => part.Equals("\\h", StringComparison.OrdinalIgnoreCase))
                 ? LinkTag("#" + parts[1], null)
                 : null;
+        // GOTOBUTTON bookmark text (17.16.5.26): jumps to the bookmark
+        if (parts[0].Equals("GOTOBUTTON", StringComparison.OrdinalIgnoreCase))
+            return parts.Count > 1 ? LinkTag("#" + parts[1], null) : null;
         if (!parts[0].Equals("HYPERLINK", StringComparison.OrdinalIgnoreCase)) return null;
         string url = "", anchors = "", tooltip = "";
         for (int i = 1; i < parts.Count; i++)
@@ -703,7 +769,13 @@ public sealed class DocxBlockHtmlRenderer
     {
         foreach (XElement child in run.Elements())
         {
-            switch (child.Name.LocalName)
+            string childName = child.Name.LocalName;
+            // inside a field's code (a nested field's result there is part of the code) or a result replaced by a placeholder /
+            // computed text: nothing shows
+            if (_fields.Depth > 0 && childName is not ("fldChar" or "instrText" or "rPr" or "AlternateContent")
+                && _fields.Route(childName is "t" ? child.Value : childName is "tab" or "ptab" ? "\t" : null) != Fields.WordFieldTextRoute.Visible)
+                continue;
+            switch (childName)
             {
                 case "t": case "delText": AppendRunText(html, child, formatting); break;
                 case "tab": case "ptab":
@@ -745,17 +817,24 @@ public sealed class DocxBlockHtmlRenderer
                 case "fldChar":
                     switch ((string?)child.Attribute(W + "fldCharType"))
                     {
-                        case "begin": _openFields.Add(new DocxField()); break;
-                        case "separate" when _openFields.Count > 0:
-                            DocxField field = _openFields[_openFields.Count - 1];
-                            field.IsSeparated = true;
-                            field.LinkOpenTag = HyperlinkFieldTag(field.Instruction.ToString());
+                        case "begin": _fields.Begin(IsOn(child.Attribute(W + "dirty")), IsOn(child.Attribute(W + "fldLock")), FormFieldState(child)); break;
+                        case "separate":
+                        {
+                            Fields.WordFieldOutput output = _fields.Separate();
+                            // shown when the fields around it show (the field itself now suppresses its cached result)
+                            if (!output.IsEmpty && FieldOutputShows()) AppendFieldOutput(html, output, _fields.CurrentFieldLink);
                             break;
-                        case "end" when _openFields.Count > 0: _openFields.RemoveAt(_openFields.Count - 1); break;
+                        }
+                        case "end":
+                        {
+                            Fields.WordFieldOutput output = _fields.End(out string? linkTag);
+                            if (_fields.Route() == Fields.WordFieldTextRoute.Visible) AppendFieldOutput(html, output, linkTag);
+                            break;
+                        }
                     }
                     break;
                 case "instrText":
-                    if (_openFields.Count > 0 && !_openFields[_openFields.Count - 1].IsSeparated) _openFields[_openFields.Count - 1].Instruction.Append(child.Value);
+                    _fields.AppendInstruction(child.Value);
                     break;
                 case "separator": case "continuationSeparator": case "rPr": case "lastRenderedPageBreak": break;
             }
@@ -785,9 +864,9 @@ public sealed class DocxBlockHtmlRenderer
         string? previous = _previousStyleKey;
         // A text box inside a link is not part of the link (no <a> inside <a>, no blocks inside <a>); its own fields start fresh.
         string? outerLink = _activeLinkOpenTag;
-        List<DocxField> outerFields = new(_openFields);
+        Fields.WordFieldStack outerFields = _fields;
         _activeLinkOpenTag = null;
-        _openFields.Clear();
+        _fields = new(FieldContext) { LinkTagOf = HyperlinkFieldTag, Counters = outerFields.Counters };   // the text box's own fields, the same counters
         bool outerIsRightToLeft = _isParagraphRightToLeft;   // the text box's own paragraphs set it; the outer runs need theirs back
         _textBoxDepth++;
         XElement? boxLayout = drawing.Elements().FirstOrDefault(e => e.Name.LocalName == Docx.DocxDrawingStripper.PictureLayoutElementName && e.Attribute("textBox") is not null);
@@ -803,8 +882,7 @@ public sealed class DocxBlockHtmlRenderer
             boxLayout = null;   // a second box in one drawing (a group) has no layout of its own here
         }
         _activeLinkOpenTag = outerLink;
-        _openFields.Clear();
-        _openFields.AddRange(outerFields);
+        _fields = outerFields;
         _textBoxDepth--;
         _isParagraphRightToLeft = outerIsRightToLeft;
         _previousStyleKey = previous;
@@ -905,9 +983,9 @@ public sealed class DocxBlockHtmlRenderer
 
         string? previous = _previousStyleKey;
         string? outerLink = _activeLinkOpenTag;
-        List<DocxField> outerFields = new(_openFields);
+        Fields.WordFieldStack outerFields = _fields;
         _activeLinkOpenTag = null;
-        _openFields.Clear();
+        _fields = new(FieldContext) { LinkTagOf = HyperlinkFieldTag, Counters = outerFields.Counters };   // the text box's own fields, the same counters
         bool outerIsRightToLeft = _isParagraphRightToLeft;
         _textBoxDepth++;
         WordShapeHtml.OpenFrame(html, placement, inFlow);
@@ -938,8 +1016,7 @@ public sealed class DocxBlockHtmlRenderer
             WordPictureHtml.CloseTextBox(html);
         }
         _activeLinkOpenTag = outerLink;
-        _openFields.Clear();
-        _openFields.AddRange(outerFields);
+        _fields = outerFields;
         _textBoxDepth--;
         _isParagraphRightToLeft = outerIsRightToLeft;
         _previousStyleKey = previous;
@@ -1260,9 +1337,13 @@ public sealed class DocxBlockHtmlRenderer
                 // rows is as tall as all of them, so only a single-row cell is clipped to this row's height.
                 bool isClipped = isExactHeight && rowSpan == 1;
                 if (isClipped) html.Append("<div style=\"max-height:").Append(WordParagraphFormatting.TwipsToPt(rowHeight!.Value)).Append("pt;overflow:hidden\">");
+                // a formula field in this cell computes over this table (17.16.3.1 cell references)
+                Fields.IWordFieldTable? outerTable = FieldContext?.Table;
+                if (FieldContext is not null) FieldContext.Table = new DocxFieldTable(rows, rowIndex, cells.IndexOf(cell));
                 _cellDepth++;
                 yield return new(RenderBlocks(cell.Elements(), html, isAutoSpacingContainer: true));
                 _cellDepth--;
+                if (FieldContext is not null) FieldContext.Table = outerTable;
                 if (isClipped) html.Append("</div>");
                 _previousStyleKey = previous;
                 html.Append("</td>");
