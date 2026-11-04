@@ -37,6 +37,41 @@ internal static class RtfShapeDrawing
     public delegate string? PictureIdOf(in RtfPicture picture);
 
     /// <summary>
+    /// A text effect (WordArt) shape is drawn as its text only: LibreOffice renders a TextPath shape as Fontwork in place of its
+    /// outline (svx EnhancedCustomShapeEngine.cxx:236-262); the text takes the shape's fill colour (Fontwork text is filled with it).
+    /// </summary>
+    private static void TextEffect(WordShape drawn, RtfShapePlacement shape)
+    {
+        drawn.Geometry = WordShapeGeometry.Path;
+        drawn.Paths = [];
+    }
+
+    /// <summary>The shape's fill as .doc reads it from the same properties (see <see cref="WordOfficeArtFill"/>).</summary>
+    private static WordOfficeArtFillProperties FillOf(RtfShapePlacement shape, PictureIdOf pictureId)
+    {
+        var fill = new WordOfficeArtFillProperties
+        {
+            Type = shape.FillType,
+            Color = Css(shape, shape.FillColor ?? 0xFFFFFF, WordOfficeArtColor.FillColor),
+            BackColor = Css(shape, shape.FillBackColor ?? 0xFFFFFF, WordOfficeArtColor.FillBackColor),
+            HasOpacity = shape.FillOpacity is not null,
+            Opacity = (shape.FillOpacity ?? 0x10000) / 65536.0,
+            BackOpacity = (shape.FillBackOpacity ?? 0x10000) / 65536.0,
+            AngleFix16 = shape.FillAngle, Focus = shape.FillFocus, ToRight = shape.FillToRight, ToBottom = shape.FillToBottom,
+            TileWidthPt = shape.FillWidth / EmuPerPoint, TileHeightPt = shape.FillHeight / EmuPerPoint,
+        };
+        if (shape.FillShadeColors is { } shades)
+            fill.ShadeColors = shades.Select(s => (Css(shape, s.color, WordOfficeArtColor.FillColor), 1 - s.position / 65536.0)).ToList();
+        if (shape.FillPicture is { } picture)
+        {
+            if (picture.Extension == ".dib" && fill.Type == 1 && picture.Data is { } dib && WordOfficeArtFill.DibPixels(dib) is { } pattern)
+                (fill.PatternPixels, fill.PatternWidth, fill.PatternHeight) = pattern;
+            else fill.PictureId = pictureId(picture);
+        }
+        return fill;
+    }
+
+    /// <summary>
     /// The drawn shapes of <paramref name="shape"/> at (x, y, width, height) points in the frame, children of a group placed by
     /// their relLeft.. in the group's groupLeft.. scaled to the group's box (rtfsdrimport.cxx:1036-1053); each text box's HTML
     /// is added to <paramref name="texts"/>, its index on the shape.
@@ -73,6 +108,13 @@ internal static class RtfShapeDrawing
             TextStyle = TextStyle(shape),
         };
         WordOfficeArtShapeTypes.Apply(drawn, shape.ShapeType < 0 ? WordOfficeArtShapeTypes.Rectangle : shape.ShapeType, shape.Adjust);
+        if (shape.Vertices is { Count: > 0 } vertices)
+        {
+            drawn.Geometry = WordShapeGeometry.Path;
+            drawn.Paths = WordOfficeArtGeometry.Custom(vertices, shape.Segments ?? [], [], shape.Adjust, shape.GeoLeft, shape.GeoTop, shape.GeoRight, shape.GeoBottom, width, height);
+        }
+        if (drawn.FillColor is not null) WordOfficeArtFill.Apply(drawn, FillOf(shape, pictureId));
+        if (shape.IsTextEffect) TextEffect(drawn, shape);
         WordOfficeArtShapeTypes.ApplyLineEnds(drawn, shape.StartArrowType, shape.StartArrowWidth, shape.StartArrowLength, shape.EndArrowType, shape.EndArrowWidth, shape.EndArrowLength);
         if (shape.Picture is { } picture)
         {

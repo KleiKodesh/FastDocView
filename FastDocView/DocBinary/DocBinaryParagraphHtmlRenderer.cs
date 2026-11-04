@@ -488,8 +488,19 @@ public sealed class DocBinaryParagraphHtmlRenderer
     }
 
     /// <summary>A text-box story range as paragraphs (each ends at a paragraph mark, the last at the range's end).</summary>
-    private void AppendStory(StringBuilder html, (int start, int end) range)
+    private void AppendStory(StringBuilder html, DocBinaryShapeText story)
     {
+        if (story.Literal is { } literal)
+        {
+            // WordArt: its own string, in its font and size, centred (a text path fits it to the shape)
+            html.Append("<span class=\"text-box-paragraph\" style=\"display:block;text-align:center;white-space:pre-wrap;");
+            if (story.FontFamily is { Length: > 0 } font) html.Append("font-family:'").Append(WordHtmlText.Encode(font.Replace("'", ""))).Append("';");
+            if (story.Color is { } color) html.Append("color:").Append(color).Append(';');
+            if (story.FontSizePt > 0) html.Append("font-size:").Append(story.FontSizePt.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("pt;");
+            html.Append("\">").Append(WordHtmlText.Encode(literal)).Append("</span>");
+            return;
+        }
+        (int start, int end) range = (story.Start, story.End);
         string text = _pieces.ReadText(range.start, range.end);
         int paragraphStart = range.start;
         string? previousStyleKey = null;

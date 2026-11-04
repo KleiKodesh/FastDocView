@@ -337,6 +337,18 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
                                      shape.WrapBottom / EmuPerPoint, shape.WrapLeft / EmuPerPoint, offset);
     }
 
+    /// <summary>WordArt text centred in its font and size (msdffdef.hxx:121-125 gtextUNICODE / gtextSize / gtextFont), known once the shape closed.</summary>
+    private static void WrapWordArt(RtfShapePlacement shape)
+    {
+        foreach (RtfShapePlacement child in shape.Children) WrapWordArt(child);
+        if (!shape.IsWordArt || shape.TextHtml is null) return;
+        var style = new StringBuilder("display:block;text-align:center;");
+        if (shape.WordArtFont is { Length: > 0 } font) style.Append("font-family:'").Append(WordHtmlText.Encode(font.Replace("'", ""))).Append("';");
+        if (shape.IsTextEffect && RtfShapeDrawing.FillColorCss(shape) is { } color) style.Append("color:").Append(color).Append(';');
+        if (shape.WordArtSizePt > 0) style.Append("font-size:").Append(shape.WordArtSizePt.ToString("0.##", CultureInfo.InvariantCulture)).Append("pt;");
+        shape.TextHtml = "<span class=\"word-art\" style=\"" + style + "\">" + shape.TextHtml + "</span>";
+    }
+
     // ── drawing objects ({\shp} / {\shpgrp}) ────────────────────────────────────────
 
     private Flow? _textBoxOuterFlow;
@@ -382,6 +394,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     public override void ShapeEnd(RtfShapePlacement root, in RtfGroupState state)
     {
         FlushRun();
+        WrapWordArt(root);
         double width = Math.Max(0, root.Right - root.Left) / 20.0, height = Math.Max(0, root.Bottom - root.Top) / 20.0;
         if (!root.IsGroup && !root.HasText && root.Picture is { } picture)
         {
@@ -395,7 +408,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         }
         StringBuilder target = _listTextTarget ?? _flow.Inline;
         WordPictureLayout layout = ShapeLayout(root, width, height);
-        if (!root.IsGroup && root.HasText && root.ShapeType is -1 or 1 or 202 && root.RotationDegrees == 0 && !root.FlipHorizontal && !root.FlipVertical)
+        if (!root.IsGroup && root.HasText && root.ShapeType is -1 or 1 or 202 && root.FillType == 0 && root.FillPicture is null && root.RotationDegrees == 0 && !root.FlipHorizontal && !root.FlipVertical)
         {
             WordTextBoxStyle style = RtfShapeDrawing.TextStyle(root);
             style = style with

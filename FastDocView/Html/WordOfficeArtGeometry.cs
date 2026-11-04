@@ -37,8 +37,10 @@ public static class WordOfficeArtGeometry
             int v = definition.Vertices[i];
             vertices[i] = (v & EquationMark) != 0 && v > 0 ? (v & 0xFFFF, true) : (v, false);
         }
+        var segments = new List<(int command, int count)>(definition.Segments.Length);
+        foreach (ushort data in definition.Segments) segments.Add(TableSegment(data));
         var evaluator = new Equations(definition.Calculations, values, 0, 0, definition.CoordinateWidth, definition.CoordinateHeight);
-        return Build(vertices, definition.Segments, evaluator, 0, 0, definition.CoordinateWidth, definition.CoordinateHeight, width, height,
+        return Build(vertices, segments, evaluator, 0, 0, definition.CoordinateWidth, definition.CoordinateHeight, width, height,
                      angleMode: FullEllipseTypes.Contains(shapeType) ? AngleMode.Full : AngleMode.Odf);
     }
 
@@ -48,13 +50,64 @@ public static class WordOfficeArtGeometry
     /// segments, guide records (flags, p1, p2, p3); angle ellipses use the binary-import rule (degrees in 16.16, a swing angle,
     /// EnhancedCustomShape2d.cxx:2246-2297).
     /// </summary>
-    public static List<WordShapePath> Custom(IReadOnlyList<(int value, bool isEquation)> vertices, IReadOnlyList<ushort> segments, int[] guides,
+    public static List<WordShapePath> Custom(IReadOnlyList<int> vertexValues, IReadOnlyList<ushort> segments, int[] guides,
                                              IReadOnlyList<int?> adjust, int left, int top, int right, int bottom, double width, double height)
     {
         var values = new double[10];
         for (int i = 0; i < 10; i++) values[i] = i < adjust.Count && adjust[i] is { } given ? given : 0;
+        // a value whose high 16 bits are 0x8000 is equation n (EnhancedCustomShape2d.cxx:72-86 SetEnhancedCustomShapeParameter)
+        var vertices = vertexValues.Select(v => ((uint)v >> 16) == 0x8000 ? (v & 0xFFFF, true) : (v, false)).ToArray();
         var evaluator = new Equations(guides, values, left, top, right, bottom);
-        return Build(vertices.ToArray(), segments.ToArray(), evaluator, left, top, right, bottom, width, height, AngleMode.Binary);
+        return Build(vertices, segments.Select(BinarySegment).ToList(), evaluator, left, top, right, bottom, width, height, AngleMode.Binary);
+    }
+
+    /// <summary>A preset table's segment (svdoashp.cxx:96-165 lcl_ShapeSegmentFromBinary) as (command byte, element count).</summary>
+    private static (int command, int count) TableSegment(ushort data)
+    {
+        int command = data >> 8, low = data & 0xFF;
+        return command switch
+        {
+            0x00 or 0x20 or 0x40 => (command, Math.Max(1, low)),
+            0xA1 or 0xA2 => (command, low / 3),
+            0xA3 or 0xA4 or 0xA5 or 0xA6 => (command, low >> 2),
+            _ => (command, low),
+        };
+    }
+
+    /// <summary>
+    /// A shape's own pSegmentInfo element (msdffimp.cxx:2267-2390: the top 3 bits the command - line, curve, move, close, end -
+    /// and 13 bits the count; 5 / 6 = an escape whose next 5 bits pick extension (a line), angle ellipse to / angle ellipse, arc to,
+    /// arc, clockwise arc to / arc, quadrant x / y, no fill, no stroke) as (command byte, element count). RTF writes the same values
+    /// (rtfsdrimport.cxx:531-590 reads 0x0001 / 0x4000 / 0x2000+n / 0x6001 / 0x8000 / 0xaa00 / 0xab00 alike).
+    /// </summary>
+    private static (int command, int count) BinarySegment(ushort data)
+    {
+        int count = data & 0x1FFF;
+        switch (data >> 13)
+        {
+            case 0: return (0x00, Math.Max(1, count));
+            case 1: return (0x20, Math.Max(1, count));
+            case 2: return (0x40, Math.Max(1, count));
+            case 3: return (0x60, 0);
+            case 4: return (0x80, 0);
+            case 5: case 6:
+                return ((data >> 8) & 0x1F) switch
+                {
+                    0x0 => (0x00, Math.Max(1, count)),
+                    0x1 => (0xA1, (data & 0xFF) / 3),
+                    0x2 => (0xA2, (data & 0xFF) / 3),
+                    0x3 => (0xA3, (data & 0xFF) >> 2),
+                    0x4 => (0xA4, (data & 0xFF) >> 2),
+                    0x5 => (0xA5, (data & 0xFF) >> 2),
+                    0x6 => (0xA6, (data & 0xFF) >> 2),
+                    0x7 => (0xA7, data & 0xFF),
+                    0x8 => (0xA8, data & 0xFF),
+                    0xA => (0xAA, 0),
+                    0xB => (0xAB, 0),
+                    _ => (-1, 0),
+                };
+            default: return (-1, 0);
+        }
     }
 
     private enum AngleMode { Odf, Full, Binary }
@@ -124,7 +177,7 @@ public static class WordOfficeArtGeometry
         }
     }
 
-    private static List<WordShapePath> Build((int value, bool isEquation)[] vertices, ushort[] segments, Equations equations,
+    private static List<WordShapePath> Build((int value, bool isEquation)[] vertices, List<(int command, int count)> segments, Equations equations,
                                              double left, double top, double right, double bottom, double width, double height, AngleMode angleMode)
     {
         double scaleX = right != left ? width / (right - left) : 0, scaleY = bottom != top ? height / (bottom - top) : 0;
@@ -136,7 +189,7 @@ public static class WordOfficeArtGeometry
         (double X, double Y) Point(int pair) => ((Raw(pair * 2, true) - left) * scaleX, (Raw(pair * 2 + 1, false) - top) * scaleY);
         int pointCount = vertices.Length / 2;
         var paths = new List<WordShapePath>();
-        if (segments.Length == 0)
+        if (segments.Count == 0)
         {
             var path = new WordShapePath();
             if (pointCount > 0)
@@ -150,7 +203,7 @@ public static class WordOfficeArtGeometry
             return paths;
         }
         int source = 0, segment = 0;
-        while (segment < segments.Length)
+        while (segment < segments.Count)
         {
             var path = new WordShapePath();
             WordShapeSubpath? current = null;
@@ -162,17 +215,16 @@ public static class WordOfficeArtGeometry
             }
             (double X, double Y) Last() => current is null ? (0, 0) : current.Segments.Count > 0 ? (current.Segments[current.Segments.Count - 1].X, current.Segments[current.Segments.Count - 1].Y) : (current.StartX, current.StartY);
             bool ended = false;
-            while (segment < segments.Length && !ended)
+            while (segment < segments.Count && !ended)
             {
-                int data = segments[segment++];
-                int command = data >> 8, count = data & 0xFF;
+                (int command, int count) = segments[segment++];
                 switch (command)
                 {
                     case 0x00:
-                        for (int i = 0; i < Math.Max(1, count) && source < pointCount; i++) { var p = Point(source++); LineTo(p.X, p.Y); }
+                        for (int i = 0; i < count && source < pointCount; i++) { var p = Point(source++); LineTo(p.X, p.Y); }
                         break;
                     case 0x20:
-                        for (int i = 0; i < Math.Max(1, count) && source + 2 < pointCount; i++)
+                        for (int i = 0; i < count && source + 2 < pointCount; i++)
                         {
                             var a = Point(source++); var b = Point(source++); var e = Point(source++);
                             current ??= new WordShapeSubpath { StartX = a.X, StartY = a.Y };
@@ -188,7 +240,7 @@ public static class WordOfficeArtGeometry
                         break;
                     case 0x80: ended = true; break;
                     case 0xA1: case 0xA2:
-                        for (int i = 0; i < count / 3 && source + 2 < pointCount; i++)
+                        for (int i = 0; i < count && source + 2 < pointCount; i++)
                         {
                             if (command == 0xA2) Finish();
                             var centre = Point(source);
@@ -201,7 +253,7 @@ public static class WordOfficeArtGeometry
                     case 0xA3: case 0xA4: case 0xA5: case 0xA6:
                     {
                         bool clockwise = command is 0xA5 or 0xA6, moves = command is 0xA4 or 0xA6;
-                        for (int i = 0; i < (count >> 2) && source + 3 < pointCount; i++)
+                        for (int i = 0; i < count && source + 3 < pointCount; i++)
                         {
                             if (moves) Finish();
                             var c1 = Point(source); var c2 = Point(source + 1);

@@ -60,7 +60,18 @@ public static class WordOfficeArtShapeTypes
             shape.Geometry = WordShapeGeometry.Path;
             shape.Paths = paths;
         }
-        else shape.Geometry = WordShapeGeometry.Box;
+        else
+        {
+            // a type without a table: a plain box of its size, as paths so fills and line ends draw as for every other shape
+            shape.Geometry = WordShapeGeometry.Path;
+            var box = new WordShapeSubpath { Closed = true };
+            box.Segments.Add(WordShapeSegment.Line(shape.Width, 0));
+            box.Segments.Add(WordShapeSegment.Line(shape.Width, shape.Height));
+            box.Segments.Add(WordShapeSegment.Line(0, shape.Height));
+            var path = new WordShapePath();
+            path.Subpaths.Add(box);
+            shape.Paths = [path];
+        }
     }
 
     /// <summary>

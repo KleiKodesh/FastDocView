@@ -718,6 +718,16 @@ internal sealed class RtfParser
                 if (pictureClosed && !Pop()) _position = _end;
                 return;
             }
+            // the fill blip ({\sp{\sn fillBlip}{\sv {\pict ...}}}): a pattern's small DIB is always decoded (its pixels draw the
+            // pattern); a texture / picture is decoded only when its bytes are asked for
+            case RtfWord.Picture when state.Destination == RtfDestination.ShapePropertyValue && _sink.WantsPictures && _shapePropertyName == "fillBlip"
+                                      && _shapes.Count > 0 && _shapes[_shapes.Count - 1].FillPicture is null:
+            {
+                (RtfPicture body, bool pictureClosed) = ReadPictureBody(keepsData: true);
+                _shapes[_shapes.Count - 1].FillPicture = _sink.WantsPictureData || body.Extension == ".dib" ? body : body with { Data = null };
+                if (pictureClosed && !Pop()) _position = _end;
+                return;
+            }
             case RtfWord.Shape: case RtfWord.ShapeGroup: OpenShape(word, name, ref state); return;
             case RtfWord.ShapeInstruction:
                 if (state.Destination == RtfDestination.Shape) state.Destination = RtfDestination.ShapeInstruction;
@@ -1010,6 +1020,7 @@ internal sealed class RtfParser
                     case "picscaley": scaleY = value; break;
                     case "pngblip": extension = ".png"; break;
                     case "jpegblip": extension = ".jpg"; break;
+                    case "dibitmap": extension = ".dib"; break;          // a DIB without its file header (RTF 1.5 spec \dibitmapN)
                     case "bin":
                         if (data is null) { SkipBytes(parameter); break; }
                         for (long i = 0; i < parameter; i++) { int raw = ReadByte(); if (raw < 0) break; data.WriteByte((byte)raw); }
@@ -1065,6 +1076,7 @@ internal sealed class RtfParser
     private void EmitShapeString(RtfShapePlacement shape, string text)
     {
         shape.HasText = true;
+        shape.IsWordArt = true;
         _textBoxDepth = _depth;
         _sink.TextBoxStart(shape);
         ref RtfGroupState state = ref _stack[_depth];

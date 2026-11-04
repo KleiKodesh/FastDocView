@@ -115,12 +115,59 @@ internal sealed class RtfShapePlacement
     public long? FillOpacity, LineOpacity;
     /// <summary>The pib picture, when the renderer read one.</summary>
     public RtfPicture? Picture;
+    /// <summary>fillBlip (texture / picture / pattern fills) and the fill properties (same numbers as .doc FOPT, msdffdef.hxx:173-200).</summary>
+    public RtfPicture? FillPicture;
+    public int FillType;
+    public long? FillBackOpacity;
+    public int FillAngle, FillFocus, FillToRight, FillToBottom;
+    public long FillWidth, FillHeight;
+    /// <summary>fillShadeColors: "8;n;(color,dist);..." pairs (an array as the RTF shapes page writes arrays).</summary>
+    public List<(int color, int position)>? FillShadeColors;
+    /// <summary>The shape's own geometry: pVerticies (x, y pairs), pSegmentInfo (u16 commands) and geoLeft..geoBottom (the RTF shapes page;
+    /// LibreOffice rtfsdrimport.cxx:500-600 reads the same arrays).</summary>
+    public List<int>? Vertices;
+    public List<ushort>? Segments;
+    public int GeoLeft, GeoTop, GeoRight = 21600, GeoBottom = 21600;
     /// <summary>The shape has a {\shptxt}; its rendered HTML (the renderer).</summary>
     public bool HasText;
+    /// <summary>The text came from gtextUNICODE (WordArt), shown in gtextFont at gtextSize (16.16 points).</summary>
+    public bool IsWordArt;
+    /// <summary>fGtext ("True if the text effect properties (gtext*) are used", RTF shapes page): the shape is its text (a text path) - no outline drawn.</summary>
+    public bool IsTextEffect;
+    public string? WordArtFont;
+    public double WordArtSizePt;
     public string? TextHtml;
 
     public void SetProperty(string name, string value)
     {
+        if (name == "gtextFont") { WordArtFont = value; return; }
+        if (name == "pVerticies")
+        {
+            Vertices = new List<int>();
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(value, @"\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)"))
+            {
+                Vertices.Add((int)long.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture));
+                Vertices.Add((int)long.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture));
+            }
+            return;
+        }
+        if (name == "pSegmentInfo")
+        {
+            string[] parts = value.Split(';');
+            Segments = new List<ushort>();
+            for (int i = 2; i < parts.Length; i++)
+                if (long.TryParse(parts[i].Trim(), System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out long segment))
+                    Segments.Add((ushort)segment);
+            return;
+        }
+        if (name == "fillShadeColors")
+        {
+            // "size;count;(a,b);(a,b)..." - the array form of the RTF shapes page ("{\sv 8;4;{0,0};...}")
+            FillShadeColors = new List<(int, int)>();
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(value, @"\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)"))
+                FillShadeColors.Add(((int)(uint)long.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), int.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture)));
+            return;
+        }
         if (!long.TryParse(value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out long number)) return;
         int clamped = (int)Math.Max(int.MinValue, Math.Min(int.MaxValue, number));
         switch (name)
@@ -165,6 +212,20 @@ internal sealed class RtfShapePlacement
                 Adjust[int.Parse(name.Substring(6, name.Length - 11), System.Globalization.CultureInfo.InvariantCulture) - 1] = clamped;
                 break;
             case "lineDashing": LineDashing = clamped; break;
+            case "fillType": FillType = clamped; break;
+            case "fGtext": IsTextEffect = number != 0; break;
+            case "geoLeft": GeoLeft = clamped; break;
+            case "geoTop": GeoTop = clamped; break;
+            case "geoRight": GeoRight = clamped; break;
+            case "geoBottom": GeoBottom = clamped; break;
+            case "fillBackOpacity": FillBackOpacity = number; break;
+            case "fillAngle": FillAngle = clamped; break;
+            case "fillFocus": FillFocus = clamped; break;
+            case "fillToRight": FillToRight = clamped; break;
+            case "fillToBottom": FillToBottom = clamped; break;
+            case "fillWidth": FillWidth = number; break;
+            case "fillHeight": FillHeight = number; break;
+            case "gtextSize": WordArtSizePt = number / 65536.0; break;
             case "fillOpacity": FillOpacity = number; break;
             case "lineOpacity": LineOpacity = number; break;
         }

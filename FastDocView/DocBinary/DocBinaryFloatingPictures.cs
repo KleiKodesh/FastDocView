@@ -63,11 +63,11 @@ internal sealed class DocBinaryFloatingPictures
         if (Fspa(cp) is not { } fspa) return null;
         if (_pibBySpid is null) ReadDrawing();
         if (!_containerBySpid!.TryGetValue(fspa.spid, out var container)) return null;
-        return DocBinaryDrawnShapes.Read(_tableStream, container.start, container.end, container.isGroup, LayoutOf(fspa), _stories);
+        return DocBinaryDrawnShapes.Read(_tableStream, container.start, container.end, container.isGroup, LayoutOf(fspa), _stories, this);
     }
 
     /// <summary>The text-box CP ranges of the drawings anchored in [<paramref name="startCp"/>, <paramref name="endCp"/>) (the search).</summary>
-    public IEnumerable<(int start, int end)> TextRangesIn(int startCp, int endCp)
+    public IEnumerable<DocBinaryShapeText> TextRangesIn(int startCp, int endCp)
     {
         int[] cps = _anchorCps ??= ReadAnchorCps();
         if (cps.Length < 2) yield break;
@@ -78,7 +78,7 @@ internal sealed class DocBinaryFloatingPictures
             if (Fspa(cps[index]) is not { } fspa) continue;
             if (_pibBySpid is null) ReadDrawing();
             if (!_containerBySpid!.TryGetValue(fspa.spid, out var container)) continue;
-            foreach ((int start, int end) range in DocBinaryDrawnShapes.TextRanges(_tableStream, container.start, container.end, container.isGroup, _stories))
+            foreach (DocBinaryShapeText range in DocBinaryDrawnShapes.TextRanges(_tableStream, container.start, container.end, container.isGroup, _stories))
                 yield return range;
         }
     }
@@ -104,9 +104,36 @@ internal sealed class DocBinaryFloatingPictures
         return (LayoutOf(fspa), IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    /// <summary>The id prefix of a fill picture: the BStore index (1-based) of a shape's fillBlip.</summary>
+    public const string FillIdPrefix = "sf";
+
+    /// <summary>The picture id of BStore entry <paramref name="pib"/> as a fill (texture / picture fill); null when it is not a PNG / JPEG.</summary>
+    internal string? FillPictureId(int pib)
+        => LocateBlip(pib) is not null ? FillIdPrefix + pib.ToString(System.Globalization.CultureInfo.InvariantCulture) : null;
+
+    /// <summary>The DIB of BStore entry <paramref name="pib"/> (a pattern fill's blip), or null.</summary>
+    internal byte[]? Dib(int pib)
+    {
+        if (_pibBySpid is null) ReadDrawing();
+        if (pib < 1 || pib > _blips!.Count) return null;
+        (uint offset, bool insideTable) = _blips[pib - 1];
+        IEnumerable<Stream?> streams = insideTable ? [_tableStream] : [_dataStream, _wordDocument];
+        foreach (Stream? stream in streams)
+            if (stream is not null && DocBinaryPictures.DibBlip(stream, offset) is { } dib)
+                return DocBinaryPictures.Read(stream, dib.dataAt, dib.dataLength);
+        return null;
+    }
+
     /// <summary>The bytes of floating picture <paramref name="pictureId"/> (see <see cref="At"/>), or null.</summary>
     public WordDocumentPicture? Read(string pictureId)
     {
+        if (pictureId.StartsWith(FillIdPrefix, StringComparison.Ordinal))
+        {
+            if (!int.TryParse(pictureId.Substring(FillIdPrefix.Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int pib)
+                || LocateBlip(pib) is not { } fill) return null;
+            byte[] fillBytes = DocBinaryPictures.Read(fill.stream, fill.dataAt, fill.dataLength);
+            return fillBytes.Length == fill.dataLength ? WordPictureHtml.Picture(fill.extension, fillBytes) : null;
+        }
         if (!pictureId.StartsWith(IdPrefix, StringComparison.Ordinal)
             || !uint.TryParse(pictureId.Substring(IdPrefix.Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out uint spid))
             return null;
@@ -144,7 +171,13 @@ internal sealed class DocBinaryFloatingPictures
     private (Stream stream, long dataAt, int dataLength, string extension)? Locate(uint spid)
     {
         if (_pibBySpid is null) ReadDrawing();
-        if (!_pibBySpid!.TryGetValue(spid, out int pib) || pib < 1 || pib > _blips!.Count) return null;
+        return _pibBySpid!.TryGetValue(spid, out int pib) ? LocateBlip(pib) : null;
+    }
+
+    private (Stream stream, long dataAt, int dataLength, string extension)? LocateBlip(int pib)
+    {
+        if (_pibBySpid is null) ReadDrawing();
+        if (pib < 1 || pib > _blips!.Count) return null;
         (uint offset, bool insideTable) = _blips[pib - 1];
         IEnumerable<Stream?> streams = insideTable ? [_tableStream] : [_dataStream, _wordDocument];
         foreach (Stream? stream in streams)

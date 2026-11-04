@@ -40,6 +40,17 @@ public static class RtfShapesFidelityTest
             + @"{\shp{\*\shpinst" + Property("relLeft", "0") + Property("relTop", "0") + Property("relRight", "100") + Property("relBottom", "100") + Property("shapeType", "1") + @"}}}}\par",
         // 7 system colours (MSO_CLR 0x10..): button face darkened by 0x80 as the fill; a red fill and "use the fill colour" (0xF0) as the line
         @"\pard " + Shape(@"\shpleft0\shptop0\shpright720\shpbottom720\shpwr1", Property("shapeType", "1") + Property("fillColor", "276824320")) + Shape(@"\shpleft0\shptop0\shpright720\shpbottom720\shpwr1", Property("shapeType", "1") + Property("fillColor", "255") + Property("lineColor", "268435696")) + @"\par",
+        // 8 fills: linear shade (fillType 7, angle 0, focus 0), axial (focus 50), shade shape (6), shade centre (5, focus 0.5 / 0.5),
+        // an 8 x 8 1-bit pattern (1) and a picture fill (3)
+        @"\pard " + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom720\shpwr1", Property("shapeType", "1") + Property("fillType", "7") + Property("fillColor", "255") + Property("fillBackColor", "16711680"))
+            + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom720\shpwr1", Property("shapeType", "1") + Property("fillType", "7") + Property("fillFocus", "50") + Property("fillColor", "255") + Property("fillBackColor", "16711680"))
+            + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom720\shpwr1", Property("shapeType", "1") + Property("fillType", "6") + Property("fillColor", "255") + Property("fillBackColor", "16711680"))
+            + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom720\shpwr1", Property("shapeType", "1") + Property("fillType", "5") + Property("fillToRight", "32768") + Property("fillToBottom", "32768") + Property("fillColor", "255") + Property("fillBackColor", "16711680"))
+            + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom720\shpwr1", Property("shapeType", "1") + Property("fillType", "1") + Property("fillColor", "255") + Property("fillBackColor", "16711680") + @"{\sp{\sn fillBlip}{\sv {\pict\dibitmap0 2800000008000000080000000100010000000000200000000000000000000000020000000000000000000000ffffff00aa00000055000000aa00000055000000aa00000055000000aa00000055000000}}}")
+            + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom720\shpwr1", Property("shapeType", "3") + Property("fillType", "3") + @"{\sp{\sn fillBlip}{\sv {\pict\pngblip 89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c636060f80f0000010100005c1b0d8b0000000049454e44ae426082}}}") + @"\par",
+        // 9 the shape's own geometry (pVerticies / pSegmentInfo: move, 2 lines, close, end) and WordArt (gtextUNICODE in Arial 36 pt)
+        @"\pard " + Shape(@"\shpleft0\shptop0\shpright1440\shpbottom1440\shpwr1", Property("shapeType", "0") + Property("pVerticies", "8;3;(0,0);(21600,0);(10800,21600)") + Property("pSegmentInfo", "2;4;16384;2;24577;32768"))
+            + Shape(@"\shpleft0\shptop0\shpright2880\shpbottom720\shpwr1", Property("shapeType", "136") + Property("fGtext", "1") + Property("fillColor", "255") + Property("gtextUNICODE", "WordArtText") + Property("gtextFont", "Arial") + Property("gtextSize", "2359296")) + @"\par",
     ];
 
     public static void Run()
@@ -107,6 +118,14 @@ public static class RtfShapesFidelityTest
         TestReport.Check(html[5].Contains("M36 0L72 72L0 72Z") && html[5].Contains("M12 0L12 0L10.82 0.03") && html[5].Contains("M36 0L72 36L36 72L0 36L36 0Z") && html[5].Contains("M16.23 48.37C28.93 61.73 43.07 61.73 55.77 48.37"),
                          "triangle, round rectangle (corner 3600 / 21600), diamond, smiley face (type 96: eyes and the mouth curve) (" + html[5] + ")");
         TestReport.Check(html[7].Contains("fill=\"#606060\"") && html[7].Contains("stroke=\"#ff0000\""), "system colours: button face C0C0C0 darkened by 128/256; a line that takes the fill colour (" + html[7] + ")");
+        TestReport.Check(html[8].Contains("x1=\"36\" y1=\"0\" x2=\"36\" y2=\"36\"><stop offset=\"0\" stop-color=\"#0000ff\"/><stop offset=\"1\" stop-color=\"#ff0000\"/>"),
+                         "linear shade: angle 0 runs top to bottom, the colours swapped by the angle and the zero focus (ImportGradientColor) (" + html[8] + ")");
+        TestReport.Check(html[8].Contains("<stop offset=\"0\" stop-color=\"#ff0000\"/><stop offset=\"0.5\" stop-color=\"#0000ff\"/><stop offset=\"1\" stop-color=\"#ff0000\"/>"),
+                         "axial shade (focus 50): the start colour on the axis");
+        TestReport.Check(Occurrences(html[8], "word-officeart-shade-") >= 4 && html[8].Contains("word-officeart-pattern-") && html[8].Contains("word-shape-fill-picture")
+                         && html[8].Contains("data-word-picture=\"8:0\""), "rectangular shades, the 8 x 8 pattern, the picture fill clipped to the ellipse");
+        TestReport.Check(html[9].Contains("<path d=\"M0 0L72 0L36 72Z\"") && html[9].Contains("class=\"word-art\" style=\"display:block;text-align:center;font-family:'Arial';color:#ff0000;font-size:36pt;\"") && Occurrences(html[9], "<path") == 2
+                         && SearchCount(path, "WordArtText") == 1, "custom geometry from pVerticies / pSegmentInfo; WordArt text in its font and size, found once (" + html[9] + ")");
         TestReport.Check(html[6].Contains("translate(72 0) rotate(90)"), "a rotated group turns its child about the group's centre");
         foreach ((string query, int expected) in new[] { ("boxtext", 1), ("second line", 1), ("outside", 1), ("arrowtext", 1), ("groupone", 1), ("grouptwo", 1), ("RESULTCOPY", 0), ("GROUPCOPY", 0) })
         {
@@ -127,5 +146,6 @@ public static class RtfShapesFidelityTest
             TestReport.Check(count == 1, $"LibreOffice .rtf: search '{word}' {count}, expected 1");
         }
         TestReport.Check(all.Contains("<svg") && all.Contains("text-box"), "LibreOffice .rtf: shapes drawn, text boxes placed");
+        TestReport.Check(all.Contains("word-officeart-gradient-"), "LibreOffice .rtf: the gradient rectangle is a gradient");
     }
 }

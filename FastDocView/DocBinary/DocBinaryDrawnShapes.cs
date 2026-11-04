@@ -3,7 +3,10 @@ using FastDocView.Html;
 namespace FastDocView.DocBinary;
 
 /// <summary>A .doc drawing object anchored in the text: its frame placement and drawn shapes, and the CP range of each shape's text box (by <see cref="WordShape.TextIndex"/>).</summary>
-internal sealed record DocBinaryDrawing(WordPictureLayout Layout, List<WordShape> Shapes, List<(int start, int end)> TextRanges, bool IsPlainTextBox, bool GrowsWithText);
+internal sealed record DocBinaryDrawing(WordPictureLayout Layout, List<WordShape> Shapes, List<DocBinaryShapeText> TextRanges, bool IsPlainTextBox, bool GrowsWithText);
+
+/// <summary>A shape's text: a text-box story's CP range, or WordArt text held in the shape itself (gtextUNICODE) with its font and size.</summary>
+internal readonly record struct DocBinaryShapeText(int Start, int End, string? Literal = null, string? FontFamily = null, double FontSizePt = 0, string? Color = null);
 
 /// <summary>
 /// The OfficeArt shape records of a .doc drawing, read from the Table stream only when the block that anchors them renders or is
@@ -38,36 +41,39 @@ internal static class DocBinaryDrawnShapes
         public int Type = -1;
         public uint Flags;
         public readonly Dictionary<int, uint> Properties = new();
+        /// <summary>Complex properties (FOPT id bit 0x8000): where their data lies in the Table stream and how long it is.</summary>
+        public readonly Dictionary<int, (long at, int length)> Complex = new();
         public (int left, int top, int right, int bottom)? ChildAnchor, GroupRect;
         public bool IsGroup => (Flags & 0x1) != 0;
     }
 
     /// <summary>The drawing whose container is at [<paramref name="start"/>, <paramref name="end"/>) (an SpContainer body, or an SpgrContainer body when <paramref name="isGroup"/>), in a frame of the FSPA's size.</summary>
-    public static DocBinaryDrawing Read(Stream table, long start, long end, bool isGroup, WordPictureLayout layout, DocBinaryTextBoxStories stories)
+    public static DocBinaryDrawing Read(Stream table, long start, long end, bool isGroup, WordPictureLayout layout, DocBinaryTextBoxStories stories, DocBinaryFloatingPictures blips)
     {
         var shapes = new List<WordShape>();
-        var texts = new List<(int, int)>();
+        var texts = new List<DocBinaryShapeText>();
         ShapeRecord root;
         if (isGroup)
         {
-            root = ReadGroup(table, start, end, 0, 0, layout.WidthPt, layout.HeightPt, shapes, texts, stories, depth: 0) ?? new ShapeRecord();
+            root = ReadGroup(table, start, end, 0, 0, layout.WidthPt, layout.HeightPt, shapes, texts, stories, blips, depth: 0) ?? new ShapeRecord();
         }
         else
         {
             root = ReadShape(table, start, end);
-            AddShape(root, 0, 0, layout.WidthPt, layout.HeightPt, shapes, texts, stories);
+            AddShape(table, root, 0, 0, layout.WidthPt, layout.HeightPt, shapes, texts, stories, blips);
         }
         bool isPlain = !isGroup && shapes.Count == 1 && shapes[0].Geometry == WordShapeGeometry.Rectangle && shapes[0].TextIndex >= 0
                        && root.Type is WordOfficeArtShapeTypes.TextBox or WordOfficeArtShapeTypes.Rectangle
-                       && shapes[0].RotationDegrees == 0 && !shapes[0].FlipHorizontal && !shapes[0].FlipVertical;
+                       && shapes[0].RotationDegrees == 0 && !shapes[0].FlipHorizontal && !shapes[0].FlipVertical
+                       && shapes[0].FillPaint is null && shapes[0].FillPictureId is null;
         bool grows = !isGroup && root.Properties.TryGetValue(PropertyFitText, out uint fit) && (fit & 2) != 0;
         return new DocBinaryDrawing(layout, shapes, texts, isPlain, grows);
     }
 
     /// <summary>The text-box ranges of every shape in a drawing (the search: each story part once, where its shape is anchored).</summary>
-    public static IEnumerable<(int start, int end)> TextRanges(Stream table, long start, long end, bool isGroup, DocBinaryTextBoxStories stories)
+    public static IEnumerable<DocBinaryShapeText> TextRanges(Stream table, long start, long end, bool isGroup, DocBinaryTextBoxStories stories)
     {
-        var ranges = new List<(int, int)>();
+        var ranges = new List<DocBinaryShapeText>();
         void Walk(long from, long to, int depth)
         {
             for (long position = from; position + 8 <= to;)
@@ -75,13 +81,13 @@ internal static class DocBinaryDrawnShapes
                 if (DocBinaryPictures.RecordHeader(table, position) is not { } record) return;
                 long body = position + 8, bodyEnd = Math.Min(to, body + record.Length);
                 if (record.Type == 0xF003 && depth < 16) Walk(body, bodyEnd, depth + 1);
-                else if (record.Type == 0xF004 && ReadShape(table, body, bodyEnd).Properties.TryGetValue(PropertyTextId, out uint id) && stories.RangeOf(id) is { } range)
-                    ranges.Add(range);
+                else if (record.Type == 0xF004 && TextOf(table, ReadShape(table, body, bodyEnd), stories) is { } text)
+                    ranges.Add(text);
                 position = body + record.Length;
             }
         }
         if (isGroup) Walk(start, end, 0);
-        else if (ReadShape(table, start, end).Properties.TryGetValue(PropertyTextId, out uint id) && stories.RangeOf(id) is { } range) ranges.Add(range);
+        else if (TextOf(table, ReadShape(table, start, end), stories) is { } text) ranges.Add(text);
         return ranges;
     }
 
@@ -104,8 +110,31 @@ internal static class DocBinaryDrawnShapes
                 case 0xF00B:
                 {
                     byte[] entries = DocBinaryPictures.Read(table, body, (int)Math.Min(record.Length, (long)record.Instance * 6));
+                    // complex data follows the entries in their order (dffpropset.cxx:1111 nComplexDataFilePos, :1162-1214); an
+                    // IMsoArray whose size counts only its elements is 6 bytes longer (its header, :1178-1194)
+                    long complexAt = body + entries.Length, recordEnd = body + record.Length;
                     for (int at = 0; at + 6 <= entries.Length; at += 6)
-                        shape.Properties[BitConverter.ToUInt16(entries, at) & 0x3FFF] = BitConverter.ToUInt32(entries, at + 2);
+                    {
+                        int id = BitConverter.ToUInt16(entries, at), number = id & 0x3FFF;
+                        uint value = BitConverter.ToUInt32(entries, at + 2);
+                        shape.Properties[number] = value;
+                        if ((id & 0x8000) == 0 || value == 0) continue;
+                        long length = value;
+                        if (IsArray(number) && DocBinaryPictures.Read(table, complexAt, 6) is { Length: 6 } header)
+                        {
+                            short elements = BitConverter.ToInt16(header, 0), reserved = BitConverter.ToInt16(header, 2), size = BitConverter.ToInt16(header, 4);
+                            if (reserved >= elements)
+                            {
+                                if (size < 0) size = (short)(-size >> 2);
+                                if ((long)size * elements == length) length += 6;
+                                if (complexAt + length > recordEnd) length = 0;
+                            }
+                            else length = 0;
+                        }
+                        if (length == 0) { shape.Properties.Remove(number); continue; }
+                        shape.Complex[number] = (complexAt, (int)Math.Min(int.MaxValue, length));
+                        complexAt += length;
+                    }
                     break;
                 }
                 case 0xF00F or 0xF009 when record.Length >= 16:
@@ -124,7 +153,7 @@ internal static class DocBinaryDrawnShapes
 
     /// <summary>A group's children placed in its box; returns the group's own shape record (its first SpContainer).</summary>
     private static ShapeRecord? ReadGroup(Stream table, long position, long end, double x, double y, double width, double height,
-                                          List<WordShape> shapes, List<(int, int)> texts, DocBinaryTextBoxStories stories, int depth)
+                                          List<WordShape> shapes, List<DocBinaryShapeText> texts, DocBinaryTextBoxStories stories, DocBinaryFloatingPictures? blips, int depth)
     {
         ShapeRecord? group = null;
         int first = shapes.Count;
@@ -151,7 +180,7 @@ internal static class DocBinaryDrawnShapes
                 else
                 {
                     (double cx, double cy, double cw, double ch) = Place(shape.ChildAnchor);
-                    AddShape(shape, cx, cy, cw, ch, shapes, texts, stories);
+                    AddShape(table, shape, cx, cy, cw, ch, shapes, texts, stories, blips);
                 }
             }
             else if (record.Type == 0xF003 && group is not null && depth < 16)
@@ -162,7 +191,7 @@ internal static class DocBinaryDrawnShapes
                 {
                     ShapeRecord nested = ReadShape(table, firstAt + 8, Math.Min(bodyEnd, firstAt + 8 + own.Length));
                     (double cx, double cy, double cw, double ch) = Place(nested.ChildAnchor);
-                    ReadGroup(table, body, bodyEnd, cx, cy, cw, ch, shapes, texts, stories, depth + 1);
+                    ReadGroup(table, body, bodyEnd, cx, cy, cw, ch, shapes, texts, stories, blips, depth + 1);
                 }
             }
             position = body + record.Length;
@@ -172,14 +201,126 @@ internal static class DocBinaryDrawnShapes
         return group;
     }
 
+    /// <summary>The IMsoArray properties LibreOffice checks for a missing header (dffpropset.cxx:1170-1176): pVertices 325, pSegmentInfo 326,
+    /// fillShadeColors 407, lineDashStyle 463, pWrapPolygonVertices 899, connectorPoints 337, Handles 341, pFormulas 342, textRectangles 343 (include/svx/msdffdef.hxx).</summary>
+    private static bool IsArray(int id) => id is 325 or 326 or 407 or 463 or 899 or 337 or 341 or 342 or 343;
+
+    private const int PropertyVertices = 325, PropertySegments = 326, PropertyGuides = 342, PropertyWordArtText = 192, PropertyWordArtSize = 195, PropertyWordArtFont = 197;
+
+    /// <summary>
+    /// The shape's own geometry as LibreOffice reads it (msdffimp.cxx:1625-1636 the coordinate space geoLeft..geoBottom, default
+    /// 0, 0, 21600, 21600; :1956-1980 pFormulas - 8-byte records u16 flags, i16 p1, p2, p3; :2207-2265 pVertices - 8-byte int32
+    /// pairs, or 4-byte int16 pairs (0xFFF0 = truncated 8-byte), unsigned for an arc (19); :2267-2390 pSegmentInfo u16 each).
+    /// </summary>
+    private static List<WordShapePath>? CustomGeometry(Stream table, ShapeRecord record, int?[] adjust, double width, double height)
+    {
+        if (ReadArray(table, record, PropertyVertices) is not { } vertices) return null;
+        int elementSize = vertices.elementSize == 0xFFF0 ? 4 : vertices.elementSize;
+        var values = new List<int>();
+        for (int i = 0; i < vertices.count; i++)
+        {
+            int at = i * elementSize;
+            if (elementSize == 8 && at + 8 <= vertices.data.Length) { values.Add(BitConverter.ToInt32(vertices.data, at)); values.Add(BitConverter.ToInt32(vertices.data, at + 4)); }
+            else if (elementSize == 4 && at + 4 <= vertices.data.Length)
+            {
+                if (record.Type == 19) { values.Add(BitConverter.ToUInt16(vertices.data, at)); values.Add(BitConverter.ToUInt16(vertices.data, at + 2)); }
+                else { values.Add(BitConverter.ToInt16(vertices.data, at)); values.Add(BitConverter.ToInt16(vertices.data, at + 2)); }
+            }
+        }
+        var segments = new List<ushort>();
+        if (ReadArray(table, record, PropertySegments) is { } segmentArray)
+            for (int i = 0; i < segmentArray.count && i * 2 + 2 <= segmentArray.data.Length; i++) segments.Add(BitConverter.ToUInt16(segmentArray.data, i * 2));
+        var guides = new List<int>();
+        if (ReadArray(table, record, PropertyGuides) is { } guideArray && guideArray.count <= 128)
+            for (int i = 0; i < guideArray.count && i * 8 + 8 <= guideArray.data.Length; i++)
+            {
+                guides.Add(BitConverter.ToUInt16(guideArray.data, i * 8));
+                for (int k = 1; k <= 3; k++) guides.Add(BitConverter.ToInt16(guideArray.data, i * 8 + k * 2));
+            }
+        Dictionary<int, uint> p = record.Properties;
+        int Geo(int id, int fallback) => p.TryGetValue(id, out uint v) ? (int)v : fallback;
+        return WordOfficeArtGeometry.Custom(values, segments, guides.ToArray(), adjust, Geo(320, 0), Geo(321, 0), Geo(322, 21600), Geo(323, 21600), width, height);
+    }
+
+    /// <summary>An IMsoArray: element count, element size and the elements' bytes.</summary>
+    private static (int count, int elementSize, byte[] data)? ReadArray(Stream table, ShapeRecord record, int id)
+    {
+        if (!record.Complex.TryGetValue(id, out var where) || where.length < 6) return null;
+        byte[] bytes = DocBinaryPictures.Read(table, where.at, where.length);
+        if (bytes.Length < 6) return null;
+        return (BitConverter.ToUInt16(bytes, 0), BitConverter.ToUInt16(bytes, 4), bytes.AsSpan(6).ToArray());
+    }
+
+    private static string? ComplexString(Stream table, ShapeRecord record, int id)
+    {
+        if (!record.Complex.TryGetValue(id, out var where) || where.length < 2) return null;
+        byte[] bytes = DocBinaryPictures.Read(table, where.at, where.length);
+        string text = System.Text.Encoding.Unicode.GetString(bytes, 0, bytes.Length & ~1);
+        int end = text.IndexOf('\0');
+        return end >= 0 ? text.Substring(0, end) : text;
+    }
+
+    /// <summary>
+    /// A shape's text: its text-box story (lTxid), else its WordArt string (gtextUNICODE 192 with gtextFont 197 and gtextSize 195,
+    /// 16.16 points - msdffdef.hxx:121-125; LibreOffice puts that string in the shape as its text, msdffimp.cxx ImportGraphic /
+    /// rtfsdrimport.cxx:949-957 alike).
+    /// </summary>
+    private static DocBinaryShapeText? TextOf(Stream table, ShapeRecord record, DocBinaryTextBoxStories stories)
+    {
+        if (record.Properties.TryGetValue(PropertyTextId, out uint id) && stories.RangeOf(id) is { } range) return new DocBinaryShapeText(range.start, range.end);
+        if (ComplexString(table, record, PropertyWordArtText) is { Length: > 0 } wordArt)
+            return new DocBinaryShapeText(0, 0, wordArt, ComplexString(table, record, PropertyWordArtFont),
+                                          record.Properties.TryGetValue(PropertyWordArtSize, out uint size) ? size / 65536.0 : 36);
+        return null;
+    }
+
+    /// <summary>The fill properties (msdffdef.hxx:173-200: fillType 384, fillColor 385, fillOpacity 386, fillBackColor 387, fillBackOpacity 388,
+    /// fillBlip 390, fillWidth / fillHeight 393 / 394 (EMU), fillAngle 395, fillFocus 396, fillToRight / fillToBottom 399 / 400,
+    /// fillShadeColors 407).</summary>
+    private static WordOfficeArtFillProperties FillOf(Stream table, ShapeRecord record, bool stroked, DocBinaryFloatingPictures? blips)
+    {
+        Dictionary<int, uint> p = record.Properties;
+        uint? Get(int id) => p.TryGetValue(id, out uint v) ? v : null;
+        var fill = new WordOfficeArtFillProperties
+        {
+            Type = (int)(Get(384) ?? 0),
+            Color = Color(p, PropertyFillColor, 0xFFFFFF, stroked),
+            BackColor = Color(p, 387, 0xFFFFFF, stroked),
+            HasOpacity = p.ContainsKey(PropertyFillOpacity),
+            Opacity = (Get(PropertyFillOpacity) ?? 0x10000) / 65536.0,
+            BackOpacity = (Get(388) ?? 0x10000) / 65536.0,
+            AngleFix16 = (int)(Get(395) ?? 0),
+            Focus = (int)(Get(396) ?? 0),
+            ToRight = (int)(Get(399) ?? 0),
+            ToBottom = (int)(Get(400) ?? 0),
+            TileWidthPt = (int)(Get(393) ?? 0) / 12700.0,
+            TileHeightPt = (int)(Get(394) ?? 0) / 12700.0,
+        };
+        if (ReadArray(table, record, 407) is { } shades && shades.elementSize == 8)
+        {
+            fill.ShadeColors = new List<(string, double)>();
+            for (int i = 0; i < shades.count && i * 8 + 8 <= shades.data.Length; i++)
+                fill.ShadeColors.Add((WordOfficeArtColor.Css(BitConverter.ToUInt32(shades.data, i * 8), PropertyFillColor, id => p.TryGetValue(id, out uint v) ? v : null, stroked),
+                                      1 - BitConverter.ToInt32(shades.data, i * 8 + 4) / 65536.0));
+        }
+        if (Get(390) is { } blip && blips is not null)
+        {
+            if (fill.Type == 1 && blips.Dib((int)blip) is { } dib && WordOfficeArtFill.DibPixels(dib) is { } pattern)
+                (fill.PatternPixels, fill.PatternWidth, fill.PatternHeight) = pattern;
+            else fill.PictureId = blips.FillPictureId((int)blip);
+        }
+        return fill;
+    }
+
     private static double Rotation(ShapeRecord shape) => shape.Properties.TryGetValue(PropertyRotation, out uint value) ? (int)value / 65536.0 : 0;
 
-    private static void AddShape(ShapeRecord record, double x, double y, double width, double height, List<WordShape> shapes, List<(int, int)> texts, DocBinaryTextBoxStories stories)
+    private static void AddShape(Stream table, ShapeRecord record, double x, double y, double width, double height, List<WordShape> shapes, List<DocBinaryShapeText> texts, DocBinaryTextBoxStories stories, DocBinaryFloatingPictures? blips)
     {
         Dictionary<int, uint> p = record.Properties;
         int type = record.Type < 0 ? WordOfficeArtShapeTypes.Rectangle : record.Type;
         bool filled = Flag(p, PropertyFillFlags, 0x10) ?? WordOfficeArtShapeTypes.IsFilledByDefault(type);
         bool stroked = Flag(p, PropertyLineFlags, 0x08) ?? WordOfficeArtShapeTypes.IsStrokedByDefault(type);
+        WordOfficeArtFillProperties? fill = filled ? FillOf(table, record, stroked, blips) : null;
         var shape = new WordShape
         {
             X = x, Y = y, Width = width, Height = height,
@@ -197,6 +338,12 @@ internal static class DocBinaryDrawnShapes
         var adjust = new int?[10];
         for (int i = 0; i < 10; i++) adjust[i] = p.TryGetValue(PropertyAdjust + i, out uint value) ? (int)value : null;
         WordOfficeArtShapeTypes.Apply(shape, type, adjust);
+        if (fill is not null) WordOfficeArtFill.Apply(shape, fill);
+        if (record.Complex.ContainsKey(PropertyVertices) && CustomGeometry(table, record, adjust, width, height) is { } custom)
+        {
+            shape.Geometry = WordShapeGeometry.Path;
+            shape.Paths = custom;
+        }
         // line ends only when fArrowheadsOK (line booleans 0x10, set by default) - msdffimp.cxx:1063
         if (stroked && (Flag(p, PropertyLineFlags, 0x10) ?? true))
         {
@@ -205,7 +352,16 @@ internal static class DocBinaryDrawnShapes
                                                   Get(PropertyEndArrow), Get(PropertyEndArrow + 3), Get(PropertyEndArrow + 4));
         }
         if (p.ContainsKey(PropertyPib)) { shape.Geometry = WordShapeGeometry.Picture; shape.PictureId = DocBinaryFloatingPictures.IdPrefix + record.Spid.ToString(System.Globalization.CultureInfo.InvariantCulture); }
-        if (p.TryGetValue(PropertyTextId, out uint textId) && stories.RangeOf(textId) is { } range) { shape.TextIndex = texts.Count; texts.Add(range); }
+        // a text effect (fGtext 0x4000 of the gtext booleans 255, msdffimp.cxx:2517): LibreOffice draws Fontwork in place of the
+        // outline (svx EnhancedCustomShapeEngine.cxx:236-262), the text filled with the shape's fill colour
+        bool textEffect = Flag(p, 255, 0x4000) ?? (p.TryGetValue(255, out uint gtextFlags) && (gtextFlags & 0x4000) != 0);
+        if (TextOf(table, record, stories) is { } text)
+        {
+            if (textEffect && text.Literal is not null) text = text with { Color = shape.FillColor };
+            shape.TextIndex = texts.Count;
+            texts.Add(text);
+        }
+        if (textEffect) { shape.Geometry = WordShapeGeometry.Path; shape.Paths = []; }
         shapes.Add(shape);
     }
 

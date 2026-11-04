@@ -1463,3 +1463,20 @@ EnhancedCustomShapeGeometry.cxx (default filling / stroking tables :6155-6213); 
   (no palette in Word) = the property default, system colours = LibreOffice's standard StyleSettings values
   (vcl settings.cxx:497-559) or another property (0xF0..0xFF), then gray / darken / lighten / add / subtract / black-white /
   inverts; a system colour that names another system colour keeps Word's manager default white (ww8par.cxx:500-501).
+- **Fills** (both formats): `Html/WordOfficeArtFill` follows msdffimp.cxx ApplyFillAttributes / ImportGradientColor /
+  ApplyRectangularGradientAsBitmap - solid; shade 4 / 7 / 8 linear or axial (focus 40..60) with LibreOffice's colour swaps
+  (angle >= 0, focus 0, negative focus, axial) and the box grown to the turned extent (basegfx gradienttools.cxx
+  init1DGradientInfo); shade shape 6 rectangular (aspect-corrected, getRectangularGradientAlpha) and shade centre 5 as the
+  bitmap LibreOffice renders (rectangles shrinking toward fillToRight / fillToBottom, fillShadeColors) - both drawn in 64
+  steps; fill / back opacity as stop opacity; pattern 1 = the fill blip's DIB pixels (black = back colour); texture 2 /
+  picture 3 = the fill blip by id through the shared picture-fill layer (`WordShapeHtml` FillPictureId / FillPicture; tiled at fillWidth / fillHeight for a
+  texture). .doc fill pictures have ids "sf" + BStore index; RTF fill picts count among the block's pictures.
+- **Own geometry**: .doc pVertices / pSegmentInfo / pFormulas (complex FOPT data read as dffpropset.cxx does, incl. the
+  6-byte array header fix) and RTF pVerticies / pSegmentInfo / geoLeft..geoBottom, evaluated by `WordOfficeArtGeometry.Custom`
+  (binary segment encoding msdffimp.cxx:2267-2390, binary angle-ellipse rule).
+- **WordArt**: .doc gtextUNICODE / gtextFont / gtextSize (complex strings) and RTF gtext* are the shape's text, centred in
+  its font and size, searched once; with the text-effect bit (.doc gtext booleans 0x4000, RTF fGtext) the outline is not drawn
+  and the text takes the fill colour (LibreOffice renders Fontwork instead of the outline). Fontwork's path warping (arches,
+  waves) is not drawn: the text sits straight in the box.
+- Checks: RtfShapesFidelityTest blocks 8-9; DocBinaryShapesFidelityTest (the RTF fixture and a Fontwork .fodt saved as .doc
+  by LibreOffice).

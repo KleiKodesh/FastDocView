@@ -25,8 +25,42 @@ public static class DocBinaryShapesFidelityTest
                 TestReport.Check(shown == 1 && found == 1, $"LibreOffice .doc: '{word}' shown {shown}, found {found}, expected 1 / 1");
             }
             TestReport.Check(html.Contains("<svg") && html.Contains("<path d=") && html.Contains("text-box"), "LibreOffice .doc: shapes drawn, text boxes placed");
+            TestReport.Check(html.Contains("word-officeart-gradient-"), "LibreOffice .doc: the gradient rectangle is a gradient");
             int placeholder = html.IndexOf("[image]", StringComparison.Ordinal);
             TestReport.Check(placeholder < 0, "LibreOffice .doc: no shape left as a placeholder" + (placeholder < 0 ? "" : " (" + html.Substring(Math.Max(0, placeholder - 300), Math.Min(400, html.Length - Math.Max(0, placeholder - 300))) + ")"));
+        }
+
+        TestReport.Step(".doc shapes: the hand-written RTF shapes saved as .doc by LibreOffice (WordArt, own geometry, fills, system colours)");
+        string rtf = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-rtf-drawn-shapes.rtf");
+        if (!File.Exists(rtf)) RtfShapesFidelityTest.Run();
+        if (File.Exists(rtf) && LibreOfficeConversion.Convert(rtf, ".doc", "doc:MS Word 97") is { } fromRtf)
+        {
+            string html = string.Concat(Render(fromRtf));
+            int shown = Occurrences(Tags.Replace(html, ""), "WordArtText"), found = SearchCount(fromRtf, "WordArtText");
+            TestReport.Check(shown == 1 && found == 1, $"LibreOffice .doc: the WordArt text shown {shown}, found {found}, expected 1 / 1");
+            TestReport.Check(html.Contains("word-officeart-gradient-"), $"LibreOffice .doc: shades drawn as gradients (gradients {Occurrences(html, "word-officeart-gradient-")}, rectangular {Occurrences(html, "word-officeart-shade-")}, patterns {Occurrences(html, "word-officeart-pattern-")}, picture fills {Occurrences(html, "word-shape-fill-picture")})");
+            foreach (string word in new[] { "boxtext one", "arrowtext", "groupone", "grouptwo" })
+            {
+                int wordShown = Occurrences(Tags.Replace(html, ""), word), wordFound = SearchCount(fromRtf, word);
+                TestReport.Check(wordShown == 1 && wordFound == 1, $"LibreOffice .doc from RTF: '{word}' shown {wordShown}, found {wordFound}, expected 1 / 1");
+            }
+        }
+
+        TestReport.Step(".doc shapes: Fontwork saved as .doc by LibreOffice (WordArt: gtextUNICODE)");
+        string fontwork = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-fontwork.fodt");
+        const string FontworkDocument = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+            + "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" "
+            + "xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" office:version=\"1.3\" office:mimetype=\"application/vnd.oasis.opendocument.text\">"
+            + "<office:body><office:text><text:p><draw:custom-shape text:anchor-type=\"paragraph\" svg:width=\"2in\" svg:height=\"0.5in\" svg:x=\"0in\" svg:y=\"0in\">"
+            + "<text:p>FontworkText</text:p><draw:enhanced-geometry svg:viewBox=\"0 0 21600 21600\" draw:type=\"fontwork-plain-text\" draw:text-path=\"true\" "
+            + "draw:text-path-mode=\"shape\" draw:text-path-scale=\"shape\"/></draw:custom-shape>after</text:p></office:text></office:body></office:document>";
+        if (!File.Exists(fontwork) || File.ReadAllText(fontwork) != FontworkDocument) File.WriteAllText(fontwork, FontworkDocument);
+        if (LibreOfficeConversion.Convert(fontwork, ".doc", "doc:MS Word 97") is { } wordArtDoc)
+        {
+            string html = string.Concat(Render(wordArtDoc));
+            int shown = Occurrences(Tags.Replace(html, ""), "FontworkText"), found = SearchCount(wordArtDoc, "FontworkText");
+            TestReport.Check(shown == 1 && found == 1, $"LibreOffice .doc Fontwork: shown {shown}, found {found}, expected 1 / 1");
+            TestReport.Check(html.Contains("class=\"text-box-paragraph\" style=\"display:block;text-align:center;white-space:pre-wrap;") && !html.Contains("<path"), "LibreOffice .doc Fontwork: the WordArt string drawn centred in its font, no outline (a text path) (" + html + ")");
         }
 
         TestReport.Step(".doc shapes: Apache POI / LibreOffice files with text boxes");

@@ -81,6 +81,9 @@ public sealed class WordShape
     public WordLineEnd HeadEnd, TailEnd;
     /// <summary>A line end drawn by its own format's geometry (OfficeArt binary arrows) instead of <see cref="WordLineEndGeometry"/>.</summary>
     internal WordLineEndMarker? HeadMarker, TailMarker;
+    /// <summary>A fill drawn by its own format's SVG paint (OfficeArt rectangular shades, patterns, picture fills): the &lt;defs&gt;
+    /// content (written once before the shape's fill) and the paint (e.g. "url(#id)") used instead of <see cref="FillColor"/>.</summary>
+    internal string? FillDefinitions, FillPaint;
     public WordLineCap LineCap;
     /// <summary>Per stop of <see cref="GradientStops"/> (null = all opaque).</summary>
     public List<double>? GradientStopOpacities;
@@ -418,7 +421,14 @@ public static class WordShapeHtml
                 WordShapePathFill.Darken => -0.4, WordShapePathFill.DarkenLess => -0.2,
                 WordShapePathFill.Lighten => 0.4, WordShapePathFill.LightenLess => 0.2, _ => 0,
             };
-            if (path.Fill != WordShapePathFill.None)
+            if (path.Fill != WordShapePathFill.None && shape.FillPaint is { } paint)
+            {
+                if (shape.FillDefinitions is { } definitions) { html.Append("<defs>").Append(definitions).Append("</defs>"); shape.FillDefinitions = null; }
+                html.Append("<path d=\"").Append(PathData(path.Subpaths, closeAll: true)).Append("\" fill-rule=\"evenodd\" fill=\"").Append(paint).Append('"');
+                if (shape.FillOpacity < 1) html.Append(" fill-opacity=\"").Append(Opacity(shape.FillOpacity)).Append('"');
+                html.Append(" stroke=\"none\"/>");
+            }
+            else if (path.Fill != WordShapePathFill.None)
             {
                 string fillData = PathData(path.Subpaths, closeAll: true);
                 if (shape.GradientRectangular && shape.GradientStops is { Count: > 0 }) AppendRectangularGradient(html, shape, fillData, brightness);

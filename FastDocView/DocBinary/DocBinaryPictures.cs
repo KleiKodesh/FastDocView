@@ -81,6 +81,16 @@ internal sealed class DocBinaryPictures
         return (dataAt, (int)dataLength, extension);
     }
 
+    /// <summary>A DIB blip's data (recInstance &amp; 0xFFFE = 0x7A8; the BITMAPINFOHEADER and pixels after the UID(s) and the tag byte - msdffimp.cxx GetBLIPDirect).</summary>
+    internal static (long dataAt, int dataLength)? DibBlip(Stream data, long blipAt)
+    {
+        if (RecordHeader(data, blipAt) is not { } blip || blip.Type is < 0xF018 or > 0xF117 || (blip.Instance & 0xFFFE) != 0x7A8) return null;
+        int skip = ((blip.Instance & 1) != 0 ? 32 : 16) + 1;
+        long dataAt = blipAt + 8 + skip, dataLength = blip.Length - skip;
+        if (dataLength <= 0 || dataAt + dataLength > data.Length || dataLength > int.MaxValue) return null;
+        return (dataAt, (int)dataLength);
+    }
+
     /// <summary>The picture's bytes, or null (see <see cref="Locate"/>).</summary>
     public WordDocumentPicture? Read(uint pictureLocation)
     {
