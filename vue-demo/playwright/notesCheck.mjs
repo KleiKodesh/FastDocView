@@ -75,7 +75,16 @@ let notes = await notesState()
 console.log(`  pane: ${JSON.stringify(notes)}; fetches ${JSON.stringify(noteFetches)}`)
 check(notes.full, 'the notes pane is full (content taller than the pane)')
 check(noteFetches.every(([, count]) => count <= 100), 'every notes fetch is at most 100 notes')
-check(noteFetches.reduce((sum, [, count]) => sum + count, 0) < totalNotes || totalNotes <= 60, 'not all notes fetched')
+// windowed: the fetches cover the mounted rows and stay near them - at most the mounted span plus one 100-note request on
+// each side (useFastDocViewNotes: requests of at most 100), never the whole list of a file with more notes than that
+{
+  const mountedIndexes = await page.evaluate(selector => [...document.querySelectorAll(`${selector} [data-note-index]`)].map(row => Number(row.dataset.noteIndex)), NOTES)
+  const covered = index => noteFetches.some(([first, count]) => index >= first && index < first + count)
+  const fetchedTotal = new Set(noteFetches.flatMap(([first, count]) => Array.from({ length: count }, (_, i) => first + i))).size   // distinct notes
+  const windowBound = mountedIndexes.length + 2 * 100
+  check(mountedIndexes.length > 0 && mountedIndexes.every(covered), `the fetched windows cover every mounted note (${mountedIndexes.length} mounted)`)
+  check(fetchedTotal <= Math.min(totalNotes, windowBound), `only a window of the notes is fetched (${fetchedTotal} of ${totalNotes}, bound ${Math.min(totalNotes, windowBound)})`)
+}
 
 step('scroll the text down a lot with sync ON: the notes follow')
 const syncButton = await page.$$eval('button[title]', (buttons, titles) => buttons.findIndex(button => titles.includes(button.title)), syncTitles)
@@ -116,16 +125,32 @@ await hook('return t.scrollToBlock(a)', farBlock)
 await page.waitForTimeout(500)
 const clicked = await page.$(`${TEXT} .note-reference[data-note-kind]`)
 const key = await clicked.evaluate(el => `${el.dataset.noteKind}|${el.dataset.noteNumber}`)
-const tops = []
+// every animation frame's scrollTop, sampled in the page from the click until it has not moved for 30 frames (no polling
+// from here: the round trips made the count depend on the machine's speed)
+await page.evaluate(selector => {
+  const viewport = document.querySelector(selector)
+  const sample = window.__notesLandingSample = { tops: [viewport.scrollTop], done: false }
+  let still = 0, started = false
+  const frame = () => {
+    const top = viewport.scrollTop
+    if (top !== sample.tops[sample.tops.length - 1]) { sample.tops.push(top); still = 0; started = true } else still++
+    if (still >= 30 && (started || still >= 120)) { sample.done = true; return }
+    requestAnimationFrame(frame)
+  }
+  requestAnimationFrame(frame)
+}, NOTES)
 await clicked.click()
-for (let i = 0; i < 25; i++) { const s = await notesState(); tops.push(s.scrollTop); await page.waitForTimeout(20) }
-await page.waitForTimeout(300)
+await waitFor(() => window.__notesLandingSample?.done === true, null, 30_000)
+const tops = await page.evaluate(() => window.__notesLandingSample.tops)
 const landed = await notesState()
 const landedRow = await page.evaluate(([selector, index]) => document.querySelector(`${selector} [data-note-index="${index}"]`)?.textContent?.slice(0, 40), [NOTES, landed.firstIndex])
 const distinctTops = new Set(tops).size
 console.log(`  reference ${key}; landed note ${landed.firstIndex} offset ${landed.firstOffset}; ${distinctTops} distinct scroll positions during the landing; "${landedRow}"`)
 check(Math.abs(landed.firstOffset) <= 2, 'the clicked note is at the pane top')
-check(distinctTops >= 3, 'the landing eased (several intermediate positions)')
+// an ease needs a distance to cover: a landing of a few pixels (the note was already near the top) may take one frame
+const landingDistance = Math.abs(landed.scrollTop - tops[0])
+check(tops[tops.length - 1] === landed.scrollTop, 'the landing sample saw the pane reach its final position')
+check(landingDistance < 40 || distinctTops >= 3, `the landing eased (${distinctTops} positions over ${Math.round(landingDistance)} px)`)
 
 step('the note number: superscript, ~0.7em, normal weight, link colour; click jumps the text back')
 const mark = await page.$(`${NOTES} [data-note-index="${landed.firstIndex}"] :is(.note-mark, .note-label)`)
