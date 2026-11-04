@@ -216,8 +216,9 @@ internal sealed class OdtShapeStyle
     internal static double[] DashArray(XElement dash, double lineWidthPt)
     {
         const double Smallest = 26.95 * 72 / 2540;
-        int dots = int.TryParse((string?)dash.Attribute(Draw + "dots1"), out int d1) ? d1 : 0;
-        int dashes = int.TryParse((string?)dash.Attribute(Draw + "dots2"), out int d2) ? d2 : 0;
+        // counts are 16-bit in LibreOffice (XDash sal_uInt16); a pattern of more than 100 repeats one period anyway
+        int dots = Math.Max(0, Math.Min(100, int.TryParse((string?)dash.Attribute(Draw + "dots1"), out int d1) ? d1 : 0));
+        int dashes = Math.Max(0, Math.Min(100, int.TryParse((string?)dash.Attribute(Draw + "dots2"), out int d2) ? d2 : 0));
         if (dots + dashes == 0) return [];
         string? dotText = (string?)dash.Attribute(Draw + "dots1-length"), dashText = (string?)dash.Attribute(Draw + "dots2-length"), distanceText = (string?)dash.Attribute(Draw + "distance");
         bool relative = (dotText?.Contains('%') ?? false) || (dashText?.Contains('%') ?? false) || (distanceText?.Contains('%') ?? false);

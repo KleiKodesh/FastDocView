@@ -455,6 +455,11 @@ public static class WordShapeHtml
         {
             double startX = fill.TileOffsetX - Math.Ceiling(fill.TileOffsetX / fill.TileWidth) * fill.TileWidth, startY = fill.TileOffsetY - Math.Ceiling(fill.TileOffsetY / fill.TileHeight) * fill.TileHeight;
             // ODF draw:tile-repeat-offset: every other row (column) shifted by a fraction of the tile
+            // a tile smaller than 1/256 of the box repeats below a pixel on screen: drawn at that size (bounds the picture elements)
+            if (!(fill.TileWidth >= w / 256) || !(fill.TileHeight >= h / 256) || !(!double.IsNaN(startX) && !double.IsInfinity(startX)) || !(!double.IsNaN(startY) && !double.IsInfinity(startY)))
+                fill = fill with { TileWidth = Math.Max(fill.TileWidth, w / 256), TileHeight = Math.Max(fill.TileHeight, h / 256) };
+            if (!(!double.IsNaN(startX) && !double.IsInfinity(startX))) startX = 0;
+            if (!(!double.IsNaN(startY) && !double.IsInfinity(startY))) startY = 0;
             double rowShift = shape.TileRowOffset * fill.TileWidth, columnShift = shape.TileColumnOffset * fill.TileHeight;
             if (rowShift > 0) startX -= fill.TileWidth;
             if (columnShift > 0) startY -= fill.TileHeight;

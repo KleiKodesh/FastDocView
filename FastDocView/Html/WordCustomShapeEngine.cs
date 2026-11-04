@@ -362,6 +362,9 @@ internal sealed class WordCustomShapeEngine
                             var radii = Point(sourcePoint, false, false); var angles = Point(sourcePoint + 1, false, false);
                             double fwr = radii.X, fhr = radii.Y, start = angles.X, swing = angles.Y;
                             if (IsOoxml) swing = Math.Max(-360, Math.Min(360, swing));
+                            // a turn beyond 720 degrees retraces the same ellipse: drawn as two turns (a non-finite one as none)
+                            if (!(!double.IsNaN(swing) && !double.IsInfinity(swing)) || !(!double.IsNaN(start) && !double.IsInfinity(start))) { sourcePoint += 2; continue; }
+                            swing = Math.Max(-720, Math.Min(720, swing));
                             if (polygon.Count > 0)
                             {
                                 var arc = new List<(double X, double Y)>();

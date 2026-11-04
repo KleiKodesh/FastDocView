@@ -397,7 +397,7 @@ internal sealed class OdtShapeBuilder
     /// <summary>draw:regular-polygon (ODF 1.3 part 3 19.123 draw:concave, 19.128 draw:corners, 19.211 draw:sharpness).</summary>
     private static WordShapeSubpath RegularPolygon(XElement element, double w, double h)
     {
-        int corners = Math.Max(3, int.TryParse((string?)element.Attribute(Draw + "corners"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int c) ? c : 3);
+        int corners = Math.Min(1000, Math.Max(3, int.TryParse((string?)element.Attribute(Draw + "corners"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int c) ? c : 3));      // over 1000 corners is a circle at any size on screen
         bool concave = (string?)element.Attribute(Draw + "concave") == "true";
         double sharpness = OdtFillPaint.Percent((string?)element.Attribute(Draw + "sharpness")) ?? 0;
         var points = new List<(double X, double Y)>();

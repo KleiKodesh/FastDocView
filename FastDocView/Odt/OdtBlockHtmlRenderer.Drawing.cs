@@ -73,7 +73,8 @@ public sealed partial class OdtBlockHtmlRenderer
     /// </summary>
     private string? ContourCss(XElement element, WordPictureLayout layout, double width, double height, List<List<(double X, double Y)>>? outlines)
     {
-        if (layout.Wrap != WordPictureWrap.Square || layout.Side == WordPictureSide.Center || width <= 0 || height <= 0) return null;
+        if (layout.Wrap != WordPictureWrap.Square || layout.Side == WordPictureSide.Center || !(width > 0) || !(height > 0) || !(!double.IsNaN(width) && !double.IsInfinity(width)) || !(!double.IsNaN(height) && !double.IsInfinity(height))) return null;
+        double step = Math.Max(1, height / 2000);            // 1 pt rows, at most 2000 (a taller object: rows below a pixel apart on screen anyway)
         if (GraphicProperty(element, OdtStyleCascade.Style + "wrap-contour") != "true") return null;
         if (element.Name == DrawNs + "frame")
         {
@@ -92,7 +93,7 @@ public sealed partial class OdtBlockHtmlRenderer
         if (outlines is not { Count: > 0 }) return null;
         bool textOnRight = layout.Side == WordPictureSide.Left;
         var polygon = new List<(double X, double Y)>();
-        for (double y = 0; ; y = Math.Min(height, y + 1))
+        for (double y = 0; ; y = Math.Min(height, y + step))
         {
             double? extreme = null;
             foreach (List<(double X, double Y)> outline in outlines)

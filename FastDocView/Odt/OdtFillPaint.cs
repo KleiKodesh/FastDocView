@@ -204,6 +204,9 @@ internal static class OdtFillPaint
             // GeoTexSvxHatch: the box grown for the rotation; lines at a * distance (a = 1 .. steps - 1) across its width
             double a = -angle, cos = Math.Abs(Math.Cos(a)), sin = Math.Abs(Math.Sin(a));
             double sizeX = a != 0 ? w * cos + h * sin : w, sizeY = a != 0 ? h * cos + w * sin : h;
+            // lines closer than 1/2000 of the area are drawn that far apart (closer would be below a device pixel)
+            if (!(distancePt > 0) || !(!double.IsNaN(distancePt) && !double.IsInfinity(distancePt))) distancePt = 0;
+            else distancePt = Math.Max(distancePt, sizeY / 2000);
             double steps = distancePt != 0 ? sizeY / distancePt : 10;
             int count = (int)Math.Round(steps + 0.5, MidpointRounding.AwayFromZero);
             double spacing = sizeY / steps;
