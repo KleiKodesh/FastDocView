@@ -32,6 +32,8 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private readonly DocxNoteNumberFormats _noteFormats;
     private WordDocumentFileStream? _releasableFile;   // set by Open(path): released after every window
     private bool _isReadingFromFile;                    // false when the whole text was inflated in memory (small .docx)
+    private WordDocumentBlockRenderGuard? _blockRenderGuardField;
+    private WordDocumentBlockRenderGuard _blockRenderGuard => _blockRenderGuardField ??= new WordDocumentBlockRenderGuard(FilePath);
     private readonly object _readLock = new();          // one package stream is shared by the block and note readers (and the on-demand scan)
     private readonly Dictionary<(WordDocumentNoteKind kind, int id), string> _noteHtmlCache = new();
     private long _noteHtmlCacheCharacters;
@@ -268,7 +270,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                     if (builder.IsBodyScanned) CompleteIndexLocked();
                     else RecordNewNoteReferences();
                 }
-                return RenderBlocksLocked(firstBlockIndex, count);
+                return _blockRenderGuard.Render(firstBlockIndex, count, _blocks.BlockCount, RenderBlocksLocked, _blocks.BlockKindOf);
             }
             finally { _releasableFile?.Release(); }
         }

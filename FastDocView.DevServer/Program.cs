@@ -38,6 +38,8 @@ var cacheDirectory = Path.Combine(AppContext.BaseDirectory, "index-cache");
 using var documents = new WordWindowedDocumentSet(cacheDirectory);     // the same set and locking the app's service uses
 var lastProgress = new WordDocumentIndexProgress(0, 0, 0);
 
+static string OpenFailedMessage(string code, string detail) => $"FastDocViewOpenFailed:{code}: {detail}";
+
 // Runs a call on an open document: 404 for an unknown id, 409 "source-changed" when it must be reopened (the demo reopens).
 IResult UseDocument(string id, Func<IWordWindowedDocument, IResult> action)
 {
@@ -59,16 +61,27 @@ app.MapGet("/api/folder", (string path) =>
 app.MapPost("/api/documents", (OpenRequest request) =>
 {
     request = request with { Path = ResolvePath(request.Path) };
-    if (!File.Exists(request.Path)) return Results.NotFound(new ErrorBody($"File not found: {request.Path}"));
+    if (!File.Exists(request.Path)) return Results.NotFound(new ErrorBody(OpenFailedMessage("not-found", $"File not found: {request.Path}")));
     string indexPath = documents.Policy.IndexPathFor(request.Path);
     if (request.RebuildIndex == true && File.Exists(indexPath)) File.Delete(indexPath);
     var progress = new Progress<WordDocumentIndexProgress>(p => lastProgress = p);
     var watch = Stopwatch.StartNew();
     string id;
     try { id = documents.Open(request.Path, request.ForceSidecar == true ? WordIndexMode.Sidecar : null, progress); }
-    catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException)
+    catch (Exception exception) when (exception is not WordDocumentSourceChangedException)
     {
-        return Results.BadRequest(new ErrorBody(exception.Message));
+        // the same "FastDocViewOpenFailed:<code>: detail" text the app's Core sends (FastDocViewOpenFailedException)
+        string? code = WordDocumentOpenFailures.Classify(exception) switch
+        {
+            WordDocumentOpenFailure.Encrypted => "encrypted",
+            WordDocumentOpenFailure.Corrupt => "corrupt",
+            WordDocumentOpenFailure.OnlineOnly => "online-only",
+            WordDocumentOpenFailure.NotFound => "not-found",
+            WordDocumentOpenFailure.UnsupportedFormat => "unsupported",
+            WordDocumentOpenFailure.AccessDenied => "access-denied",
+            _ => null,
+        };
+        return Results.BadRequest(new ErrorBody(code is null ? exception.Message : OpenFailedMessage(code, exception.Message)));
     }
     double openMilliseconds = watch.Elapsed.TotalMilliseconds;
     return UseDocument(id, document =>

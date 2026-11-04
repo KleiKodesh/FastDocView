@@ -84,7 +84,7 @@ public sealed class DocBinaryFileInformationBlock
         HasExtendedCharacters = (flags & 0x1000) != 0;
         TextStartFileOffset = BitConverter.ToUInt32(fib, 0x18);
         TextEndFileOffset = BitConverter.ToUInt32(fib, 0x1C);
-        if (IsEncrypted) throw new NotSupportedException("Encrypted (password-protected) Word documents are not supported.");
+        if (IsEncrypted) throw new WordDocumentEncryptedException("Encrypted (password-protected) Word documents are not supported.");
         TableStreamName = (flags & 0x0200) != 0 ? "1Table" : "0Table";
 
         MainTextCharacterCount = BitConverter.ToInt32(fib, 0x4C);

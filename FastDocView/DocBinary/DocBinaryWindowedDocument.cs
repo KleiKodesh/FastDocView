@@ -266,7 +266,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     internal static void ThrowWhenEncryptedPackage(CompoundFileReader compoundFile)
     {
         if (compoundFile.HasRootStream("EncryptedPackage") && compoundFile.HasRootStream("EncryptionInfo"))
-            throw new NotSupportedException("Encrypted (password-protected) Word 2007+ documents are not supported.");
+            throw new WordDocumentEncryptedException("Encrypted (password-protected) Word 2007+ documents are not supported.");
     }
 
     /// <summary>Normal style bidi, else a Hebrew/Arabic share of the first few thousand characters.</summary>
@@ -302,6 +302,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
 
     private WordDocumentFileStream? _releasableFile;   // set by Open(path): released after every window
     private bool _isReadingFromFile;                    // false when the whole text was inflated in memory (small .docx)
+    private WordDocumentBlockRenderGuard? _blockRenderGuardField;
+    private WordDocumentBlockRenderGuard _blockRenderGuard => _blockRenderGuardField ??= new WordDocumentBlockRenderGuard(FilePath);
     private readonly object _readLock = new();
 
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
@@ -410,7 +412,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
             // Only documents that still read the file (index mode) are at risk; a stale in-memory body is still consistent.
             if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
                 throw new WordDocumentSourceChangedException(FilePath);
-            try { return RenderBlocksLocked(firstBlockIndex, count); }
+            try { return _blockRenderGuard.Render(firstBlockIndex, count, _index.BlockCount, RenderBlocksLocked, _table.BlockKindOf); }
             finally { _releasableFile?.Release(); }
         }
     }

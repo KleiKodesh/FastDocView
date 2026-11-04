@@ -198,7 +198,7 @@ public static class WordFormattingAudit
         TestReport.Check(rawFailures.Count == 0, $"every failure is InvalidDataException / NotSupportedException / IOException ({rawFailures.Sum(f => f.Value.Count)} raw)");
     }
 
-    private static readonly string[] ClearFailureTypes = [nameof(InvalidDataException), nameof(NotSupportedException), nameof(IOException), nameof(EndOfStreamException), nameof(FileNotFoundException)];
+    private static readonly string[] ClearFailureTypes = [nameof(InvalidDataException), nameof(NotSupportedException), nameof(IOException), nameof(EndOfStreamException), nameof(FileNotFoundException), nameof(WordDocumentEncryptedException), nameof(WordDocumentOnlineOnlyException)];
 
     /// <summary>Reason keys look like "open Docx: InvalidDataException: …" — the exception type is the second field.</summary>
     private static bool IsClearFailure(string reason)

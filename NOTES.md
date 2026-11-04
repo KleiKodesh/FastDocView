@@ -1726,3 +1726,13 @@ its text on one side). The contour:
 LibreOffice's extra 15-twip shift of Word polygons (WrapPolygonHandler.cxx:99-114) is its own guess and not applied.
 Checks: `--fidelity` WrapSidesAndContourFidelityTest (synthetic .rtf, picture-wrap-polygon.docx / .rtf, tdf128501.doc),
 PagePlacementFidelityTest (centred wrapSquare floats left), OdtShapesFidelityTest / OdtDrawingFidelityTest (ODF).
+
+## Error handling (2026-11-04)
+
+- Open failures are classified by `WordDocumentOpenFailures.Classify` (encrypted, corrupt, online-only, not-found,
+  unsupported format, access-denied); encrypted files throw `WordDocumentEncryptedException`, cloud placeholders
+  `WordDocumentOnlineOnlyException`. Hosts map the class to their own translated message.
+- `WordDocumentBlockRenderGuard`: a window whose render throws a content error is rendered again block by block;
+  blocks that still fail become the "unsupported" placeholder, reported once per document through
+  `BlockRenderFailed`. IO errors (file changed / gone), cancellation and OOM are never swallowed.
+  Harness: `CorpusRegressionTest.RunOpenFailureClasses` / `RunMalformedBlock`; live: `playwright/errorsCheck.mjs`.

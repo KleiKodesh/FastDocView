@@ -79,7 +79,7 @@ public static class WordWindowedDocumentOpener
         catch (UnauthorizedAccessException) { return false; }
     }
 
-    private static IOException OnlineOnly(string filePath, IOException cause) => new(
+    private static WordDocumentOnlineOnlyException OnlineOnly(string filePath, IOException cause) => new(
         $"\"{Path.GetFileName(filePath)}\" is stored online only (for example OneDrive Files On-Demand) and could not be downloaded: "
         + $"{cause.Message} Make it available offline, or start the cloud app, then open it again.", cause);
 
