@@ -108,6 +108,9 @@ public sealed class WordShape
     public string? DrawingTextHtml;
     public string DrawingTextAnchor = "t";
     public int TextIndex = -1;
+    /// <summary>A DrawingML WordArt (a:prstTxWarp): its text-effect shape type and adjust values; the renderer lays its text box text on the outlines.</summary>
+    public int WordArtShapeType;
+    public List<int?>? WordArtAdjust;
     public string? PictureId;
     public WordTextBoxStyle TextStyle;
 }

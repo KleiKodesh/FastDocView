@@ -200,7 +200,7 @@ internal static class DocxDrawingStripper
         "a:red", "a:redMod", "a:redOff", "a:green", "a:greenMod", "a:greenOff", "a:blue", "a:blueMod", "a:blueOff",
         "a:gray", "a:comp", "a:inv", "a:gamma", "a:invGamma", "a:gdLst", "a:fillToRect", "a:custDash", "a:ds",
         // canvases (wpc), picture and pattern fills, the custom geometry's text rectangle
-        "wpc:wpc", "wpc:bg", "wpc:whole", "a:blipFill", "a:stretch", "a:fillRect", "a:tile", "a:alphaModFix", "a:pattFill", "a:fgClr", "a:bgClr", "a:rect",
+        "wpc:wpc", "wpc:bg", "wpc:whole", "a:prstTxWarp", "a:blipFill", "a:stretch", "a:fillRect", "a:tile", "a:alphaModFix", "a:pattFill", "a:fgClr", "a:bgClr", "a:rect",
         "a:ln", "a:prstDash", "a:headEnd", "a:tailEnd", "a:lnRef", "a:fillRef", "a:spAutoFit",
     };
 
@@ -354,7 +354,14 @@ internal static class DocxDrawingStripper
         {
             if (AttributeValue(tag, name) is { } value) layout.Append(' ').Append(attribute).Append("=\"").Append(value).Append('"');
         }
-        foreach (string name in new[] { "style", "fillcolor", "filled", "strokecolor", "stroked", "strokeweight", "arcsize", "from", "to" }) Copy(name, shapeTag, name);
+        foreach (string name in new[] { "style", "fillcolor", "filled", "strokecolor", "stroked", "strokeweight", "arcsize", "from", "to", "type", "adj" }) Copy(name, shapeTag, name);
+        Copy("spt", shapeTag, "o:spt");
+        // WordArt: v:textpath string and style, the attributes LibreOffice reads (vmlshapecontext.cxx:510-514)
+        if (IndexOfOpenTag(body, 0, "v:textpath") is var textPath and >= 0)
+        {
+            Copy("textpathString", OpenTagAt(body, textPath), "string");
+            Copy("textpathStyle", OpenTagAt(body, textPath), "style");
+        }
         if (IndexOfOpenTag(body, 0, "v:fill") is var fill and >= 0) { Copy("fillOn", OpenTagAt(body, fill), "on"); Copy("fillColor2", OpenTagAt(body, fill), "color"); }
         if (IndexOfOpenTag(body, 0, "v:stroke") is var stroke and >= 0)
         {

@@ -190,7 +190,11 @@ internal static class DocxShapeReader
                 (double x, double y, double width, double height, double rotation, bool flipH, bool flipV) = Place(properties?.Element("xfrm"), group, frameWidth, frameHeight);
                 WordShape shape = Shape(properties, element.Element("style"), theme, x, y, width, height, groupFill, pictureId, pictureSize, (rotation, flipH, flipV));
 
-                if (element.Element("txbx") is not null) { shape.TextIndex = textIndex++; shape.TextStyle = TextStyle(element.Element("bodyPr")); }
+                if (element.Element("txbx") is not null)
+                {
+                    shape.TextIndex = textIndex++; shape.TextStyle = TextStyle(element.Element("bodyPr"));
+                    if (DocxWordArt.FromTextWarp(element.Element("bodyPr")?.Element("prstTxWarp")) is { } wordArt) { shape.WordArtShapeType = wordArt.ShapeType; shape.WordArtAdjust = wordArt.Adjust; }
+                }
                 shapes.Add(shape);
                 break;
             }
@@ -587,6 +591,17 @@ internal static class DocxShapeReader
             resolved.Apply(line, null, null);
             resolved.ApplyTo(shape);
             shape.LineColor = VmlColor((string?)layout.Attribute("strokecolor")) ?? "#000000";
+        }
+        // WordArt: a text-effect shape type with its v:textpath string, drawn in the fill colour (DocxWordArt)
+        if ((string?)layout.Attribute("textpathString") is { Length: > 0 } wordArt
+            && DocxWordArt.VmlShapeType((string?)layout.Attribute("type"), (string?)layout.Attribute("spt")) is { } wordArtType)
+        {
+            string? font = null;
+            foreach (string declaration in ((string?)layout.Attribute("textpathStyle") ?? "").Split(';'))
+                if (declaration.IndexOf(':') is var colon and > 0 && declaration.Substring(0, colon).Trim() == "font-family")
+                    font = declaration.Substring(colon + 1).Trim().Trim('"', '\'');
+            DocxWordArt.Apply(shape, wordArtType, DocxWordArt.VmlAdjust((string?)layout.Attribute("adj")), wordArt, font, shape.FillColor);
+            shape.LineColor = null;
         }
         if (style.TryGetValue("rotation", out string? rotation)) shape.RotationDegrees = VmlRotation(rotation);
         if (style.TryGetValue("flip", out string? flip)) { shape.FlipHorizontal = flip.Contains('x'); shape.FlipVertical = flip.Contains('y'); }

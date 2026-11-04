@@ -826,7 +826,8 @@ public sealed class DocxBlockHtmlRenderer
             string? preset = (string?)properties?.Element("prstGeom")?.Attribute("prst");
             bool plain = (preset is null or "rect") && properties?.Element("custGeom") is null
                       && properties?.Descendants().Any(e => e.Name.LocalName is "schemeClr" or "gradFill" or "sysClr" or "prstClr" or "headEnd" or "tailEnd") != true;
-            if (plain) return false;
+            // a WordArt (a:prstTxWarp other than textNoShape) is drawn, not boxed
+            if (plain && DocxWordArt.FromTextWarp(top[0].Element("bodyPr")?.Element("prstTxWarp")) is null) return false;
         }
         return true;
     }
@@ -880,6 +881,25 @@ public sealed class DocxBlockHtmlRenderer
             shapes = DocxShapeReader.Read(layout.Element("shapes")!, placement.WidthPt, placement.HeightPt, _styles.Theme,
                                           embed => _pictures is not null ? _pictures(_currentPicturePart, embed) : null,
                                           embed => PictureSize?.Invoke(_currentPicturePart, embed));
+        // DrawingML WordArt: its text box text laid on the warp's outlines (DocxWordArt); the box text is drawn there instead
+        var wordArtTexts = new HashSet<int>();
+        foreach (WordShape shape in shapes)
+            if (shape.WordArtShapeType > 0 && shape.TextIndex >= 0 && shape.TextIndex < textBoxes.Count)
+            {
+                XElement content = textBoxes[shape.TextIndex];
+                string text = string.Join("\n", content.Descendants().Where(e => e.Name == W + "p").Select(p => string.Concat(p.Descendants(W + "t").Select(t => t.Value))));
+                XElement? runProperties = content.Descendants(W + "rPr").FirstOrDefault();
+                XElement? fonts = runProperties?.Element(W + "rFonts");
+                string? font = (string?)fonts?.Attribute(W + "ascii") ?? (string?)fonts?.Attribute(W + "cs")
+                             ?? _styles.Theme.FontFor((string?)fonts?.Attribute(W + "asciiTheme") ?? "minorHAnsi");
+                // the run's colour: w14:textFill's solid colour (Word 2010 text effects), else w:color
+                XElement? textFill = runProperties?.Elements().FirstOrDefault(e => e.Name.LocalName == "textFill")?.Elements().FirstOrDefault(e => e.Name.LocalName == "solidFill");
+                string? color = textFill?.Elements().FirstOrDefault(e => e.Name.LocalName == "srgbClr")?.Attributes().FirstOrDefault(a => a.Name.LocalName == "val")?.Value is { Length: 6 } hex ? "#" + hex.ToUpperInvariant()
+                              : (string?)runProperties?.Element(W + "color")?.Attribute(W + "val") is { Length: 6 } colorHex ? "#" + colorHex.ToUpperInvariant() : null;
+                DocxWordArt.Apply(shape, shape.WordArtShapeType, shape.WordArtAdjust ?? [], text, font, color);
+                wordArtTexts.Add(shape.TextIndex);
+                shape.TextIndex = -1;
+            }
         List<WordShape> withText = shapes.Where(s => s.TextIndex >= 0 && s.TextIndex < textBoxes.Count).ToList();
         bool inFlow = shapes.Count == 1 && withText.Count == 1 && withText[0].TextStyle.GrowsWithText && withText[0].RotationDegrees == 0;
 
@@ -908,6 +928,7 @@ public sealed class DocxBlockHtmlRenderer
         }
         WordShapeHtml.CloseFrame(html);
         var claimed = new HashSet<int>(withText.Select(s => s.TextIndex));
+        claimed.UnionWith(wordArtTexts);
         for (int i = 0; i < textBoxes.Count; i++)
         {
             if (claimed.Contains(i)) continue;
