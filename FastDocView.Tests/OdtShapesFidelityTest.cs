@@ -100,7 +100,7 @@ public static class OdtShapesFidelityTest
         TestReport.Check(!box.Contains("hiddenword") && !box.Contains("<p>boxtext"), "text box: hidden text not shown, no <p> inside the <p>");
         TestReport.Check(html[1].Contains("display:inline-block;vertical-align:bottom;width:72pt;height:21.6pt;overflow:hidden;") && html[1].IndexOf("before", StringComparison.Ordinal) < html[1].IndexOf("inlinebox", StringComparison.Ordinal),
                          "as-char text box: in the line at its fixed size (" + html[1] + ")");
-        TestReport.Check(html[2].Contains("display:block;margin:0pt auto 0pt auto;") && !html[2].Contains("float"), "centred parallel wrap: a centred block, text above and below (" + html[2] + ")");
+        TestReport.Check(html[2].Contains("float:left;margin:0pt 0pt 0pt 0pt;") && !html[2].Contains("margin:0pt auto"), "centred parallel wrap: floats flush left, the text along its other side (" + html[2] + ")");
         TestReport.Check(html[3].Contains("float:right;") && html[3].StartsWith("<p dir=\"rtl\"", StringComparison.Ordinal), "right-to-left paragraph: the box floats to its start side, right (" + html[3] + ")");
         string rectangle = html[4];
         TestReport.Check(rectangle.Contains("<span class=\"word-shape\" data-shape-page=\"72 36\" style=\"position:relative;box-sizing:border-box;width:72pt;height:36pt;display:block;margin:0pt auto 0pt auto;\">"),

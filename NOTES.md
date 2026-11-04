@@ -239,8 +239,8 @@ Ordered by value for text-heavy Hebrew documents:
    colours: see "Drawn shapes" below. Linked boxes: the first box holds the chain's whole txbxContent, so it shows all the
    text (no split). rtf / .doc boxes: still the old inline frame; .docx shapes, groups and VML shapes: drawn as SVG ("Drawn shapes" below) (.odt / .fodt boxes and shapes: see
    "OpenDocument text boxes and shapes" below).
-   Wrap on both sides of a centred object is not possible in CSS: CSS Shapes 1 section 2 ("does not allow content to wrap
-   on both sides of a float"); a centred square wrap stays top-and-bottom.
+   Wrap on both sides of an object is not possible in CSS: CSS Shapes 1 section 2 ("does not allow content to wrap
+   on both sides of a float"); see "Two-sided and contour wrap (all formats)" below.
 6. Paragraph borders/shading, tab stops (`w:tabs` positions), character spacing/scale, caps/small caps, underline styles, `w:lvlRestart`, legal numbering.
 7. ~~Fields~~ — done for .docx / .doc / .rtf (see "Word fields (all formats)").
 8. Tracked changes toggle (show/hide `w:ins`/`w:del`), comments ignored.
@@ -1284,7 +1284,7 @@ Sources: LibreOffice core master read 2026-11-04 (cited file:line in each class)
   sdrmeasureprimitive2d.cxx:150-170), drawn per piece end (help lines carry none); the page redraws the pieces with their markers
   and sizes the frame from the measured label. Checks: `--fidelity` OdtShapeTextFidelityTest, live
   `vue-demo/playwright/shapeTextCheck.mjs TestOutput/fidelity-v2-odt-shape-text.fodt`.
-- **Not possible / not done, with reason**: contour-mode "full" and text on both sides of a float cannot be laid out in CSS (CSS Shapes 1 s.2);.
+- **Not possible / not done, with reason**: contour-mode "full" and text on both sides of a float cannot be laid out in CSS (CSS Shapes 1 s.2); see "Two-sided and contour wrap (all formats)".
 - **Wrap**: style:wrap-contour = CSS shape-outside polygon from the outline (1 pt sweep) with shape-margin; page-anchored objects
   at body level are their own paragraph blocks (index format 9, which also keeps every graphic property and drawing style).
 - **Search**: shapes of every kind, lists / tables / sections in text boxes, lists in shapes, body-level drawings - once.
@@ -1318,9 +1318,8 @@ EnhancedCustomShapeTypeNames.cxx:36-38, 48, 101-104 (preset names) and EnhancedC
 - **Both-sides wrap is not possible in CSS.** CSS Shapes 1, section 2 "Relation to the box model and float behavior"
   (drafts.csswg.org/css-shapes, read 2026-11-03): "this does not allow content to wrap on both sides of a float"; "Left floats
   with a shape-outside still only allow content wrapping on the right side". Fallback: a centred object with text on both
-  sides (style:wrap parallel / dynamic / biggest, horizontal-pos center; .docx wrapSquare centred) becomes a centred block
-  with the text above and below it (`AppendPlacement`: Square + Center = TopAndBottom); a left / right object with
-  parallel / dynamic floats to its side and the text runs on the other side only.
+  sides (style:wrap parallel / dynamic / biggest) floats flush to its side and the text runs along the other side (user,
+  2026-11-04: never top-and-bottom); see "Two-sided and contour wrap (all formats)".
 - **Shapes** (draw:custom-shape, draw:rect, draw:ellipse, draw:line, draw:g) are inline SVG in a placed box
   (`text-box word-shape`, positioned; the SVG fills it): bounding box from svg:x / y / width / height, a line's svg:x1..y2,
   a group around its drawn children (each child an absolutely placed part at its offset). Fill: none / solid / gradient
@@ -1680,3 +1679,29 @@ One engine in `Fields/` for .docx, .doc and .rtf; each format only finds the fie
   + both search readers), WordFieldsOtherFormatsTest (test-data/word-fields/fields-v1.doc / .rtf saved by Word 16 with
   make-fields-fixtures.ps1, and hand-written RTF: no \fldrslt, \fldlock, \fldpriv, \formfield, counters across index
   anchors).
+
+## Two-sided and contour wrap (all formats)
+
+User decision 2026-11-04: text on both sides of an object (.docx wrapText bothSides / largest, VML side both / largest,
+.doc FSPA wrk 0 / 3, RTF \shpwrk 0 / 3, ODF style:wrap parallel / dynamic / biggest) has NO top-and-bottom fallback.
+CSS cannot put text on both sides of a float (CSS Shapes 1 s.2), so the object floats flush to its side (left / right as
+placed; centred = left, our choice for the tie), its horizontal offset dropped, and the text wraps fully along the other
+side. A one-sided wrap (left / right only) floats opposite its text and keeps its offset. `WordPictureLayout.TextSides` +
+`WordPictureHtml.AppendPlacement` / `FloatsRight`. .doc reads the side from posh (0x038F in the 0xF122 record,
+msdffimp.cxx:5199-5216; inside / outside as on an odd page). Limit: an object placed by an absolute offset alone (no alignment)
+floats left - the flow view has no column width to tell which edge is nearer.
+
+Contour wrap = CSS `shape-outside:polygon(...)` from `WordPictureContour.ShapeOutsideCss` (the outline's extreme on the
+text side per 1 pt row, at most 2000 rows; gap on the text side as shape-margin; through drawn as tight - a float keeps
+its text on one side). The contour:
+- .docx wp:wrapTight / wp:wrapThrough wp:wrapPolygon (ECMA-376 Part 1 20.4.2.16-18), VML wrapcoords (tight / through);
+  Word's 21600 x 21600 space over the object ([MS-OI29500] as quoted by LibreOffice WrapPolygonHandler.cxx:120-129).
+- .doc FSPA wr 4 / 5 (ww8graf.cxx:2721-2725 bContour): pWrapPolygonVertices 899 (msdffimp.cxx:5574-5605, 8-byte int32 or
+  4-byte int16 pairs), else the drawn shapes' own outline (`WordShapeHtml.Outlines`); a lone picture without one: its box.
+- RTF \shpwr 4 (wrapTight, rtfdispatchvalue.cxx:1250-1254) with pWrapPolygonVertices "8;n;(x,y);..." (rtfsdrimport.cxx:
+  856-885), else the shape's outline; \shpwr 5 is THROUGH in LibreOffice (:1255-1257) and stays drawn as none.
+- ODF style:wrap-contour: draw:contour-polygon / contour-path, else a shape's own outlines. The page re-sweeps the
+  contour when a shape grows with its text (vue-frontend fastDocViewShapeText.ts `contourPolygon`, same format).
+LibreOffice's extra 15-twip shift of Word polygons (WrapPolygonHandler.cxx:99-114) is its own guess and not applied.
+Checks: `--fidelity` WrapSidesAndContourFidelityTest (synthetic .rtf, picture-wrap-polygon.docx / .rtf, tdf128501.doc),
+PagePlacementFidelityTest (centred wrapSquare floats left), OdtShapesFidelityTest / OdtDrawingFidelityTest (ODF).

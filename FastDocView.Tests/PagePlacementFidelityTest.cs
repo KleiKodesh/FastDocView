@@ -142,7 +142,7 @@ public static class PagePlacementFidelityTest
         TestReport.Check(html[2].Contains("float:left;margin:10pt 20pt 10pt 0pt;"), "wrapTight left: floats left");
         TestReport.Check(html[3].Contains("display:block;margin:10pt auto 10pt auto;"), "wrapTopAndBottom center: a centred block with the top / bottom gap");
         TestReport.Check(html[4].Contains("display:block;margin:0pt auto 0pt 10pt;"), "wrapNone: a block without gaps, at its offset from the left (" + html[4] + ")");
-        TestReport.Check(html[5].Contains("display:block;margin:10pt auto 10pt auto;"), "wrapSquare centred: a centred block (CSS cannot float centre)");
+        TestReport.Check(html[5].Contains("float:left;margin:10pt ") && !html[5].Contains("display:block"), "wrapSquare centred: text on both sides cannot be laid out, floats flush left (the tie: our choice) (" + html[5] + ")");
         TestReport.Check(html.All(block => !block.Contains("[image]")), "every picture is drawn");
     }
 

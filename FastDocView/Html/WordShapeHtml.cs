@@ -185,6 +185,38 @@ public static class WordShapeHtml
 
     public static void CloseFrame(StringBuilder html) => html.Append("</span>");
 
+    /// <summary>
+    /// The drawn outlines of <paramref name="shapes"/> in their frame's points, for a contour wrap without an explicit wrap
+    /// polygon (the text follows the object itself): evaluated outlines (<see cref="WordShape.Paths"/>) as drawn, an ellipse as
+    /// 64 chords, any other geometry as its box; each through the shape's transform, else its box, flips and rotation about its
+    /// centre exactly as <see cref="AppendShape"/> draws it.
+    /// </summary>
+    public static List<IReadOnlyList<(double X, double Y)>> Outlines(IReadOnlyList<WordShape> shapes)
+    {
+        var outlines = new List<IReadOnlyList<(double X, double Y)>>();
+        foreach (WordShape shape in shapes)
+        {
+            WordAffine place = shape.Transform ?? Placement(shape);
+            IEnumerable<List<(double X, double Y)>> own = shape.Paths is { Count: > 0 } paths
+                ? paths.SelectMany(p => p.Subpaths).Select(Flatten)
+                : shape.Geometry == WordShapeGeometry.Ellipse
+                    ? [Enumerable.Range(0, 64).Select(i => (shape.Width / 2 * (1 + Math.Cos(i * Math.PI / 32)), shape.Height / 2 * (1 + Math.Sin(i * Math.PI / 32)))).ToList()]
+                    : [[(0, 0), (shape.Width, 0), (shape.Width, shape.Height), (0, shape.Height)]];
+            foreach (List<(double X, double Y)> outline in own)
+                if (outline.Count > 1) outlines.Add(outline.Select(p => place.Apply(p.X, p.Y)).ToList());
+        }
+        return outlines;
+    }
+
+    /// <summary>The SVG placement of <see cref="AppendShape"/> without a transform: translate(centre) rotate scale translate(-centre).</summary>
+    private static WordAffine Placement(WordShape shape)
+    {
+        double cx = shape.Width / 2, cy = shape.Height / 2;
+        WordAffine t = WordAffine.Then(WordAffine.Translate(-cx, -cy), WordAffine.Scale(shape.FlipHorizontal ? -1 : 1, shape.FlipVertical ? -1 : 1));
+        t = WordAffine.Then(t, WordAffine.Rotate(shape.RotationDegrees * Math.PI / 180));
+        return WordAffine.Then(t, WordAffine.Translate(shape.X + cx, shape.Y + cy));
+    }
+
     /// <summary>The outlines of every shape (pictures are drawn as boxes by <see cref="AppendPicture"/>); a picture-filled shape splits the SVG so its picture layer keeps its place in the drawing order.</summary>
     public static void AppendGeometry(StringBuilder html, IReadOnlyList<WordShape> shapes, double width, double height, bool stretches)
     {

@@ -1085,7 +1085,10 @@ public sealed class DocxBlockHtmlRenderer
             _ => (string?)picture.Attribute("wrapText") switch { "left" => WordPictureSide.Right, "right" => WordPictureSide.Left, _ => WordPictureSide.Left },
         };
         double offset = align is null && picture.Attribute("posOffset") is not null ? Math.Max(0, Emu("posOffset")) : 0;
-        return new WordPictureLayout(Emu("cx"), Emu("cy"), pictureWrap, side, Emu("distT"), Emu("distR"), Emu("distB"), Emu("distL"), offset);
+        double width = Emu("cx"), height = Emu("cy");
+        return new WordPictureLayout(width, height, pictureWrap, side, Emu("distT"), Emu("distR"), Emu("distB"), Emu("distL"), offset,
+                                     TextSidesOf((string?)picture.Attribute("wrapText")),
+                                     WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs((string?)picture.Attribute("wrapPolygon")), width, height));
     }
 
     /// <summary>
@@ -1157,9 +1160,26 @@ public sealed class DocxBlockHtmlRenderer
             _ => (string?)picture.Attribute("wrapText") switch { "left" => WordPictureSide.Right, "right" => WordPictureSide.Left, _ => WordPictureSide.Left },
         };
         double offset = isAnchored && horizontal is null or "absolute" ? Math.Max(0, Length("margin-left")) : 0;
-        return new WordPictureLayout(Length("width"), Length("height"), pictureWrap, side, Length("mso-wrap-distance-top"), Length("mso-wrap-distance-right"),
-                                     Length("mso-wrap-distance-bottom"), Length("mso-wrap-distance-left"), offset);
+        double width = Length("width"), height = Length("height");
+        // wrapcoords: x,y pairs in Word's 21600 space over the shape (see NOTES.md "Two-sided and contour wrap"); only for tight / through
+        string? coords = wrap is "tight" or "through" ? (string?)picture.Attribute("wrapcoords") : null;
+        return new WordPictureLayout(width, height, pictureWrap, side, Length("mso-wrap-distance-top"), Length("mso-wrap-distance-right"),
+                                     Length("mso-wrap-distance-bottom"), Length("mso-wrap-distance-left"), offset,
+                                     TextSidesOf((string?)picture.Attribute("wrapText")),
+                                     WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs(coords), width, height));
     }
+
+    /// <summary>
+    /// wp:wrapSquare / wrapTight / wrapThrough wrapText (ECMA-376 Part 1 20.4.3.7 ST_WrapText: bothSides, left = "text shall only
+    /// wrap around the left side", right, largest) and VML w10:wrap side (Part 4 19.3.2.6 wrap, ST_WrapSide both / left / right / largest)
+    /// as the sides the text may use; LibreOffice GraphicImport.cxx:389-399 maps them to PARALLEL / LEFT / RIGHT / DYNAMIC.
+    /// </summary>
+    private static WordPictureTextSides TextSidesOf(string? wrapText) => wrapText switch
+    {
+        "left" => WordPictureTextSides.LeftOnly,
+        "right" => WordPictureTextSides.RightOnly,
+        _ => WordPictureTextSides.Both,
+    };
 
     /// <summary>A VML style length in points: CSS units pt / in / cm / mm / pc / px (96 per inch); 0 when it has another or none.</summary>
     internal static double VmlLengthPoints(string value)

@@ -24,17 +24,32 @@ public readonly record struct WordTextBoxStyle(double LeftInsetPt, double TopIns
                                                string? BorderColor, double BorderWidthPt, bool BorderDash, string? FillColor,
                                                double RotationDegrees, string? WritingMode, bool GrowsWithText);
 
-/// <summary>A picture's box: size and the gap kept to the text around it (points), wrap and side.</summary>
+/// <summary>
+/// Which sides of a <see cref="WordPictureWrap.Square"/> object the text may use: both (.docx wrapText bothSides / largest, VML
+/// side both / largest, .doc / RTF wrk 0 / 3, ODF style:wrap parallel / dynamic / biggest) or one only (wrapText / side / wrk
+/// left / right, ODF style:wrap left / right: "text wraps around the left side", so the object goes right).
+/// </summary>
+public enum WordPictureTextSides : byte { Both, LeftOnly, RightOnly }
+
+/// <summary>
+/// A picture's box: size and the gap kept to the text around it (points), wrap and side; for a floating object the sides its text
+/// may use and its wrap contour (outlines in its own box points, <see cref="WordPictureContour"/>; null = its box).
+/// </summary>
 public readonly record struct WordPictureLayout(double WidthPt, double HeightPt, WordPictureWrap Wrap, WordPictureSide Side,
-                                                double TopPt, double RightPt, double BottomPt, double LeftPt, double OffsetPt = 0);
+                                                double TopPt, double RightPt, double BottomPt, double LeftPt, double OffsetPt = 0,
+                                                WordPictureTextSides TextSides = WordPictureTextSides.Both,
+                                                IReadOnlyList<IReadOnlyList<(double X, double Y)>>? Contour = null);
 
 /// <summary>
 /// Draws a picture at its size where the document puts it. The browser has no page or anchor, so a floating picture is a
 /// CSS float in its own paragraph (the page keeps each block a formatting context, so a float never runs into blocks that
 /// are not on screen):
-/// - square / tight / through: float to its side with the gap to the text as margins; the margin on the side without text
-///   is dropped, as LibreOffice emulates Word (GraphicImport.cxx: "when impossible to wrap text on a side, remove the margin
-///   gap"). A centred picture cannot float in CSS: it becomes a centred block (text above and below).
+/// - square / tight / through: float with the gap to the text as margins; the margin on the side without text is dropped, as
+///   LibreOffice emulates Word (GraphicImport.cxx: "when impossible to wrap text on a side, remove the margin gap"). CSS cannot
+///   put text on both sides of a float (CSS Shapes 1, section 2), so an object with text on both sides floats flush to the
+///   column edge nearest its position (left / right as placed; a centred one to the left - our choice, the tie has no rule),
+///   without its horizontal offset, and the text wraps fully along its other side. A one-sided wrap floats to the side
+///   opposite its text and keeps its offset. A contour (<see cref="WordPictureLayout.Contour"/>) becomes shape-outside.
 /// - top and bottom: a block on its side with the top / bottom gap.
 /// - none (in front of / behind the text): LibreOffice imports it as wrap THROUGH with every gap dropped (GraphicImport.cxx
 ///   LN_EG_WrapType_wrapNone); text cannot run under a picture here without hiding it, so it is drawn as a block on its side
@@ -72,21 +87,24 @@ public static class WordPictureHtml
     public static void AppendPlacement(StringBuilder css, WordPictureLayout layout)
     {
         WordPictureSide side = layout.Side;
-        WordPictureWrap wrap = layout.Wrap;
-        if (wrap == WordPictureWrap.Square && side == WordPictureSide.Center) wrap = WordPictureWrap.TopAndBottom;
-        switch (wrap)
+        switch (layout.Wrap)
         {
             case WordPictureWrap.Inline:
                 if (layout.TopPt + layout.RightPt + layout.BottomPt + layout.LeftPt > 0) css.Append("margin:").Append(Margins(layout.TopPt, layout.RightPt, layout.BottomPt, layout.LeftPt)).Append(';');
                 break;
             case WordPictureWrap.Square:
-                css.Append("float:").Append(side == WordPictureSide.Right ? "right" : "left").Append(";margin:")
-                   .Append(side == WordPictureSide.Right ? Margins(layout.TopPt, 0, layout.BottomPt, layout.LeftPt)
-                                                         : Margins(layout.TopPt, layout.RightPt, layout.BottomPt, layout.OffsetPt))
+                bool floatsRight = FloatsRight(layout);
+                double offset = layout.TextSides == WordPictureTextSides.Both ? 0 : layout.OffsetPt;
+                css.Append("float:").Append(floatsRight ? "right" : "left").Append(";margin:")
+                   .Append(floatsRight ? Margins(layout.TopPt, 0, layout.BottomPt, layout.LeftPt)
+                                       : Margins(layout.TopPt, layout.RightPt, layout.BottomPt, offset))
                    .Append(';');
+                if (layout.Contour is { } contour
+                    && WordPictureContour.ShapeOutsideCss(contour, layout.WidthPt, layout.HeightPt, !floatsRight, floatsRight ? layout.LeftPt : layout.RightPt) is { } shape)
+                    css.Append(shape);
                 break;
             default:
-                double top = wrap == WordPictureWrap.None ? 0 : layout.TopPt, bottom = wrap == WordPictureWrap.None ? 0 : layout.BottomPt;
+                double top = layout.Wrap == WordPictureWrap.None ? 0 : layout.TopPt, bottom = layout.Wrap == WordPictureWrap.None ? 0 : layout.BottomPt;
                 css.Append("display:block;margin:").Append(Points(top)).Append("pt ")
                    .Append(side == WordPictureSide.Right ? "0" : "auto").Append(' ')
                    .Append(Points(bottom)).Append("pt ")
@@ -94,6 +112,14 @@ public static class WordPictureHtml
                 break;
         }
     }
+
+    /// <summary>Whether a <see cref="WordPictureWrap.Square"/> object floats right: a one-sided wrap opposite its text, else its own side (centre = left).</summary>
+    public static bool FloatsRight(WordPictureLayout layout) => layout.TextSides switch
+    {
+        WordPictureTextSides.LeftOnly => true,
+        WordPictureTextSides.RightOnly => false,
+        _ => layout.Side == WordPictureSide.Right,
+    };
 
     /// <summary>
     /// Opens a text box: a box at its placement (<see cref="AppendPlacement"/>), its width, its height (a minimum when it grows
