@@ -40,6 +40,7 @@ public static class WordOfficeArtFontwork
     {
         var outlines = new List<List<(double X, double Y)>>();
         foreach (WordShapePath path in geometry)
+            if (!path.IsFillCopy)
             foreach (WordShapeSubpath subpath in path.Subpaths)
                 if (Flatten(subpath) is { Count: > 1 } points) outlines.Add(points);
         var result = new List<WordShapeTextOnPath>();

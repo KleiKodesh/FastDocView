@@ -188,6 +188,8 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
     // ── IOdtBlockTable over the known blocks ──────────────────────────────────────────
 
     int IOdtBlockTable.BlockCount => KnownBlockCount;
+    public OdtListStyle? ListStyleNamed(string name) => _scanner.UsedListStyles.TryGetValue(name, out OdtListStyle? style) ? style : _styles.ListStyle(name);
+
     public string RootOpenTag => KnownBlockCount > 0 ? _scanner.RootOpenTag : throw new InvalidOperationException("No block scanned yet.");
     public long BlockStartOffset(int blockIndex) => _scanner.BlockStartOffsets[blockIndex];
     public long BlockEndOffset(int blockIndex) => _scanner.BlockEndOffsets[blockIndex];

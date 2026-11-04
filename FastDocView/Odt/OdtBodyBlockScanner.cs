@@ -29,8 +29,14 @@ internal sealed class OdtBodyBlockScanner
     {
         Other, Paragraph, Heading, Table, List, ListItem, ListHeader, Section, SectionSource, IndexBody, IndexElement,
         SoftPageBreak, TrackedChanges, NumberedParagraph, Note, NoteCitation, NoteBody, OfficeBody, OfficeText,
-        FontFaceDecls, Styles, AutomaticStyles, BinaryData, Annotation, Bookmark,
+        FontFaceDecls, Styles, AutomaticStyles, BinaryData, Annotation, Bookmark, Drawing,
     }
+
+    /// <summary>
+    /// Drawing objects that may stand between paragraphs (page-anchored frames and shapes: LibreOffice writes them as children of
+    /// office:text, ODF 1.3 part 3 3.4 / 10.3): each is a block of its own, drawn where it stands in the flow (no page here).
+    /// </summary>
+    internal static readonly string[] BodyDrawingNames = ["draw:frame", "draw:custom-shape", "draw:rect", "draw:ellipse", "draw:circle", "draw:line", "draw:polygon", "draw:polyline", "draw:path", "draw:connector", "draw:measure", "draw:caption", "draw:regular-polygon", "draw:g", "draw:a", "draw:control"];
 
     private const int MaxTagBytes = 1 << 20;
     private const int MaxHeadingTextBytes = 600;
@@ -432,7 +438,7 @@ internal sealed class OdtBodyBlockScanner
 
     private Frame BlockLevel(Name name, ReadOnlySpan<byte> tag, int nameEnd, long tagEndOffset, bool isListItemParagraph)
     {
-        if (name is Name.Paragraph or Name.Heading or Name.Table) BlockStarting?.Invoke(BlockStartOffsets.Count, _tagStartOffset);
+        if (name is Name.Paragraph or Name.Heading or Name.Table or Name.Drawing) BlockStarting?.Invoke(BlockStartOffsets.Count, _tagStartOffset);
         switch (name)
         {
             case Name.Paragraph or Name.Heading:
@@ -447,6 +453,10 @@ internal sealed class OdtBodyBlockScanner
                 }
                 return Frame.Block;
             }
+            case Name.Drawing:
+                StartBlock(WordDocumentBlockKind.Paragraph, 255, null);
+                NoteSectionStart("paragraph", null);
+                return Frame.Block;
             case Name.Table:
                 StartBlock(WordDocumentBlockKind.Table, 255, null);
                 NoteSectionStart("table", Attribute(tag, nameEnd, "table:style-name"));
@@ -478,6 +488,7 @@ internal sealed class OdtBodyBlockScanner
         }
         if (parent is Frame.InnerNoText) return Frame.InnerNoText;
         if (name is Name.BinaryData or Name.Annotation) return Frame.InnerNoText;
+        if (name == Name.List) _numbering.NoteListStyle(Attribute(tag, nameEnd, "text:style-name"));     // a list in a text box / shape
         if (parent == Frame.Note)
         {
             if (name == Name.NoteCitation)
@@ -766,6 +777,7 @@ internal sealed class OdtBodyBlockScanner
             [P("text:reference-mark")] = Name.Bookmark, [P("text:reference-mark-start")] = Name.Bookmark,
         };
         foreach (string index in IndexElementNames) names[P(index)] = Name.IndexElement;
+        foreach (string drawing in BodyDrawingNames) names[P(drawing)] = Name.Drawing;
         int longest = names.Keys.Max(key => key.Length);
         var buckets = new List<(byte[], Name)>[longest + 1];
         for (int i = 0; i < buckets.Length; i++) buckets[i] = new List<(byte[], Name)>();

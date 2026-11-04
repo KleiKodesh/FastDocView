@@ -239,6 +239,13 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                 return WordPictureHtml.Picture(partName, bytes.ToArray());
             }
         }
+        if (pictureId.StartsWith(OdtBlockHtmlRenderer.FillImagePrefix, StringComparison.Ordinal))
+        {
+            // a fill image stored in the styles (draw:fill-image office:binary-data): the kept style holds it
+            XElement? image = _styles.DrawingStyle("fill-image", pictureId.Substring(OdtBlockHtmlRenderer.FillImagePrefix.Length));
+            if (image?.Element(OdtStyleCascade.Office + "binary-data") is not { } data || OdtBlockHtmlRenderer.BinaryPictureBytes(data) is not { } fill) return null;
+            return WordPictureHtml.ExtensionOf(fill).Length > 0 ? WordPictureHtml.Picture(WordPictureHtml.ExtensionOf(fill), fill) : null;
+        }
         if (!pictureId.StartsWith(OdtBlockHtmlRenderer.BinaryPicturePrefix, StringComparison.Ordinal)) return null;
         string[] parts = pictureId.Substring(OdtBlockHtmlRenderer.BinaryPicturePrefix.Length).Split(':');
         if (parts.Length != 2 || !int.TryParse(parts[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int blockIndex)
@@ -349,6 +356,9 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         foreach ((int blockIndex, XElement element) in _reader.ReadBlocks(firstBlockIndex, count))
         {
             _renderer.CurrentBlockIndex = blockIndex;
+            _renderer.RootOpenTag ??= _blocks.RootOpenTag;
+            _renderer.Pictures ??= ReadPicture;
+            _renderer.ListStyles ??= _blocks.ListStyleNamed;
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), _blocks.ListLevelOf(blockIndex), _blocks.ListLabelLayoutOf(blockIndex),
                                                                                        _blocks.NoteReferencesInBlocks(blockIndex, blockIndex), null);
             result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes));

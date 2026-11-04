@@ -16,12 +16,12 @@ public static class WordDocumentHtmlStylesheet
         double sizePt = documentDefaultRun.EffectiveFontSizeHalfPoints > 0 ? documentDefaultRun.EffectiveFontSizeHalfPoints / 2.0 : 11;
         return $$"""
             .word-document { font-family: '{{font.Replace("'", "")}}', 'Times New Roman', serif; font-size: {{sizePt.ToString("0.#", CultureInfo.InvariantCulture)}}pt; line-height: 1.15; color: #000; }
-            .word-document p { margin: 0; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1em; }
+            .word-document p, .word-document .word-paragraph-block { margin: 0; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1em; }
             .word-document h1, .word-document h2, .word-document h3, .word-document h4, .word-document h5, .word-document h6 { margin: 0; font-size: inherit; font-weight: inherit; white-space: pre-wrap; }
             .word-document table { border-collapse: collapse; margin: 0; }
             .word-document td { border: 1px solid #999; padding: 1pt 4pt; vertical-align: top; }
             .word-document .list-marker { display: inline-block; text-indent: 0; }
-            .word-document p, .word-document h1, .word-document h2, .word-document h3, .word-document h4, .word-document h5, .word-document h6 { tab-size: 36pt; }
+            .word-document p, .word-document .word-paragraph-block, .word-document h1, .word-document h2, .word-document h3, .word-document h4, .word-document h5, .word-document h6 { tab-size: 36pt; }
             .word-document .note-reference { font-size: 0.7em; line-height: 0; color: #06c; cursor: pointer; padding: 0 1px; }
             .word-document .note-mark { vertical-align: super; font-size: 0.7em; line-height: 0; color: #06c; margin-inline-end: 0.25em; }
             .word-document .page-break { display: block; border-top: 1px dashed #bbb; margin: 6pt 0; }

@@ -65,7 +65,9 @@ public sealed class OdtStyleCascade
 
     private readonly Dictionary<(string family, string name), XElement> _styles = new();
     private readonly Dictionary<string, XElement> _defaultStyles = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, XElement> _gradients = new(StringComparer.Ordinal);
+    /// <summary>The named drawing styles of office:styles (ODF 1.3 part 3 16.40-16.44 / 16.46: draw:gradient, svg:linearGradient,
+    /// svg:radialGradient, draw:hatch, draw:fill-image, draw:opacity, draw:marker, draw:stroke-dash) by (element local name, draw:name).</summary>
+    private readonly Dictionary<(string kind, string name), XElement> _drawingStyles = new();
     private readonly Dictionary<string, OdtListStyle> _listStyles = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _fontFamilies = new(StringComparer.Ordinal);
     private readonly Dictionary<string, OdtParagraphStyle> _resolvedParagraphs = new(StringComparer.Ordinal);
@@ -112,9 +114,9 @@ public sealed class OdtStyleCascade
             {
                 if ((string?)element.Attribute(Style + "family") is { } family) _defaultStyles[family] = element;
             }
-            else if (element.Name == Draw + "gradient")
+            else if (IsDrawingStyle(element.Name))
             {
-                if ((string?)element.Attribute(Draw + "name") is { } name) _gradients[name] = element;
+                if ((string?)element.Attribute(Draw + "name") is { } name) _drawingStyles[(element.Name.LocalName, name)] = element;
             }
             else if (element.Name == Text + "list-style")
             {
@@ -172,14 +174,14 @@ public sealed class OdtStyleCascade
                             _ => null,
                         };
                         if (handled is null) continue;
-                        var kept = new XElement(properties.Name, properties.Attributes().Where(attribute => handled.Contains(QualifiedName(attribute.Name))));
+                        // graphic properties are kept whole: every drawing attribute (fill, stroke, markers, text area, wrap) is read
+                        var kept = new XElement(properties.Name, properties.Attributes().Where(attribute => properties.Name.LocalName == "graphic-properties" || handled.Contains(QualifiedName(attribute.Name))));
                         if (kept.HasAttributes) style.Add(kept);
                     }
                     copy.Add(style);
                 }
-                else if (element.Name == Draw + "gradient")
-                    copy.Add(new XElement(element.Name, element.Attribute(Draw + "name"), element.Attribute(Draw + "start-color"),
-                                          element.Attribute(Draw + "end-color"), element.Attribute(Draw + "angle")));
+                else if (IsDrawingStyle(element.Name))
+                    copy.Add(new XElement(element));             // whole: gradient stops, marker paths, fill images
             }
             return copy;
         }).ToArray();
@@ -225,6 +227,19 @@ public sealed class OdtStyleCascade
         var resolved = new OdtParagraphStyle(formatting, raw.IsPageBreakBefore, listStyleName);
         _resolvedParagraphs[key] = resolved;
         return resolved;
+    }
+
+    /// <summary>
+    /// The character formatting a drawing shape's graphic style gives its text (style:text-properties of the graphic style and its
+    /// parents over the document default): LibreOffice's shape text takes the shape's item set as its defaults.
+    /// </summary>
+    public WordRunFormatting GraphicTextFormatting(string? graphicStyleName)
+    {
+        WordRunFormatting run = DefaultParagraph.Formatting.RunFormatting.Clone();
+        if (_defaultStyles.TryGetValue("graphic", out XElement? defaults)) ApplyTextProperties(run, defaults.Element(Style + "text-properties"), run.IsRightToLeft);
+        foreach (XElement style in Chain("graphic", graphicStyleName, includeDefault: false))
+            ApplyTextProperties(run, style.Element(Style + "text-properties"), run.IsRightToLeft);
+        return run;
     }
 
     /// <summary>A text:span's formatting over its paragraph's base (family "text" chain); cached per pair.</summary>
@@ -443,8 +458,13 @@ public sealed class OdtStyleCascade
         return Twips(properties?.Attribute(Style + "column-width")) is { } width ? WordParagraphFormatting.TwipsToPt(width) + "pt" : null;
     }
 
+    private static bool IsDrawingStyle(XName name) => name.Namespace == Draw && name.LocalName is "gradient" or "hatch" or "fill-image" or "opacity" or "marker" or "stroke-dash";
+
     /// <summary>A draw:gradient by its draw:name (office:styles), null when unknown.</summary>
-    public XElement? Gradient(string? name) => name is not null && _gradients.TryGetValue(name, out XElement? gradient) ? gradient : null;
+    public XElement? Gradient(string? name) => DrawingStyle("gradient", name);
+
+    /// <summary>A named drawing style (draw:gradient / hatch / fill-image / opacity / marker / stroke-dash) by its draw:name; null when unknown.</summary>
+    public XElement? DrawingStyle(string kind, string? name) => name is not null && _drawingStyles.TryGetValue((kind, name), out XElement? style) ? style : null;
 
     /// <summary>A graphic style's property through its parent chain (style:parent-style-name), then the graphic default style.</summary>
     public string? GraphicProperty(string? styleName, XName attribute)

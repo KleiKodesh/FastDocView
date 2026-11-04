@@ -23,4 +23,6 @@ internal interface IOdtBlockTable
     /// window's bytes while locating its blocks), else from <paramref name="view"/>.
     /// </summary>
     byte[] ReadRange(Stream view, long start, long end);
+    /// <summary>A list style kept by the index (body lists, and lists inside text boxes and shapes); null when unknown.</summary>
+    OdtListStyle? ListStyleNamed(string name);
 }

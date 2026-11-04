@@ -1,4 +1,4 @@
-// FastDocView test harness.
+﻿// FastDocView test harness.
 //
 //   dotnet run -c Release                          deflate round trip (8 MB) + synthetic docx (50k blocks) + real files passed/found
 //   dotnet run -c Release -- --blocks 500000       bigger synthetic document
@@ -56,8 +56,8 @@ for (int i = 0; i < args.Length; i++)
     switch (args[i])
     {
         case "--blocks": blocks = int.Parse(args[++i]); break;
-        case "--huge": hugeBlocks = int.Parse(args[++i]); break;                       // e.g. 1000000 → ~350 MB document.xml
-        case "--notes-streaming": notesStreamingBlocks = int.Parse(args[++i]); break;  // e.g. 20000 → 1000 footnotes, ~113 MB footnotes.xml
+        case "--huge": hugeBlocks = int.Parse(args[++i]); break;                       // e.g. 1000000 ג†’ ~350 MB document.xml
+        case "--notes-streaming": notesStreamingBlocks = int.Parse(args[++i]); break;  // e.g. 20000 ג†’ 1000 footnotes, ~113 MB footnotes.xml
         case "--deflate-mb": deflateMegabytes = int.Parse(args[++i]); break;
         case "--skip-synthetic": skipSynthetic = true; break;
         case "--search": searchOnly = true; while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) searchPaths.Add(args[++i]); break;   // in-document search checks (+ timings on the given files)
@@ -101,6 +101,14 @@ for (int i = 0; i < args.Length; i++)
             break;
         case "--rtf-profile": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfProfilePaths.Add(args[++i]); break;
         case "--rtf-audit": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) rtfAuditPaths.Add(args[++i]); break;
+        case "--odt-drawing": OdtDrawingFidelityTest.Run(); return TestReport.FailureCount == 0 ? 0 : 1;
+        case "--dump-html":                                                            // <file>: every block's HTML, one per line (inspection)
+        {
+            string dumpPath = args[++i];
+            using FastDocView.IWordWindowedDocument dumped = FastDocView.WordWindowedDocumentOpener.Open(dumpPath, new FastDocView.WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") });
+            foreach (var block in dumped.RenderBlocks(0, dumped.BlockCount)) Console.WriteLine(block.Html);
+            return 0;
+        }
         case "--golden": goldenDirectory = args[++i]; while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) goldenPaths.Add(args[++i]); break;   // <out-dir> <files...>: observable-output dump per file (index-change proof)
         case "--doc-search-golden": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) docSearchGoldenPaths.Add(args[++i]); break;   // .doc one-pass search = the old block-range path, on these files only
         case "--coexistence-probe": WordCoexistenceTest.Probe(args[++i], int.Parse(args[++i])); return TestReport.FailureCount == 0 ? 0 : 1;   // <file> <rounds>: save-by-replace refusals with / without our document open, and who held the file
@@ -124,7 +132,7 @@ if (rereadPaths.Count > 0) { RereadCostTest.Run(rereadPaths.Where(File.Exists));
 if (docReadPaths.Count > 0) { DocBinaryReadCountTest.Run(docReadPaths.Where(File.Exists)); skipSynthetic = true; }
 if (compactReportPaths.Count > 0) { CompactIndexReport.Run(compactReportPaths.Where(File.Exists)); skipSynthetic = true; }
 if (searchOnly) { DocumentSearchTest.Run(searchPaths); skipSynthetic = true; }
-if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); PagePlacementFidelityTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); DocBinaryFloatingPicturesTest.Run(); OdtShapesFidelityTest.Run(); RtfShapesFidelityTest.Run(); WordOfficeArtGeometryTest.Run(); DocBinaryShapesFidelityTest.Run(); OdtFirstOpenTiming.RunSynthetic(); skipSynthetic = true; }
+if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); PagePlacementFidelityTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); DocBinaryFloatingPicturesTest.Run(); OdtShapesFidelityTest.Run(); OdtDrawingFidelityTest.Run(); RtfShapesFidelityTest.Run(); WordOfficeArtGeometryTest.Run(); DocBinaryShapesFidelityTest.Run(); OdtFirstOpenTiming.RunSynthetic(); skipSynthetic = true; }
 if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
 if (!skipSynthetic)
 {

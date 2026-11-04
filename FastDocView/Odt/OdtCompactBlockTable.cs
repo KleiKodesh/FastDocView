@@ -45,6 +45,8 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
 
     public int BlockCount => _index.BlockCount;
     public string RootOpenTag => _index.RootOpenTag;
+
+    public OdtListStyle? ListStyleNamed(string name) => _index.UsedListStyles.TryGetValue(name, out OdtListStyle? style) ? style : null;
     private WordIndexSpanAnchor[] Anchors => _index.Anchors;
 
     private long SpanEnd(int anchor) => anchor + 1 < Anchors.Length ? Anchors[anchor + 1].Position : _index.LastBlockEndOffset;

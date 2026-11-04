@@ -226,12 +226,13 @@ internal sealed class WordXmlSearchText
     public const string RelationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     public const string OdfOfficeNamespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
     public const string OdfDrawingNamespace = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+    public const string OdfTableNamespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 
     /// <summary>
     /// Where an .odt element sits, as far as the renderer (<c>OdtBlockHtmlRenderer</c>) shows its text: paragraph content,
     /// a draw:frame's children, a draw:text-box's children, or a note body (blocks again).
     /// </summary>
-    internal enum OdfTextContext : byte { Paragraph, Frame, TextBox, NoteBody, Shape, ShapeGroup }
+    internal enum OdfTextContext : byte { Paragraph, Frame, TextBox, NoteBody, Shape, ShapeGroup, BoxContent }
 
     /// <summary>
     /// Whether the renderer shows nothing of an element that opens in <paramref name="context"/> (it is skipped whole), and
@@ -254,11 +255,13 @@ internal sealed class WordXmlSearchText
         return buffer.AsSpan(0, name.Length);
     }
 
-    internal static bool IsHiddenOdf(OdfTextContext? context, bool isText, bool isDrawing, ReadOnlySpan<byte> localName, out OdfTextContext? opens)
+    internal static bool IsHiddenOdf(OdfTextContext? context, bool isText, bool isDrawing, ReadOnlySpan<byte> localName, out OdfTextContext? opens, bool isTable = false)
     {
         opens = null;
         if (isText && (WordXmlBytes.Is(localName, "p") || WordXmlBytes.Is(localName, "h"))) { opens = OdfTextContext.Paragraph; return context is OdfTextContext.Frame or OdfTextContext.ShapeGroup; }
         if (isText && WordXmlBytes.Is(localName, "note-body")) opens = OdfTextContext.NoteBody;
+        // a block that is a drawing (a page-anchored frame or shape between paragraphs) is read like one inside a paragraph
+        if (context is null && isDrawing) context = OdfTextContext.Paragraph;
         switch (context)
         {
             case OdfTextContext.Paragraph:
@@ -269,12 +272,18 @@ internal sealed class WordXmlSearchText
             case OdfTextContext.ShapeGroup:
                 return !IsDrawnShapeOdf(isDrawing, localName, out opens);
             case OdfTextContext.Shape:
-                return true;     // text:p / text:h returned above; draw:enhanced-geometry, svg:title / svg:desc ... hidden
+                // text:p / text:h returned above; a shape's lists show (ODF 1.3 part 3 10.3: shapes hold text:p and text:list);
+                // draw:enhanced-geometry, svg:title / svg:desc, glue points ... hidden
+                if (isText && WordXmlBytes.Is(localName, "list")) { opens = OdfTextContext.BoxContent; return false; }
+                return true;
             case OdfTextContext.Frame:
                 if (isDrawing && WordXmlBytes.Is(localName, "text-box")) { opens = OdfTextContext.TextBox; return false; }
                 return true;
             case OdfTextContext.TextBox:
-                return true;     // text:p / text:h returned above
+                // text:p / text:h returned above; lists, tables and sections in a text box are drawn (OdtBlockHtmlRenderer.RenderBoxBlock)
+                if ((isText && (WordXmlBytes.Is(localName, "list") || WordXmlBytes.Is(localName, "section"))) || (isTable && WordXmlBytes.Is(localName, "table")))
+                { opens = OdfTextContext.BoxContent; return false; }
+                return true;
             default:
                 return false;
         }
@@ -286,7 +295,10 @@ internal sealed class WordXmlSearchText
         opens = null;
         if (!isDrawing) return false;
         if (WordXmlBytes.Is(localName, "custom-shape") || WordXmlBytes.Is(localName, "rect") || WordXmlBytes.Is(localName, "ellipse")
-            || WordXmlBytes.Is(localName, "line")) { opens = OdfTextContext.Shape; return true; }
+            || WordXmlBytes.Is(localName, "circle") || WordXmlBytes.Is(localName, "line") || WordXmlBytes.Is(localName, "polygon")
+            || WordXmlBytes.Is(localName, "polyline") || WordXmlBytes.Is(localName, "path") || WordXmlBytes.Is(localName, "connector")
+            || WordXmlBytes.Is(localName, "measure") || WordXmlBytes.Is(localName, "caption") || WordXmlBytes.Is(localName, "regular-polygon"))
+        { opens = OdfTextContext.Shape; return true; }
         if (WordXmlBytes.Is(localName, "g")) { opens = OdfTextContext.ShapeGroup; return true; }
         return false;
     }
@@ -406,7 +418,7 @@ internal sealed class WordXmlSearchText
                     {
                         OdfTextContext? context = contexts.Count == 0 ? null : contexts[contexts.Count - 1].context;
                         ReadOnlySpan<byte> local = AsciiName(reader.LocalName, localBytes);
-                        if (IsHiddenOdf(context, reader.NamespaceURI == OdfTextNamespace, reader.NamespaceURI == OdfDrawingNamespace, local, out OdfTextContext? opens))
+                        if (IsHiddenOdf(context, reader.NamespaceURI == OdfTextNamespace, reader.NamespaceURI == OdfDrawingNamespace, local, out OdfTextContext? opens, reader.NamespaceURI == OdfTableNamespace))
                         { reader.Skip(); skipped = true; continue; }
                         if (opens is { } opened && !reader.IsEmptyElement) contexts.Add((reader.Depth, opened));
                     }

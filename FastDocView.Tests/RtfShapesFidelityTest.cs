@@ -128,8 +128,8 @@ public static class RtfShapesFidelityTest
         TestReport.Check(html[3].Contains("left:0pt;top:0pt;width:144pt;height:72pt") && html[3].Contains("left:144pt;top:36pt;width:144pt;height:36pt")
                          && html[3].Contains("rotate(90)") && html[3].Contains("groupone") && html[3].Contains("grouptwo"), "group: children placed by relLeft.. in groupLeft.., rotation");
         TestReport.Check(html[4].Contains("<path d=\"M0 0L138.57 34.64\" fill=\"none\"") && Occurrences(html[4], "<path") == 2 && html[4].Contains("<path d=\"M144 36L"), "line with an end arrow (no fill: a line is not filled by default; the 2 pt minimum medium arrow, 6 pt long) (" + html[4] + ")");
-        TestReport.Check(html[5].Contains("M36 0L72 72L0 72Z") && html[5].Contains("M12 0L12 0L10.82 0.03") && html[5].Contains("M36 0L72 36L36 72L0 36L36 0Z") && html[5].Contains("M16.23 48.37C28.93 61.73 43.07 61.73 55.77 48.37"),
-                         "triangle, round rectangle (corner 3600 / 21600), diamond, smiley face (type 96: eyes and the mouth curve) (" + html[5] + ")");
+        TestReport.Check(html[5].Contains("M36 0L72 72L0 72Z") && html[5].Contains("M6 0L6 0L5.41 0.03") && html[5].Contains("M36 0L72 36L36 72L0 36L36 0Z") && html[5].Contains("M16.23 48.37C28.93 61.73 43.07 61.73 55.77 48.37"),
+                         "triangle, round rectangle (corner 3600 / 21600 of the shorter side: msoRoundRectangle stretches, nXRef / nYRef 10800 - 72 x 36 pt gives 6 pt), diamond, smiley face (type 96: eyes and the mouth curve) (" + html[5] + ")");
         TestReport.Check(html[7].Contains("fill=\"#606060\"") && html[7].Contains("stroke=\"#ff0000\""), "system colours: button face C0C0C0 darkened by 128/256; a line that takes the fill colour (" + html[7] + ")");
         TestReport.Check(html[8].Contains("x1=\"36\" y1=\"0\" x2=\"36\" y2=\"36\"><stop offset=\"0\" stop-color=\"#0000ff\"/><stop offset=\"1\" stop-color=\"#ff0000\"/>"),
                          "linear shade: angle 0 runs top to bottom, the colours swapped by the angle and the zero focus (ImportGradientColor) (" + html[8] + ")");

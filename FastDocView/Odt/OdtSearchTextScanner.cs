@@ -43,7 +43,7 @@ internal sealed class OdtSearchTextScanner
         Skip,
     }
 
-    private enum NamespaceKind : byte { Other, Text, Office, Drawing }
+    private enum NamespaceKind : byte { Other, Text, Office, Drawing, Table }
 
     private enum Outside : byte { Other, BlockElement, List, ListItem, Container, IndexElement, IndexBody }
 
@@ -62,6 +62,7 @@ internal sealed class OdtSearchTextScanner
             WordXmlSearchText.OdfTextNamespace => NamespaceKind.Text,
             WordXmlSearchText.OdfOfficeNamespace => NamespaceKind.Office,
             WordXmlSearchText.OdfDrawingNamespace => NamespaceKind.Drawing,
+            WordXmlSearchText.OdfTableNamespace => NamespaceKind.Table,
             _ => NamespaceKind.Other,
         }));
         // between blocks names are classified as the body scanner classifies them: by the prefixes the root declares
@@ -72,6 +73,7 @@ internal sealed class OdtSearchTextScanner
         Add("text:list", Outside.List); Add("text:list-item", Outside.ListItem); Add("text:list-header", Outside.ListItem);
         Add("text:section", Outside.Container); Add("text:numbered-paragraph", Outside.Container); Add("text:index-body", Outside.IndexBody);
         foreach (string index in OdtBodyBlockScanner.IndexElementNames) Add(index, Outside.IndexElement);
+        foreach (string drawing in OdtBodyBlockScanner.BodyDrawingNames) Add(drawing, Outside.BlockElement);
         _outsideNames = names.ToArray();
     }
 
@@ -272,7 +274,7 @@ internal sealed class OdtSearchTextScanner
                 // outside paragraph content only the names below matter (their lengths); inside it every name is resolved
                 NamespaceKind namespaceKind = context is not (null or WordXmlSearchText.OdfTextContext.NoteBody) || local.Length is 1 or 3 or 9 or 10 or 13 or 15
                     ? Resolve(elementPrefix) : NamespaceKind.Other;
-                bool isHidden = WordXmlSearchText.IsHiddenOdf(context, namespaceKind == NamespaceKind.Text, namespaceKind == NamespaceKind.Drawing, local, out WordXmlSearchText.OdfTextContext? opens);
+                bool isHidden = WordXmlSearchText.IsHiddenOdf(context, namespaceKind == NamespaceKind.Text, namespaceKind == NamespaceKind.Drawing, local, out WordXmlSearchText.OdfTextContext? opens, namespaceKind == NamespaceKind.Table);
                 if (!isHidden && opens is { } opened && !isEmpty) _contexts.Add((elementDepth, opened));
                 if (isHidden) { if (!isEmpty) skipDepth = elementDepth; }     // the renderer shows nothing of it (svg:title, a shape, an image...)
                 else if (namespaceKind == NamespaceKind.Text)

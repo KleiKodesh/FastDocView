@@ -29,6 +29,12 @@ public sealed class WordShapePath
     public readonly List<WordShapeSubpath> Subpaths = new();
     public WordShapePathFill Fill;
     public bool Stroke = true;
+    /// <summary>LibreOffice's path brightness (ODF H / I / J / K, OOXML darken / lighten): -0.4 .. 0.4 (GetColorData :1095-1118); 0 = none.</summary>
+    public double Brightness;
+    /// <summary>The OpenOffice colour data's luminance change in percent for this object (GetLuminanceChange :1082-1093, applied in HSV :1120-1149); 0 = none.</summary>
+    public int LuminancePercent;
+    /// <summary>The fill half of a sub-path group LibreOffice draws as a fill and a stroke object; a text effect lays its text on the other half only.</summary>
+    internal bool IsFillCopy;
 }
 
 /// <summary>A line end (DrawingML a:headEnd / a:tailEnd, ST_LineEndType) with its width and length (0 small, 1 medium, 2 large).</summary>
@@ -48,6 +54,31 @@ public readonly record struct WordShapePictureFill(double Left, double Top, doub
 
 /// <summary>Line cap (DrawingML a:ln cap: flat, rnd, sq).</summary>
 public enum WordLineCap : byte { Flat, Round, Square }
+
+/// <summary>Line join (SVG stroke-linejoin; ODF draw:stroke-linejoin miter / round / bevel, middle and none drawn as LibreOffice draws them).</summary>
+public enum WordLineJoin : byte { Miter, Round, Bevel, None }
+
+/// <summary>A 2-D affine transform (x' = A x + C y + E, y' = B x + D y + F), SVG matrix(a b c d e f) order.</summary>
+public readonly record struct WordAffine(double A, double B, double C, double D, double E, double F)
+{
+    public static readonly WordAffine Identity = new(1, 0, 0, 1, 0, 0);
+    public static WordAffine Translate(double x, double y) => new(1, 0, 0, 1, x, y);
+    public static WordAffine Scale(double x, double y) => new(x, 0, 0, y, 0, 0);
+    /// <summary>A rotation by <paramref name="radians"/> in y-down coordinates (positive = clockwise on screen, basegfx rotate).</summary>
+    public static WordAffine Rotate(double radians) { double c = Math.Cos(radians), s = Math.Sin(radians); return new(c, s, -s, c, 0, 0); }
+    /// <summary><paramref name="first"/> applied, then <paramref name="then"/> (basegfx: then * first).</summary>
+    public static WordAffine Then(WordAffine first, WordAffine then)
+        => new(then.A * first.A + then.C * first.B, then.B * first.A + then.D * first.B,
+               then.A * first.C + then.C * first.D, then.B * first.C + then.D * first.D,
+               then.A * first.E + then.C * first.F + then.E, then.B * first.E + then.D * first.F + then.F);
+    public (double X, double Y) Apply(double x, double y) => (A * x + C * y + E, B * x + D * y + F);
+    public bool IsIdentity => A == 1 && B == 0 && C == 0 && D == 1 && E == 0 && F == 0;
+    public string Svg => "matrix(" + WordShapeHtml.Number6(A) + " " + WordShapeHtml.Number6(B) + " " + WordShapeHtml.Number6(C) + " " + WordShapeHtml.Number6(D) + " "
+                       + WordShapeHtml.Number6(E) + " " + WordShapeHtml.Number6(F) + ")";
+    /// <summary>The same transform for CSS (translation in px: 1 pt = 4/3 px).</summary>
+    public string Css => "matrix(" + WordShapeHtml.Number6(A) + "," + WordShapeHtml.Number6(B) + "," + WordShapeHtml.Number6(C) + "," + WordShapeHtml.Number6(D) + ","
+                       + WordShapeHtml.Number6(E * 4 / 3) + "," + WordShapeHtml.Number6(F * 4 / 3) + ")";
+}
 
 /// <summary>
 /// One drawn shape inside a drawing's frame: its box in points from the frame's top left, rotation (degrees clockwise about
@@ -87,6 +118,9 @@ public sealed class WordShape
     /// <summary>Text-effect (WordArt / Fontwork) lines set on paths (<see cref="WordOfficeArtFontwork"/>), drawn in their font and colour.</summary>
     internal List<WordShapeTextOnPath>? TextOnPaths;
     internal string? TextOnPathFont, TextOnPathColor;
+    /// <summary>The text effect's glyph outline (ODF Fontwork glyphs carry the shape's line); null = none.</summary>
+    internal string? TextOnPathStroke;
+    internal double TextOnPathStrokeWidth;
     /// <summary>gtextAlign (MSO_GEOTEXTALIGN, msdffdef.hxx:594-601: 0 stretch, 1 centre - the default, msdffimp.cxx:4466 -, 2 left, 3 right, 4 letter / 5 word justify).</summary>
     internal int TextOnPathAlign = 1;
     public WordLineCap LineCap;
@@ -113,6 +147,17 @@ public sealed class WordShape
     public List<int?>? WordArtAdjust;
     public string? PictureId;
     public WordTextBoxStyle TextStyle;
+    /// <summary>Maps the shape's own box (0..Width, 0..Height) to the frame; when set it replaces X / Y / rotation / flips (ODF draw:transform with shear).</summary>
+    public WordAffine? Transform;
+    public WordLineJoin LineJoin;
+    /// <summary>A fill drawn by its own format's paint for a path's brightness (ODF gradients, hatches, transparency gradients): the &lt;defs&gt; content and the paint.</summary>
+    internal Func<double, (string Definitions, string Paint)>? FillPainter;
+    /// <summary>A tiled picture fill's alternate-row / alternate-column shift in tile fractions (ODF draw:tile-repeat-offset).</summary>
+    public double TileRowOffset, TileColumnOffset;
+    /// <summary>A picture fill's transparency gradient: an SVG luminance mask in the shape's own points (definitions, id).</summary>
+    internal (string Definitions, string Id)? FillPictureMask;
+    /// <summary>stroke-miterlimit for miter joins (0 = the SVG default 4); LibreOffice bevels below 15 degrees (b2dlinegeometry.hxx:142): 1 / sin(7.5 deg).</summary>
+    public double MiterLimit;
 }
 
 /// <summary>
@@ -123,13 +168,14 @@ public sealed class WordShape
 /// </summary>
 public static class WordShapeHtml
 {
-    public static void OpenFrame(StringBuilder html, WordPictureLayout layout, bool growsWithText)
+    public static void OpenFrame(StringBuilder html, WordPictureLayout layout, bool growsWithText, string? extraCss = null)
     {
         var css = new StringBuilder("position:relative;box-sizing:border-box;");
         css.Append(layout.Wrap == WordPictureWrap.Inline ? "display:inline-block;vertical-align:bottom;" : "");
         css.Append("width:").Append(Points(layout.WidthPt)).Append("pt;");
         css.Append(growsWithText ? "min-height:" : "height:").Append(Points(layout.HeightPt)).Append("pt;");
         WordPictureHtml.AppendPlacement(css, layout);
+        css.Append(extraCss);
         html.Append("<span class=\"word-shape\" style=\"").Append(css).Append("\">");
     }
 
@@ -150,7 +196,7 @@ public static class WordShapeHtml
             if (shape.FillPictureId is not null && shape.Paths is not null)
             {
                 html.Append("</svg>");
-                AppendPictureFill(html, shape);
+                AppendPictureFill(html, shape, width, height);
                 Open();
             }
             AppendShape(html, shape, stretches);
@@ -161,10 +207,14 @@ public static class WordShapeHtml
     private static void AppendShape(StringBuilder html, WordShape shape, bool stretches)
     {
         double w = shape.Width, h = shape.Height;
-        html.Append("<g transform=\"translate(").Append(Number(shape.X + w / 2)).Append(' ').Append(Number(shape.Y + h / 2)).Append(')');
-        if (shape.RotationDegrees != 0) html.Append(" rotate(").Append(Number(shape.RotationDegrees)).Append(')');
-        if (shape.FlipHorizontal || shape.FlipVertical) html.Append(" scale(").Append(shape.FlipHorizontal ? "-1" : "1").Append(' ').Append(shape.FlipVertical ? "-1" : "1").Append(')');
-        html.Append(" translate(").Append(Number(-w / 2)).Append(' ').Append(Number(-h / 2)).Append(")\">");
+        if (shape.Transform is { } transform) html.Append("<g transform=\"").Append(transform.Svg).Append("\">");
+        else
+        {
+            html.Append("<g transform=\"translate(").Append(Number(shape.X + w / 2)).Append(' ').Append(Number(shape.Y + h / 2)).Append(')');
+            if (shape.RotationDegrees != 0) html.Append(" rotate(").Append(Number(shape.RotationDegrees)).Append(')');
+            if (shape.FlipHorizontal || shape.FlipVertical) html.Append(" scale(").Append(shape.FlipHorizontal ? "-1" : "1").Append(' ').Append(shape.FlipVertical ? "-1" : "1").Append(')');
+            html.Append(" translate(").Append(Number(-w / 2)).Append(' ').Append(Number(-h / 2)).Append(")\">");
+        }
         if (shape.Paths is not null)
         {
             AppendPaths(html, shape, stretches);
@@ -358,8 +408,11 @@ public static class WordShapeHtml
     /// picture element the host gives its source to, placed and turned like the shape, clipped to the outline by an SVG clip
     /// path in the box's own units. Stretched: into the box inset by the fill rectangle; tiled: copies from the tile origin.
     /// </summary>
-    private static void AppendPictureFill(StringBuilder html, WordShape shape)
+    private static void AppendPictureFill(StringBuilder html, WordShape shape, double frameWidth, double frameHeight)
     {
+        StringBuilder outer = html;
+        bool masked = shape.FillPictureMask is not null && shape.Transform is not null;
+        if (masked) html = new StringBuilder();
         double w = Math.Max(shape.Width, 0.01), h = Math.Max(shape.Height, 0.01);
         var unit = new StringBuilder();
         foreach (WordShapePath path in shape.Paths!)
@@ -381,7 +434,15 @@ public static class WordShapeHtml
             .Append("\" clipPathUnits=\"objectBoundingBox\"><path d=\"").Append(unit).Append("\" clip-rule=\"evenodd\"/></clipPath></defs></svg>");
         var css = new StringBuilder("position:absolute;display:block;overflow:hidden;left:").Append(Points(shape.X)).Append("pt;top:").Append(Points(shape.Y))
             .Append("pt;width:").Append(Points(w)).Append("pt;height:").Append(Points(h)).Append("pt;clip-path:url(#").Append(clip).Append(");");
-        if (shape.RotationDegrees != 0 || shape.FlipHorizontal || shape.FlipVertical)
+        if (masked)
+            css.Clear().Append("position:absolute;display:block;overflow:hidden;left:0;top:0;width:").Append(Points(w)).Append("pt;height:").Append(Points(h))
+               .Append("pt;clip-path:url(#").Append(clip).Append(");");
+        else if (shape.Transform is { } transform)
+        {
+            css.Clear().Append("position:absolute;display:block;overflow:hidden;left:0;top:0;width:").Append(Points(w)).Append("pt;height:").Append(Points(h))
+               .Append("pt;clip-path:url(#").Append(clip).Append(");transform-origin:0 0;transform:").Append(transform.Css).Append(';');
+        }
+        else if (shape.RotationDegrees != 0 || shape.FlipHorizontal || shape.FlipVertical)
             css.Append("transform:rotate(").Append(Number(shape.RotationDegrees)).Append("deg) scale(").Append(shape.FlipHorizontal ? "-1" : "1").Append(',').Append(shape.FlipVertical ? "-1" : "1").Append(");");
         WordShapePictureFill fill = shape.FillPicture;
         if (fill.Opacity < 1) css.Append("opacity:").Append(Opacity(fill.Opacity)).Append(';');
@@ -393,11 +454,27 @@ public static class WordShapeHtml
         if (fill.Tiled && fill.TileWidth > 0 && fill.TileHeight > 0)
         {
             double startX = fill.TileOffsetX - Math.Ceiling(fill.TileOffsetX / fill.TileWidth) * fill.TileWidth, startY = fill.TileOffsetY - Math.Ceiling(fill.TileOffsetY / fill.TileHeight) * fill.TileHeight;
-            for (double y = startY; y < h; y += fill.TileHeight)
-                for (double x = startX; x < w; x += fill.TileWidth) Picture(x, y, fill.TileWidth, fill.TileHeight);
+            // ODF draw:tile-repeat-offset: every other row (column) shifted by a fraction of the tile
+            double rowShift = shape.TileRowOffset * fill.TileWidth, columnShift = shape.TileColumnOffset * fill.TileHeight;
+            if (rowShift > 0) startX -= fill.TileWidth;
+            if (columnShift > 0) startY -= fill.TileHeight;
+            int row = 0;
+            for (double y = startY; y < h + columnShift; y += fill.TileHeight, row++)
+            {
+                int column = 0;
+                for (double x = startX; x < w + rowShift; x += fill.TileWidth, column++)
+                    Picture(x + ((row & 1) != 0 ? rowShift : 0), y + ((column & 1) != 0 ? columnShift : 0), fill.TileWidth, fill.TileHeight);
+            }
         }
         else Picture(fill.Left * w, fill.Top * h, w * (1 - fill.Left - fill.Right), h * (1 - fill.Top - fill.Bottom));
         html.Append("</span>");
+        if (!masked) return;
+        // a transparency gradient: the picture layer inside the SVG (foreignObject), masked in the shape's own points
+        (string definitions, string maskId) = shape.FillPictureMask!.Value;
+        outer.Append("<svg class=\"word-shape-geometry\" aria-hidden=\"true\" viewBox=\"0 0 ").Append(Points(frameWidth)).Append(' ').Append(Points(frameHeight))
+             .Append("\" style=\"position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none\"><g transform=\"")
+             .Append(shape.Transform!.Value.Svg).Append("\"><defs>").Append(definitions).Append("</defs><g mask=\"url(#").Append(maskId).Append(")\"><foreignObject x=\"0\" y=\"0\" width=\"")
+             .Append(Number(w)).Append("\" height=\"").Append(Number(h)).Append("\">").Append(html).Append("</foreignObject></g></g></svg>");
     }
 
     private static string Unit(double value) => Math.Round(value, 5).ToString("0.#####", CultureInfo.InvariantCulture);
@@ -417,12 +494,21 @@ public static class WordShapeHtml
         foreach (WordShapePath path in shape.Paths!)
         {
             if (path.Subpaths.Count == 0) continue;
-            double brightness = path.Fill switch
+            double brightness = path.Brightness != 0 ? path.Brightness : path.Fill switch
             {
                 WordShapePathFill.Darken => -0.4, WordShapePathFill.DarkenLess => -0.2,
                 WordShapePathFill.Lighten => 0.4, WordShapePathFill.LightenLess => 0.2, _ => 0,
             };
-            if (path.Fill != WordShapePathFill.None && shape.FillPaint is { } paint)
+            if (path.LuminancePercent != 0) brightness = WordShapeColor.LuminanceMarker(path.LuminancePercent);
+            if (path.Fill != WordShapePathFill.None && shape.FillPainter is { } painter)
+            {
+                (string definitions, string painted) = painter(brightness);
+                html.Append("<defs>").Append(definitions).Append("</defs>");
+                html.Append("<path d=\"").Append(PathData(path.Subpaths, closeAll: true)).Append("\" fill-rule=\"evenodd\" fill=\"").Append(painted).Append('"');
+                if (shape.FillOpacity < 1) html.Append(" fill-opacity=\"").Append(Opacity(shape.FillOpacity)).Append('"');
+                html.Append(" stroke=\"none\"/>");
+            }
+            else if (path.Fill != WordShapePathFill.None && shape.FillPaint is { } paint)
             {
                 if (shape.FillDefinitions is { } definitions) { html.Append("<defs>").Append(definitions).Append("</defs>"); shape.FillDefinitions = null; }
                 html.Append("<path d=\"").Append(PathData(path.Subpaths, closeAll: true)).Append("\" fill-rule=\"evenodd\" fill=\"").Append(paint).Append('"');
@@ -447,16 +533,24 @@ public static class WordShapeHtml
             var stroke = new StringBuilder(" fill=\"none\" stroke=\"").Append(line).Append("\" stroke-width=\"").Append(Number(lineWidth)).Append('"');
             if (shape.LineOpacity < 1) stroke.Append(" stroke-opacity=\"").Append(Opacity(shape.LineOpacity)).Append('"');
             if (shape.LineCap != WordLineCap.Flat) stroke.Append(" stroke-linecap=\"").Append(shape.LineCap == WordLineCap.Round ? "round" : "square").Append('"');
+            if (shape.LineJoin is WordLineJoin.Round or WordLineJoin.Bevel) stroke.Append(" stroke-linejoin=\"").Append(shape.LineJoin == WordLineJoin.Round ? "round" : "bevel").Append('"');
+            else if (shape.MiterLimit > 0) stroke.Append(" stroke-miterlimit=\"").Append(Number(shape.MiterLimit)).Append('"');
             if (shape.Dash is { Length: > 0 } dash) stroke.Append(" stroke-dasharray=\"").Append(string.Join(" ", dash.Select(d => Number(Math.Max(0, d) * lineWidth)))).Append('"');
             if (stretches) stroke.Append(" vector-effect=\"non-scaling-stroke\"");
-            bool hasEnds = shape.HeadEnd.Type != WordLineEndType.None || shape.TailEnd.Type != WordLineEndType.None;
+            bool hasEnds = shape.HeadEnd.Type != WordLineEndType.None || shape.TailEnd.Type != WordLineEndType.None || shape.HeadMarker is not null || shape.TailMarker is not null;
             var plain = new List<WordShapeSubpath>();
             foreach (WordShapeSubpath subpath in path.Subpaths)
             {
                 if (!hasEnds || subpath.Closed || subpath.Segments.Count == 0) { plain.Add(subpath); continue; }
                 AppendWithLineEnds(html, subpath, shape, stroke.ToString(), line);
             }
-            if (plain.Count > 0) html.Append("<path d=\"").Append(PathData(plain, closeAll: false)).Append('"').Append(stroke).Append("/>");
+            if (plain.Count > 0 && shape.LineJoin == WordLineJoin.None)
+            {
+                // B2DLineJoin::NONE: every segment stroked on its own, nothing fills the corners (b2dlinegeometry.cxx:886)
+                foreach (WordShapeSubpath subpath in plain) foreach (WordShapeSubpath segment in Segments(subpath))
+                    html.Append("<path d=\"").Append(PathData([segment], closeAll: false)).Append('"').Append(stroke).Append("/>");
+            }
+            else if (plain.Count > 0) html.Append("<path d=\"").Append(PathData(plain, closeAll: false)).Append('"').Append(stroke).Append("/>");
         }
     }
 
@@ -478,6 +572,8 @@ public static class WordShapeHtml
             string id = "word-shape-textpath-" + StableHash(line.PathData + line.Text);
             html.Append("<defs><path id=\"").Append(id).Append("\" d=\"").Append(line.PathData).Append("\"/></defs>");
             html.Append("<text font-size=\"").Append(Number(line.FontSizePt)).Append("\" dominant-baseline=\"central\" fill=\"").Append(shape.TextOnPathColor ?? "#000000").Append('"');
+            if (shape.TextOnPathStroke is { } textStroke)
+                html.Append(" stroke=\"").Append(textStroke).Append("\" stroke-width=\"").Append(Number(Math.Max(0.25, shape.TextOnPathStrokeWidth))).Append('"');
             if (shape.TextOnPathFont is { Length: > 0 } font) html.Append(" font-family=\"").Append(WordHtmlText.Encode(font)).Append('"');
             if (line.UpperData is { } upper && line.LowerData is { } lower)
                 html.Append(" data-fontwork=\"pair\" data-fontwork-upper=\"").Append(upper).Append("\" data-fontwork-lower=\"").Append(lower)
@@ -489,6 +585,25 @@ public static class WordShapeHtml
                 .Append(WordHtmlText.Encode(line.Text)).Append("</textPath></text>");
         }
         html.Append("</g>");
+    }
+
+    /// <summary>Each segment of a sub-path (its closing edge too) as a sub-path of its own.</summary>
+    private static IEnumerable<WordShapeSubpath> Segments(WordShapeSubpath subpath)
+    {
+        double x = subpath.StartX, y = subpath.StartY;
+        foreach (WordShapeSegment segment in subpath.Segments)
+        {
+            var one = new WordShapeSubpath { StartX = x, StartY = y };
+            one.Segments.Add(segment);
+            yield return one;
+            x = segment.X; y = segment.Y;
+        }
+        if (subpath.Closed && (x != subpath.StartX || y != subpath.StartY))
+        {
+            var closing = new WordShapeSubpath { StartX = x, StartY = y };
+            closing.Segments.Add(WordShapeSegment.Line(subpath.StartX, subpath.StartY));
+            yield return closing;
+        }
     }
 
     private static string PathData(List<WordShapeSubpath> subpaths, bool closeAll)
@@ -556,12 +671,16 @@ public static class WordShapeHtml
     {
         double rotation = Math.Atan2(head.Y - toward.Y, head.X - toward.X) + Math.PI / 2, cos = Math.Cos(rotation), sin = Math.Sin(rotation);
         var d = new StringBuilder();
-        for (int i = 0; i < marker.Points.Count; i++)
+        foreach (List<(double X, double Y)> polygon in new[] { marker.Points }.Concat(marker.MorePolygons ?? []))
         {
-            (double x, double y) = marker.Points[i];
-            d.Append(i == 0 ? 'M' : 'L').Append(Number(head.X + x * cos - y * sin)).Append(' ').Append(Number(head.Y + x * sin + y * cos));
+            for (int i = 0; i < polygon.Count; i++)
+            {
+                (double x, double y) = polygon[i];
+                d.Append(i == 0 ? 'M' : 'L').Append(Number(head.X + x * cos - y * sin)).Append(' ').Append(Number(head.Y + x * sin + y * cos));
+            }
+            d.Append('Z');
         }
-        html.Append("<path d=\"").Append(d).Append("Z\" fill=\"").Append(color).Append('"');
+        html.Append("<path d=\"").Append(d).Append(marker.MorePolygons is { Count: > 0 } ? "\" fill-rule=\"evenodd\" fill=\"" : "\" fill=\"").Append(color).Append('"');
         if (opacity < 1) html.Append(" fill-opacity=\"").Append(Opacity(opacity)).Append('"');
         html.Append(" stroke=\"none\"/>");
     }
@@ -716,11 +835,19 @@ public static class WordShapeHtml
 
     internal static string Number(double value) { double rounded = Math.Round(value, 2); return (rounded == 0 ? 0 : rounded).ToString("0.##", CultureInfo.InvariantCulture); }
 
+    internal static string Number6(double value) { double rounded = Math.Round(value, 6); return (rounded == 0 ? 0 : rounded).ToString("0.######", CultureInfo.InvariantCulture); }
+
+    internal static string StableHashOf(string text) => StableHash(text);
+
     private static string Points(double value) => Math.Max(0, value).ToString("0.##", CultureInfo.InvariantCulture);
 }
 
 /// <summary>A line-end marker ready to place: its outline with the tip (or, centred, its middle) at (0, 0) and its body along +y, in points.</summary>
-internal sealed record WordLineEndMarker(List<(double X, double Y)> Points, double Width, double Consumed);
+internal sealed record WordLineEndMarker(List<(double X, double Y)> Points, double Width, double Consumed)
+{
+    /// <summary>A marker's further polygons (an ODF draw:marker path may have several), placed like <see cref="Points"/>.</summary>
+    public List<List<(double X, double Y)>>? MorePolygons { get; init; }
+}
 
 /// <summary>
 /// Line-end markers as LibreOffice builds them for DrawingML (oox/source/drawingml/lineproperties.cxx:223-367,
@@ -773,7 +900,42 @@ public static class WordShapeColor
     {
         if (brightness == 0 || css.Length != 7 || css[0] != '#'
             || !int.TryParse(css.Substring(1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int rgb)) return css;
+        if (brightness > 1 || brightness < -1) return Luminance(rgb, (int)Math.Round(brightness > 0 ? brightness - 1000 : brightness + 1000));
         int Channel(int c) => (int)Math.Max(0, Math.Min(255, brightness >= 0 ? c * (1.0 - brightness) + brightness * 255.0 : c * (1.0 + brightness)));
         return "#" + ((Channel((rgb >> 16) & 0xFF) << 16) | (Channel((rgb >> 8) & 0xFF) << 8) | Channel(rgb & 0xFF)).ToString("X6", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>A luminance change carried through the brightness parameter: percent + 1000 (positive) / - 1000 (negative), out of the -1..1 brightness range.</summary>
+    internal static double LuminanceMarker(int percent) => percent > 0 ? 1000 + percent : -1000 + percent;
+
+    /// <summary>
+    /// The OpenOffice colour-data way (EnhancedCustomShape2d::GetColorData :1120-1149): in HSV, a positive change scales the
+    /// saturation by (1 - n) and moves the value toward 1 by n; a negative one scales the value by (1 + n); rounded to bytes.
+    /// </summary>
+    private static string Luminance(int rgb, int percent)
+    {
+        double r = ((rgb >> 16) & 0xFF) / 255.0, g = ((rgb >> 8) & 0xFF) / 255.0, b = (rgb & 0xFF) / 255.0;
+        double max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b)), delta = max - min;
+        double hue = 0, saturation = max == 0 ? 0 : delta / max, value = max;
+        if (delta != 0)
+        {
+            if (r == max) hue = (g - b) / delta; else if (g == max) hue = 2 + (b - r) / delta; else hue = 4 + (r - g) / delta;
+            hue *= 60; if (hue < 0) hue += 360;
+        }
+        double n = percent / 100.0;
+        if (n > 0) { saturation *= 1 - n; value = n + (1 - n) * value; }
+        else value *= 1 + n;
+        // basegfx hsv2rgb
+        double red, green, blue;
+        if (saturation == 0) red = green = blue = value;
+        else
+        {
+            double h = hue == 360 ? 0 : hue / 60;
+            int sector = (int)Math.Floor(h);
+            double f = h - sector, p = value * (1 - saturation), q = value * (1 - saturation * f), t = value * (1 - saturation * (1 - f));
+            (red, green, blue) = sector switch { 0 => (value, t, p), 1 => (q, value, p), 2 => (p, value, t), 3 => (p, q, value), 4 => (t, p, value), _ => (value, p, q) };
+        }
+        int Byte(double c) => (int)(Math.Max(0, Math.Min(1, c)) * 255.0 + 0.5);
+        return "#" + ((Byte(red) << 16) | (Byte(green) << 8) | Byte(blue)).ToString("X6", CultureInfo.InvariantCulture);
     }
 }

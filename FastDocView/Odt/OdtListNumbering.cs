@@ -160,6 +160,12 @@ internal sealed class OdtListNumbering
     /// <summary>The list styles a label was resolved from (ParagraphStarted): what the compact index keeps so a rescan can count again.</summary>
     public Dictionary<string, OdtListStyle> UsedListStyles { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>Keeps a list style a list inside a text box or shape names (those lists are numbered when they are drawn).</summary>
+    public void NoteListStyle(string? name)
+    {
+        if (name is not null && !UsedListStyles.ContainsKey(name) && _styles.ListStyle(name) is { } style) UsedListStyles[name] = style;
+    }
+
     // -- state for the compact index (per span anchor) --------------------------------
 
     /// <summary>
