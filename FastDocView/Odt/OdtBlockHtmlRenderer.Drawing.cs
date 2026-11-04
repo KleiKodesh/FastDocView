@@ -128,91 +128,121 @@ public sealed partial class OdtBlockHtmlRenderer
         List<OdtDrawnShape> drawn = ShapeBuilder.Build(element);
         if (drawn.Count == 0) return;
         double left = double.MaxValue, top = double.MaxValue, right = double.MinValue, bottom = double.MinValue;
+        void Take(double px, double py) { left = Math.Min(left, px); top = Math.Min(top, py); right = Math.Max(right, px); bottom = Math.Max(bottom, py); }
         foreach (OdtDrawnShape d in drawn)
         {
             WordAffine t = d.Shape.Transform ?? WordAffine.Identity;
             foreach ((double cx, double cy) in new[] { (0.0, 0.0), (d.Shape.Width, 0.0), (0.0, d.Shape.Height), (d.Shape.Width, d.Shape.Height) })
             {
                 (double px, double py) = t.Apply(cx, cy);
-                left = Math.Min(left, px); top = Math.Min(top, py); right = Math.Max(right, px); bottom = Math.Max(bottom, py);
+                Take(px, py);
             }
+            // a dimension line's pieces (laid out with the label estimate; the page sizes the frame again from the measured label)
+            foreach ((WordShape piece, _, _) in d.MeasureLines)
+                foreach (WordShapeSubpath sub in piece.Paths!.SelectMany(p => p.Subpaths))
+                    foreach ((double qx, double qy) in OdtShapeStyle.Flatten(sub)) { (double px, double py) = (piece.Transform ?? WordAffine.Identity).Apply(qx, qy); Take(px, py); }
         }
         double width = right - left, height = bottom - top;
         WordAffine toFrame = WordAffine.Translate(-left, -top);
-        foreach (OdtDrawnShape d in drawn)
+        string?[] growth = new string?[drawn.Count];
+        for (int k = 0; k < drawn.Count; k++)
         {
+            OdtDrawnShape d = drawn[k];
             d.Shape.Transform = WordAffine.Then(d.Shape.Transform ?? WordAffine.Identity, toFrame);
             d.TextTransform = WordAffine.Then(d.TextTransform, toFrame);
-            if (d.MeasureLine is { } measureLine) measureLine.Transform = WordAffine.Then(measureLine.Transform ?? WordAffine.Identity, toFrame);
+            d.Full = WordAffine.Then(d.Full, toFrame);
+            foreach ((WordShape piece, _, _) in d.MeasureLines) piece.Transform = WordAffine.Then(piece.Transform ?? WordAffine.Identity, toFrame);
             if (d.Geometry is { IsTextPath: true } && d.HasText) ApplyFontwork(d);
+            growth[k] = AutoGrowAttributes(d, k);
         }
+        // a frame the page lays out again (a shape growing with its text, a dimension line): every shape's box on its <g>
+        bool pageLayout = growth.Any(g => g is not null) || drawn.Any(d => d.MeasureLabel is not null);
+        if (pageLayout)
+            for (int k = 0; k < drawn.Count; k++)
+                drawn[k].Shape.GroupAttributes = " data-shape-box=\"" + Css(drawn[k].Shape.Width) + " " + Css(drawn[k].Shape.Height) + "\"" + (growth[k] is null ? "" : " data-autogrow-id=\"" + k + "\"");
         WordPictureLayout layout = Placement(element, width, height, left, top);
         List<List<(double X, double Y)>> outlines = drawn.SelectMany(d => (d.Shape.Paths ?? []).SelectMany(p => p.Subpaths)
             .Select(s => OdtShapeStyle.Flatten(s).Select(q => (d.Shape.Transform ?? WordAffine.Identity).Apply(q.X, q.Y)).ToList())).ToList();
         int frameAt = html.Length;
         WordShapeHtml.OpenFrame(html, layout, growsWithText: false, ContourCss(element, layout, width, height, outlines));
-        if (drawn.Count == 1 && AutoGrowAttributes(drawn[0]) is { } autoGrow) html.Insert(frameAt + "<span class=\"word-shape\"".Length, autoGrow);
+        if (pageLayout) html.Insert(frameAt + "<span class=\"word-shape\"".Length, " data-shape-page=\"" + Css(width) + " " + Css(height) + "\"");
         WordShapeHtml.AppendGeometry(html, drawn.Select(d => d.Shape).ToList(), width, height, stretches: false);
-        foreach (OdtDrawnShape d in drawn)
+        for (int k = 0; k < drawn.Count; k++)
         {
+            OdtDrawnShape d = drawn[k];
             if (d.MeasureLabel is { } m)
             {
                 // the dimension line and its label together: the page measures the label and lays both out again (fastDocViewShapeText.ts)
-                WordAffine toPage = d.MeasureLine?.Transform ?? WordAffine.Translate(-left, -top);
-                html.Append("<span class=\"fast-doc-view-measure\" data-measure=\"").Append(d.MeasurePageLayout).Append("\" data-measure-matrix=\"")
-                    .Append(string.Join(" ", new[] { toPage.A, toPage.B, toPage.C, toPage.D, toPage.E, toPage.F }.Select(v => v.ToString("0.######", CultureInfo.InvariantCulture))))
+                WordAffine toPage = d.MeasureLines.Count > 0 ? d.MeasureLines[0].Shape.Transform ?? toFrame : toFrame;
+                html.Append("<span class=\"fast-doc-view-measure\" data-measure=\"").Append(d.MeasurePageLayout).Append("\" data-measure-matrix=\"").Append(Matrix(toPage))
+                    .Append("\" data-measure-markers=\"").Append(MarkerData(d.MeasureMarkers.Start)).Append('|').Append(MarkerData(d.MeasureMarkers.End))
                     .Append("\" style=\"position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none\">");
-                if (d.MeasureLine is { } line) WordShapeHtml.AppendGeometry(html, [line], width, height, stretches: false);
+                if (d.MeasureLines.Count > 0) WordShapeHtml.AppendGeometry(html, d.MeasureLines.Select(p => p.Shape).ToList(), width, height, stretches: false);
                 (double mx, double my) = toPage.Apply(m.X, m.Y);
                 html.Append("<span class=\"word-shape-text\" style=\"position:absolute;left:").Append(Css(mx)).Append("pt;top:").Append(Css(my))
                     .Append("pt;white-space:nowrap;pointer-events:auto;transform:translate(-50%,-50%) rotate(").Append(Css(m.Rotation)).Append("deg);\">").Append(WordHtmlText.Encode(m.Text)).Append("</span></span>");
                 continue;
             }
-            if (d.HasText && d.Geometry is not { IsTextPath: true }) AppendShapeText(d, html);
+            if (d.HasText && d.Geometry is not { IsTextPath: true }) AppendShapeText(d, html, growth[k]);
         }
         WordShapeHtml.CloseFrame(html);
     }
 
+    private static string Matrix(WordAffine t) => string.Join(" ", new[] { t.A, t.B, t.C, t.D, t.E, t.F }.Select(v => (Math.Round(v, 6) == 0 ? 0 : v).ToString("0.######", CultureInfo.InvariantCulture)));
+
+    /// <summary>A line-end marker for the page: "width consumed;x,y x,y ...;..." (each polygon placed with its tip at the origin, pointing up), "" for none.</summary>
+    private static string MarkerData(WordLineEndMarker? marker)
+    {
+        if (marker is null) return "";
+        static string N(double v) => v.ToString("0.####", CultureInfo.InvariantCulture);
+        string Polygon(List<(double X, double Y)> points) => string.Join(" ", points.Select(p => N(p.X) + "," + N(p.Y)));
+        return N(marker.Width) + " " + N(marker.Consumed) + ";" + string.Join(";", new[] { marker.Points }.Concat(marker.MorePolygons ?? []).Select(Polygon));
+    }
+
     /// <summary>
-    /// A custom shape that grows with its text ("resize shape to fit text"), as data attributes for the page, which measures
-    /// the text and resizes the frame (KitveiHakodesh vue-frontend fastDocViewShapeText.ts). LibreOffice's rules:
+    /// A custom shape that grows with its text ("resize shape to fit text"), as data attributes on its text box for the page,
+    /// which measures the text and resizes the shape (KitveiHakodesh vue-frontend fastDocViewShapeText.ts). LibreOffice's rules:
     /// - only draw:custom-shape (SdrObjCustomShape); a draw:rect / ellipse / ... is not a text frame (SdrTextObj::IsAutoGrowHeight
     ///   needs mbTextFrame, svx svdotext.cxx:248-252); draw:frame text boxes grow by fo:min-height (<see cref="AppendTextBox"/>).
     /// - SdrObjCustomShape::IsAutoGrowHeight / Width (svdoashp.cxx:2179-2194): both read draw:auto-grow-height (sdpropls.cxx:141);
     ///   the height grows unless the text is vertical and wraps, the width grows when horizontal text does not wrap
     ///   (fo:wrap-option no-wrap, sdpropls.cxx:157) or the text is vertical. draw:auto-grow-width is not read for custom shapes.
+    ///   Absent, the item pool's default holds: on (svdattr.cxx:247). Nothing on the way in sets another value: the ODF import
+    ///   maps only the attribute itself (sdpropls.cxx:141; ximpshap.cxx, ximpcustomshape.cxx, shapeimport.cxx and
+    ///   XMLShapeStyleContext.cxx have no auto-grow default), and neither Writer's drawing model (sw DocumentDrawModelManager.cxx,
+    ///   drawdoc.cxx) nor SdrModel (svdmodel.cxx) nor the custom shape's own code (svdoashp.cxx) sets one - master read 2026-11-04.
     /// - text fitted to the shape (draw:fit-to-size true / all) does not grow (SdrTextObj::AdjustTextFrameWidthAndHeight,
     ///   svdotxat.cxx:54-56 - the custom-shape version takes the same rule through IsFitToSize).
     /// - the text area takes the text's size (at least fo:min-width / fo:min-height, GetMinTextFrameWidth / Height, sdpropls.cxx:148-149)
     ///   plus the text distances (fo:padding-*), growing or shrinking; the shape changes by that much times shape / text-area size
     ///   (svdoashp.cxx:2324-2357, ImpCalculateTextFrame :2436-2464); it grows down for top-aligned text, up for bottom, both ways
     ///   for centre / justify (:2385-2418; draw:textarea-horizontal-align left grows right, right grows left, else both).
-    /// The outline is stretched to the new size (the page has no geometry engine); only an unrotated, unsheared, unmirrored
-    /// single shape grows (a rotated one moves its rectangle along the rotation too, :2420-2428 - not done). draw:auto-grow-height
-    /// absent: no growth (the pool default is on, svdattr.cxx:247, but LibreOffice writes the attribute on every shape it saves).
+    /// - all of that in the shape's own unrotated rectangle; a rotated shape's rectangle then moves by the turned change of its
+    ///   top left (:2420-2428) - the page applies the change in the shape's own coordinates before its transform (rotation,
+    ///   shear, scale) and the mirroring about the new box's centre (EnhancedCustomShapeEngine.cxx:286-298); each shape of a group
+    ///   grows on its own and the frame takes the new bounds.
+    /// The outline is stretched to the new size (the page has no geometry engine).
     /// </summary>
-    private static string? AutoGrowAttributes(OdtDrawnShape d)
+    private static string? AutoGrowAttributes(OdtDrawnShape d, int id)
     {
         if (d.Element.Name != DrawNs + "custom-shape" || !d.HasText || d.Geometry is { IsTextPath: true }) return null;
         OdtShapeStyle style = d.Style;
-        if (style.Get(OdtStyleCascade.Draw + "auto-grow-height") != "true") return null;
+        if ((style.Get(OdtStyleCascade.Draw + "auto-grow-height") ?? "true") != "true") return null;
         if (style.Get(OdtStyleCascade.Draw + "fit-to-size") is "true" or "all") return null;
-        WordAffine t = d.Shape.Transform ?? WordAffine.Identity;
-        if (Math.Abs(t.B) > 1e-9 || Math.Abs(t.C) > 1e-9 || Math.Abs(t.A - 1) > 1e-6 || Math.Abs(t.D - 1) > 1e-6) return null;
-        if (d.Geometry is { TextRotateAngle: not 0 }) return null;
         bool vertical = style.Get(OdtStyleCascade.Style + "writing-mode") is "tb-rl" or "tb";
         bool wraps = style.Get(OdtStyleCascade.Fo + "wrap-option") != "no-wrap";
         bool growHeight = !vertical || !wraps, growWidth = vertical || !wraps;
         double Pad(string side) => OdtShapeStyle.Length(style.Get(OdtStyleCascade.Fo + ("padding-" + side))) ?? OdtShapeStyle.Length(style.Get(OdtStyleCascade.Fo + "padding")) ?? 0;
         double Min(string name) => style.Get(OdtStyleCascade.Fo + name) is { } v && !v.Contains('%') ? OdtShapeStyle.Length(v) ?? 0 : 0;
         (double x, double y, double w, double h) = d.TextArea;
-        (double ax, double ay) = d.TextTransform.Apply(x, y);
         string vAlign = style.Get(OdtStyleCascade.Draw + "textarea-vertical-align") ?? "top";
         string hAlign = style.Get(OdtStyleCascade.Draw + "textarea-horizontal-align") ?? "justify";
-        string Numbers(params double[] values) => string.Join(" ", values.Select(Css));
-        return " data-autogrow=\"" + (growWidth ? "w" : "") + (growHeight ? "h" : "") + "\" data-autogrow-text=\"" + Numbers(ax, ay, w, h)
+        static string Numbers(params double[] values) => string.Join(" ", values.Select(v => v.ToString("0.######", CultureInfo.InvariantCulture)));
+        return " data-autogrow-id=\"" + id + "\" data-autogrow=\"" + (growWidth ? "w" : "") + (growHeight ? "h" : "") + "\" data-autogrow-text=\"" + Numbers(x, y, w, h)
              + "\" data-autogrow-shape=\"" + Numbers(d.Shape.Width, d.Shape.Height) + "\" data-autogrow-pad=\"" + Numbers(Pad("left"), Pad("top"), Pad("right"), Pad("bottom"))
-             + "\" data-autogrow-min=\"" + Numbers(Min("min-width"), Min("min-height")) + "\" data-autogrow-align=\"" + WordHtmlText.Encode(vAlign) + " " + WordHtmlText.Encode(hAlign) + "\"";
+             + "\" data-autogrow-min=\"" + Numbers(Min("min-width"), Min("min-height")) + "\" data-autogrow-align=\"" + WordHtmlText.Encode(vAlign) + " " + WordHtmlText.Encode(hAlign)
+             + "\" data-autogrow-matrix=\"" + Matrix(d.Full) + "\" data-autogrow-mirror=\"" + (d.Geometry?.MirrorHorizontal == true ? 1 : 0) + " " + (d.Geometry?.MirrorVertical == true ? 1 : 0)
+             + "\" data-autogrow-turn=\"" + Numbers(Math.Atan2(d.Full.B, d.Full.A)) + "\" data-autogrow-text-rotate=\"" + Numbers(d.Geometry?.TextRotateAngle ?? 0) + "\"";
     }
 
     /// <summary>
@@ -223,7 +253,7 @@ public sealed partial class OdtBlockHtmlRenderer
     /// turns the text further. The text turns with the shape (not with its shear or mirroring). The text starts from the graphic
     /// style's character formatting.
     /// </summary>
-    private void AppendShapeText(OdtDrawnShape d, StringBuilder html)
+    private void AppendShapeText(OdtDrawnShape d, StringBuilder html, string? pageAttributes = null)
     {
         OdtShapeStyle style = d.Style;
         double Pad(string side) => OdtShapeStyle.Length(style.Get(OdtStyleCascade.Fo + ("padding-" + side))) ?? OdtShapeStyle.Length(style.Get(OdtStyleCascade.Fo + "padding")) ?? 0;
@@ -237,7 +267,7 @@ public sealed partial class OdtBlockHtmlRenderer
         }
         string justify = style.Get(OdtStyleCascade.Draw + "textarea-vertical-align") switch { "middle" => "center", "bottom" => "flex-end", "justify" => "space-between", _ => "flex-start" };
         string align = style.Get(OdtStyleCascade.Draw + "textarea-horizontal-align") switch { "left" => "flex-start", "center" => "center", "right" => "flex-end", _ => "stretch" };
-        var css = new StringBuilder("position:absolute;left:0;top:0;box-sizing:border-box;margin:0;border:0;overflow:visible;display:flex;flex-direction:column;");
+        var css = new StringBuilder("position:absolute;left:0;top:0;box-sizing:border-box;margin:0;border:0;overflow:visible;display:flex;flex-direction:column;max-width:none;");
         css.Append("width:").Append(Css(Math.Max(w, 0))).Append("pt;height:").Append(Css(Math.Max(h, 0))).Append("pt;");
         css.Append("padding:").Append(Css(Pad("top"))).Append("pt ").Append(Css(Pad("right"))).Append("pt ").Append(Css(Pad("bottom"))).Append("pt ").Append(Css(Pad("left"))).Append("pt;");
         css.Append("justify-content:").Append(justify).Append(";align-items:").Append(align).Append(';');
@@ -246,7 +276,7 @@ public sealed partial class OdtBlockHtmlRenderer
         if (style.Get(OdtStyleCascade.Fo + "wrap-option") == "no-wrap") css.Append("white-space:nowrap;");
         WordRunFormatting text = _styles.GraphicTextFormatting((string?)d.Element.Attribute(DrawNs + "style-name"));
         string textCss = text.ToCss(_styles.DefaultParagraph.Formatting.RunFormatting);
-        html.Append("<span class=\"text-box word-shape-text\" style=\"").Append(css).Append(textCss).Append("\">");
+        html.Append("<span class=\"text-box word-shape-text\"").Append(pageAttributes).Append(" style=\"").Append(css).Append(textCss).Append("\">");
         html.Append("<span style=\"display:block;").Append(align == "stretch" ? "" : "width:fit-content;max-width:100%;").Append("\">");
         AppendOwnParagraphs(d.Element, html);
         html.Append("</span></span>");

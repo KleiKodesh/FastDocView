@@ -254,7 +254,7 @@ internal sealed class OdtShapeStyle
     /// sdrattributecreator.cxx:338-395), docked at its middle when draw:marker-*-center is true; the line is shortened by the
     /// marker's length (less for a marker with a notched back, :96-140).
     /// </summary>
-    private WordLineEndMarker? Marker(string end, double lineWidthPt)
+    internal WordLineEndMarker? Marker(string end, double lineWidthPt)
     {
         if (_styles.DrawingStyle("marker", Get(Draw + ("marker-" + end))) is not { } marker) return null;
         double width = Length(Get(Draw + ("marker-" + end + "-width"))) ?? 200 * 72 / 2540.0;
@@ -291,7 +291,7 @@ internal sealed class OdtShapeStyle
         if (crossings.Count(y => y < 1e-9) % 2 != 0)
             foreach (double y in crossings)
                 if (y > 1e-9) { if (y < consumed) consumed = y; break; }
-        return new WordLineEndMarker(placed[0], width, consumed) { MorePolygons = placed.Skip(1).ToList() };
+        return new WordLineEndMarker(placed[0], width, consumed) { MorePolygons = placed.Skip(1).ToList(), Length = length, Centred = centred };
     }
 
     internal static List<(double X, double Y)> Flatten(WordShapeSubpath subpath)

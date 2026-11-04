@@ -114,6 +114,8 @@ public sealed class WordShape
     public WordLineEnd HeadEnd, TailEnd;
     /// <summary>A line end drawn by its own format's geometry (OfficeArt binary arrows) instead of <see cref="WordLineEndGeometry"/>.</summary>
     internal WordLineEndMarker? HeadMarker, TailMarker;
+    /// <summary>Extra attributes written on the shape's &lt;g&gt; (data for the page's own layout), or null.</summary>
+    public string? GroupAttributes;
     /// <summary>A fill drawn by its own format's SVG paint (OfficeArt rectangular shades, patterns, picture fills): the &lt;defs&gt;
     /// content (written once before the shape's fill) and the paint (e.g. "url(#id)") used instead of <see cref="FillColor"/>.</summary>
     internal string? FillDefinitions, FillPaint;
@@ -209,7 +211,7 @@ public static class WordShapeHtml
     private static void AppendShape(StringBuilder html, WordShape shape, bool stretches)
     {
         double w = shape.Width, h = shape.Height;
-        if (shape.Transform is { } transform) html.Append("<g transform=\"").Append(transform.Svg).Append("\">");
+        if (shape.Transform is { } transform) html.Append("<g transform=\"").Append(transform.Svg).Append('"').Append(shape.GroupAttributes).Append('>');
         else
         {
             html.Append("<g transform=\"translate(").Append(Number(shape.X + w / 2)).Append(' ').Append(Number(shape.Y + h / 2)).Append(')');
@@ -860,6 +862,9 @@ internal sealed record WordLineEndMarker(List<(double X, double Y)> Points, doub
 {
     /// <summary>A marker's further polygons (an ODF draw:marker path may have several), placed like <see cref="Points"/>.</summary>
     public List<List<(double X, double Y)>>? MorePolygons { get; init; }
+    /// <summary>The marker's length along the line before docking (its polygon's height scaled to its width) and whether it is centred on the end.</summary>
+    public double Length { get; init; }
+    public bool Centred { get; init; }
 }
 
 /// <summary>

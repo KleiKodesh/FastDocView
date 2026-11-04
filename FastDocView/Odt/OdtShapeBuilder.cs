@@ -18,8 +18,12 @@ internal sealed class OdtDrawnShape
     public bool HasText;
     /// <summary>A draw:measure's label: text, centre in the anchor's points, clockwise rotation.</summary>
     public (string Text, double X, double Y, double Rotation)? MeasureLabel;
-    /// <summary>A draw:measure's dimension line (anchor points, through <see cref="WordShape.Transform"/>), drawn apart from its help lines.</summary>
-    public WordShape? MeasureLine;
+    /// <summary>A draw:measure's dimension-line pieces (anchor points, through <see cref="WordShape.Transform"/>) with their marker flags, drawn apart from its help lines.</summary>
+    public readonly List<(WordShape Shape, bool StartMarker, bool EndMarker)> MeasureLines = new();
+    /// <summary>A draw:measure's start / end markers (null: none), for the page to draw them on its own layout.</summary>
+    public (WordLineEndMarker? Start, WordLineEndMarker? End) MeasureMarkers;
+    /// <summary>The shape's own box to the anchor's points without mirroring (the text area's frame of reference).</summary>
+    public WordAffine Full = WordAffine.Identity;
     /// <summary>A draw:measure's layout inputs for the page (<see cref="OdtMeasureGeometry.PageLayout"/>).</summary>
     public string? MeasurePageLayout;
 }
@@ -186,21 +190,29 @@ internal sealed class OdtShapeBuilder
                 if (local == "measure")
                 {
                     // dimension and help lines (sdrmeasureprimitive2d.cxx, OdtMeasureShape); the label is laid out by the renderer
-                    var marker = OdtMeasureArrow.FromMarker(0, 1, 1, false);
+                    // the arrows: the shape's own markers (draw:marker-start / -end), their length as the measure primitive takes it
+                    // (sdrmeasureprimitive2d.cxx:150-170: the polygon's height scaled to the marker width, halved when centred)
+                    double lineWidth = OdtShapeStyle.Length(drawn.Style.Get(Svg + "stroke-width")) ?? 0;
+                    WordLineEndMarker? startMarker = drawn.Style.StrokeKind == "none" ? null : drawn.Style.Marker("start", lineWidth);
+                    WordLineEndMarker? endMarker = drawn.Style.StrokeKind == "none" ? null : drawn.Style.Marker("end", lineWidth);
+                    OdtMeasureArrow Arrow(WordLineEndMarker? m) => m is null ? default : new OdtMeasureArrow(m.Width, m.Centred ? m.Length * 0.5 : m.Length);
                     string label = OdtMeasureShape.Label(element, drawn.Style.Get);
                     double fontSize = 12;
-                    OdtMeasureGeometry measure = OdtMeasureShape.Layout(element, drawn.Style.Get, label.Length * fontSize * 0.5, fontSize * 1.2, marker, marker);
-                    var lines = measure.MainLines.Select(m => m.Line).Concat(measure.HelpLines).ToList();
-                    (_, placement, width, height) = Absolute(lines, fill: false);
+                    OdtMeasureGeometry measure = OdtMeasureShape.Layout(element, drawn.Style.Get, label.Length * fontSize * 0.5, fontSize * 1.2, Arrow(startMarker), Arrow(endMarker));
+                    // the shape's box holds the help lines; the dimension line is drawn apart, in the anchor's points, one piece per
+                    // shape with its own markers - the page lays it out again with the label's measured size (fastDocViewShapeText.ts)
+                    (_, placement, width, height) = Absolute(measure.HelpLines, fill: false);
                     (double helpLeft, double helpTop) = placement.Apply(0, 0);
-                    // the help lines in the shape's box; the dimension line apart, in the anchor's points - the page lays it out
-                    // again with the label's measured size (fastDocViewShapeText.ts)
                     var help = new WordShapePath { Fill = WordShapePathFill.None };
                     foreach (WordShapeSubpath s in measure.HelpLines) help.Subpaths.Add(Shift(s, -helpLeft, -helpTop, 1, 1, 0, 0));
                     paths = [help];
-                    var main = new WordShapePath { Fill = WordShapePathFill.None };
-                    foreach (OdtMeasurePart part in measure.MainLines) main.Subpaths.Add(part.Line);
-                    drawn.MeasureLine = new WordShape { Geometry = WordShapeGeometry.Path, Paths = [main], Transform = transform };
+                    foreach (OdtMeasurePart part in measure.MainLines)
+                    {
+                        var piece = new WordShapePath { Fill = WordShapePathFill.None };
+                        piece.Subpaths.Add(part.Line);
+                        drawn.MeasureLines.Add((new WordShape { Geometry = WordShapeGeometry.Path, Paths = [piece], Transform = transform }, part.StartMarker, part.EndMarker));
+                    }
+                    drawn.MeasureMarkers = (startMarker, endMarker);
                     drawn.MeasureLabel = (label, measure.TextCenterX, measure.TextCenterY, measure.TextRotationDegrees);
                     drawn.MeasurePageLayout = measure.PageLayout;
                     break;
@@ -292,6 +304,7 @@ internal sealed class OdtShapeBuilder
             shape.Transform = WordAffine.Then(full, mirror);
         }
         else shape.Transform = full;
+        drawn.Full = full;
         // the text turns with the shape (its rotation; shear and mirroring do not apply to text, svdoashp.cxx:2638-2658)
         (double ox, double oy) = full.Apply(0, 0);
         double angle = Math.Atan2(full.B, full.A);
@@ -303,7 +316,14 @@ internal sealed class OdtShapeBuilder
         drawn.Style.ApplyFill(shape, (0, 0, shape.Width, shape.Height), _fillPicture);
         if (!closedForFill) { shape.FillColor = null; shape.FillPainter = null; shape.FillPictureId = null; }
         drawn.Style.ApplyStroke(shape);
-        if (drawn.MeasureLine is { } measureLine) drawn.Style.ApplyStroke(measureLine);
+        // a dimension line's help lines carry no markers - only its pieces do, per end (sdrmeasureprimitive2d.cxx:226-288)
+        if (local == "measure") { shape.HeadMarker = null; shape.TailMarker = null; }
+        foreach ((WordShape piece, bool startMarker, bool endMarker) in drawn.MeasureLines)
+        {
+            drawn.Style.ApplyStroke(piece);
+            if (!startMarker) piece.HeadMarker = null;
+            if (!endMarker) piece.TailMarker = null;
+        }
         if (shape.LineJoin == WordLineJoin.Miter) shape.MiterLimit = 1 / Math.Sin(7.5 * Math.PI / 180);
         if (drawn.Geometry?.Extrusion is { } extrusion) Extrude(drawn, extrusion, full);
         return drawn;
