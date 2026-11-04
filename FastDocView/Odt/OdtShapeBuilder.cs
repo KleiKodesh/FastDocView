@@ -16,6 +16,8 @@ internal sealed class OdtDrawnShape
     public WordAffine TextTransform = WordAffine.Identity;
     public OdtEnhancedGeometry? Geometry;
     public bool HasText;
+    /// <summary>A draw:measure's label: text, centre in the anchor's points, clockwise rotation.</summary>
+    public (string Text, double X, double Y, double Rotation)? MeasureLabel;
 }
 
 /// <summary>
@@ -131,10 +133,26 @@ internal sealed class OdtShapeBuilder
         switch (local)
         {
             case "rect":
-            case "caption":
-                paths = [Path(RoundedRectangle(width, height, local == "rect" ? Length(element, Draw + "corner-radius") : 0), fill: true)];
+                paths = [Path(RoundedRectangle(width, height, Length(element, Draw + "corner-radius")), fill: true)];
                 placement = WordAffine.Translate(x, y);
                 break;
+            case "caption":
+            {
+                // the rectangle and its tail (svdocapt.cxx ImpCalcTail, OdtCaptionShape); the tail carries the markers
+                OdtCaptionGeometry caption = OdtCaptionShape.Layout(element, drawn.Style.Get);
+                var box = RoundedRectangle(caption.Width, caption.Height, Math.Min(caption.CornerRadiusX, caption.CornerRadiusY));
+                var all = new List<WordShapeSubpath> { Shift(box, caption.Left, caption.Top, 1, 1, 0, 0), caption.Tail };
+                (double l, double t, _, _) = Bounds(all);
+                var fillPath = new WordShapePath { Fill = WordShapePathFill.Normal };
+                fillPath.Subpaths.Add(Shift(all[0], -l, -t, 1, 1, 0, 0));
+                var tailPath = new WordShapePath { Fill = WordShapePathFill.None };
+                tailPath.Subpaths.Add(Shift(caption.Tail, -l, -t, 1, 1, 0, 0));
+                paths = [fillPath, tailPath];
+                (_, _, width, height) = Bounds(all);
+                placement = WordAffine.Translate(l, t);
+                drawn.TextArea = (caption.Left - l, caption.Top - t, caption.Width, caption.Height);
+                break;
+            }
             case "ellipse":
             case "circle":
             {
@@ -161,8 +179,19 @@ internal sealed class OdtShapeBuilder
                 var line = new WordShapeSubpath { StartX = x1, StartY = y1 };
                 line.Segments.Add(WordShapeSegment.Line(x2, y2));
                 closedForFill = false;
+                if (local == "measure")
+                {
+                    // dimension and help lines (sdrmeasureprimitive2d.cxx, OdtMeasureShape); the label is laid out by the renderer
+                    var marker = OdtMeasureArrow.FromMarker(0, 1, 1, false);
+                    string label = OdtMeasureShape.Label(element, drawn.Style.Get);
+                    double fontSize = 12;
+                    OdtMeasureGeometry measure = OdtMeasureShape.Layout(element, drawn.Style.Get, label.Length * fontSize * 0.5, fontSize * 1.2, marker, marker);
+                    var lines = measure.MainLines.Select(m => m.Line).Concat(measure.HelpLines).ToList();
+                    (paths, placement, width, height) = Absolute(lines, fill: false);
+                    drawn.MeasureLabel = (label, measure.TextCenterX, measure.TextCenterY, measure.TextRotationDegrees);
+                    break;
+                }
                 (paths, placement, width, height) = Absolute([line], fill: false);
-                if (local == "measure") placement = WordAffine.Then(placement, WordAffine.Identity);
                 break;
             }
             case "polygon":
@@ -204,9 +233,11 @@ internal sealed class OdtShapeBuilder
                 if (track is not { Count: > 0 } || last is null || Math.Abs(track[0].StartX - x1) > Tolerance || Math.Abs(track[0].StartY - y1) > Tolerance
                     || Math.Abs(last.Value.X - x2) > Tolerance || Math.Abs(last.Value.Y - y2) > Tolerance)
                 {
-                    var straight = new WordShapeSubpath { StartX = x1, StartY = y1 };
-                    straight.Segments.Add(WordShapeSegment.Line(x2, y2));
-                    track = [straight];
+                    // no usable stored route: LibreOffice's own routing (svdoedge.cxx ImpCalcEdgeTrack, OdtConnectorRoute); a connected
+                    // shape may stand in another block - read windowed, ends are taken where the file puts them
+                    double[] skew = ((string?)element.Attribute(Draw + "line-skew") ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(v => OdtShapeStyle.Length(v) ?? 0).ToArray();
+                    track = OdtConnectorRoute.Route((string?)element.Attribute(Draw + "type") ?? "standard", (x1, y1), (x2, y2), skew, null, null);
                 }
                 closedForFill = false;
                 (paths, placement, width, height) = Absolute(track, fill: false);

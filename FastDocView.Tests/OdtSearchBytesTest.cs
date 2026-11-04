@@ -188,7 +188,7 @@ public static class OdtSearchBytesTest
             Expect("picdesc", [], "svg:desc of a picture");
             Expect("imagetext", [], "paragraphs inside draw:image");
             Expect("boxtext", [1], "a text box's paragraph");
-            Expect("boxlist", [], "a list inside a text box (not rendered)");
+            Expect("boxlist", [1], "a list inside a text box (drawn since 2026-11-04: searched once)");
             Expect("boxtitle", [], "svg:title of a text box frame");
             Expect("shapetext", [2], "a shape's paragraph (drawn in the shape box since 2026-11-03: searched once)");
             Expect("linked", [2], "draw:a's text");

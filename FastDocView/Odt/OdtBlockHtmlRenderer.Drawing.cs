@@ -150,7 +150,16 @@ public sealed partial class OdtBlockHtmlRenderer
         WordShapeHtml.OpenFrame(html, layout, growsWithText: false, ContourCss(element, layout, width, height, outlines));
         WordShapeHtml.AppendGeometry(html, drawn.Select(d => d.Shape).ToList(), width, height, stretches: false);
         foreach (OdtDrawnShape d in drawn)
+        {
+            if (d.MeasureLabel is { } m)
+            {
+                (double mx, double my) = (m.X - left, m.Y - top);
+                html.Append("<span class=\"word-shape-text\" style=\"position:absolute;left:").Append(Css(mx)).Append("pt;top:").Append(Css(my))
+                    .Append("pt;white-space:nowrap;transform:translate(-50%,-50%) rotate(").Append(Css(m.Rotation)).Append("deg);\">").Append(WordHtmlText.Encode(m.Text)).Append("</span>");
+                continue;
+            }
             if (d.HasText && d.Geometry is not { IsTextPath: true }) AppendShapeText(d, html);
+        }
         WordShapeHtml.CloseFrame(html);
     }
 

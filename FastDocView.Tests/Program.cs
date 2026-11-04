@@ -1,4 +1,4 @@
-﻿// FastDocView test harness.
+// FastDocView test harness.
 //
 //   dotnet run -c Release                          deflate round trip (8 MB) + synthetic docx (50k blocks) + real files passed/found
 //   dotnet run -c Release -- --blocks 500000       bigger synthetic document
@@ -56,8 +56,8 @@ for (int i = 0; i < args.Length; i++)
     switch (args[i])
     {
         case "--blocks": blocks = int.Parse(args[++i]); break;
-        case "--huge": hugeBlocks = int.Parse(args[++i]); break;                       // e.g. 1000000 ג†’ ~350 MB document.xml
-        case "--notes-streaming": notesStreamingBlocks = int.Parse(args[++i]); break;  // e.g. 20000 ג†’ 1000 footnotes, ~113 MB footnotes.xml
+        case "--huge": hugeBlocks = int.Parse(args[++i]); break;                       // e.g. 1000000 → ~350 MB document.xml
+        case "--notes-streaming": notesStreamingBlocks = int.Parse(args[++i]); break;  // e.g. 20000 → 1000 footnotes, ~113 MB footnotes.xml
         case "--deflate-mb": deflateMegabytes = int.Parse(args[++i]); break;
         case "--skip-synthetic": skipSynthetic = true; break;
         case "--search": searchOnly = true; while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) searchPaths.Add(args[++i]); break;   // in-document search checks (+ timings on the given files)
