@@ -125,7 +125,7 @@ public sealed class OdtConnectedShapeTable
     /// </summary>
     internal static string FrameKeyOf(string? anchorType, string? anchorPage, bool isBodyLevel, int blockIndex)
     {
-        if (isBodyLevel || anchorType == "page") return "p:" + (anchorPage ?? "");
+        if (isBodyLevel || anchorType == "page") return anchorPage is null ? "" : "p:" + anchorPage;   // no page number: no common origin known
         if (anchorType is "paragraph" or "char" && blockIndex >= 0) return "b:" + blockIndex.ToString(CultureInfo.InvariantCulture);
         return "";
     }

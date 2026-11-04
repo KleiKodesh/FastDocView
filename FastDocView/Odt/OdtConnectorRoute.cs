@@ -167,7 +167,7 @@ internal static class OdtConnectorRoute
     internal static OdtConnectorGluePoint UserGluePoint((double X, double Y, double Width, double Height) rectPt, long xHmm, long yHmm, string? align, OdtGlueEscape escape)
     {
         var r = LR.FromPointSize(ToHmm(rectPt.X), ToHmm(rectPt.Y), ToHmm(rectPt.Width), ToHmm(rectPt.Height));
-        bool percent = align is null;
+        bool percent = align is not ("top-left" or "top" or "top-right" or "left" or "center" or "right" or "bottom-left" or "bottom" or "bottom-right");   // an unknown value stays relative (ximpshap.cxx:290-297)
         bool left = align is "top-left" or "left" or "bottom-left", right = align is "top-right" or "right" or "bottom-right";
         bool top = align is "top-left" or "top" or "top-right", bottom = align is "bottom-left" or "bottom" or "bottom-right";
         LP ofs = r.Center;

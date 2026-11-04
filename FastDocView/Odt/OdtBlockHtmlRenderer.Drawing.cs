@@ -45,7 +45,7 @@ public sealed partial class OdtBlockHtmlRenderer
         }
     }
 
-    /// <summary>The shapes connectors may be glued to, by id (the index's <see cref="OdtConnectedShapeTable"/>, or the part known while it is built).</summary>
+    /// <summary>The shapes connectors may be glued to, by id (the index's <see cref="OdtConnectedShapeTable"/>; null until the index is final - a first open draws glued ends as free points until then).</summary>
     internal Func<string, OdtConnectedShape?>? ConnectedShapes { get; set; }
 
     private OdtShapeBuilder ShapeBuilder
@@ -65,6 +65,8 @@ public sealed partial class OdtBlockHtmlRenderer
     /// </summary>
     internal void RecordConnectedShapes(XElement block, int blockIndex, Dictionary<string, OdtConnectedShape> into)
     {
+        ConnectedShapes = null;          // the shapes are measured, never routed against a half-built table
+        CurrentBlockIndex = blockIndex;
         foreach (XElement element in block.DescendantsAndSelf())
         {
             if (element.Name.Namespace != DrawNs || Array.IndexOf(OdtBodyBlockScanner.BodyDrawingNames, "draw:" + element.Name.LocalName) < 0) continue;
