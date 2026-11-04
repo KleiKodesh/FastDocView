@@ -1,7 +1,7 @@
 # FastDocView
 
 Standalone library — its own **public** repo (github.com/KleiKodesh/FastDocView),
-sibling folder of KitveiHakodesh; nothing of it lives in the KitveiHakodesh repo.
+git submodule of the app repo at `KitveiHakodesh\FastDocView`; its code lives only in this repo.
 
 **Goal: instant preview of .doc and .docx files.** Any window of paragraphs rendered to HTML in
 milliseconds, for files of any size, inside the app's book-view (lines pane + windowed scroller +
@@ -61,8 +61,8 @@ view over SQLite.
 
 | Folder | Owns |
 |---|---|
-| `..\SeekableDeflate` (own repo, sibling folder) | managed RFC 1951 inflater with zran checkpoints, seekable stream, zip-entry location — referenced as a `ProjectReference`, no NuGet. Clone it next to this repo. |
-| `..\TextEncodingDetection` (own repo, sibling folder) | .txt encoding detection identical to Notepad++ (ported Notepad++ uchardet) — `ProjectReference`, no NuGet. Clone it next to this repo (worktrees: next to them, in `..\FastDocView-work`). |
+| `SeekableDeflate\` (own repo, submodule of this repo) | managed RFC 1951 inflater with zran checkpoints, seekable stream, zip-entry location — referenced as a `ProjectReference`, no NuGet. `git submodule update --init` fetches it. |
+| `TextEncodingDetection\` (own repo, submodule of this repo) | .txt encoding detection identical to Notepad++ (ported Notepad++ uchardet) — `ProjectReference`, no NuGet. `git submodule update --init` fetches it (in a worktree too). |
 | `…/Docx` | body + notes scanners, index (format v4) + builder, block / note readers, drawing stripper, `DocxWindowedDocument` |
 | `…/Html`, `…/DocxHtml` | format-neutral formatting models + CSS; styles / table styles cascade; block, table, note → HTML |
 | `…/Odt` | OpenDocument text (.odt/.ott/.fodt): package detection, body scanner, list numbering, index + builder, style cascade, block reader + renderer, `OdtWindowedDocument` |
@@ -123,7 +123,7 @@ view over SQLite.
   speed vs coverage, research vs implementation go to parallel subagents with narrow briefs;
   only sequential, shared-file work stays in the main thread. **At most 3 agents at a time**
   in a session (user, 2026-10-28: 2; raised to 3 on 2026-10-29) — the machine must stay usable; queue the rest. Agents work
-  in their own worktree under `..\FastDocView-work\<topic>` (branch `work/<topic>`),
+  in their own worktree under `C:\Users\Public\Documents\KleiKodeshProject-work\<topic>` (outside every repo; removed once merged) (branch `work/<topic>`),
   commit there, never push or merge; the main thread merges after QA.
 - **Commit as you go** (user, 2026-10-28): small commits after each verified step (a feature,
   a fix, a measured speed-up), not one big commit at the end — each QA'd per the rule above.

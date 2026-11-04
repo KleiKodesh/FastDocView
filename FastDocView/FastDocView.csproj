@@ -3,7 +3,7 @@
   <!-- Random access into Word files without keeping a decompressed copy, for windowed
        (virtual-scroll) HTML rendering of huge documents.
 
-         • (SeekableDeflate repo, sibling folder) — the checkpointing inflater, the seekable stream
+         • (SeekableDeflate repo, submodule) — the checkpointing inflater, the seekable stream
                          and zip-entry location; referenced as a project, not a package.
          • Docx/       — one indexing pass records checkpoints + every body-level block
                          (paragraph / table / ...) offset; afterwards any block is read in ms.
@@ -22,8 +22,8 @@
 
   <!-- Seekable deflate + zip-entry location, and .txt encoding detection, live in their own repos, cloned next to this one. -->
   <ItemGroup>
-    <ProjectReference Include="..\..\SeekableDeflate\SeekableDeflate\SeekableDeflate.csproj" />
-    <ProjectReference Include="..\..\TextEncodingDetection\TextEncodingDetection\TextEncodingDetection.csproj" />
+    <ProjectReference Include="..\SeekableDeflate\SeekableDeflate\SeekableDeflate.csproj" />
+    <ProjectReference Include="..\TextEncodingDetection\TextEncodingDetection\TextEncodingDetection.csproj" />
   </ItemGroup>
 
   <!-- ECMA-376 Part 1 presetShapeDefinitions.xml as LibreOffice ships it (oox/source/drawingml/customshapes): every preset outline. -->

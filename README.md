@@ -5,7 +5,7 @@ decompressed copy, no page layout.
 
 | Project | What |
 |---|---|
-| `../SeekableDeflate/` | **Separate repo, clone next to this one.** Seekable deflate + zip-entry location the library builds on. |
+| `SeekableDeflate/` | **Separate repo, a submodule of this one.** Seekable deflate + zip-entry location the library builds on. |
 | `FastDocView/` | Library (net48 + net10.0, zero dependencies). `WordWindowedDocumentOpener.Open(path)` → `IWordWindowedDocument` with `RenderBlocks(first, count)`. |
 | `FastDocView.Tests/` | Console harness: deflate round-trip + random seeks, synthetic 50k-block docx, real-file smoke run. |
 | `FastDocView.DevServer/` | C# localhost JSON host (`http://127.0.0.1:5188/api/…`), the dev counterpart of the app's service. |

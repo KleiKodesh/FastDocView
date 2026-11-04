@@ -1,0 +1,6 @@
+[submodule "SeekableDeflate"]
+	path = SeekableDeflate
+	url = https://github.com/KleiKodesh/SeekableDeflate.git
+[submodule "TextEncodingDetection"]
+	path = TextEncodingDetection
+	url = https://github.com/KleiKodesh/TextEncodingDetection.git
