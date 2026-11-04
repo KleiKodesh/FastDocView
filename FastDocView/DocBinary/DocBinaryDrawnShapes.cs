@@ -70,6 +70,29 @@ internal static class DocBinaryDrawnShapes
         return new DocBinaryDrawing(layout, shapes, texts, isPlain, grows);
     }
 
+    /// <summary>
+    /// The shape's pWrapPolygonVertices (899): an IMsoArray of x, y points in Word's 21600 space over the object, 8-byte int32
+    /// pairs or 4-byte int16 pairs (0xFFF0 = truncated 8-byte) - read as LibreOffice reads it (msdffimp.cxx:5574-5605). A group's
+    /// own shape is the first SpContainer of its SpgrContainer. Null when it has none or fewer than 3 points.
+    /// </summary>
+    public static List<(double X, double Y)>? WrapPolygon(Stream table, long start, long end, bool isGroup)
+    {
+        if (isGroup)
+        {
+            if (DocBinaryPictures.RecordHeader(table, start) is not { Type: 0xF004 } first) return null;
+            end = Math.Min(end, start + 8 + first.Length);
+            start += 8;
+        }
+        if (ReadArray(table, ReadShape(table, start, end), PropertyWrapPolygon) is not { } array) return null;
+        int size = array.elementSize == 0xFFF0 ? 4 : array.elementSize;
+        if (size is not (4 or 8)) return null;
+        var points = new List<(double X, double Y)>(array.count);
+        for (int i = 0; i < array.count && (i + 1) * size <= array.data.Length; i++)
+            points.Add(size == 8 ? (BitConverter.ToInt32(array.data, i * 8), BitConverter.ToInt32(array.data, i * 8 + 4))
+                                 : (BitConverter.ToInt16(array.data, i * 4), BitConverter.ToInt16(array.data, i * 4 + 2)));
+        return points.Count > 2 ? points : null;
+    }
+
     /// <summary>The text-box ranges of every shape in a drawing (the search: each story part once, where its shape is anchored).</summary>
     public static IEnumerable<DocBinaryShapeText> TextRanges(Stream table, long start, long end, bool isGroup, DocBinaryTextBoxStories stories)
     {
@@ -205,7 +228,7 @@ internal static class DocBinaryDrawnShapes
     /// fillShadeColors 407, lineDashStyle 463, pWrapPolygonVertices 899, connectorPoints 337, Handles 341, pFormulas 342, textRectangles 343 (include/svx/msdffdef.hxx).</summary>
     private static bool IsArray(int id) => id is 325 or 326 or 407 or 463 or 899 or 337 or 341 or 342 or 343;
 
-    private const int PropertyVertices = 325, PropertySegments = 326, PropertyGuides = 342, PropertyWordArtText = 192, PropertyWordArtSize = 195, PropertyWordArtFont = 197;
+    private const int PropertyWrapPolygon = 899, PropertyVertices = 325, PropertySegments = 326, PropertyGuides = 342, PropertyWordArtText = 192, PropertyWordArtSize = 195, PropertyWordArtFont = 197;
 
     /// <summary>
     /// The shape's own geometry as LibreOffice reads it (msdffimp.cxx:1625-1636 the coordinate space geoLeft..geoBottom, default

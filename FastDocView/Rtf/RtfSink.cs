@@ -135,6 +135,8 @@ internal sealed class RtfShapePlacement
     /// <summary>The shape's own geometry: pVerticies (x, y pairs), pSegmentInfo (u16 commands) and geoLeft..geoBottom (the RTF shapes page;
     /// LibreOffice rtfsdrimport.cxx:500-600 reads the same arrays).</summary>
     public List<int>? Vertices;
+    /// <summary>pWrapPolygonVertices: "8;n;(x,y);..." in Word's 21600 space over the shape (LibreOffice rtfsdrimport.cxx:856-885 reads the same array); null = none.</summary>
+    public List<(double X, double Y)>? WrapPolygon;
     public List<ushort>? Segments;
     public int GeoLeft, GeoTop, GeoRight = 21600, GeoBottom = 21600;
     /// <summary>The shape has a {\shptxt}; its rendered HTML (the renderer).</summary>
@@ -162,6 +164,15 @@ internal sealed class RtfShapePlacement
                 Vertices.Add((int)long.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture));
                 Vertices.Add((int)long.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture));
             }
+            return;
+        }
+        if (name == "pWrapPolygonVertices")
+        {
+            WrapPolygon = new List<(double X, double Y)>();
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(value, @"\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)"))
+                if (long.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out long x)
+                    && long.TryParse(match.Groups[2].Value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out long y))
+                    WrapPolygon.Add((x, y));
             return;
         }
         if (name == "pSegmentInfo")

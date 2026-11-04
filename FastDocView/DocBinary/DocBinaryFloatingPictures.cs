@@ -19,7 +19,7 @@ namespace FastDocView.DocBinary;
 ///   (msdffdef.hxx DFF_Prop_pib), the 1-based FBSE index (msdffimp.cxx:3843 / 6439-6455).
 /// - The blip at foDelay: the Data stream first, then the WordDocument stream (msdffimp.cxx:6455-6473 GetBLIP).
 /// Wrap from FSPA wr / wrk as ww8graf.cxx:2700-2745 maps them: 1 = text above and below, 3 = no wrap (through),
-/// 0 / 2 / 4 / 5 = text on the sides; wrk 1 = text only on the left (the picture on the right). Size = xaRight - xaLeft by
+/// 0 / 2 / 4 / 5 = text on the sides; wrk 1 = text only on the left (the picture on the right); 4 / 5 along a contour. Size = xaRight - xaLeft by
 /// yaBottom - yaTop. The browser has no page, so yaTop and the page / margin origin (bx, by) are not drawn; a picture
 /// relative to the column (bx 2) or margin (bx 0) keeps xaLeft as its offset from the start of the line.
 /// Only the main text's shapes (headers are not rendered here). A group, a shape without a picture or one with a text box
@@ -70,7 +70,8 @@ internal sealed class DocBinaryFloatingPictures
         if (Fspa(cp) is not { } fspa) return null;
         if (_pibBySpid is null) ReadDrawing();
         if (!_containerBySpid!.TryGetValue(fspa.spid, out var container)) return null;
-        return DocBinaryDrawnShapes.Read(_tableStream, container.start, container.end, container.isGroup, LayoutOf(fspa), _stories, this);
+        DocBinaryDrawing drawing = DocBinaryDrawnShapes.Read(_tableStream, container.start, container.end, container.isGroup, LayoutOf(fspa), _stories, this);
+        return drawing with { Layout = WithContour(drawing.Layout, fspa.flags, container, () => WordShapeHtml.Outlines(drawing.Shapes)) };
     }
 
     /// <summary>The CPs that anchor a shape (main text or header story CPs, as this table was made for).</summary>
@@ -108,7 +109,23 @@ internal sealed class DocBinaryFloatingPictures
         WordPictureWrap wrap = wr switch { 1 => WordPictureWrap.TopAndBottom, 3 => WordPictureWrap.None, _ => WordPictureWrap.Square };
         WordPictureSide side = (wr is 2 or 4 && wrk == 1) ? WordPictureSide.Right : WordPictureSide.Left;
         double offsetPt = side == WordPictureSide.Left && !pageRelative ? Math.Max(0, fspa.xaLeft / 20.0) : 0;
-        return new WordPictureLayout(widthPt, heightPt, wrap, side, 0, 0, 0, 0, offsetPt);
+        // wrk only counts for wr 2 / 4 (ww8graf.cxx:2730-2749): 1 = text only on the left, 2 = only on the right, 0 / 3 both / largest
+        WordPictureTextSides sides = wr is 2 or 4 ? wrk switch { 1 => WordPictureTextSides.LeftOnly, 2 => WordPictureTextSides.RightOnly, _ => WordPictureTextSides.Both }
+                                                  : WordPictureTextSides.Both;
+        return new WordPictureLayout(widthPt, heightPt, wrap, side, 0, 0, 0, 0, offsetPt, sides);
+    }
+
+    /// <summary>
+    /// wr 4 / 5 (tight / through) wrap along a contour (ww8graf.cxx:2721-2725 bContour): the shape's pWrapPolygonVertices
+    /// (<see cref="DocBinaryDrawnShapes.WrapPolygon"/>, ww8graf.cxx:2067-2128 scales it by the 21600 space), else
+    /// <paramref name="outline"/> (a drawing's own shapes; a picture: its box, the layout as it is).
+    /// </summary>
+    private WordPictureLayout WithContour(WordPictureLayout layout, int flags, (long start, long end, bool isGroup) container, Func<IReadOnlyList<IReadOnlyList<(double X, double Y)>>?>? outline)
+    {
+        if ((flags >> 5 & 0xF) is not (4 or 5) || layout.Wrap != WordPictureWrap.Square) return layout;
+        var contour = WordPictureContour.FromWordUnits(DocBinaryDrawnShapes.WrapPolygon(_tableStream, container.start, container.end, container.isGroup), layout.WidthPt, layout.HeightPt)
+                      ?? outline?.Invoke();
+        return contour is { Count: > 0 } ? layout with { Contour = contour } : layout;
     }
 
     /// <summary>The layout and id of the picture anchored at <paramref name="cp"/>; null when there is none we can show.</summary>
@@ -116,9 +133,10 @@ internal sealed class DocBinaryFloatingPictures
     {
         if (Fspa(cp) is not { } fspa) return null;
         if (Locate(fspa.spid) is null) return null;
-        if (_containerBySpid!.TryGetValue(fspa.spid, out var container) && container.isGroup) return null;     // a group is a drawing
+        bool located = _containerBySpid!.TryGetValue(fspa.spid, out var container);
+        if (located && container.isGroup) return null;                                                        // a group is a drawing
         if (_textBoxSpids!.Contains(fspa.spid)) return null;                                                  // a picture with a text box too
-        return (LayoutOf(fspa), IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return (located ? WithContour(LayoutOf(fspa), fspa.flags, container, null) : LayoutOf(fspa), IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     /// <summary>The id prefix of a fill picture: the BStore index (1-based) of a shape's fillBlip.</summary>
