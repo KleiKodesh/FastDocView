@@ -32,6 +32,14 @@ internal sealed class OdtMeasureGeometry
     public double TextCenterX, TextCenterY;
     /// <summary>Clockwise rotation of the text block in degrees (CSS rotate), 0..360.</summary>
     public double TextRotationDegrees;
+    /// <summary>
+    /// The inputs of the dimension line and text placement, for the page to lay them out again with the label's measured size
+    /// (KitveiHakodesh vue-frontend fastDocViewShapeText.ts, a port of <see cref="OdtMeasureShape.Layout"/>'s text-dependent part):
+    /// space-separated numbers - start x, y, end x, y (anchor points), line distance, below (0/1), text rotated (0/1), horizontal
+    /// and vertical position (0 automatic, 1 negative, 2 centred, 3 positive), start arrow width, length, end arrow width,
+    /// length, line width, padding left, right, top, bottom.
+    /// </summary>
+    public string PageLayout = "";
 }
 
 /// <summary>
@@ -221,6 +229,9 @@ internal static class OdtMeasureShape
         double padTop = Length(get(Fo + "padding-top")) ?? 0, padBottom = Length(get(Fo + "padding-bottom")) ?? 0;
 
         var result = new OdtMeasureGeometry();
+        result.PageLayout = string.Join(" ", new[] { sx, sy, ex, ey, distance, below ? 1 : 0, textRotation ? 1 : 0, (int)horizontal, (int)vertical,
+                                                     startArrow.Width, startArrow.Length, endArrow.Width, endArrow.Length, lineWidth, padLeft, padRight, padTop, padBottom }
+                                                   .Select(v => Math.Round(v, 4).ToString(CultureInfo.InvariantCulture)));
         double lineDx = ex - sx, lineDy = ey - sy;
         double length = Math.Sqrt(lineDx * lineDx + lineDy * lineDy);
         double angle = Math.Atan2(lineDy, lineDx);

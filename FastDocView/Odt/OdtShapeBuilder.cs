@@ -18,6 +18,10 @@ internal sealed class OdtDrawnShape
     public bool HasText;
     /// <summary>A draw:measure's label: text, centre in the anchor's points, clockwise rotation.</summary>
     public (string Text, double X, double Y, double Rotation)? MeasureLabel;
+    /// <summary>A draw:measure's dimension line (anchor points, through <see cref="WordShape.Transform"/>), drawn apart from its help lines.</summary>
+    public WordShape? MeasureLine;
+    /// <summary>A draw:measure's layout inputs for the page (<see cref="OdtMeasureGeometry.PageLayout"/>).</summary>
+    public string? MeasurePageLayout;
 }
 
 /// <summary>
@@ -187,8 +191,18 @@ internal sealed class OdtShapeBuilder
                     double fontSize = 12;
                     OdtMeasureGeometry measure = OdtMeasureShape.Layout(element, drawn.Style.Get, label.Length * fontSize * 0.5, fontSize * 1.2, marker, marker);
                     var lines = measure.MainLines.Select(m => m.Line).Concat(measure.HelpLines).ToList();
-                    (paths, placement, width, height) = Absolute(lines, fill: false);
+                    (_, placement, width, height) = Absolute(lines, fill: false);
+                    (double helpLeft, double helpTop) = placement.Apply(0, 0);
+                    // the help lines in the shape's box; the dimension line apart, in the anchor's points - the page lays it out
+                    // again with the label's measured size (fastDocViewShapeText.ts)
+                    var help = new WordShapePath { Fill = WordShapePathFill.None };
+                    foreach (WordShapeSubpath s in measure.HelpLines) help.Subpaths.Add(Shift(s, -helpLeft, -helpTop, 1, 1, 0, 0));
+                    paths = [help];
+                    var main = new WordShapePath { Fill = WordShapePathFill.None };
+                    foreach (OdtMeasurePart part in measure.MainLines) main.Subpaths.Add(part.Line);
+                    drawn.MeasureLine = new WordShape { Geometry = WordShapeGeometry.Path, Paths = [main], Transform = transform };
                     drawn.MeasureLabel = (label, measure.TextCenterX, measure.TextCenterY, measure.TextRotationDegrees);
+                    drawn.MeasurePageLayout = measure.PageLayout;
                     break;
                 }
                 (paths, placement, width, height) = Absolute([line], fill: false);
@@ -289,6 +303,7 @@ internal sealed class OdtShapeBuilder
         drawn.Style.ApplyFill(shape, (0, 0, shape.Width, shape.Height), _fillPicture);
         if (!closedForFill) { shape.FillColor = null; shape.FillPainter = null; shape.FillPictureId = null; }
         drawn.Style.ApplyStroke(shape);
+        if (drawn.MeasureLine is { } measureLine) drawn.Style.ApplyStroke(measureLine);
         if (shape.LineJoin == WordLineJoin.Miter) shape.MiterLimit = 1 / Math.Sin(7.5 * Math.PI / 180);
         if (drawn.Geometry?.Extrusion is { } extrusion) Extrude(drawn, extrusion, full);
         return drawn;
