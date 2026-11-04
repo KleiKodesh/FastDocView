@@ -170,6 +170,7 @@ public sealed class MarkupLineReader
             _end -= _start;
             _start = 0;
         }
+        _stream.Position = _bufferFileOffset + _end;          // the stream may be shared (windows read between two on-demand index steps)
         int read = _stream.Read(_buffer, _end, _buffer.Length - _end);
         if (read <= 0) return false;
         _end += read;

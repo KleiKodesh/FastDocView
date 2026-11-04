@@ -19,7 +19,10 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     private readonly RtfDocumentTables _tables = new();
     private RtfListNumbering? _lists;
     private readonly IProgress<WordDocumentIndexProgress>? _progress;
-    private readonly CancellationToken _cancellation;
+    private CancellationToken _cancellation;
+
+    /// <summary>An on-demand open hands the pass to the document: later steps are not tied to the open's cancellation.</summary>
+    public void ClearCancellation() => _cancellation = default;
     private readonly long _totalBytes;
 
     private readonly List<long> _starts = new(), _ends = new();
@@ -150,13 +153,64 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     public static RtfRandomAccessIndex Build(Stream file, long sourceLength, long sourceLastWriteTicksUtc,
                                              IProgress<WordDocumentIndexProgress>? progress = null, CancellationToken cancellation = default)
     {
-        var builder = new RtfRandomAccessIndexBuilder(file, progress, cancellation);
-        builder._parser.Run(file, 0, file.Length);
-        builder.EndBlock(builder._parser.Position, final: true);
-        builder.EndSection();
-        progress?.Report(new WordDocumentIndexProgress(file.Length, file.Length, builder._starts.Count));
-        return builder.CreateIndex(sourceLength, sourceLastWriteTicksUtc);
+        RtfRandomAccessIndexBuilder builder = Incremental(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
+        builder.AdvanceUntilKnown(int.MaxValue);
+        return builder.Complete();
     }
+
+    /// <summary>
+    /// The index pass run in steps (an on-demand first open): <see cref="AdvanceUntilKnown"/> parses on until that many blocks
+    /// are known, pausing the parser right after a block ends; <see cref="CreatePartialIndex"/> is the index of the blocks known
+    /// so far (the same compact form: a window reads them as it reads a finished index); <see cref="Complete"/> the final one.
+    /// One parse either way: the same blocks and values as one run to the end.
+    /// </summary>
+    public static RtfRandomAccessIndexBuilder Incremental(Stream file, long sourceLength, long sourceLastWriteTicksUtc,
+                                                          IProgress<WordDocumentIndexProgress>? progress = null, CancellationToken cancellation = default)
+        => new(file, progress, cancellation) { _mainFile = file, _sourceLength = sourceLength, _sourceTicks = sourceLastWriteTicksUtc };
+
+    private Stream? _mainFile;
+    private long _sourceLength, _sourceTicks;
+    private bool _isMainStarted;
+
+    /// <summary>The index pass reached the end of the file: every block is known.</summary>
+    public bool IsEveryBlockKnown { get; private set; }
+
+    /// <summary>Blocks known so far (final values: each has ended).</summary>
+    public int KnownBlockCount => _starts.Count;
+
+    /// <summary>Parses on until at least <paramref name="blocks"/> blocks are known or the file ends.</summary>
+    public void AdvanceUntilKnown(int blocks)
+    {
+        _cancellation.ThrowIfCancellationRequested();       // also when the blocks asked for are known already
+        while (!IsEveryBlockKnown && _starts.Count < blocks)
+        {
+            _cancellation.ThrowIfCancellationRequested();
+            _pauseAtBlockCount = blocks;
+            if (!_isMainStarted) { _isMainStarted = true; _parser.Run(_mainFile!, 0, _totalBytes); }
+            else _parser.Continue();
+            if (_parser.IsPaused) continue;
+            EndBlock(_parser.Position, final: true);
+            EndSection();
+            _progress?.Report(new WordDocumentIndexProgress(_totalBytes, _totalBytes, _starts.Count));
+            IsEveryBlockKnown = true;
+            _mainFile = null;
+        }
+        _pauseAtBlockCount = int.MaxValue;
+    }
+
+    /// <summary>The finished index (parses on to the end first when needed).</summary>
+    public RtfRandomAccessIndex Complete()
+    {
+        if (!IsEveryBlockKnown) AdvanceUntilKnown(int.MaxValue);
+        return CreateIndex(_sourceLength, _sourceTicks, isPartial: false);
+    }
+
+    /// <summary>
+    /// The index of the blocks known so far: its last span ends at the last known block's end, so a window reads those blocks
+    /// exactly as it will from the final index. Notes and bookmarks of the block still being read are left out; the open
+    /// section is closed provisionally at the last known block. Never saved.
+    /// </summary>
+    public RtfRandomAccessIndex CreatePartialIndex() => CreateIndex(_sourceLength, _sourceTicks, isPartial: !IsEveryBlockKnown);
 
     /// <summary>
     /// A resumable rescan of one span of the compact index: the blocks from the anchor's start up to <paramref name="end"/> (the
@@ -232,8 +286,9 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     public byte[] SnapshotOf(int localIndex) => _states[_stateIds[localIndex]];
     public string? LabelOf(int localIndex) => _labelIds[localIndex] >= 0 ? _labels[_labelIds[localIndex]] : null;
 
-    private RtfRandomAccessIndex CreateIndex(long sourceLength, long sourceTicks)
+    private RtfRandomAccessIndex CreateIndex(long sourceLength, long sourceTicks, bool isPartial = false)
     {
+        int known = _starts.Count;
         bool isRightToLeft = _tables.IsRightToLeftDocument || (_paragraphs > 0 && _rightToLeftParagraphs * 2 >= _paragraphs);
         var anchors = new WordIndexSpanAnchor[_anchors.Count];
         byte[] previousState = [];
@@ -245,15 +300,33 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             previousState = state;
         }
         return new RtfRandomAccessIndex(sourceLength, sourceTicks, _tables, isRightToLeft, _starts.Count, _starts.Count > 0 ? _ends[_ends.Count - 1] : 0,
-                                        anchors, WordIndexTextLengthGroups.Totals(_textLengths), _headings.ToArray(), _notes.ToArray())
+                                        anchors, WordIndexTextLengthGroups.Totals(_textLengths),
+                                        isPartial ? _headings.Where(h => h.BlockIndex < known).ToArray() : _headings.ToArray(),
+                                        isPartial ? _notes.Where(n => n.BlockIndex < known).ToArray() : _notes.ToArray())
         {
-            SectionLastBlocks = _sectionLastBlocks.ToArray(),
-            SectionTextWidths = _sectionTextWidths.ToArray(),
-            SectionColumnLefts = _sectionColumnLefts.ToArray(),
+            SectionLastBlocks = SectionsFor(isPartial, known, _sectionLastBlocks, known - 1),
+            SectionTextWidths = SectionsFor(isPartial, known, _sectionTextWidths, CurrentSectionTextWidth()),
+            SectionColumnLefts = SectionsFor(isPartial, known, _sectionColumnLefts, WordDocumentPageSetup.ColumnLeft(_sectionLeftMargin ?? _leftMargin, _sectionGutter ?? _gutter)),
             // a bookmark after the last block's end (nothing followed it) marks the last block
-            Bookmarks = new WordDocumentBookmarkTable(_bookmarkNames.ToArray(), _bookmarkBlocks.Select(block => Math.Min(block, Math.Max(0, _starts.Count - 1))).ToArray()),
-            IndexEntries = _indexEntries.ToArray(),
+            Bookmarks = isPartial
+                ? new WordDocumentBookmarkTable(_bookmarkNames.Where((_, i) => _bookmarkBlocks[i] < known).ToArray(), _bookmarkBlocks.Where(block => block < known).ToArray())
+                : new WordDocumentBookmarkTable(_bookmarkNames.ToArray(), _bookmarkBlocks.Select(block => Math.Min(block, Math.Max(0, known - 1))).ToArray()),
+            IndexEntries = _indexEntries.ToArray(),      // entries of the block being read too: an INDEX lists them as found so far
         };
+    }
+
+    private int CurrentSectionTextWidth() => WordDocumentPageSetup.TextWidth(_sectionPageWidth ?? _paperWidth, _sectionLeftMargin ?? _leftMargin,
+                                                                            _sectionRightMargin ?? _rightMargin, _sectionGutter ?? _gutter);
+
+    /// <summary>A partial index closes the open section at the last known block (the values in effect there).</summary>
+    private int[] SectionsFor(bool isPartial, int known, List<int> closed, int openValue)
+    {
+        bool isOpen = isPartial && known > 0 && (_sectionLastBlocks.Count == 0 || _sectionLastBlocks[_sectionLastBlocks.Count - 1] < known - 1);
+        if (!isOpen) return closed.ToArray();
+        var values = new int[closed.Count + 1];
+        closed.CopyTo(values);
+        values[closed.Count] = openValue;
+        return values;
     }
 
     // ── block boundaries ─────────────────────────────────────────────────────────────
@@ -294,7 +367,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _blockLists.Add(_blockList);
         _labelIds.Add(listLabel is null ? -1 : InternLabel(listLabel));
         if (_search is not null && blockIndex >= _searchFrom) _search.BlockEnded(blockIndex);
-        if (_isSpanScan && !final && _starts.Count >= _pauseAtBlockCount) _parser.RequestPause();
+        if (!final && _starts.Count >= _pauseAtBlockCount) _parser.RequestPause();
         if (_pendingAnchor is { } pending && pending.block == blockIndex)
         {
             _anchors.Add(pending);
@@ -458,8 +531,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     {
         if (_starts.Count == 0) return;
         int lastBlock = _starts.Count - 1;
-        int width = WordDocumentPageSetup.TextWidth(_sectionPageWidth ?? _paperWidth, _sectionLeftMargin ?? _leftMargin,
-                                                    _sectionRightMargin ?? _rightMargin, _sectionGutter ?? _gutter);
+        int width = CurrentSectionTextWidth();
         if (_sectionLastBlocks.Count > 0 && _sectionLastBlocks[_sectionLastBlocks.Count - 1] >= lastBlock) return;
         _sectionLastBlocks.Add(lastBlock);
         _sectionTextWidths.Add(width);

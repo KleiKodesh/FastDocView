@@ -36,11 +36,12 @@ export const demoOpenOptions: { rebuildIndex?: boolean; forceSidecar?: boolean }
 export const demoDiagnostics = reactive({ lastOpen: null as null | { fileName: string; openMilliseconds: number; mode: string; hasCachedIndex: boolean; readerType: string; reason: string } })
 
 export const fastDocViewApi: FastDocViewApi = {
-  async open(path) {
+  async open(path, openId) {
     const summary = await readJson<DevServerSummary>(await fetch('/api/documents', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, rebuildIndex: demoOpenOptions.rebuildIndex, forceSidecar: demoOpenOptions.forceSidecar }),
+      body: JSON.stringify({ path, rebuildIndex: demoOpenOptions.rebuildIndex, forceSidecar: demoOpenOptions.forceSidecar, openId }),
     }))
+    if ((summary as unknown as { cancelled?: boolean }).cancelled) throw new Error('Cancelled.')   // cancelOpen stopped it
     demoOpenOptions.rebuildIndex = demoOpenOptions.forceSidecar = undefined   // once
     demoDiagnostics.lastOpen = { fileName: path.split(/[\/]/).pop() ?? path, openMilliseconds: summary.openMilliseconds, mode: summary.mode,
                                  hasCachedIndex: summary.hasCachedIndex, readerType: summary.readerType, reason: summary.reason }
@@ -50,6 +51,9 @@ export const fastDocViewApi: FastDocViewApi = {
       headingCount: summary.headingCount, footnoteCount: summary.footnoteCount, endnoteCount: summary.endnoteCount,
     }
     return result
+  },
+  async cancelOpen(openId) {
+    await fetch(`/api/open-cancel?openId=${encodeURIComponent(openId)}`, { method: 'POST' })
   },
   async blocks(documentId, first, count) {
     const blocks = await readJson<{ index: number; kind: number; html: string; notes: FastDocViewBlock['notes']; provisional: boolean }[]>(

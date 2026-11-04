@@ -47,8 +47,9 @@ internal sealed class MarkupSpanRescan
         MarkupSpanAnchor[] anchors = index.Anchors;
         MarkupSpanAnchor anchor = anchors[anchorIndex];
         _firstBlock = anchor.FirstBlock;
-        _isLast = anchorIndex + 1 >= anchors.Length;
-        _blockCount = (_isLast ? index.BlockCount : anchors[anchorIndex + 1].FirstBlock) - _firstBlock;
+        bool isLastAnchor = anchorIndex + 1 >= anchors.Length;
+        _isLast = isLastAnchor && !index.IsPartial;      // a partial index's last span ends like any other: past its last block's end
+        _blockCount = (isLastAnchor ? index.BlockCount : anchors[anchorIndex + 1].FirstBlock) - _firstBlock;
         (int codePage, int unitSize, Encoding encoding) = MarkupRandomAccessIndexBuilder.PlainTextEncoding(index.CodePage);   // the same unit rules for MHTML
         bool bigEndian = codePage == MarkupTextEncoding.Utf16BigEndian;
         MarkupBlockMode mode = index.Kind == MarkupSourceKind.WebArchive ? MarkupBlockMode.Elements : MarkupBlockMode.Lines;
@@ -58,7 +59,7 @@ internal sealed class MarkupSpanRescan
 
         if (index.Kind == MarkupSourceKind.WebArchive)
         {
-            _limit = _isLast ? long.MaxValue : anchors[anchorIndex + 1].ScanPosition;
+            _limit = _isLast ? long.MaxValue : isLastAnchor ? index.TextEnd : anchors[anchorIndex + 1].ScanPosition;
             Resumes = anchor.State is null ? [] : [anchor.BlockResume];
             _decoder = new MimeTransferDecoder(index.TransferEncoding);
             _resumeRing = new long[MarkupRandomAccessIndexBuilder.ResumeRingSize];
@@ -71,7 +72,7 @@ internal sealed class MarkupSpanRescan
         }
         else
         {
-            _limit = _isLast ? index.TextEnd : anchors[anchorIndex + 1].ScanPosition;
+            _limit = isLastAnchor ? index.TextEnd : anchors[anchorIndex + 1].ScanPosition;
             if (anchor.State is null) Scanner.Begin(index.TextStart);
             _chunk = new byte[Math.Max(MarkupRandomAccessIndexBuilder.ChunkSize, MarkupTextEncoding.DetectionSampleBytes)];   // span 0 starts with the detection sample piece
             _position = anchor.ScanPosition;

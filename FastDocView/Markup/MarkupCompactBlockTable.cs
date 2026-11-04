@@ -79,7 +79,12 @@ internal sealed class MarkupCompactBlockTable
     /// <summary>Where the block ends: the next block's start (the first block of the next span), or the text's end.</summary>
     public long BlockEnd(int blockIndex)
     {
-        if (blockIndex + 1 >= _index.BlockCount) return _index.TextEnd;
+        if (blockIndex + 1 >= _index.BlockCount)
+        {
+            if (!_index.IsPartial) return _index.TextEnd;
+            MarkupSpanRescan rescan = ScannedThrough(blockIndex, out int local);   // a partial index: the block still being read starts there
+            return rescan.Scanner.BlockStartOffsets[local + 1];
+        }
         int anchorIndex = _index.AnchorIndexOf(blockIndex + 1);
         if (SpanFirstBlock(anchorIndex) == blockIndex + 1) return Anchors[anchorIndex].FirstBlockStart;   // no rescan of the next span
         return BlockStart(blockIndex + 1);

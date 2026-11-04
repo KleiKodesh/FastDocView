@@ -60,7 +60,11 @@ public sealed class WordWindowedDocumentSet : IDisposable
     /// <summary>Opens the file and returns its new id.</summary>
     /// <param name="forcedMode">Overrides the size decision for this open (null = decide by size).</param>
     /// <param name="progress">Index-building progress, for a host that shows it.</param>
-    public string Open(string filePath, WordIndexMode? forcedMode = null, IProgress<WordDocumentIndexProgress>? progress = null)
+    /// <param name="cancellation">Stops the open's own work (the index pass of a format without an on-demand open, or the
+    /// first blocks of one with it): the host cancels when the page closes or replaces the open before it returned.</param>
+    /// <exception cref="OperationCanceledException">The open was cancelled; nothing stays open.</exception>
+    public string Open(string filePath, WordIndexMode? forcedMode = null, IProgress<WordDocumentIndexProgress>? progress = null,
+                       CancellationToken cancellation = default)
     {
         WordIndexPolicy policy = forcedMode is null ? _policy : new WordIndexPolicy
         {
@@ -69,7 +73,12 @@ public sealed class WordWindowedDocumentSet : IDisposable
             SidecarThresholdBytes = _policy.SidecarThresholdBytes,
             ForcedMode = forcedMode,
         };
-        IWordWindowedDocument document = WordWindowedDocumentOpener.Open(filePath, policy, progress);
+        IWordWindowedDocument document = WordWindowedDocumentOpener.Open(filePath, policy, progress, cancellation);
+        if (cancellation.IsCancellationRequested)
+        {
+            document.Dispose();                     // cancelled after the open's last check: the page has gone, nobody would close it
+            cancellation.ThrowIfCancellationRequested();
+        }
         string id = Guid.NewGuid().ToString("N");
         lock (_documentsGate) _documents[id] = new OpenDocument(document);
         return id;

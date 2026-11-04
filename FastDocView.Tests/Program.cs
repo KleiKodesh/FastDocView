@@ -11,6 +11,7 @@
 //   dotnet run -c Release -- --notes-streaming 20000   notes read on demand from a 100 MB+ footnotes part
 //   dotnet run -c Release -- --audit <path>...     formatting constructs the renderers do not handle
 //   dotnet run -c Release -- --odt-incremental [N] first open of a synthetic .odt and .fodt with the index built on demand (N blocks, default 200000)
+//   dotnet run -c Release -- --streaming-incremental [N]  on-demand first open of synthetic .rtf / .txt / MHTML (N blocks, default 300000) + cancelled opens
 //   dotnet run -c Release -- --odt [N]             synthetic .odt/.fodt (N repeating blocks, default 20000); with LibreOffice installed,
 //                                                  every --real .docx is also converted to .odt (TestOutput) and smoke-tested + audited
 //   dotnet run -c Release -- --text [N] / --mhtml [N]   synthetic .txt (every encoding / line ending) and MHTML (qp + base64), N filler blocks; --mhtml also runs the .html checks
@@ -38,6 +39,7 @@ string? listLabelsFallback = null;
 int corpusMax = int.MaxValue;
 int corpusSample = 0;
 int odtIncrementalBlocks = 0;
+int streamingIncrementalBlocks = 0;
 int odtBlocks = 0, rtfBlocks = 0, textBlocks = 0, mhtmlBlocks = 0, textLargest = 200, textRandom = 300;
 string? textCorpus = null, mimeScan = null;
 var markupProfilePaths = new List<string>();
@@ -79,6 +81,10 @@ for (int i = 0; i < args.Length; i++)
         case "--odt-incremental":                                                      // optional block count, default 200000
             odtIncrementalBlocks = 200_000;
             if (i + 1 < args.Length && int.TryParse(args[i + 1], out int odtIncrementalCount)) { odtIncrementalBlocks = odtIncrementalCount; i++; }
+            break;
+        case "--streaming-incremental":                                                // optional block count, default 300000
+            streamingIncrementalBlocks = 300_000;
+            if (i + 1 < args.Length && int.TryParse(args[i + 1], out int streamingCount)) { streamingIncrementalBlocks = streamingCount; i++; }
             break;
         case "--odt":
             odtBlocks = 20_000;
@@ -157,6 +163,7 @@ if (hugeBlocks > 0) HugeDocumentMemoryTest.Run(hugeBlocks);
 if (incrementalOpen)
     DocxIncrementalOpenTest.Run(incrementalBlocks, realPaths.Where(path => File.Exists(path) && path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)));
 if (odtIncrementalBlocks > 0) OdtIncrementalOpenTest.Run(odtIncrementalBlocks);
+if (streamingIncrementalBlocks > 0) StreamingFormatsIncrementalOpenTest.Run(streamingIncrementalBlocks);
 if (notesStreamingBlocks > 0) DocxNotesStreamingTest.Run(notesStreamingBlocks, noteFillerCharacters: 60_000);
 if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Count > 0) CompactIndexTest.RunRecovery(realPaths.Where(path => File.Exists(path) && path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)));

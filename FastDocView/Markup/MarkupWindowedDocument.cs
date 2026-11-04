@@ -9,6 +9,10 @@ namespace FastDocView.Markup;
 /// <see cref="IWordWindowedDocument"/> contract as the Word formats. Like a flat .fodt the file itself
 /// is the random-access view: the index pass records block offsets (and, for MHTML, transfer-decoder
 /// resume points); a window reads only its own bytes. The index is a sidecar when the file is big.
+/// A sidecar first open with <see cref="WordIndexPolicy.IndexesOnDemand"/> returns after the first
+/// <see cref="OnDemandFirstBlockCount"/> blocks; <see cref="ScanAhead"/> feeds the same one pass on
+/// (<see cref="MarkupIncrementalIndexBuilder"/>), windows read the known blocks from the partial index, and the finished
+/// index is saved when the pass ends.
 /// </summary>
 public sealed class MarkupWindowedDocument : IWordWindowedDocument
 {
@@ -20,8 +24,13 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
 
     private const int ReadChunkBytes = 1 << 16;
 
-    private readonly MarkupRandomAccessIndex _index;
-    private readonly MarkupCompactBlockTable _table;
+    public const int OnDemandFirstBlockCount = 100;
+
+    private MarkupRandomAccessIndex _indexField;
+    private MarkupCompactBlockTable _tableField;
+    private MarkupIncrementalIndexBuilder? _builder;       // null once the index is complete
+    private bool _isIndexStale;                            // the builder knows more blocks than _indexField
+    private readonly string? _sidecarPathToSave;
     private readonly Stream _file;
     private readonly Encoding _encoding;
     private WordDocumentBlockRenderGuard? _blockRenderGuardField;
@@ -30,15 +39,85 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     private WordDocumentFileStream? _releasableFile;
 
     public string FilePath { get; }
-    public int BlockCount => _index.BlockCount;
-    public bool IsIndexComplete => true;
-    public int KnownBlockCount => _index.BlockCount;
-    public int ScanAhead(int blocks) => BlockCount;          // always complete
+    /// <summary>The blocks known so far while an on-demand index is scanning (only grows), exact once complete.</summary>
+    public int BlockCount => KnownBlockCount;
+    public bool IsIndexComplete { get { lock (_readLock) return _builder is null; } }
+    public int KnownBlockCount { get { lock (_readLock) return _builder?.KnownBlockCount ?? _indexField.BlockCount; } }
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
-    public bool IsRightToLeft => _index.IsRightToLeft;
+    public bool IsRightToLeft { get; }                     // fixed at open (an on-demand open: from the first 64 KB of text)
     public string Stylesheet { get; }
     public WordIndexDecision Decision { get; }
-    public MarkupRandomAccessIndex Index => _index;
+
+    /// <summary>The finished index. Throws while an on-demand open is still scanning.</summary>
+    public MarkupRandomAccessIndex Index { get { lock (_readLock) return _builder is null ? _indexField : throw new InvalidOperationException("The index is still being built on demand."); } }
+
+    /// <summary>The index of the blocks known so far (a partial index is re-made only after the scan moved on).</summary>
+    private MarkupRandomAccessIndex _index
+    {
+        get
+        {
+            if (_isIndexStale && IsRefreshDue()) RefreshIndex(_builder!.CreatePartialIndex());
+            return _indexField;
+        }
+    }
+
+    private MarkupCompactBlockTable _table
+    {
+        get
+        {
+            if (_isIndexStale && IsRefreshDue()) RefreshIndex(_builder!.CreatePartialIndex());
+            return _tableField;
+        }
+    }
+
+    // Re-making the partial index copies its tables (O(known blocks)), so it is re-made only when the known blocks doubled or
+    // half a second passed - a scan interleaved with window reads stays linear - and at once when a window or search needs blocks
+    // past it (CoverKnownBlocks).
+    private long _refreshedAtTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+    private bool IsRefreshDue() => _builder!.KnownBlockCount >= 2L * Math.Max(1, _indexField.BlockCount)
+                                   || System.Diagnostics.Stopwatch.GetTimestamp() - _refreshedAtTicks > System.Diagnostics.Stopwatch.Frequency / 2;
+
+    /// <summary>The partial index covers blocks before <paramref name="end"/> (or every known block).</summary>
+    private void CoverKnownBlocks(long end)
+    {
+        if (_isIndexStale && end > _indexField.BlockCount) RefreshIndex(_builder!.CreatePartialIndex());
+    }
+
+    private void RefreshIndex(MarkupRandomAccessIndex index)
+    {
+        _isIndexStale = false;
+        _refreshedAtTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        _indexField = index;
+        _tableField = new MarkupCompactBlockTable(index, _file);
+    }
+
+    /// <summary>Feeds the index pass on by up to <paramref name="blocks"/> blocks (nothing rendered); saves the sidecar when it ends.</summary>
+    public int ScanAhead(int blocks)
+    {
+        lock (_readLock)
+        {
+            if (_builder is not { } builder) return _indexField.BlockCount;
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                builder.AdvanceUntilKnown((int)Math.Min(int.MaxValue, (long)builder.KnownBlockCount + Math.Max(1, blocks)));
+                if (builder.IsEveryBlockKnown) CompleteIndexLocked();
+                else _isIndexStale = true;
+                return _builder?.KnownBlockCount ?? _indexField.BlockCount;
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
+    private void CompleteIndexLocked()
+    {
+        MarkupRandomAccessIndex index = _builder!.Complete();
+        _builder = null;
+        RefreshIndex(index);
+        if (_sidecarPathToSave is null) return;
+        try { index.Save(_sidecarPathToSave); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }   // the sidecar is a cache
+    }
     public Encoding TextEncoding => _encoding;
 
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy, MarkupSourceKind kind)
@@ -58,8 +137,11 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         try
         {
             WordIndexDecision decision = policy.Decide(filePath, file.Length, cached is not null);
-            MarkupWindowedDocument document = OpenFromStream(file, filePath, kind, decision, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
-            if (decision.Mode == WordIndexMode.Sidecar && cached is null)
+            bool isOnDemand = decision.Mode == WordIndexMode.Sidecar && cached is null && policy.IndexesOnDemand;
+            MarkupWindowedDocument document = isOnDemand
+                ? OpenOnDemand(file, filePath, kind, decision, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation, indexPath)
+                : OpenFromStream(file, filePath, kind, decision, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
+            if (!isOnDemand && decision.Mode == WordIndexMode.Sidecar && cached is null)
             {
                 try { document._index.Save(indexPath); }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }   // the sidecar is a cache
@@ -87,17 +169,43 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
                 MarkupSourceKind.PlainText => MarkupRandomAccessIndexBuilder.BuildPlainText(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation),
                 _ => MarkupRandomAccessIndexBuilder.BuildWebArchive(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation),
             };
-        return new MarkupWindowedDocument(displayPath, file, index, decision);
+        return new MarkupWindowedDocument(displayPath, file, index, null, decision, sidecarPathToSave: null);
     }
 
-    private MarkupWindowedDocument(string filePath, Stream file, MarkupRandomAccessIndex index, WordIndexDecision decision)
+    /// <summary>
+    /// Returns once the first blocks are known (MHTML: and the 64 KB of body text the direction is read from); the rest of the
+    /// index is fed by <see cref="ScanAhead"/>.
+    /// </summary>
+    private static MarkupWindowedDocument OpenOnDemand(Stream file, string displayPath, MarkupSourceKind kind, WordIndexDecision decision, long sourceLength,
+                                                       long sourceLastWriteTicksUtc, IProgress<WordDocumentIndexProgress>? progress,
+                                                       CancellationToken cancellation, string sidecarPathToSave)
+    {
+        var builder = new MarkupIncrementalIndexBuilder(kind, file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
+        builder.AdvanceUntilKnown(OnDemandFirstBlockCount);
+        while (!builder.HasDirectionSample) builder.AdvanceUntilKnown(builder.KnownBlockCount + 1);
+        if (builder.IsEveryBlockKnown)
+        {
+            MarkupRandomAccessIndex whole = builder.Complete();
+            try { whole.Save(sidecarPathToSave); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+            return new MarkupWindowedDocument(displayPath, file, whole, null, decision, sidecarPathToSave: null);
+        }
+        builder.ClearCancellation();       // the open's cancellation stops the open only; later steps run under the host's own calls
+        return new MarkupWindowedDocument(displayPath, file, builder.CreatePartialIndex(), builder, decision, sidecarPathToSave);
+    }
+
+    private MarkupWindowedDocument(string filePath, Stream file, MarkupRandomAccessIndex index, MarkupIncrementalIndexBuilder? builder,
+                                   WordIndexDecision decision, string? sidecarPathToSave)
     {
         FilePath = filePath;
         _file = file;
-        _index = index;
-        _table = new MarkupCompactBlockTable(index, file);
+        _builder = builder;
+        _sidecarPathToSave = sidecarPathToSave;
+        _indexField = index;
+        _tableField = new MarkupCompactBlockTable(index, file);
         _encoding = MarkupTextEncoding.FromCodePage(index.CodePage);
         Decision = decision;
+        IsRightToLeft = index.IsRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(new WordRunFormatting(), index.IsRightToLeft)
                      + "\n.word-document .text-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1em; }"
                      + "\n.word-document .image-placeholder { color: #999; font-style: italic; }\n"
@@ -136,6 +244,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         fromBlock = Math.Max(0, fromBlock);
         lock (_readLock)
         {
+            CoverKnownBlocks(fromBlock + (long)Math.Max(1, maxBlocksToScan));
             if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
             try
             {
@@ -156,7 +265,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
                         if (matcher.Count > 0) { hits.Add(block); counts.Add(matcher.Count); }
                     }
                 }
-                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: true, _index.BlockCount);
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: _builder is null, _index.BlockCount);
             }
             finally { _releasableFile?.Release(); }
         }
@@ -166,6 +275,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     {
         lock (_readLock)
         {
+            CoverKnownBlocks(firstBlockIndex + (long)Math.Max(0, count));
             if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
             try { return _blockRenderGuard.Render(firstBlockIndex, count, _index.BlockCount, RenderBlocksLocked, _ => WordDocumentBlockKind.Paragraph); }
             finally { _releasableFile?.Release(); }

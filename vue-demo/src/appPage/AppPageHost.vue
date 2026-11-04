@@ -19,6 +19,11 @@ if (queryFile || tab.value.route !== '/fast-doc-view' || !tab.value.localFilePat
 
 const pathInput = ref(tab.value.localFilePath ?? '')
 const openCount = ref(0)
+/** False after close(): the page unmounts, as when the app's tab is closed (Playwright's cancel check). */
+const isPageShown = ref(true)
+function close() {
+  isPageShown.value = false
+}
 const pageKey = computed(() => `${tab.value.id}:${tab.value.localFilePath}:${openCount.value}`)
 
 // Server memory on demand (no timers in the page): heap / process / open documents, after an optional GC.
@@ -35,6 +40,7 @@ function open(path: string, options: { rebuildIndex?: boolean; forceSidecar?: bo
   if (!trimmed) return
   Object.assign(demoOpenOptions, options)
   pathInput.value = trimmed
+  isPageShown.value = true
   openCount.value++
   tabStore.updateActiveTab({ route: '/fast-doc-view', localFilePath: trimmed, title: trimmed.split(/[\/]/).pop() ?? trimmed })
 }
@@ -54,7 +60,7 @@ const navigation: PaneNavigation = {
 provide(PANE_NAVIGATION_KEY, navigation)
 
 // Playwright drives the page through the same open path the buttons use.
-;(window as unknown as { __fastDocViewDemo: { open: typeof open } }).__fastDocViewDemo = { open }
+;(window as unknown as { __fastDocViewDemo: { open: typeof open; close: typeof close } }).__fastDocViewDemo = { open, close }
 </script>
 
 <template>
@@ -74,7 +80,7 @@ provide(PANE_NAVIGATION_KEY, navigation)
       <span>{{ memory }}</span>
     </div>
     <div class="app-page-host-page">
-      <FastDocViewPage :key="pageKey" />
+      <FastDocViewPage v-if="isPageShown" :key="pageKey" />
     </div>
   </div>
 </template>

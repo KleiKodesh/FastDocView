@@ -619,6 +619,36 @@ cached index scans only until the first 100 blocks are known and returns.
   from 50 % ~1.6 s; the 87 MB-body sample first window ~80 ms, 10 % ~170 ms, 50 % ~0.8 s, end ~0.4 s.
   Heap at 50 %: 27 MB (synthetic) / 13 MB (sample).
 
+## On-demand first open for RTF, .txt and MHTML; cancellable opens (2026-11-04)
+
+The streaming formats now open like .docx / .odt: with `WordIndexPolicy.IndexesOnDemand` a sidecar open
+with no cached index returns after the first 100 blocks (MHTML: also after the 64 KB of body text its
+direction is read from), and `ScanAhead` runs the **same one pass** on, paused between calls.
+
+- RTF: `RtfRandomAccessIndexBuilder.Incremental` / `AdvanceUntilKnown` / `CreatePartialIndex` / `Complete`.
+  The main pass pauses the parser right after a block ends, as span rescans already did (`RtfParser.Fill`
+  seeks before every read, so windows may move the shared stream between steps). A partial index's last
+  span ends at the last known block's end, so `RtfCompactBlockTable` reads it unchanged. Notes and
+  bookmarks of the block still being read are left out; the open section is closed provisionally.
+  `FindBookmark` scans on until found; field lookups (mid-render) see only the known blocks.
+- .txt / MHTML: `MarkupIncrementalIndexBuilder` is the pass (the static `Build*` run it to the end). A
+  partial `MarkupRandomAccessIndex` (`IsPartial`, never saved) ends at the bytes read so far, past the
+  start of the block still being read; its last span rescans like a middle span, and
+  `MarkupCompactBlockTable.BlockEnd` of the last known block is the next block's start from that rescan.
+  `MarkupLineReader.Fill` now seeks (shared stream).
+- Documents re-make the partial index lazily (only when a window, search or lookup needs it after a scan
+  step). Direction and stylesheet are fixed at open. The finished index is byte-identical to the one-go
+  build (`--streaming-incremental`).
+- Measured (`--streaming-incremental`, 300k blocks): RTF 22.8 MB open 33 ms (first window 84 ms);
+  .txt 11.2 MB open 6 ms; MHTML 16.5-17.9 MB open 4 ms. Live (vue-demo): text shown after 133 ms (.txt)
+  and 303 ms (.rtf), count only grows.
+- .doc stays one-go: its index pass on the 40 MB sample is 0.5-0.9 s cold, and it is cancellable.
+- Cancellation: `WordWindowedDocumentSet.Open(..., cancellation)`; every builder checks the token per
+  step (also when the first blocks are already known). After an on-demand open returns, the token is
+  dropped: later steps run under the host's own scan calls. The app's service cancels by the page's open
+  id (`fastDocViewCancelOpen`) when the tab closes or another file replaces the open;
+  `playwright/cancelCheck.mjs` checks it live (dev server: `/api/open-cancel`, `/api/open-cancels`).
+
 ## Plain text and Word web archives (Markup/)
 
 **.txt is read as HTML** (user's decision): embedded tags render, `<h1>`-`<h6>` feed the outline.
@@ -1706,7 +1736,8 @@ horizontal-rel page / page-start-margin, RTF \shpbxpage / posrelh 1, .doc bx 1) 
 gutter; from the right margin area (rightMargin / outsideMargin, right- / outer-margin-area, page-end-margin) plus the text
 width. Inside / outside are taken as an odd page. A character / frame origin is not converted (left). The column start is
 stored per section next to the text width (index formats: .docx 16, RTF 9, ODT 11; .doc reads its SEP at open).
-Not done: a right-to-left section's gutter on the right (w:rtlGutter / tlgutter) - the gutter is always counted on the left.
+Not done: a right-to-left section's gutter on the right (w:rtlGutter / 
+tlgutter) - the gutter is always counted on the left.
 
 Contour wrap = CSS `shape-outside:polygon(...)` from `WordPictureContour.ShapeOutsideCss` (the outline's extreme on the
 text side per 1 pt row, at most 2000 rows; gap on the text side as shape-margin; through drawn as tight - a float keeps

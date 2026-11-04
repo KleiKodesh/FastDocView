@@ -58,6 +58,17 @@ app.MapGet("/api/folder", (string path) =>
     return Results.Ok(entries);
 });
 
+// opens still running, by the page's open id: /api/open-cancel stops one (the app's fastDocViewCancelOpen)
+var pendingOpens = new System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource>(StringComparer.Ordinal);
+int cancelledOpens = 0;
+app.MapPost("/api/open-cancel", (string openId) =>
+{
+    if (!pendingOpens.TryGetValue(openId ?? "", out CancellationTokenSource? source)) return Results.Ok(new { cancelled = false });
+    try { source.Cancel(); } catch (ObjectDisposedException) { return Results.Ok(new { cancelled = false }); }
+    return Results.Ok(new { cancelled = true });
+});
+app.MapGet("/api/open-cancels", () => Results.Ok(new { cancelledOpens }));
+
 app.MapPost("/api/documents", (OpenRequest request) =>
 {
     request = request with { Path = ResolvePath(request.Path) };
@@ -67,7 +78,15 @@ app.MapPost("/api/documents", (OpenRequest request) =>
     var progress = new Progress<WordDocumentIndexProgress>(p => lastProgress = p);
     var watch = Stopwatch.StartNew();
     string id;
-    try { id = documents.Open(request.Path, request.ForceSidecar == true ? WordIndexMode.Sidecar : null, progress); }
+    using var cancellation = new CancellationTokenSource();
+    bool isRegistered = !string.IsNullOrEmpty(request.OpenId) && pendingOpens.TryAdd(request.OpenId!, cancellation);
+    try { id = documents.Open(request.Path, request.ForceSidecar == true ? WordIndexMode.Sidecar : null, progress, cancellation.Token); }
+    catch (OperationCanceledException)
+    {
+        Interlocked.Increment(ref cancelledOpens);
+        Console.WriteLine($"open cancelled after {watch.Elapsed.TotalMilliseconds:0} ms: {Path.GetFileName(request.Path)}");
+        return Results.Ok(new { cancelled = true });          // 200, as the app's service answers (an error frame): no browser console noise
+    }
     catch (Exception exception) when (exception is not WordDocumentSourceChangedException)
     {
         // the same "FastDocViewOpenFailed:<code>: detail" text the app's Core sends (FastDocViewOpenFailedException)
@@ -82,6 +101,10 @@ app.MapPost("/api/documents", (OpenRequest request) =>
             _ => null,
         };
         return Results.BadRequest(new ErrorBody(code is null ? exception.Message : OpenFailedMessage(code, exception.Message)));
+    }
+    finally
+    {
+        if (isRegistered) pendingOpens.TryRemove(request.OpenId!, out _);
     }
     double openMilliseconds = watch.Elapsed.TotalMilliseconds;
     return UseDocument(id, document =>
@@ -186,7 +209,7 @@ app.Run();
 
 // ── wire shapes ────────────────────────────────────────────────────────────────────
 
-record OpenRequest(string Path, bool? ForceSidecar, bool? RebuildIndex);
+record OpenRequest(string Path, bool? ForceSidecar, bool? RebuildIndex, string? OpenId);
 record ErrorBody(string Error);
 record FolderEntry(string Path, string FileName, long FileBytes, string Mode, bool HasCachedIndex, long BodyBytes, long EstimatedIndexBytes, string Reason);
 record HeadingBody(int BlockIndex, int Level, string Text);

@@ -56,6 +56,11 @@ public sealed class MarkupRandomAccessIndex
     public int[] TextLengthGroupTotals { get; }
     public List<string> Stacks { get; }
     public WordDocumentHeading[] Headings { get; }
+    /// <summary>
+    /// The index of the blocks known so far while an on-demand first open is still scanning (never saved): its last span
+    /// ends at <see cref="TextEnd"/>, where the pass had read to, past the start of the block still being read.
+    /// </summary>
+    public bool IsPartial { get; init; }
 
     private Dictionary<string, int>? _stackIds;
     /// <summary>The interned stacks by text (what a span rescan's scanner shares), built on first use.</summary>
