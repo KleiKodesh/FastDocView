@@ -47,13 +47,13 @@ internal sealed class OdtShapeBuilder
 {
     private static readonly XNamespace Draw = OdtStyleCascade.Draw, Svg = OdtStyleCascade.Svg, Text = OdtStyleCascade.Text;
     private readonly OdtStyleCascade _styles;
-    private readonly double _officeVersion;
+    private readonly bool _gradientAngleIsTenths;
     private readonly Func<XElement, (string Id, (double W, double H)? Size)?>? _fillPicture;
 
-    public OdtShapeBuilder(OdtStyleCascade styles, double officeVersion, Func<XElement, (string Id, (double W, double H)? Size)?>? fillPicture)
+    public OdtShapeBuilder(OdtStyleCascade styles, bool gradientAngleIsTenths, Func<XElement, (string Id, (double W, double H)? Size)?>? fillPicture)
     {
         _styles = styles;
-        _officeVersion = officeVersion;
+        _gradientAngleIsTenths = gradientAngleIsTenths;
         _fillPicture = fillPicture;
     }
 
@@ -120,7 +120,7 @@ internal sealed class OdtShapeBuilder
 
     private OdtDrawnShape? Shape(XElement element)
     {
-        var drawn = new OdtDrawnShape { Element = element, Style = new OdtShapeStyle(_styles, (string?)element.Attribute(Draw + "style-name"), _officeVersion) };
+        var drawn = new OdtDrawnShape { Element = element, Style = new OdtShapeStyle(_styles, (string?)element.Attribute(Draw + "style-name"), _gradientAngleIsTenths) };
         WordShape shape = drawn.Shape;
         WordAffine transform = Transform((string?)element.Attribute(Draw + "transform") ?? (string?)element.Attribute(Svg + "transform"));
         double x = Length(element, Svg + "x"), y = Length(element, Svg + "y");
@@ -164,7 +164,7 @@ internal sealed class OdtShapeBuilder
                     { width = 2 * rx; height = 2 * ry; x = Length(element, Svg + "cx") - rx; y = Length(element, Svg + "cy") - ry; }
                 }
                 string kind = (string?)element.Attribute(Draw + "kind") ?? "full";
-                double Angle(string name) => OdtFillPaint.TenthDegrees((string?)element.Attribute(Draw + name), 1.3) / 10.0;     // convertAngle: degrees (converter.cxx:952-977)
+                double Angle(string name) => OdtFillPaint.TenthDegrees((string?)element.Attribute(Draw + name), unitlessIsTenths: false) / 10.0;     // convertAngle: degrees (converter.cxx:952-977)
                 (WordShapeSubpath outline, bool isClosed) = Ellipse(width, height, kind, Angle("start-angle"), Angle("end-angle"));
                 closedForFill = isClosed;
                 paths = [Path(outline, fill: isClosed)];

@@ -1258,14 +1258,19 @@ Sources: LibreOffice core master read 2026-11-04 (cited file:line in each class)
   angle units, intensities, loext gradient stops, step bands; transparency gradients as SVG masks (also over picture fills);
   hatches single / double / triple with background; bitmap fills stretch / repeat / no-repeat with ref point, offsets, row /
   column shift; dashes (XDash::CreateDotDashArray, the pool's default dash), joins (none = segments stroked apart), caps,
-  markers from draw:marker paths with width / centre and the notched-back rule. Steps 0 are drawn smooth (within one colour level).
+  markers from draw:marker paths with width / centre and the notched-back rule. Automatic steps (0) are banded like a set count:
+  calculateNumberOfSteps (colour distance x 127.5) bands per stop range, as the primitive decomposition draws them
+  (drawinglayer texture.cxx; the Windows VCL path) - only the Cairo renderer draws them smooth. Unitless draw:angle of
+  gradients / transparency gradients: tenths of a degree before ODF 1.2 and in ODF 1.2 written by OOo / AOO or LibreOffice
+  before 7 (tdf#89475, GradientStyle.cxx:115-128), decided per document from meta:generator (meta.xml / office:meta, read at
+  every open - a few hundred bytes - and classified as xmlmetai.cxx setBuildId + xmlimp.cxx DocumentInfo: `Odt/OdtGeneratorVersion.cs`).
+  Checked in --fidelity by `fidelity-v1-odt-angle-*.fodt` / `.odt` (OOo 3.2 / LibreOffice 7.3 / no generator).
 - **Text**: text areas with padding, vertical / horizontal alignment, writing mode; Fontwork through the shared
   WordOfficeArtFontwork (align from draw:fit-to-size / textarea-horizontal-align; LibreOffice does not use text-path-mode);
   text boxes: vertical alignment, painted fills, numbered lists and tables (a paragraph holding a box table becomes
   `div.word-paragraph-block` - a table inside a `<p>` is split by the HTML parser).
 - **Not possible / not done, with reason**: auto-grow of a shape to its text needs browser text metrics (LibreOffice-saved files
-  carry the grown size); contour-mode "full" and text on both sides of a float cannot be laid out in CSS (CSS Shapes 1 s.2); the
-  ODF 1.2 + LibreOffice 7 unitless-degree gradient angle needs meta.xml's generator, not read (1.2 = tenths).
+  carry the grown size); contour-mode "full" and text on both sides of a float cannot be laid out in CSS (CSS Shapes 1 s.2).
 - **Wrap**: style:wrap-contour = CSS shape-outside polygon from the outline (1 pt sweep) with shape-margin; page-anchored objects
   at body level are their own paragraph blocks (index format 9, which also keeps every graphic property and drawing style).
 - **Search**: shapes of every kind, lists / tables / sections in text boxes, lists in shapes, body-level drawings - once.
@@ -1639,7 +1644,8 @@ One engine in `Fields/` for .docx, .doc and .rtf; each format only finds the fie
   (A 110010011, B 101101101, C 110101011, D 111010111, E 101000101 - Wikipedia "Facing Identification Mark" from the USPS
   Domestic Mail Manual 708.9 / 202); ADVANCE \u / \d raise / lower the paragraph's later runs (position: relative) - \x / \y
   are page positions (paged view TODO).
-- RTF  \w walk back at most 4096 blocks and stop at another list's paragraph (\ls per block from the span scans);
+- RTF 
+ \w walk back at most 4096 blocks and stop at another list's paragraph (\ls per block from the span scans);
   STYLEREF looks at most 4096 blocks each way - every block read is a span rescan (no per-style table in the index).
 - RTF field lookups read through a second block table whose rescans compute no fields: a lookup runs while the document's
   table is mid-rescan and must not re-enter it.

@@ -25,7 +25,8 @@ public static class NotesWindowTest
             var expected = new List<WordDocumentNoteHtml>();
             for (int block = 0; block < document.BlockCount; block += 200) foreach (WordDocumentBlockHtml rendered in document.RenderBlocks(block, 200)) expected.AddRange(rendered.Notes);
             int noteCount = document.NoteReferences.Count;
-            TestReport.Check(noteCount > 0 && expected.Count == noteCount, $"{noteCount} references, the blocks deliver {expected.Count} notes");
+            bool isSynthetic = path == docx || path == odt || path == rtf;              // generated with notes; a real file may have none
+            TestReport.Check((noteCount > 0 || !isSynthetic) && expected.Count == noteCount, $"{noteCount} references, the blocks deliver {expected.Count} notes");
             var windowed = new List<WordDocumentNoteHtml>();
             for (int first = 0; first < noteCount; first += 7) windowed.AddRange(document.RenderNotes(first, 7));
             TestReport.Check(windowed.Count == noteCount, $"windows of 7 deliver {windowed.Count} notes");
@@ -34,7 +35,7 @@ public static class NotesWindowTest
             TestReport.Check(mismatches == 0, $"every windowed note equals the block's note ({mismatches} differ)");
             TestReport.Check(Enumerable.Range(0, noteCount).All(i => document.NoteReferences[i].Number == windowed[i].Number && document.NoteReferences[i].Kind == windowed[i].Kind),
                              "note i of the windows is reference i");
-            TestReport.Check(document.RenderNotes(noteCount, 5).Count == 0 && document.RenderNotes(-3, 2).Count == 2, "windows clamp to the notes");
+            TestReport.Check(document.RenderNotes(noteCount, 5).Count == 0 && document.RenderNotes(-3, 2).Count == Math.Min(2, noteCount), "windows clamp to the notes");
         }
     }
 }

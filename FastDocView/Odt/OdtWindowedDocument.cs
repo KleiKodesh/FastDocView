@@ -132,9 +132,10 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         {
             var content = new MemoryStream();
             OdtRandomAccessIndex index = OdtRandomAccessIndexBuilder.BuildFromPackage(file, indexingStyles, sourceLength, sourceLastWriteTicksUtc, progress, long.MaxValue, content, cancellation);
+            string? generator = OdtPackage.ReadGenerator(file, isFlat: false);
             file.Dispose();
             return new OdtWindowedDocument(displayPath, index, null, OdtBlockXmlReader.OverBytes(content.ToArray(), index),
-                                           RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null);
+                                           RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null, generator);
         }
 
         OdtRandomAccessIndex built = OdtRandomAccessIndexBuilder.BuildFromPackage(file, indexingStyles, sourceLength, sourceLastWriteTicksUtc, progress,
@@ -152,7 +153,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
 
     private static OdtWindowedDocument OverIndex(string displayPath, Stream file, OdtRandomAccessIndex index, WordIndexDecision decision)
         => new(displayPath, index, null, index.IsFlat ? OdtBlockXmlReader.OverFlatFile(file, index) : OdtBlockXmlReader.OverPackage(file, index),
-               RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null);
+               RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null, OdtPackage.ReadGenerator(file, index.IsFlat));
 
     /// <summary>
     /// Returns once the first blocks are known; the rest of the index is scanned as blocks are asked
@@ -174,7 +175,8 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
             return whole;
         }
         var document = new OdtWindowedDocument(displayPath, null, builder, OdtBlockXmlReader.OverIncrementalBuild(file, builder),
-                                               RenderingStyles(builder.StyleSectionElementsForRendering()), decision, sidecarPathToSave);
+                                               RenderingStyles(builder.StyleSectionElementsForRendering()), decision, sidecarPathToSave,
+                                               OdtPackage.ReadGenerator(file, isFlat));
         if (builder.IsEveryBlockKnown) document.CompleteIndexLocked();   // a short body: done already
         return document;
     }
@@ -196,7 +198,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     }
 
     private OdtWindowedDocument(string filePath, OdtRandomAccessIndex? index, OdtIncrementalIndexBuilder? builder, OdtBlockXmlReader reader,
-                                OdtStyleCascade styles, WordIndexDecision decision, string? sidecarPathToSave)
+                                OdtStyleCascade styles, WordIndexDecision decision, string? sidecarPathToSave, string? generator)
     {
         FilePath = filePath;
         _index = index;
@@ -205,7 +207,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         _sidecarPathToSave = sidecarPathToSave;
         _reader = reader;
         _styles = styles;
-        _renderer = new OdtBlockHtmlRenderer(styles);
+        _renderer = new OdtBlockHtmlRenderer(styles) { Generator = generator };
         Decision = decision;
         CountNewNoteReferences();
         IsRightToLeft = styles.IsDocumentRightToLeft;

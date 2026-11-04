@@ -11,9 +11,8 @@ namespace FastDocView.Odt;
 /// - colour stops: xmloff GradientStyle.cxx:60-145 (draw:start-color / end-color, start- / end-intensity blended toward black
 ///   per stop offset - basegfx bgradient.cxx:249-272 blendToIntensity; LibreOffice's loext:gradient-stop children :147-215
 ///   replace the two colours), angle :112-131 (sax Converter::convert10thDegAngle converter.cxx:878-912: "deg" / "grad" /
-///   "rad" units; a plain number is tenths of a degree for ODF older than 1.2, degrees from ODF 1.3 - ODF 1.2 files written
-///   by LibreOffice 7 or later also mean degrees but the generator is not read here, so 1.2 is taken as tenths, as every
-///   older writer meant); draw:cx / draw:cy default 0 (Gradient2 XOffset / YOffset = 0, :70-71); draw:border;
+///   "rad" units; a plain number is tenths of a degree before ODF 1.2 and in ODF 1.2 from OpenOffice.org / AOO or LibreOffice
+///   before 7, degrees otherwise - decided per document from meta:generator, <see cref="OdtGeneratorVersion.GradientAngleIsTenths"/>); draw:cx / draw:cy default 0 (Gradient2 XOffset / YOffset = 0, :70-71); draw:border;
 /// - geometry: basegfx/source/tools/gradienttools.cxx init1DGradientInfo :52-121 (linear, axial: the box grown to hold the
 ///   rotated gradient, rotated about its centre by -angle, the border at the start), initEllipticalGradientInfo :127-190
 ///   (radial: a circle of the box's diagonal; ellipsoid: the box times sqrt 2, rotated), initRectGradientInfo :196-270
@@ -23,8 +22,14 @@ namespace FastDocView.Odt;
 ///   getEllipticalGradientAlpha :641-667 (the aspect correction), getSquareGradientAlpha / getRectangularGradientAlpha :669-757;
 ///   outside the unit area the start colour (alpha 0);
 /// - steps: BColorStops::getInterpolatedBColor (bgradient.cxx:85-190) with calculateNumberOfSteps (gradienttools.cxx:479-497):
-///   draw:gradient-step-count bands of interpolate(start, end, floor(t n) / (n - 1)); 0 = as many as the colour distance
-///   allows (at most one band per two of 255 levels) - drawn smooth here, within one level of LibreOffice;
+///   draw:gradient-step-count bands of interpolate(start, end, k / (n - 1)) per stop range, one band of the start colour when
+///   n = 1; 0 (automatic) = as many as the colour distance allows (distance * 127.5 rounded, at least 1) - banded too, as the
+///   primitive decomposition draws every style (drawinglayer texture.cxx:169-222 GeoTexSvxGradientLinear and the same loop
+///   for axial :316-357, radial :425-461, elliptical :532-571, square :638-674, rect :745-784), which the Windows VCL / Skia
+///   processor uses for every gradient that is rotated, multi-stop, transparent or reaches outside its box
+///   (vclpixelprocessor2d.cxx:911-960; plain ones go to OutputDevice::DrawGradient, whose automatic count follows the device
+///   resolution - not reproduced, a document has no device); the Cairo renderer draws automatic steps smooth
+///   (cairopixelprocessor2d.cxx:3492-3504);
 /// - hatches: drawinglayer fillhatchprimitive2d.cxx:36-130 and texture.cxx:810-930 GeoTexSvxHatch (lines along the box grown
 ///   for the rotation, every draw:distance from its top, rotated by -draw:rotation about the centre; double adds the set at
 ///   rotation - 90 degrees, triple also rotation - 45; hairlines; draw:fill-hatch-solid fills the background first);
@@ -46,7 +51,7 @@ internal static class OdtFillPaint
     }
 
     /// <summary>A draw:gradient (or a draw:opacity as grey levels of opacity) as its model; null when the element is missing.</summary>
-    public static GradientModel? Gradient(XElement? element, bool isOpacity, double officeVersion, int steps)
+    public static GradientModel? Gradient(XElement? element, bool isOpacity, bool angleIsTenths, int steps)
     {
         if (element is null) return null;
         XNamespace draw = OdtStyleCascade.Draw;
@@ -54,7 +59,7 @@ internal static class OdtFillPaint
         model.CenterX = Percent((string?)element.Attribute(draw + "cx")) ?? 0;
         model.CenterY = Percent((string?)element.Attribute(draw + "cy")) ?? 0;
         model.Border = Math.Max(0, Math.Min(1, Percent((string?)element.Attribute(draw + "border")) ?? 0));
-        model.AngleRadians = TenthDegrees((string?)element.Attribute(draw + "angle"), officeVersion) / 10.0 * Math.PI / 180;
+        model.AngleRadians = TenthDegrees((string?)element.Attribute(draw + "angle"), angleIsTenths) / 10.0 * Math.PI / 180;
         if (isOpacity)
         {
             // grey = transparency (100 - opacity), stored as a byte (TransGradientStyle.cxx:108-127); the mask wants opacity
@@ -91,8 +96,8 @@ internal static class OdtFillPaint
         return model;
     }
 
-    /// <summary>sax Converter::convert10thDegAngle (converter.cxx:878-912) with xmloff's ODF-version rule (GradientStyle.cxx:112-131).</summary>
-    internal static double TenthDegrees(string? value, double officeVersion, bool alwaysTenths = false)
+    /// <summary>sax Converter::convert10thDegAngle (converter.cxx:878-912); <paramref name="unitlessIsTenths"/> is its isWrongOOo10thDegAngle.</summary>
+    internal static double TenthDegrees(string? value, bool unitlessIsTenths)
     {
         if (string.IsNullOrWhiteSpace(value)) return 0;
         string text = value!.Trim();
@@ -105,7 +110,7 @@ internal static class OdtFillPaint
             "deg" => angle * 10,
             "grad" => angle * 9,
             "rad" => angle * 1800 / Math.PI,
-            "" => alwaysTenths || officeVersion < 1.3 ? angle : angle * 10,
+            "" => unitlessIsTenths ? angle : angle * 10,
             _ => 0,
         };
         angle = Math.Round(angle) % 3600;
@@ -138,15 +143,9 @@ internal static class OdtFillPaint
             Stop a = stops[i], b = stops[i + 1];
             if (b.Offset <= a.Offset) continue;
             int n = StepCount(model.Steps, a, b);
-            if (n <= 1 || model.Steps == 0)
-            {
-                Add(a.Offset, (a.R, a.G, a.B));
-                Add(b.Offset, (b.R, b.G, b.B));
-                continue;
-            }
             for (int k = 0; k < n; k++)
             {
-                double f = k / (double)(n - 1);
+                double f = n == 1 ? 0 : k / (double)(n - 1);
                 var c = (a.R + (b.R - a.R) * f, a.G + (b.G - a.G) * f, a.B + (b.B - a.B) * f);
                 Add(a.Offset + (b.Offset - a.Offset) * k / n, c);
                 Add(a.Offset + (b.Offset - a.Offset) * (k + 1) / n, c);
