@@ -5,8 +5,11 @@ namespace FastDocView;
 /// (.docx) or a table row (.doc), or another body child; it is the unit the windowed viewer asks
 /// for. <see cref="Notes"/> holds the footnotes/endnotes this block references, already rendered,
 /// so a notes pane can follow the visible text without a second round trip (Word's draft view).
+/// <see cref="IsProvisional"/>: drawn before the index was final with something only the final index knows (an .odt connector glued
+/// to shapes whose geometry is recorded when the index completes) - the host fetches the block again once the index is complete.
 /// </summary>
-public sealed record WordDocumentBlockHtml(int BlockIndex, WordDocumentBlockKind Kind, string Html, IReadOnlyList<WordDocumentNoteHtml> Notes);
+public sealed record WordDocumentBlockHtml(int BlockIndex, WordDocumentBlockKind Kind, string Html, IReadOnlyList<WordDocumentNoteHtml> Notes,
+                                           bool IsProvisional = false);
 
 public enum WordDocumentBlockKind : byte
 {

@@ -36,7 +36,35 @@ public static class OdtConnectedShapesTest
             string paragraph = ConnectorPath(first[4]);
             TestReport.Check(FirstSegmentIsHorizontal(paragraph), $"{mode}: paragraph-anchored connector routed around shapes of other paragraphs ({paragraph})");
             // without the shapes the same ends would be routed as free points: a vertical Z (OdtConnectorRouteTest)
+            TestReport.Check(first.Count > 0, $"{mode}: rendered");
         }
+        RunFirstOpen();
+    }
+
+    /// <summary>
+    /// A first open that builds its index on demand: the shapes' table exists only once the index is final, so a glued connector drawn
+    /// before that is a free-point route marked provisional (the host fetches it again when the index completes); afterwards it is routed
+    /// around its shapes and no longer provisional.
+    /// </summary>
+    private static void RunFirstOpen()
+    {
+        string path = Path.Combine(TestReport.OutputDirectory, "cross-block-connectors-long-v1.fodt");
+        var tail = new StringBuilder();
+        for (int i = 0; i < 30000; i++) tail.Append("<text:p>filler paragraph ").Append(i).Append("</text:p>");
+        File.WriteAllText(path, Document().Replace("</office:text>", tail + "</office:text>"), new UTF8Encoding(false));
+        string cache = Path.Combine(TestReport.OutputDirectory, "index-cache-connectors-on-demand");
+        if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true);
+        var policy = new WordIndexPolicy { CacheDirectory = cache, ForcedMode = WordIndexMode.Sidecar, IndexesOnDemand = true };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+        TestReport.Check(!document.IsIndexComplete, "first open: the index is still being built");
+        IReadOnlyList<WordDocumentBlockHtml> early = document.RenderBlocks(0, 6);
+        TestReport.Check(early[2].IsProvisional && early[4].IsProvisional && !early[0].IsProvisional && !early[3].IsProvisional,
+                         "first open: glued connectors drawn before the index is final are provisional, other blocks are not");
+        document.ScanAhead(int.MaxValue);
+        TestReport.Check(document.IsIndexComplete, "first open: the index completes");
+        IReadOnlyList<WordDocumentBlockHtml> late = document.RenderBlocks(0, 6);
+        TestReport.Check(!late.Any(b => b.IsProvisional) && FirstSegmentIsHorizontal(ConnectorPath(late[2].Html)) && FirstSegmentIsHorizontal(ConnectorPath(late[4].Html)),
+                         $"first open: once the index is final the same blocks route around their shapes ({ConnectorPath(late[2].Html)})");
     }
 
     private static string ConnectorPath(string html)

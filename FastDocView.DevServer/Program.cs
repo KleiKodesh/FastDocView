@@ -125,7 +125,7 @@ app.MapGet("/api/documents/{id}/blocks", (string id, int first, int count, HttpR
     response.Headers["X-Known-Block-Count"] = document.KnownBlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Index-Complete"] = document.IsIndexComplete ? "true" : "false";
     return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, b.Html,
-        b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())).ToList());
+        b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList(), b.IsProvisional)).ToList());
 }));
 
 // One picture of a rendered block, by the id its <img data-word-picture> carries (the app service's GET
@@ -186,7 +186,7 @@ record DocumentSummary(string Id, string FileName, string Path, int BlockCount, 
 record NoteBody(string Kind, int Number, string Label, string Html);
 record NoteReferenceBody(string Kind, int Number, int BlockIndex);
 record ScanBody(int KnownBlockCount, bool IsIndexComplete, int FootnoteCount, int EndnoteCount);
-record BlockBody(int Index, int Kind, string Html, List<NoteBody> Notes);
+record BlockBody(int Index, int Kind, string Html, List<NoteBody> Notes, bool Provisional);
 record ProgressBody(long BytesDone, long BytesTotal, int BlocksFound);
 record MemoryBody(long ManagedHeapMegabytes, long WorkingSetMegabytes, int OpenDocuments);
 

@@ -55,6 +55,7 @@ public sealed partial class OdtBlockHtmlRenderer
             _shapeBuilder ??= new OdtShapeBuilder(_styles, GradientAngleIsTenths, FillPictureOf);
             _shapeBuilder.ConnectedShapes = ConnectedShapes;
             _shapeBuilder.CurrentBlockIndex = CurrentBlockIndex;
+            _shapeBuilder.IsRecordingProvisionalGlue = !_isMeasuringConnectedShapes;
             return _shapeBuilder;
         }
     }
@@ -63,16 +64,29 @@ public sealed partial class OdtBlockHtmlRenderer
     /// Index time: records the shapes with an id in one block (a block from <see cref="OdtRandomAccessIndex.ConnectedShapeBlocks"/>) - each
     /// outermost drawing object in it with the coordinates it stands in (<see cref="OdtConnectedShapeTable.FrameOf"/>).
     /// </summary>
+    private bool _isMeasuringConnectedShapes;
+
+    /// <summary>Whether the block just rendered drew a glued connector without its shapes (<see cref="WordDocumentBlockHtml.IsProvisional"/>).</summary>
+    internal bool LastBlockIsProvisional => _shapeBuilder?.UsedProvisionalGlue == true;
+
+    /// <summary>Starts a block: nothing provisional drawn yet.</summary>
+    internal void ResetProvisional() { if (_shapeBuilder is not null) _shapeBuilder.UsedProvisionalGlue = false; }
+
     internal void RecordConnectedShapes(XElement block, int blockIndex, Dictionary<string, OdtConnectedShape> into)
     {
         ConnectedShapes = null;          // the shapes are measured, never routed against a half-built table
         CurrentBlockIndex = blockIndex;
-        foreach (XElement element in block.DescendantsAndSelf())
+        _isMeasuringConnectedShapes = true;
+        try
         {
-            if (element.Name.Namespace != DrawNs || Array.IndexOf(OdtBodyBlockScanner.BodyDrawingNames, "draw:" + element.Name.LocalName) < 0) continue;
-            (string key, XElement outermost) = OdtConnectedShapeTable.FrameOf(element, blockIndex);
-            if (outermost == element) OdtConnectedShapeTable.Record(element, key, ShapeBuilder, into);
+            foreach (XElement element in block.DescendantsAndSelf())
+            {
+                if (element.Name.Namespace != DrawNs || Array.IndexOf(OdtBodyBlockScanner.BodyDrawingNames, "draw:" + element.Name.LocalName) < 0) continue;
+                (string key, XElement outermost) = OdtConnectedShapeTable.FrameOf(element, blockIndex);
+                if (outermost == element) OdtConnectedShapeTable.Record(element, key, ShapeBuilder, into);
+            }
         }
+        finally { _isMeasuringConnectedShapes = false; }
     }
 
     /// <summary>A draw:fill-image's picture id ("p:" + package entry, or "f:" + its name for inline data) and its own size.</summary>

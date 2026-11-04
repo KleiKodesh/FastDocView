@@ -387,9 +387,10 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
             _renderer.RootOpenTag ??= _blocks.RootOpenTag;
             _renderer.Pictures ??= ReadPicture;
             _renderer.ListStyles ??= _blocks.ListStyleNamed;
+            _renderer.ResetProvisional();
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), _blocks.ListLevelOf(blockIndex), _blocks.ListLabelLayoutOf(blockIndex),
                                                                                        _blocks.NoteReferencesInBlocks(blockIndex, blockIndex), null);
-            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes));
+            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes, _renderer.LastBlockIsProvisional));
         }
         return result;
     }
