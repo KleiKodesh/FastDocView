@@ -103,8 +103,8 @@ public static class OdtShapesFidelityTest
         TestReport.Check(html[2].Contains("display:block;margin:0pt auto 0pt auto;") && !html[2].Contains("float"), "centred parallel wrap: a centred block, text above and below (" + html[2] + ")");
         TestReport.Check(html[3].Contains("float:right;") && html[3].StartsWith("<p dir=\"rtl\"", StringComparison.Ordinal), "right-to-left paragraph: the box floats to its start side, right (" + html[3] + ")");
         string rectangle = html[4];
-        TestReport.Check(rectangle.Contains("<span class=\"word-shape\" style=\"position:relative;box-sizing:border-box;width:72pt;height:36pt;display:block;margin:0pt auto 0pt auto;\">"),
-                         "custom shape: a frame of its size, centred, wrap none = above and below (" + rectangle + ")");
+        TestReport.Check(rectangle.Contains("<span class=\"word-shape\" data-shape-page=\"72 36\" style=\"position:relative;box-sizing:border-box;width:72pt;height:36pt;display:block;margin:0pt auto 0pt auto;\">"),
+                         "custom shape: a frame of its size, centred, wrap none = above and below, marked for the page (it grows with its text: auto-grow default on) (" + rectangle + ")");
         // "rectangle" is drawn as a plain rectangle (EnhancedCustomShape2d.cxx:3042-3055); 0.03 in = 2.16 pt
         TestReport.Check(rectangle.Contains("<path d=\"M0 0L72 0L72 36L0 36Z\" fill-rule=\"evenodd\" fill=\"#ff0000\" stroke=\"none\"/>")
                          && rectangle.Contains("stroke=\"#000080\" stroke-width=\"2.16\" stroke-linejoin=\"round\""), "rectangle preset: fill and stroke from the graphic style, LibreOffice's round join");
