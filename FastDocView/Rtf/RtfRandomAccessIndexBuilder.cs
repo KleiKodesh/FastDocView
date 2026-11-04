@@ -243,6 +243,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             SectionTextWidths = _sectionTextWidths.ToArray(),
             // a bookmark after the last block's end (nothing followed it) marks the last block
             Bookmarks = new WordDocumentBookmarkTable(_bookmarkNames.ToArray(), _bookmarkBlocks.Select(block => Math.Min(block, Math.Max(0, _starts.Count - 1))).ToArray()),
+            IndexEntries = _indexEntries.ToArray(),
         };
     }
 
@@ -361,7 +362,23 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     public override void FieldStart(int depth) => _fields.Start(depth);
     public override void FieldModifier(RtfWord word) { if (word == RtfWord.FieldLock) _fields.Lock(); else _fields.Private(); }
     public override void FormField(Fields.WordFormFieldState state) => _fields.Form(state);
-    public override void FieldInstruction(string instruction) => _fields.Instruction(instruction);
+    public override void FieldInstruction(string instruction)
+    {
+        _fields.Instruction(instruction);
+        // XE / TA entries for a result-less INDEX / TOA (the full pass only; a field in another field's code is part of that code)
+        if (!_isSpanScan && _fields.Depth == 1 && WordFieldInstructionName(instruction) is "XE" or "TA")
+            _indexEntries.Add(Math.Max(0, _starts.Count).ToString(System.Globalization.CultureInfo.InvariantCulture) + "\u0001" + instruction);
+    }
+
+    private readonly List<string> _indexEntries = new();
+
+    private static string WordFieldInstructionName(string instruction)
+    {
+        string trimmed = instruction.TrimStart();
+        int end = 0;
+        while (end < trimmed.Length && char.IsLetter(trimmed[end])) end++;
+        return trimmed.Substring(0, end).ToUpperInvariant();
+    }
     public override void FieldResultStart() => SearchOutput(_fields.ResultStart(out _));
 
     private void SearchOutput(Fields.WordFieldOutput output)

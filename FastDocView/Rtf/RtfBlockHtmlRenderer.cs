@@ -133,7 +133,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         StringBuilder target = _listTextTarget ?? _flow.Inline;
         // \rtlch marks a right-to-left run (RTF 1.5 spec); inside an \ltrpar paragraph it is an RTL embedding, as w:rtl is
         bool isRunRightToLeft = _runState.RunType is RtfRunType.RightToLeftFirst or RtfRunType.LeftToRightThenRightToLeft;
-        string css = RunFormatting(_runState, IsComplexScript(text)).ToCss(_documentRun)
+        string css = RunFormatting(_runState, IsComplexScript(text)).ToCss(_documentRun) + BaselineShiftCss
                      + WordHtmlText.RunDirectionCss(isRunRightToLeft, _runState.Has(RtfStateFlags.RightToLeftParagraph));
         string encoded = WordHtmlText.Encode(text);
         if (css.Length == 0) { target.Append(encoded); return; }
@@ -244,6 +244,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _flow.HasInline = false;
         if (openLink is not null) _flow.Inline.Append(openLink);
         if (isTopLevel) _isFirstParagraph = false;
+        _baselineShift = 0;                                            // an ADVANCE up / down shift lasts to the paragraph end
 
         if (isInTable) CellOf(Math.Max(1, (int)state.NestingLevel)).Cell.Append(html);
         else _flow.Output.Append(html);
@@ -493,10 +494,17 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     public override void FieldInstruction(string instruction) => _fields.Instruction(instruction);
 
     /// <summary>A computed result or placeholder, in the current run's formatting, in the field's link when no link is open.</summary>
+
+    /// <summary>ADVANCE \u / \d: points the paragraph's later runs are raised (negative: lowered), as a relative offset.</summary>
+    private double _baselineShift;
+    private string BaselineShiftCss => _baselineShift == 0 ? "" : "position:relative;top:" + (-_baselineShift).ToString(System.Globalization.CultureInfo.InvariantCulture) + "pt;";
+
     private void AppendFieldOutput(Fields.WordFieldOutput output, string? link)
     {
         if (output.IsEmpty || _listTextTarget is not null) return;
         FlushRun();
+        _baselineShift += output.BaselineShiftPt;
+        if (output.Text is null && output.Html is null) return;
         bool wrap = link is not null && _flow.OpenLink is null;
         if (wrap) _flow.Inline.Append(link);
         if (output.Html is { } markup) _flow.Inline.Append(markup);
@@ -544,6 +552,13 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             linkFlow.OpenLink = null;
         }
         foreach ((Fields.WordFieldOutput output, string? link) in outputs) AppendFieldOutput(output, link);
+    }
+
+    /// <summary>{\*\bkmkend name}: an empty marker where the bookmark ends (REF without a result reads up to it).</summary>
+    public override void BookmarkEnd(string name)
+    {
+        FlushRun();
+        (_listTextTarget ?? _flow.Inline).Append("<span class=\"bookmark-end\" data-bookmark=\"").Append(WordHtmlText.Encode(name)).Append("\"></span>");
     }
 
     /// <summary>{\*\bkmkstart name}: the jump target of in-document links.</summary>

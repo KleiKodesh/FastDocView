@@ -120,6 +120,7 @@ internal sealed class DocBinaryFields
 
     private List<(int cp, WordFieldInstruction instruction)>? _countedFields;
     private (int cp, WordFieldSequenceCounters counters)? _lastCounters;
+    private (int cp, int level)[]? _headings;
 
     /// <summary>
     /// The counters as they stand at <paramref name="cp"/> in the main text: every counted field before it that is not inside
@@ -133,16 +134,20 @@ internal sealed class DocBinaryFields
         int fromCp;
         if (_lastCounters is { } last && last.cp <= cp) { counters = last.counters.Clone(); fromCp = last.cp; }
         else { counters = new WordFieldSequenceCounters(); fromCp = 0; }
-        var headingList = headings().Where(h => h.cp >= fromCp && h.cp < cp).ToList();
+        // the heading positions once, sorted; each call starts at the first one at or after its range (a binary search)
+        // (kept once there are any: during the index pass the list is not there yet)
+        var headingList = _headings ?? headings().OrderBy(h => h.cp).ToArray();
+        if (headingList.Length > 0) _headings = headingList;
         int nextHeading = 0;
+        { int low = 0, high = headingList.Length; while (low < high) { int middle = (low + high) / 2; if (headingList[middle].cp < fromCp) low = middle + 1; else high = middle; } nextHeading = low; }
         foreach ((int fieldCp, WordFieldInstruction instruction) in _countedFields)
         {
             if (fieldCp < fromCp) continue;
             if (fieldCp >= cp) break;
-            while (nextHeading < headingList.Count && headingList[nextHeading].cp <= fieldCp) counters.Heading(headingList[nextHeading++].level);
+            while (nextHeading < headingList.Length && headingList[nextHeading].cp <= fieldCp) counters.Heading(headingList[nextHeading++].level);
             WordFieldEvaluator.Count(instruction, counters);
         }
-        while (nextHeading < headingList.Count) counters.Heading(headingList[nextHeading++].level);
+        while (nextHeading < headingList.Length && headingList[nextHeading].cp < cp) counters.Heading(headingList[nextHeading++].level);
         _lastCounters = (cp, counters.Clone());
         return counters;
     }
@@ -163,6 +168,25 @@ internal sealed class DocBinaryFields
             counted.Add((_beginCps[i], WordFieldInstruction.Parse(code)));
         }
         return counted;
+    }
+
+    private List<(int cp, string code)>? _indexEntries;
+
+    /// <summary>The XE / TA codes of the main text (read once, on first need: a result-less INDEX / TOA in a window).</summary>
+    public List<(int cp, string code)> IndexEntries(Func<int, int, string> readText)
+    {
+        if (_indexEntries is not null) return _indexEntries;
+        var entries = new List<(int, string)>();
+        for (int i = 0; i < _beginCps.Length && _beginCps[i] < _mainTextEnd; i++)
+        {
+            if (InsideCode(i)) continue;
+            int codeEnd = _separatorCps[i] >= 0 ? _separatorCps[i] : Math.Min(_endCps[i], _mainTextEnd);
+            string head = readText(_beginCps[i] + 1, Math.Min(codeEnd, _beginCps[i] + 8)).TrimStart();
+            if (!head.StartsWith("XE", StringComparison.OrdinalIgnoreCase) && !head.StartsWith("TA", StringComparison.OrdinalIgnoreCase)) continue;
+            string code = new string(readText(_beginCps[i] + 1, codeEnd).Select(c => c < ' ' ? ' ' : c).ToArray());
+            if (WordFieldInstruction.Parse(code).Name is "XE" or "TA") entries.Add((_beginCps[i], code));
+        }
+        return _indexEntries = entries;
     }
 
     /// <summary>Whether a field sits in the code of a field around it.</summary>

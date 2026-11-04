@@ -54,6 +54,17 @@ public sealed class DocxStyleCascade
         }
     }
 
+    /// <summary>
+    /// The style id a STYLEREF names: by w:name (case-insensitive, as Word matches style names; built-in "heading 1" also as
+    /// "Heading 1"), else by id; null when no style has it.
+    /// </summary>
+    public string? StyleIdByName(string name)
+    {
+        foreach (KeyValuePair<string, XElement> pair in _stylesById)
+            if (string.Equals((string?)pair.Value.Element(W + "name")?.Attribute(W + "val"), name, StringComparison.OrdinalIgnoreCase)) return pair.Key;
+        return _stylesById.ContainsKey(name) ? name : null;
+    }
+
     /// <summary>The paragraph style resolved through its chain (cached), without direct formatting.</summary>
     public WordParagraphFormatting ResolveParagraphStyle(string? styleId)
     {

@@ -227,6 +227,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
         if (listLabel is { Length: > 0 }) AppendListLabel(html, listLabel, formatting);
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
         DocBinaryFieldReader fields = _fields ??= NewFieldReader(cpStart, restore: _textBoxDepth == 0);
+        _baselineShift = 0;
         if (fields.ReopenLink() is { } openLink) html.Append(openLink);   // a link field that runs on from the paragraph before
         foreach ((WordRunFormatting runFormatting, string text, bool isSpecial, int runCp, uint? picture) in CharacterRuns(cpStart, cpEnd, formatting.RunFormatting, styleBase))
             AppendRunHtml(html, runFormatting, formatting.RunFormatting, text, isSpecial, runCp, fields, noteLabel, picture);
@@ -485,7 +486,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
                                string text, bool isSpecial, int runCp, DocBinaryFieldReader fieldState, string? noteLabel, uint? picture = null)
     {
         var visible = new StringBuilder(text.Length);
-        string css = formatting.ToCss(paragraphBase) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft);
+        string css = formatting.ToCss(paragraphBase) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft) + BaselineShiftCss;
         void Flush()
         {
             if (visible.Length == 0) return;
@@ -507,7 +508,14 @@ public sealed class DocBinaryParagraphHtmlRenderer
             {
                 if (step.LinkClose) { Flush(); html.Append("</a>"); }
                 if (step.LinkOpen is { } linkOpen) { Flush(); html.Append(linkOpen); }
-                if (!step.Output.IsEmpty)
+                if (step.Output.BaselineShiftPt != 0)
+                {
+                    // the text after an ADVANCE \u / \d: a new span from here on
+                    Flush();
+                    _baselineShift += step.Output.BaselineShiftPt;
+                    css = formatting.ToCss(paragraphBase) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft) + BaselineShiftCss;
+                }
+                if (step.Output.Text is not null || step.Output.Html is not null)
                 {
                     // a computed result or placeholder, in the run's formatting, in the field's link when no link is open
                     if (step.OutputLink is { } outputLink) { Flush(); html.Append(outputLink); }
@@ -550,6 +558,11 @@ public sealed class DocBinaryParagraphHtmlRenderer
     }
 
     private int _textBoxDepth;
+
+    /// <summary>ADVANCE \u / \d: points the paragraph's later runs are raised (negative: lowered), as a relative offset.</summary>
+    private double _baselineShift;
+    private string BaselineShiftCss => _baselineShift == 0 ? "" : "position:relative;top:" + (-_baselineShift).ToString(System.Globalization.CultureInfo.InvariantCulture) + "pt;";
+
 
     /// <summary>
     /// A drawing object (shapes, a group, text boxes): a plain rectangle text box as <see cref="WordPictureHtml.OpenTextBox"/> with

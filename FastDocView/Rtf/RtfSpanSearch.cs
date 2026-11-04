@@ -16,6 +16,9 @@ internal sealed class RtfSpanSearch(WordDocumentSearchMatcher matcher, bool incl
     /// <summary>The document block index of the span's local block 0 (set per span).</summary>
     public int SpanFirstBlock { get; set; }
 
+    /// <summary>The fields' context: its current block follows the scan (REF / NOTEREF \p).</summary>
+    public Fields.WordFieldContext? FieldContext { get; init; }
+
     public void Text(ReadOnlySpan<char> text, RtfParser parser)
     {
         if (parser.IsInListText || (parser.IsInFootnote && !includeNotes)) return;
@@ -32,6 +35,7 @@ internal sealed class RtfSpanSearch(WordDocumentSearchMatcher matcher, bool incl
     /// <summary>Span-local block <paramref name="localIndex"/> ended: its matches are counted and the matcher starts afresh.</summary>
     public void BlockEnded(int localIndex)
     {
+        if (FieldContext is not null) FieldContext.CurrentBlock = SpanFirstBlock + localIndex + 1;
         if (matcher.Count > 0) { _hits.Add(SpanFirstBlock + localIndex); _counts.Add(matcher.Count); }
         matcher.Reset();
     }

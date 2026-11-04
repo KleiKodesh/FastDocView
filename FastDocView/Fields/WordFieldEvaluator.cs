@@ -25,10 +25,10 @@ public sealed class WordFormFieldState
 }
 
 /// <summary>What a field contributes: text (searched like any shown text) or HTML (EQ, SYMBOL, form controls, placeholders).</summary>
-public readonly record struct WordFieldOutput(string? Text, string? Html, bool IsSearchable)
+public readonly record struct WordFieldOutput(string? Text, string? Html, bool IsSearchable, double BaselineShiftPt = 0)
 {
     public static readonly WordFieldOutput None = new(null, null, false);
-    public bool IsEmpty => Text is null && Html is null;
+    public bool IsEmpty => Text is null && Html is null && BaselineShiftPt == 0;
 }
 
 /// <summary>
@@ -113,7 +113,13 @@ public static class WordFieldEvaluator
             case "MACROBUTTON": return Text(ButtonText(instruction.Code, wordsBeforeText: 2, wholeRest: true));
             // Word 16: GOTOBUTTON bm Go there → "Go" (only the first word unless quoted)
             case "GOTOBUTTON": return Text(instruction.Arguments.Count > 1 ? instruction.Arguments[1] : "");
-            case "ADVANCE": return new(null, AdvanceHtml(instruction), false);
+            // \u n / \d n raise / lower the text after the field (17.16.5.2): the readers shift the paragraph's later runs
+            case "ADVANCE": return new(null, AdvanceHtml(instruction), false, AdvanceShift(instruction));
+            case "NOTEREF": return NoteReference(instruction, context);
+            case "TOC": return TableOfContents(instruction, context);
+            case "INDEX": return BuiltIndex(instruction, context);
+            case "BARCODE": return Barcode(instruction, context);
+            case "TOA": return TableOfAuthorities(instruction, context);
         }
         if (IsCounted(instruction.Name))
         {
@@ -189,14 +195,208 @@ public static class WordFieldEvaluator
             }
             case "REF":
                 if (argument is null) return null;
-                if (instruction.Has("\\n") || instruction.Has("\\r") || instruction.Has("\\w") || instruction.Has("\\p")) return null;   // paragraph number / position: from the result only
-                return context.BookmarkText is null ? null : WordFieldValue.OfText(context.BookmarkText(argument) ?? ReferenceNotFound);
+                return Reference(instruction, argument, context);
+            case "STYLEREF": return StyleReference(instruction, context);
             default:
                 // { bookmark } is REF bookmark (17.16.5.47: "the REF field instruction may be omitted")
                 if (instruction.Arguments.Count == 0 && context.BookmarkText?.Invoke(instruction.Code.Trim().Split(' ')[0]) is { } bookmarkText)
                     return WordFieldValue.OfText(bookmarkText);
                 return null;
         }
+    }
+
+    /// <summary>Word 16's STYLEREF text when no paragraph has the style (Hebrew UI, as written on the dev machine).</summary>
+    public static string StyleNotFound(string style) => "שגיאה! השתמש בכרטיסיה בית כדי להחיל " + style + " על הטקסט שברצונך שיופיע כאן.";
+
+    /// <summary>
+    /// REF (17.16.5.47): the bookmark's text; \n \r \w its paragraph's number (Word 16: list label "1." → "1" for all three -
+    /// the trailing period dropped; our labels are the shown label, so a multi-level relative / full context is the label
+    /// as numbered); \p "above" / "below" (Word 16: \p alone → "above"; with \n → "1 above"; the word follows the text's
+    /// language - Hebrew text got "מתחת"; we write English).
+    /// </summary>
+    private static WordFieldValue? Reference(WordFieldInstruction instruction, string bookmark, WordFieldContext context)
+    {
+        bool number = instruction.Has("\\n") || instruction.Has("\\r") || instruction.Has("\\w");
+        bool position = instruction.Has("\\p");
+        bool isListComplete = context.IsBookmarkListComplete?.Invoke() ?? true;
+        if (!number && !position)
+        {
+            if (context.BookmarkText is null) return null;
+            return context.BookmarkText(bookmark) is { } text ? WordFieldValue.OfText(text) : isListComplete ? WordFieldValue.OfText(ReferenceNotFound) : null;
+        }
+        if (context.BookmarkBlock?.Invoke(bookmark) is not { } block) return context.BookmarkBlock is null || !isListComplete ? null : WordFieldValue.OfText(ReferenceNotFound);
+        var parts = new List<string>();
+        if (number && ParagraphNumber(block, context) is { Length: > 0 } label) parts.Add(label);
+        if (position && Position(block, context) is { } where) parts.Add(where);
+        return parts.Count == 0 ? null : WordFieldValue.OfText(string.Join(" ", parts));
+    }
+
+    private static string? ParagraphNumber(int block, WordFieldContext context)
+        => context.ListLabelOfBlock?.Invoke(block)?.Trim().TrimEnd('.');
+
+    private static string? Position(int block, WordFieldContext context)
+        => context.CurrentBlock is { } here ? (block <= here ? "above" : "below") : null;
+
+    /// <summary>NOTEREF (17.16.5.37): the note's mark; \f as a note reference (superscript); \p above / below; \h links (HyperlinkFieldTag).</summary>
+    private static WordFieldOutput NoteReference(WordFieldInstruction instruction, WordFieldContext context)
+    {
+        if (instruction.Arguments.Count == 0 || context.NoteMarkOfBookmark?.Invoke(instruction.Arguments[0]) is not { } mark)
+            return context.NoteMarkOfBookmark is null || instruction.Arguments.Count == 0 || !(context.IsBookmarkListComplete?.Invoke() ?? true)
+                ? WordFieldOutput.None : new(ReferenceNotFound, null, true);
+        string text = mark;
+        if (instruction.Has("\\p") && context.BookmarkBlock?.Invoke(instruction.Arguments[0]) is { } block && Position(block, context) is { } where) text += " " + where;
+        return instruction.Has("\\f")
+            ? new(text, "<span class=\"note-reference\">" + WordHtmlText.Encode(mark) + "</span>" + WordHtmlText.Encode(text.Substring(mark.Length)), true)
+            : new(text, null, true);
+    }
+
+    /// <summary>
+    /// STYLEREF "style" (17.16.5.59): the text of the nearest paragraph in the style - in a flow view the search runs back from
+    /// the field's paragraph (Word starts at the page; \l, which starts at the page's bottom, has no page here), then forward;
+    /// \n \r \w its number, \p above / below. A heading level number names "heading N" (Word accepts STYLEREF 1).
+    /// </summary>
+    private static WordFieldValue? StyleReference(WordFieldInstruction instruction, WordFieldContext context)
+    {
+        if (instruction.Arguments.Count == 0 || context.StyledParagraph is null || context.CurrentBlock is not { } here) return null;
+        string style = instruction.Arguments[0];
+        if (int.TryParse(style, NumberStyles.Integer, CultureInfo.InvariantCulture, out int level) && level is >= 1 and <= 9) style = "heading " + level;
+        (int block, string text)? found = context.StyledParagraph(style, here, false) ?? context.StyledParagraph(style, here, true);
+        if (found is not { } paragraph) return WordFieldValue.OfText(StyleNotFound(instruction.Arguments[0]));
+        bool number = instruction.Has("\\n") || instruction.Has("\\r") || instruction.Has("\\w");
+        if (!number && !instruction.Has("\\p")) return WordFieldValue.OfText(paragraph.text);
+        var parts = new List<string>();
+        if (number && ParagraphNumber(paragraph.block, context) is { Length: > 0 } label) parts.Add(label);
+        if (instruction.Has("\\p") && Position(paragraph.block, context) is { } where) parts.Add(where);
+        return WordFieldValue.OfText(string.Join(" ", parts));
+    }
+
+    /// <summary>
+    /// A TOC Word saved without a result, built from the document's headings (17.16.5.68): \o "a-b" heading levels (default
+    /// 1-9 as Word's \o without levels), \n "a-b" levels without page numbers, page numbers as placeholders (no pages in a
+    /// flow view); one line per heading inside the field's block. \h is not followed: in-document links go to bookmarks
+    /// (the app's only jump), and a heading Word has not indexed yet has no _Toc bookmark.
+    /// </summary>
+    private static WordFieldOutput TableOfContents(WordFieldInstruction instruction, WordFieldContext context)
+    {
+        if (context.Headings?.Invoke() is not { Count: > 0 } headings) return WordFieldOutput.None;
+        (int from, int to) Levels(string? range, (int, int) fallback)
+        {
+            if (range is not { Length: > 0 }) return fallback;
+            string[] ends = range.Split('-');
+            return int.TryParse(ends[0], out int a) && int.TryParse(ends[ends.Length - 1], out int b) ? (a, b) : fallback;
+        }
+        (int from, int to) levels = Levels(instruction.SwitchArgument("\\o"), (1, 9));
+        (int from, int to)? noNumbers = instruction.Has("\\n") ? Levels(instruction.SwitchArgument("\\n"), (1, 9)) : null;
+        var html = new StringBuilder("<span class=\"field-toc\" style=\"display:block\">");
+        var text = new StringBuilder();
+        foreach (WordDocumentHeading heading in headings)
+        {
+            if (heading.Level < levels.from || heading.Level > levels.to) continue;
+            html.Append("<span class=\"toc-line\" style=\"display:block;padding-inline-start:").Append((heading.Level - 1) * 1.5).Append("em\">");
+            html.Append(WordHtmlText.Encode(heading.Text));
+            if (noNumbers is not { } skip || heading.Level < skip.from || heading.Level > skip.to)
+                html.Append("<span class=\"toc-leader\"> </span><span class=\"field-page-placeholder\" title=\"PAGEREF\">#</span>");
+            html.Append("</span>");
+            text.Append(heading.Text).Append('\n');
+        }
+        html.Append("</span>");
+        return text.Length == 0 ? WordFieldOutput.None : new(text.ToString(), html.ToString(), true);
+    }
+
+    /// <summary>
+    /// An INDEX Word saved without a result, built from the XE entries (17.16.5.31 INDEX, 17.16.5.76 XE): "main:sub" levels,
+    /// sorted (ordinal, case-insensitive); each entry's page numbers as placeholders after \e's separator (", " by default);
+    /// XE \t cross-reference text instead of numbers; \f type filters entries (INDEX \f), \b ranges are not separate here.
+    /// One line per entry inside the field's block.
+    /// </summary>
+    private static WordFieldOutput BuiltIndex(WordFieldInstruction instruction, WordFieldContext context)
+    {
+        if (context.IndexEntries?.Invoke() is not { Count: > 0 } entries) return WordFieldOutput.None;
+        string separator = instruction.SwitchArgument("\\e") is { Length: > 0 } e ? e : ", ";
+        string? type = instruction.SwitchArgument("\\f");
+        var lines = new SortedDictionary<string, (string[] levels, string? crossReference, int count)>(StringComparer.OrdinalIgnoreCase);
+        foreach ((_, string code) in entries)
+        {
+            WordFieldInstruction entry = WordFieldInstruction.Parse(code);
+            if (entry.Name != "XE" || entry.Arguments.Count == 0) continue;
+            if (entry.SwitchArgument("\\f") != type) continue;            // INDEX \f type: only entries of that type; without it the untyped ones
+            string[] levels = entry.Arguments[0].Split(':').Select(level => level.Trim()).ToArray();
+            for (int depth = 1; depth <= levels.Length; depth++)
+            {
+                string key = string.Join("\u0001", levels.Take(depth));
+                lines.TryGetValue(key, out var line);
+                lines[key] = (levels.Take(depth).ToArray(), depth == levels.Length ? entry.SwitchArgument("\\t") ?? line.crossReference : line.crossReference,
+                              line.count + (depth == levels.Length ? 1 : 0));
+            }
+        }
+        if (lines.Count == 0) return WordFieldOutput.None;
+        var html = new StringBuilder("<span class=\"field-index\" style=\"display:block\">");
+        var text = new StringBuilder();
+        foreach ((string[] levels, string? crossReference, int count) in lines.Values)
+        {
+            html.Append("<span class=\"index-line\" style=\"display:block;padding-inline-start:").Append((levels.Length - 1) * 1.5).Append("em\">")
+                .Append(WordHtmlText.Encode(levels[levels.Length - 1]));
+            if (crossReference is not null) html.Append(WordHtmlText.Encode(separator + crossReference));
+            else for (int i = 0; i < count; i++) html.Append(WordHtmlText.Encode(i == 0 ? separator : ", ")).Append("<span class=\"field-page-placeholder\" title=\"PAGE\">#</span>");
+            html.Append("</span>");
+            text.Append(levels[levels.Length - 1]).Append(crossReference is null ? "" : separator + crossReference).Append('\n');
+        }
+        return new(text.ToString(), html.Append("</span>").ToString(), true);
+    }
+
+    /// <summary>
+    /// A TOA Word saved without a result, built from the TA entries (17.16.5.69 TOA, 17.16.5.67 TA): the long citations (\l)
+    /// of the category TOA \c names (all when absent), sorted, each with page placeholders; one line each inside the block.
+    /// </summary>
+    private static WordFieldOutput TableOfAuthorities(WordFieldInstruction instruction, WordFieldContext context)
+    {
+        if (context.IndexEntries?.Invoke() is not { Count: > 0 } entries) return WordFieldOutput.None;
+        string? category = instruction.SwitchArgument("\\c");
+        var citations = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach ((_, string code) in entries)
+        {
+            WordFieldInstruction entry = WordFieldInstruction.Parse(code);
+            if (entry.Name != "TA" || entry.SwitchArgument("\\l") is not { Length: > 0 } citation) continue;
+            if (category is { Length: > 0 } && entry.SwitchArgument("\\c") != category) continue;
+            citations.Add(citation);
+        }
+        if (citations.Count == 0) return WordFieldOutput.None;
+        var html = new StringBuilder("<span class=\"field-toa\" style=\"display:block\">");
+        foreach (string citation in citations)
+            html.Append("<span class=\"toa-line\" style=\"display:block\">").Append(WordHtmlText.Encode(citation))
+                .Append("<span class=\"toc-leader\"> </span><span class=\"field-page-placeholder\" title=\"PAGE\">#</span></span>");
+        return new(string.Join("\n", citations), html.Append("</span>").ToString(), true);
+    }
+
+    /// <summary>
+    /// BARCODE (17.16.5.4) as POSTNET bars in SVG: the ZIP / ZIP+4 / delivery-point digits (the argument, or with \b the
+    /// bookmark's text; the last 5, 9 or 11 digits found), a check digit making the digit sum a multiple of 10, two-of-five
+    /// bars per digit (full bars for the places 7 4 2 1 0; 0 = 11000) between two frame bars - the encoding as Wikipedia's
+    /// "POSTNET" gives it from USPS Publication 25 (2003). The FIM patterns (\f A / B / C) are not drawn: no source for them at hand.
+    /// </summary>
+    private static WordFieldOutput Barcode(WordFieldInstruction instruction, WordFieldContext context)
+    {
+        if (instruction.Arguments.Count == 0) return WordFieldOutput.None;
+        string source = instruction.Has("\b") ? context.BookmarkText?.Invoke(instruction.Arguments[0]) ?? "" : instruction.Arguments[0];
+        string digits = new string(source.Where(char.IsDigit).ToArray());
+        int length = digits.Length >= 11 ? 11 : digits.Length >= 9 ? 9 : digits.Length >= 5 ? 5 : 0;
+        if (length == 0) return WordFieldOutput.None;
+        digits = digits.Substring(digits.Length - length);
+        int sum = digits.Sum(d => d - '0');
+        digits += ((10 - sum % 10) % 10).ToString(CultureInfo.InvariantCulture);
+        string[] patterns = ["11000", "00011", "00101", "00110", "01001", "01010", "01100", "10001", "10010", "10100"];
+        string bars = "1" + string.Concat(digits.Select(d => patterns[d - '0'])) + "1";
+        var svg = new StringBuilder("<svg class=\"field-barcode\" role=\"img\" aria-label=\"").Append(WordHtmlText.Encode(digits))
+            .Append("\" viewBox=\"0 0 ").Append(bars.Length * 3).Append(" 10\" style=\"height:0.9em;width:").Append(bars.Length * 0.3).Append("em;vertical-align:baseline\">");
+        for (int i = 0; i < bars.Length; i++)
+            svg.Append("<rect x=\"").Append(i * 3).Append("\" y=\"").Append(bars[i] == '1' ? 0 : 6).Append("\" width=\"1.4\" height=\"").Append(bars[i] == '1' ? 10 : 4).Append("\" fill=\"currentColor\"/>");
+        return new(null, svg.Append("</svg>").ToString(), false);
+    }
+
+    private static double AdvanceShift(WordFieldInstruction instruction)
+    {
+        double Points(string s) => instruction.SwitchArgument(s) is { Length: > 0 } v && double.TryParse(v, NumberStyles.Number, CultureInfo.InvariantCulture, out double p) ? p : 0;
+        return Points("\\u") - Points("\\d");
     }
 
     private static string Quote(string word) => word.IndexOf(' ') >= 0 ? "\"" + word + "\"" : word;

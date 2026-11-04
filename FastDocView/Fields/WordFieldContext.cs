@@ -54,6 +54,33 @@ public sealed class WordFieldContext
     /// <summary>The text a bookmark marks (REF, and a bookmark name in a formula); null when the bookmark is not known here.</summary>
     public Func<string, string?>? BookmarkText { get; init; }
 
+    /// <summary>The block the field being rendered is in (REF / NOTEREF \p, STYLEREF's search start); set by the reader per block.</summary>
+    public int? CurrentBlock { get; set; }
+
+    /// <summary>
+    /// False while the bookmark list is still being built (an index scanning on): a bookmark not found yet is then unknown,
+    /// not missing - the field shows nothing rather than an error, and nothing scans the rest of the document mid-render.
+    /// </summary>
+    public Func<bool>? IsBookmarkListComplete { get; init; }
+
+    /// <summary>The block a bookmark starts in; null when it is not known (yet).</summary>
+    public Func<string, int?>? BookmarkBlock { get; init; }
+
+    /// <summary>A block's list label as shown ("2.a.", "ג."); null when the block is not a list item (REF / STYLEREF \n \r \w).</summary>
+    public Func<int, string?>? ListLabelOfBlock { get; init; }
+
+    /// <summary>The mark of the first note referenced in the bookmark's block (NOTEREF); null when none.</summary>
+    public Func<string, string?>? NoteMarkOfBookmark { get; init; }
+
+    /// <summary>The nearest paragraph in a style from a block, backward (forward = true: after it): its block and text (STYLEREF); null when none.</summary>
+    public Func<string, int, bool, (int block, string text)?>? StyledParagraph { get; init; }
+
+    /// <summary>The XE / TA field codes in the document with their blocks, as known now: an INDEX / TOA Word saved without a result is built from them.</summary>
+    public Func<IReadOnlyList<(int block, string code)>>? IndexEntries { get; init; }
+
+    /// <summary>The document's headings as known now: a TOC Word saved without a result is built from them.</summary>
+    public Func<IReadOnlyList<WordDocumentHeading>>? Headings { get; init; }
+
     /// <summary>The table a formula field sits in (null outside a table).</summary>
     public IWordFieldTable? Table { get; set; }
 

@@ -23,6 +23,8 @@ internal enum RtfDestination : byte
     /// <summary>{\*\fldinst ...} and {\*\bkmkstart name}: their text is captured and reported when the group closes.</summary>
     FieldInstruction,
     BookmarkStart,
+    /// <summary>The bookmark-end group (RTF 1.5 spec "Bookmarks"), captured like the start.</summary>
+    BookmarkEnd,
     /// <summary>{\*\formfield ...} inside a field's code: \fftype / \ffres / \ffdefres read, no text.</summary>
     FormField,
     /// <summary>{\*\ffl entry} / {\*\ffdeftext text} inside a form field: their text is the entry / the default.</summary>

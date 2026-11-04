@@ -302,6 +302,7 @@ public sealed class DocxBlockHtmlRenderer
 
         WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
         _isParagraphRightToLeft = formatting.IsRightToLeft;
+        _baselineShift = 0;
         if (_leaderTab is not null) html.Append("<span class=\"tab-before\">");
         if (_justifiedBreak is not null) html.Append("<span class=\"justified-lines\" style=\"display:block;text-align-last:justify\">");
         if (_listLabel is { Text.Length: > 0 } label)
@@ -398,7 +399,7 @@ public sealed class DocxBlockHtmlRenderer
         WordRunFormatting formatting = _styles.ResolveRun(paragraphBase, rPr);
         // The underline is drawn on the text pieces inside the run (not under word-only spaces, not under the paragraph's
         // trailing spaces); the strikethrough stays on the run's span, so the two never have to share one style.
-        string css = formatting.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft);
+        string css = formatting.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft) + BaselineShiftCss;
         bool hasSpan = css.Length > 0;
         string openTag = "<span style=\"" + css + "\">";
         if (hasSpan) { html.Append(openTag); _openInline.Add((openTag, "</span>")); }
@@ -448,6 +449,11 @@ public sealed class DocxBlockHtmlRenderer
 
     private bool FieldOutputShows() => _fields.OutputShows;
 
+    /// <summary>ADVANCE \u / \d: points the paragraph's later runs are raised (negative: lowered), as a relative offset.</summary>
+    private double _baselineShift;
+    private string BaselineShiftCss => _baselineShift == 0 ? "" : "position:relative;top:" + (-_baselineShift).ToString(System.Globalization.CultureInfo.InvariantCulture) + "pt;";
+
+
     /// <summary>
     /// w:fldSimple (17.16.19): the instruction in w:instr, its runs the cached result; w:dirty / w:fldLock as on w:fldChar.
     /// Rendered through the same field stack as complex fields.
@@ -475,8 +481,10 @@ public sealed class DocxBlockHtmlRenderer
     /// <summary>A field's computed result or page placeholder, in the field's link when it has one and no link is open.</summary>
     private void AppendFieldOutput(StringBuilder html, Fields.WordFieldOutput output, string? linkTag)
     {
-        if (output.IsEmpty) return;
-        bool wrap = linkTag is not null && _activeLinkOpenTag is null && ActiveFieldLink() is null;
+        _baselineShift += output.BaselineShiftPt;
+        if (output.Text is null && output.Html is null) return;
+        // (at a separator the field itself is the innermost: only a link around it counts as open)
+        bool wrap = linkTag is not null && _activeLinkOpenTag is null && (_fields.Depth > 0 && _fields.Fields[_fields.Depth - 1].LinkTag == linkTag ? _fields.OuterActiveLink : ActiveFieldLink()) is null;
         if (wrap) html.Append(linkTag);
         if (output.Html is { } markup) html.Append(markup);
         else html.Append(WordHtmlText.Encode(output.Text!));

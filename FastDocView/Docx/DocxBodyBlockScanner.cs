@@ -656,7 +656,11 @@ internal sealed class DocxBodyBlockScanner
         string code = System.Net.WebUtility.HtmlDecode(Encoding.UTF8.GetString(instruction.GetBuffer(), 0, (int)instruction.Length));
         var parsed = Fields.WordFieldInstruction.Parse(code);
         if (Fields.WordFieldEvaluator.IsCounted(parsed.Name)) Fields.WordFieldEvaluator.Count(parsed, _fieldCounters);
+        if (parsed.Name is "XE" or "TA") IndexEntries.Add(Math.Max(0, BlockStartOffsets.Count - 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + "\u0001" + code);
     }
+
+    /// <summary>XE / TA field codes and their blocks ("block U+0001 code"): an INDEX / TOA Word saved without a result is built from them.</summary>
+    public List<string> IndexEntries { get; } = new();
 
     private int OpenFieldStackId()
     {

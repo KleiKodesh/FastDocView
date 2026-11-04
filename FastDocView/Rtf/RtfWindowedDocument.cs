@@ -132,7 +132,8 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             try
             {
                 int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
-                var search = new RtfSpanSearch(matcher, options.IncludeNotes);
+                var search = new RtfSpanSearch(matcher, options.IncludeNotes) { FieldContext = _fieldContext };
+                _fieldContext.CurrentBlock = fromBlock;
                 if (fromBlock < end) _table.Search(fromBlock, end, search);
                 return WordDocumentSearchBatch.Finish(search.Hits, search.Counts, Math.Max(end, fromBlock), isIndexComplete: true, _index.BlockCount);
             }
@@ -158,6 +159,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
                 for (int blockIndex = fromBlock; blockIndex < end; blockIndex++)
                 {
                     matcher.Reset();
+                    _fieldContext.CurrentBlock = blockIndex;
                     _searchSink.Feed(_file, _table, blockIndex, matcher, options.IncludeNotes);
                     if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                 }
@@ -167,6 +169,8 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         }
     }
     private RtfSearchTextSink? _searchSink;
+
+    private static string PlainHtmlText(string html) => System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", ""));
     private readonly Fields.WordFieldContext _fieldContext;
     private bool _isReadingBookmarkText;
 
@@ -189,6 +193,13 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             DocumentVariable = name => Properties().Variable(name),
             FileName = Path.GetFileName(path), FilePath = path, FileSize = size,
             BookmarkText = BookmarkText,
+            BookmarkBlock = FindBookmark,
+            ListLabelOfBlock = block => block >= 0 && block < _index.BlockCount ? _table.ListLabelOf(block) : null,
+            NoteMarkOfBookmark = name => FindBookmark(name) is { } block && _index.NoteReferencesInBlock(block) is { Length: > 0 } notes ? notes[0].Label : null,
+            // the index keeps no paragraph style per block: STYLEREF finds heading styles ("heading N" / N) through the headings
+            StyledParagraph = (style, from, forward) => HeadingParagraph(style, from, forward),
+            Headings = () => _index.Headings,
+            IndexEntries = () => _index.IndexEntries.Select(Docx.FieldLookups.ParseEntry).ToList(),
         };
     }
 
@@ -197,6 +208,20 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     /// {\*kmkstart} only - RTF 1.5 "Bookmarks" - so the paragraph's rest stands for the bookmarked text); null when there
     /// is no such bookmark.
     /// </summary>
+    private (int block, string text)? HeadingParagraph(string style, int from, bool forward)
+    {
+        string lower = style.Trim().ToLowerInvariant();
+        if (!lower.StartsWith("heading ", StringComparison.Ordinal) || !int.TryParse(lower.Substring(8), out int level)) return null;
+        WordDocumentHeading? found = null;
+        foreach (WordDocumentHeading heading in _index.Headings)
+        {
+            if (heading.Level != level) continue;
+            if (!forward && heading.BlockIndex <= from) found = heading;
+            if (forward && heading.BlockIndex > from) { found = heading; break; }
+        }
+        return found is { } h ? (h.BlockIndex, h.Text) : null;
+    }
+
     private string? BookmarkText(string name)
     {
         if (_isReadingBookmarkText || FindBookmark(name) is not { } block) return null;
@@ -210,9 +235,23 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             try { html = renderer.Render(_file, _index, _table, block).html; }
             finally { _file.Position = position; }
             string marker = "id=\"" + Html.WordHtmlText.Encode(DocxHtml.DocxBlockHtmlRenderer.BookmarkElementId(name)) + "\"></span>";
+            string endMarker = "<span class=\"bookmark-end\" data-bookmark=\"" + Html.WordHtmlText.Encode(name) + "\"></span>";
             int at = html.IndexOf(marker, StringComparison.Ordinal);
             string after = at < 0 ? html : html.Substring(at + marker.Length);
-            return System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Replace(after, "<[^>]+>", "")).Trim();
+            // the text up to {\*\bkmkend}: in this block, else on through the next blocks (a bookmark over paragraphs)
+            var text = new System.Text.StringBuilder();
+            for (int next = block + 1; ; next++)
+            {
+                int end = after.IndexOf(endMarker, StringComparison.Ordinal);
+                if (end >= 0) { text.Append(PlainHtmlText(after.Substring(0, end))); break; }
+                text.Append(PlainHtmlText(after));
+                if (next >= _index.BlockCount || text.Length > 64 * 1024) break;
+                long nextPosition = _file.Position;
+                try { after = renderer.Render(_file, _index, _table, next).html; }
+                finally { _file.Position = nextPosition; }
+                text.Append(' ');
+            }
+            return text.ToString().Trim();
         }
         finally { _isReadingBookmarkText = false; }
     }
@@ -234,6 +273,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         var result = new List<WordDocumentBlockHtml>(Math.Max(0, end - first));
         for (int blockIndex = first; blockIndex < end; blockIndex++)
         {
+            _fieldContext.CurrentBlock = blockIndex;
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(_file, _index, _table, blockIndex);
             result.Add(new WordDocumentBlockHtml(blockIndex, _table.BlockKindOf(blockIndex), html, notes));
         }

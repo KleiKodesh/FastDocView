@@ -1,4 +1,4 @@
-# Builds fields-v1.doc and fields-v1.rtf with Word 16 (COM): one paragraph per field case, results as Word computes them.
+# Builds fields-v1.doc, fields-v1.rtf and fields-v1.docx with Word 16 (COM): one paragraph per field case, results as Word computes them.
 # Run from this folder: powershell -File make-fields-fixtures.ps1   (the harness reads the saved files; Word is not needed to test)
 $ErrorActionPreference = 'Stop'
 $dir = $PSScriptRoot
@@ -60,6 +60,7 @@ try {
     $d.Fields.Update() | Out-Null
     $d.SaveAs2("$dir\fields-v1.doc", 0)
     $d.SaveAs2("$dir\fields-v1.rtf", 6)
+    $d.SaveAs2("$dir\fields-v1.docx", 16)
     $i = 0
     foreach ($f in $d.Fields) { "{0}: {1} => [{2}]" -f $i, $f.Code.Text, $f.Result.Text; $i++ }
     $d.Close(0)

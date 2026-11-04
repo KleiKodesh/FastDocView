@@ -19,7 +19,7 @@ namespace FastDocView.Docx;
 public sealed class DocxRandomAccessIndex
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 14;     // 14: field counters (SEQ / AUTONUM / LISTNUM) in the open-field stacks; 12: compact per-block tables; 13: no per-block tables — span anchors + list counter state, one window store, Elias-Fano block lists
+    private const int FormatVersion = 15;     // 15: XE / TA entries;     // 14: field counters (SEQ / AUTONUM / LISTNUM) in the open-field stacks; 12: compact per-block tables; 13: no per-block tables — span anchors + list counter state, one window store, Elias-Fano block lists
     public const int TextLengthGroupSize = 64;
     /// <summary>Output bytes between span anchors: a random block rescans at most this much (~1-2 ms) on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
@@ -48,6 +48,15 @@ public sealed class DocxRandomAccessIndex
     /// <summary>Bookmarks in body order: name and the block it marks (see DocxBodyBlockScanner.BookmarkNames).</summary>
     public string[] BookmarkNames { get; private set; } = [];
     public int[] BookmarkBlocks { get; private set; } = [];
+
+    /// <summary>XE / TA field codes with their blocks ("block U+0001 code", DocxBodyBlockScanner.IndexEntries).</summary>
+    public string[] IndexEntries { get; private set; } = [];
+
+    internal DocxRandomAccessIndex WithIndexEntries(string[] entries)
+    {
+        IndexEntries = entries;
+        return this;
+    }
     private Dictionary<string, int>? _bookmarkLookup;
 
     public DocxRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, ZipEntryLocation documentEntry,
@@ -266,6 +275,8 @@ public sealed class DocxRandomAccessIndex
         IndexBinaryArrays.WriteCompressedStrings(writer, BookmarkNames);
         new EliasFanoSequence(BookmarkBlocks).Write(writer);
         Section($"bookmarks ({BookmarkNames.Length})");
+        IndexBinaryArrays.WriteCompressedStrings(writer, IndexEntries);
+        Section($"index entries ({IndexEntries.Length})");
         writer.Flush();
     }
 
@@ -324,12 +335,14 @@ public sealed class DocxRandomAccessIndex
         int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
         if (bookmarkBlocks.Length != bookmarkNames.Length || bookmarkBlocks.Any(block => block < 0 || block > blockCount))
             throw new InvalidDataException("Word index: bookmark table does not match the blocks.");
+        string[] indexEntries = IndexBinaryArrays.ReadCompressedStrings(reader);
 
         return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints, blockCount, anchors, groupTotals,
                                          headings, noteReferences, footnotesPart, endnotesPart)
             .WithOpenFieldPairs(openFieldBlocks, openFieldIds, openFieldStacks)
             .WithSections(sectionLastBlocks, sectionTextWidths)
-            .WithBookmarks(bookmarkNames, bookmarkBlocks);
+            .WithBookmarks(bookmarkNames, bookmarkBlocks)
+            .WithIndexEntries(indexEntries);
     }
 
     internal static ulong Zigzag(int value) => (ulong)(uint)((value << 1) ^ (value >> 31));

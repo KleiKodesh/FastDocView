@@ -16,7 +16,7 @@ public static class WordFieldsOtherFormatsTest
     {
         TestReport.Step("Word fields: .doc and .rtf (Word-saved fixtures, hand-written RTF)");
         string folder = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-fields");
-        foreach (string extension in new[] { ".doc", ".rtf" })
+        foreach (string extension in new[] { ".doc", ".rtf", ".docx" })
         {
             string path = Path.GetFullPath(Path.Combine(folder, "fields-v1" + extension));
             if (!File.Exists(path)) { TestReport.Check(false, $"test-data/word-fields/fields-v1{extension} present"); continue; }
@@ -97,7 +97,7 @@ public static class WordFieldsOtherFormatsTest
         // fields Word never saves this way: no \fldrslt (computed), \fldlock with a stale result, \fldpriv, a dropdown form field,
         // SEQ counting across many blocks (the counters ride the index's anchors), a hyperlink result across paragraphs
         var rtf = new StringBuilder(@"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Arial;}}{\info{\title Hand title}{\author Rivka}{\creatim\yr2024\mo3\dy5\hr10\min21}}{\*\userprops {\propname Client}\proptype30{\staticval Acme RTF}}{\*\docvar {Var1}{RtfVariable}}");
-        rtf.Append(@"\pard {\*\bkmkstart Target}Target text{\*\bkmkend Target}\par ");
+        rtf.Append(@"\pard {\*\bkmkstart Target}Target text{\*\bkmkend Target} not in the bookmark\par ");
         rtf.Append(@"\pard calc {\field{\*\fldinst = 6*7 }}\par ");
         rtf.Append(@"\pard locked {\field\fldlock{\*\fldinst = 1+1 }{\fldrslt staleresult}}\par ");
         rtf.Append(@"\pard private {\field\fldpriv{\*\fldinst PRIVATE data }{\fldrslt binarydata}}\par ");

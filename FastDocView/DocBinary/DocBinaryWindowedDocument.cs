@@ -171,7 +171,34 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
             FilePath = path,
             FileSize = size,
             BookmarkText = BookmarkText,
+            BookmarkBlock = FindBookmark,
+            ListLabelOfBlock = block => block >= 0 && block < BlockCount ? _table.ListLabelOf(block) : null,
+            NoteMarkOfBookmark = NoteMarkOfBookmark,
+            StyledParagraph = StyledParagraph,
+            Headings = () => _index is null ? [] : Headings,
+            IndexEntries = () => _renderer.FieldTable.IndexEntries(PieceTable.ReadText).Select(entry => (WithTable(() => _table.BlockAt(entry.cp)), entry.code)).ToList(),
         };
+    }
+
+    /// <summary>NOTEREF: the label of the first note referenced in the bookmark's block.</summary>
+    private string? NoteMarkOfBookmark(string name)
+    {
+        if (FindBookmark(name) is not { } block) return null;
+        ReadOnlySpan<DocBinaryNoteReferences.NoteReference> references = _notes.InRange(_table.BlockStartCp(block), _table.BlockEndCp(block));
+        return references.Length > 0 ? DocBinaryParagraphHtmlRenderer.NoteLabel(references[0]) : null;
+    }
+
+    /// <summary>STYLEREF: the nearest paragraph block in the named style (its PAPX istd, the style's STD name), backward from a block or forward after it.</summary>
+    private (int block, string text)? StyledParagraph(string styleName, int from, bool forward)
+    {
+        for (int block = forward ? from + 1 : Math.Min(from, BlockCount - 1); forward ? block < BlockCount : block >= 0; block += forward ? 1 : -1)
+        {
+            if (_table.BlockKindOf(block) == WordDocumentBlockKind.TableRow) continue;
+            int start = _table.BlockStartCp(block), end = _table.BlockEndCp(block);
+            if (_styles[_renderer.ResolveParagraph(start, end).styleIndex] is not { } style || !string.Equals(style.Name, styleName, StringComparison.OrdinalIgnoreCase)) continue;
+            return (block, _renderer.PlainText(start, end));
+        }
+        return null;
     }
 
     private byte[]? ReadPropertyStream(string name)
@@ -338,6 +365,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
                 {
                     int start, blockEnd;
                     matcher.Reset();
+                    if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex;
                     if (cursor is not null)
                     {
                         cursor.TryNext(out start, out blockEnd, out ReadOnlySpan<char> text);
@@ -393,6 +421,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         {
             int start = _table.BlockStartCp(blockIndex), end = _table.BlockEndCp(blockIndex);
             WordDocumentBlockKind kind = _table.BlockKindOf(blockIndex);
+            if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex;
             string html = kind == WordDocumentBlockKind.TableRow
                 ? _renderer.RenderRow(start, end)
                 : _renderer.Render(start, end, PreviousStyleKey(blockIndex), listLabel: _table.ListLabelOf(blockIndex));

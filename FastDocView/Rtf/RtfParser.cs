@@ -384,6 +384,7 @@ internal sealed class RtfParser
             string captured = _captured.ToString();
             _captured.Clear();
             if (_stack[_depth].Destination == RtfDestination.BookmarkStart) { if (captured.Trim().Length > 0) _sink.BookmarkStart(captured.Trim()); }
+            else if (_stack[_depth].Destination == RtfDestination.BookmarkEnd) { if (captured.Trim().Length > 0) _sink.BookmarkEnd(captured.Trim()); }
             else _sink.FieldInstruction(captured);
         }
         if (_shapes.Count > 0) CloseShapeGroup();
@@ -527,7 +528,7 @@ internal sealed class RtfParser
             return;
         }
         if (state.Destination >= RtfDestination.Shape) return;
-        if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart or RtfDestination.FormFieldText)
+        if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart or RtfDestination.BookmarkEnd or RtfDestination.FormFieldText)
         {
             if (_chars.Length < bytes.Length) _chars = new char[Math.Max(bytes.Length, _chars.Length * 2)];
             int decoded = RtfCodePages.Decode(bytes, state.CodePage, _chars);
@@ -548,7 +549,7 @@ internal sealed class RtfParser
             if (_sink.WantsText) { Span<char> one = stackalloc char[1]; one[0] = character; TextByteCount = 1; _sink.Text(one, state); }
             else _sink.TextLength(1, state);
         }
-        else if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart) _captured.Append(character);
+        else if (state.Destination is RtfDestination.FieldInstruction or RtfDestination.BookmarkStart or RtfDestination.BookmarkEnd) _captured.Append(character);
         else if (state.Destination == RtfDestination.FormFieldText) _formText.Append(character);
         else if (state.Destination is RtfDestination.ShapePropertyName or RtfDestination.ShapePropertyValue) _shapePropertyText.Append(character);
         else if (_readsHeaderTables && _headerDepth >= 0) HeaderCharacter(character);
@@ -736,9 +737,9 @@ internal sealed class RtfParser
                 _formTextIsEntry = word == RtfWord.FormFieldListEntry;
                 _formText.Clear();
                 return;
-            case RtfWord.FieldInstruction: case RtfWord.BookmarkStart:
+            case RtfWord.FieldInstruction: case RtfWord.BookmarkStart: case RtfWord.BookmarkEnd:
                 if (_captureDepth >= 0 || state.Destination is not (RtfDestination.Body or RtfDestination.Footnote or RtfDestination.TextBox)) { SkipGroup(name); return; }
-                state.Destination = word == RtfWord.BookmarkStart ? RtfDestination.BookmarkStart : RtfDestination.FieldInstruction;
+                state.Destination = word == RtfWord.BookmarkStart ? RtfDestination.BookmarkStart : word == RtfWord.BookmarkEnd ? RtfDestination.BookmarkEnd : RtfDestination.FieldInstruction;
                 _captureDepth = _depth;
                 _captured.Clear();
                 return;

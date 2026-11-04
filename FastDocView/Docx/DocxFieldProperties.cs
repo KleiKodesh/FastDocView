@@ -11,6 +11,19 @@ namespace FastDocView.Docx;
 /// 17.15.1.31). Field name → element as LibreOffice maps them (sw/source/writerfilter/dmapper/DomainMapper_Impl.cxx
 /// FIELD_AUTHOR / TITLE / SUBJECT / KEYWORDS / COMMENTS / LASTSAVEDBY → the matching document property).
 /// </summary>
+/// <summary>What a field looks up in the document's index (shared by the three formats' field contexts).</summary>
+internal sealed record FieldLookups(Func<string, int?> BookmarkBlock, Func<bool> IsBookmarkListComplete, Func<int, string?> ListLabelOfBlock,
+                                    Func<string, string?> NoteMarkOfBookmark, Func<string, int, bool, (int block, string text)?> StyledParagraph,
+                                    Func<IReadOnlyList<WordDocumentHeading>> Headings, Func<IReadOnlyList<(int block, string code)>> IndexEntries)
+{
+    /// <summary>A stored XE / TA entry, "block U+0001 code".</summary>
+    public static (int block, string code) ParseEntry(string entry)
+    {
+        int split = entry.IndexOf('\u0001');
+        return split > 0 && int.TryParse(entry.Substring(0, split), out int block) ? (block, entry.Substring(split + 1)) : (0, entry);
+    }
+}
+
 internal sealed class DocxFieldProperties
 {
     private static readonly XNamespace DublinCore = "http://purl.org/dc/elements/1.1/";
@@ -78,7 +91,7 @@ internal sealed class DocxFieldProperties
     public string? Variable(string name) => _variables.TryGetValue(name, out string? value) ? value : null;
 
     /// <summary>A field context over these properties, read on first use.</summary>
-    public static WordFieldContext Context(Func<DocxFieldProperties> properties, string filePath, Func<string, string?>? bookmarkText)
+    public static WordFieldContext Context(Func<DocxFieldProperties> properties, string filePath, Func<string, string?>? bookmarkText, FieldLookups lookups)
     {
         DocxFieldProperties? loaded = null;
         DocxFieldProperties Loaded() => loaded ??= properties();
@@ -93,6 +106,13 @@ internal sealed class DocxFieldProperties
             FilePath = filePath,
             FileSize = size,
             BookmarkText = bookmarkText,
+            BookmarkBlock = lookups.BookmarkBlock,
+            IsBookmarkListComplete = lookups.IsBookmarkListComplete,
+            ListLabelOfBlock = lookups.ListLabelOfBlock,
+            NoteMarkOfBookmark = lookups.NoteMarkOfBookmark,
+            StyledParagraph = lookups.StyledParagraph,
+            Headings = lookups.Headings,
+            IndexEntries = lookups.IndexEntries,
         };
     }
 }

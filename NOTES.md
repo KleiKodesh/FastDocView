@@ -1613,14 +1613,26 @@ One engine in `Fields/` for .docx, .doc and .rtf; each format only finds the fie
 - Switches: \* Arabic ArabicDash alphabetic / ALPHABETIC roman / ROMAN Ordinal OrdText CardText DollarText Hex hebrew1
   (up to 392) hebrew2 (one ת per 22 - Word's field rule, not the list rule) Upper Lower FirstCap Caps; a \* number format
   wins over \#; \# pictures (0 # x . , - + 'text', ; sections, half away from zero); \@ date pictures.
-- Not computed (the cached result shows; with none, nothing - as Word shows a field it has not updated): TOC / INDEX /
-  TOA building (a built table is new paragraphs, and the windowed block index cannot grow blocks inside a field - the
-  CLAUDE.md paradigm), STYLEREF, NOTEREF, REF \n \r \w \p (paragraph numbers), BARCODE, INCLUDETEXT / INCLUDEPICTURE (never
-  fetched), USERNAME / USERINITIALS / USERADDRESS without an argument (Word's user settings, not the document's).
-  ADVANCE \u \d \x \y move text in a page layout only. DATE \h / \s: Word 16 on a Hebrew system wrote the same Gregorian
+- Computed from the index too (2026-11-04, second pass): REF \n \r \w (the bookmarked paragraph's list label without its
+  trailing period - Word 16 wrote "1" for "1."; our label is the shown one, so relative / full context of multi-level lists
+  is that label) and \p ("above" / "below" against the field's block - English; Word writes the text's language);
+  NOTEREF (the first note mark in the bookmark's block; \f as a note reference, \p); STYLEREF (back from the field's block,
+  then forward - a flow view has no page for Word's page-relative search or \l; Word's Hebrew error when no paragraph has
+  the style; .docx by the index's per-block style ids and w:name, .doc by each paragraph's istd and STD name, .rtf through
+  the headings only - its index keeps no style per block - so "heading N" / N); TOC (\o / \n levels, built from the
+  index's headings inside the field's block, page numbers as placeholders; \h is not followed: the app jumps to bookmarks
+  only and a heading Word has not indexed has no _Toc bookmark); INDEX (XE "main:sub", \t, \e, \f; entries collected at
+  index time: .docx format 15, .rtf format 8, .doc read once from PlcFld on first need) and TOA (TA \l by \c category);
+  BARCODE as POSTNET bars in SVG (two-of-five places 7 4 2 1 0, check digit to a multiple of 10 - Wikipedia "POSTNET" from
+  USPS Publication 25; FIM \f patterns not drawn, no source at hand); ADVANCE \u / \d raise / lower the paragraph's later
+  runs (position: relative) - \x / \y are page positions (paged view TODO).
+- Bookmark lookups during a render never scan on: while the first open is still indexing, a bookmark not found yet is
+  unknown (the field shows nothing until the index completes), not missing. .doc SEQ \s heading positions are read once.
+- Still not computed: INCLUDETEXT / INCLUDEPICTURE (never fetched), USERNAME / USERINITIALS / USERADDRESS without an
+  argument (Word's user settings, not the document's). DATE \h / \s: Word 16 on a Hebrew system wrote the same Gregorian
   date with \h. Number words are English (Word 16 wrote English CardText for Hebrew text too); DollarText's "and" follows
   Word's UI language (the Hebrew UI wrote "ו-"; we write "and"); error texts are Word 16's Hebrew ones.
-- RTF REF without a result reads the bookmark's paragraph from {\*\bkmkstart} on (the parser does not read \bkmkend).
+- RTF REF without a result reads from {\*\bkmkstart} to {\*\bkmkend} (on into later blocks when the bookmark spans them).
 - **Paged view TODO**: PAGE / NUMPAGES / SECTION / SECTIONPAGES / PAGEREF placeholders get their numbers when the paged
   view lays out pages.
 - Harness: `--fields` (seconds; also in `--fidelity`): WordFieldsFidelityTest (switches, formulas, counters, .docx render

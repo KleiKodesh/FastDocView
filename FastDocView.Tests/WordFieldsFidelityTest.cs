@@ -19,6 +19,7 @@ public static class WordFieldsFidelityTest
         Formulas();
         Instructions();
         DocxRendering();
+        DocxLookups();
     }
 
     private static readonly WordFieldContext English = new() { Culture = CultureInfo.GetCultureInfo("en-US"), Now = new DateTime(2024, 3, 5, 14, 7, 9) };
@@ -311,6 +312,64 @@ public static class WordFieldsFidelityTest
             int[] reference = Hits(document, query, DocxWindowedDocument.DocxSearchTextMode.ReferenceXmlReader);
             TestReport.Check(bytes.SequenceEqual(expected) && reference.SequenceEqual(expected),
                              $"search \"{query}\": blocks [{string.Join(",", expected)}] (bytes [{string.Join(",", bytes)}], reference [{string.Join(",", reference)}])");
+        }
+    }
+
+    /// <summary>
+    /// Fields computed from the index: STYLEREF, NOTEREF, REF \n \p, TOC / INDEX / TOA built inside their block, BARCODE,
+    /// ADVANCE \u (expected values hand-worked: Word 16 wrote REF \n of list label "1." as 1, REF \n \p as "1 above").
+    /// </summary>
+    private static void DocxLookups()
+    {
+        const string styles = """
+            <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style>
+            <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style>
+            """;
+        const string numbering = """
+            <w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+            <w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>
+            """;
+        const string footnotes = """
+            <w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>
+            <w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>
+            <w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t>the note</w:t></w:r></w:p></w:footnote>
+            """;
+        string Heading(int level, string text) => $"<w:p><w:pPr><w:pStyle w:val=\"Heading{level}\"/></w:pPr>{Run(text)}</w:p>";
+        string body =
+            /* 0 */ "<w:p>" + Complex(" TOC \\o \"1-2\" ", null) + "</w:p>"
+            /* 1 */ + Heading(1, "Chapter one")
+            /* 2 */ + "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr><w:bookmarkStart w:id=\"5\" w:name=\"Item\"/>" + Run("Listed item") + "<w:bookmarkEnd w:id=\"5\"/></w:p>"
+            /* 3 */ + "<w:p>" + Run("see ") + Complex(" REF Item \\n ", null) + Run(" / ") + Complex(" REF Item \\n \\p ", null) + Run(" / ") + Complex(" REF Later \\p ", null) + "</w:p>"
+            /* 4 */ + "<w:p>" + Run("running ") + Complex(" STYLEREF \"heading 1\" ", null) + Run(" / ") + Complex(" STYLEREF 2 ", null) + Run(" / ") + Complex(" STYLEREF \"No such\" ", null) + "</w:p>"
+            /* 5 */ + Heading(2, "Section one-one")
+            /* 6 */ + "<w:p><w:bookmarkStart w:id=\"6\" w:name=\"Note1\"/>" + Run("noted") + "<w:r><w:footnoteReference w:id=\"1\"/></w:r><w:bookmarkEnd w:id=\"6\"/></w:p>"
+            /* 7 */ + "<w:p>" + Run("note ") + Complex(" NOTEREF Note1 ", null) + Run(" / ") + Complex(" NOTEREF Note1 \\f ", null) + "</w:p>"
+            /* 8 */ + "<w:p>" + Run("term") + Complex(" XE \"Apple:Green\" ", null) + Complex(" XE \"Banana\" ", null) + Complex(" TA \\l \"Smith v. Jones\" \\s \"Smith\" \\c 1 ", null) + "</w:p>"
+            /* 9 */ + "<w:p>" + Complex(" INDEX \\e \" - \" ", null) + "</w:p>"
+            /* 10 */ + "<w:p>" + Complex(" TOA \\c 1 ", null) + "</w:p>"
+            /* 11 */ + "<w:p>" + Run("zip ") + Complex(" BARCODE \"55555-1237\" \\u ", null) + "</w:p>"
+            /* 12 */ + "<w:p>" + Run("base") + Complex(" ADVANCE \\u 3 ", null) + Run("raised") + "</w:p>"
+            /* 13 */ + "<w:p><w:bookmarkStart w:id=\"7\" w:name=\"Later\"/>" + Run("later") + "<w:bookmarkEnd w:id=\"7\"/></w:p>";
+        List<string> html = DocxFidelityTest.RenderAll("fields-lookups-v1", body, styles, numbering, footnotes: footnotes);
+        TestReport.Check(Strip(html[0]).Contains("Chapter one") && Strip(html[0]).Contains("Section one-one") && html[0].Split("toc-line").Length == 3 && html[0].Contains("field-page-placeholder"),
+                         $"TOC without a result: built from the headings inside its block, page numbers as placeholders ({Strip(html[0])})");
+        TestReport.Check(Strip(html[3]) == "see 1 / 1 above / below", $"REF \\n / \\n \\p / \\p (Word 16: 1, 1 above): {Strip(html[3])}");
+        TestReport.Check(Strip(html[4]) == "running Chapter one / Section one-one / " + WordFieldEvaluator.StyleNotFound("No such"),
+                         $"STYLEREF: back to the nearest heading 1, forward to heading 2 when none is before, Word's error for a style no paragraph has: {Strip(html[4])}");
+        TestReport.Check(Strip(html[7]) == "note 1 / 1" && html[7].Contains("note-reference"), $"NOTEREF: the note's mark; \\f as a note reference: {Strip(html[7])}");
+        TestReport.Check(Strip(html[9]).Contains("Apple") && Strip(html[9]).Contains("Green") && Strip(html[9]).Contains("Banana") && html[9].Contains("index-line") && Strip(html[9]).Contains(" - "),
+                         $"INDEX without a result: built from the XE entries, levels and the \\e separator: {Strip(html[9])}");
+        TestReport.Check(Strip(html[10]).Contains("Smith v. Jones"), $"TOA \\c 1: the TA long citations of category 1: {Strip(html[10])}");
+        TestReport.Check(html[11].Contains("<svg class=\"field-barcode\"") && html[11].Contains("aria-label=\"5555512372\"") && html[11].Split("<rect").Length - 1 == 52,
+                         "BARCODE: POSTNET with check digit 2 (the worked example 55555-1237), 52 bars");
+        TestReport.Check(html[12].Contains("position:relative;top:-3pt") && html[12].IndexOf("base") < html[12].IndexOf("top:-3pt") && html[12].IndexOf("top:-3pt") < html[12].IndexOf("raised"),
+                         "ADVANCE \\u 3: the text after it is raised 3pt");
+        string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-fields-lookups-v1.docx");
+        using var document = (DocxWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-fields-lookups") });
+        foreach ((string query, int[] expected) in new (string, int[])[] { ("1 above", [3]), ("Chapter one", [0, 1, 4]), ("Section one-one", [0, 4, 5]), ("Smith v. Jones", [10]), ("Banana", [9]) })
+        {
+            int[] bytes = Hits(document, query, DocxWindowedDocument.DocxSearchTextMode.Bytes), reference = Hits(document, query, DocxWindowedDocument.DocxSearchTextMode.ReferenceXmlReader);
+            TestReport.Check(bytes.SequenceEqual(expected) && reference.SequenceEqual(expected), $"search \"{query}\": [{string.Join(",", expected)}] (bytes [{string.Join(",", bytes)}], reference [{string.Join(",", reference)}])");
         }
     }
 

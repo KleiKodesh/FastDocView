@@ -135,6 +135,17 @@ public sealed class WordFieldStack
         }
     }
 
+    /// <summary>The active link of the fields around the innermost one (whether a link is already open outside it).</summary>
+    public string? OuterActiveLink
+    {
+        get
+        {
+            for (int i = _fields.Count - 2; i >= 0; i--)
+                if (_fields[i].IsSeparated && !_fields[i].IsInsideInstruction && _fields[i].LinkTag is { } tag) return tag;
+            return null;
+        }
+    }
+
     /// <summary>The separator: the code is complete. Returns what shows in place of the cached result (empty: the cached result shows).</summary>
     public WordFieldOutput Separate()
     {

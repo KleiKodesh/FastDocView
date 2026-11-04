@@ -187,7 +187,9 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets, PictureId)
         {
             RelatedPart = ReadRelatedPart, PictureSize = ReadPictureSize, PartPictureId = PartPictureId,
-            FieldContext = DocxFieldProperties.Context(() => new DocxFieldProperties(parts.ReadPartXml, parts.PartNames.Settings), filePath, BookmarkText),
+            FieldContext = DocxFieldProperties.Context(() => new DocxFieldProperties(parts.ReadPartXml, parts.PartNames.Settings), filePath, BookmarkText,
+                                                       new FieldLookups(KnownBookmark, () => _index is not null, block => _blocks.ListLabelOf(block)?.Text, NoteMarkOfBookmark,
+                                                                        StyledParagraph, () => Headings, IndexEntries)),
         };
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
@@ -296,6 +298,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                 ? Enumerable.Range(groupStart, blockIndex - groupStart).Select(index => elements[index]).ToArray() : null;
             var neighbours = new DocxBlockNeighbours(ParagraphAt(groupStart - 1), ParagraphAt(blockIndex + 1), mergedBefore, IsFirstInContainer: groupStart == 0);
             string? previousStyleKey = blockIndex > 0 ? _blocks.StyleIdOf(blockIndex - 1) ?? "" : null;
+            if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex;
             string html = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), previousStyleKey, neighbours with { OpenFields = _blocks.OpenFieldsAt(groupStart) });
             result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, RenderNotesOf(blockIndex)));
         }
@@ -516,9 +519,37 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     /// The text a bookmark marks, for a REF field Word saved without a result: from w:bookmarkStart to its w:bookmarkEnd (same
     /// w:id) within the block that holds the start, or to the block's end; null when the bookmark does not exist.
     /// </summary>
+    private IReadOnlyList<(int block, string code)> IndexEntries()
+        => ((IReadOnlyList<string>?)_index?.IndexEntries ?? _builder!.KnownIndexEntries).Select(FieldLookups.ParseEntry).ToList();
+
+    /// <summary>A bookmark's block from what the index knows now - never scanning on (a lookup during a render).</summary>
+    private int? KnownBookmark(string name) => _index is { } index ? index.BlockOfBookmark(name) : _builder!.FindKnownBookmark(name);
+
+    /// <summary>NOTEREF: the label of the first note referenced in the bookmark's block.</summary>
+    private string? NoteMarkOfBookmark(string name)
+    {
+        if (KnownBookmark(name) is not { } block) return null;
+        foreach (DocxNoteReference reference in _blocks.NoteReferencesInBlocks(block, block))
+            return ResolveNoteLabel(reference.Kind, reference.NoteId) is { } label ? label.label : null;
+        return null;
+    }
+
+    /// <summary>STYLEREF: the nearest paragraph in the style (by the index's per-block style ids), backward from a block or forward after it.</summary>
+    private (int block, string text)? StyledParagraph(string styleName, int from, bool forward)
+    {
+        if (_styles.StyleIdByName(styleName) is not { } styleId) return null;
+        int count = _blocks.BlockCount;
+        for (int block = forward ? from + 1 : Math.Min(from, count - 1); forward ? block < count : block >= 0; block += forward ? 1 : -1)
+        {
+            if (_blocks.StyleIdOf(block) != styleId) continue;
+            foreach ((int _, XElement read) in _blockReader.ReadBlocks(block, 1)) return (block, DocxBlockHtmlRenderer.PlainText(read));
+        }
+        return null;
+    }
+
     private string? BookmarkText(string name)
     {
-        if (FindBookmark(name) is not { } block) return null;
+        if (KnownBookmark(name) is not { } block) return null;
         XElement? element = null;
         lock (_readLock)
             foreach ((int _, XElement read) in _blockReader.ReadBlocks(block, 1)) element = read;
@@ -648,6 +679,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                         foreach (string drawing in drawings) FeedDrawing(null, drawing, matcher);
                         drawings.Clear();
                         if (options.IncludeNotes) FeedNotes(blockIndex, matcher, mode);
+                        if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex + 1;   // REF \p reads the field's block
                         if (matcher.Count > 0)
                         {
                             hits.Add(blockIndex);
@@ -672,6 +704,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                             matcher.Reset();
                             _searchText.DrawingRelationshipIds.Clear();
                             _searchFields.Restore(_blocks.OpenFieldsAt(scanFrom));      // the fields open where the piece starts
+                            if (_renderer.FieldContext is { } pieceContext) pieceContext.CurrentBlock = scanFrom;
                             WordSearchBlocksResult result = _searchText.FeedBlocks(buffer.AsSpan(start, length), scanFrom, pieceEnd, matcher, BlockEnded, out long stoppedAt);
                             pieceStartOffset = -1;
                             WordSearchPieceVerdict verdict = WordSearchPiece.Judge(result, isEndExact, stoppedAt, length);
@@ -709,6 +742,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                             _searchText.DrawingRelationshipIds.Clear();
                             _referenceDrawingIds.Clear();
                             _searchFields.Restore(_blocks.OpenFieldsAt(blockIndex));
+                            if (_renderer.FieldContext is { } blockContext) blockContext.CurrentBlock = blockIndex;
                             if (mode == DocxSearchTextMode.ReferenceXmlReader) _referenceSearchText!.FeedOoxml(bytes, start, length, matcher, _referenceDrawingIds, _searchFields);
                             else _searchText.Feed(bytes, start, length, matcher);
                             BlockEnded(blockIndex);

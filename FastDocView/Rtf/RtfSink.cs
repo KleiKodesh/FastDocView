@@ -69,6 +69,8 @@ internal abstract class RtfSink
     public virtual void FormField(Fields.WordFormFieldState state) { }
     /// <summary>{\*\bkmkstart name} closed: a bookmark starts here.</summary>
     public virtual void BookmarkStart(string name) { }
+    /// <summary>{\*\bkmkend name}: the bookmark's end (REF without a result shows the text between).</summary>
+    public virtual void BookmarkEnd(string name) { }
 }
 
 /// <summary>A picture: shown size in twips (0 = unknown), the blip type's file extension ("" = a type a browser cannot show),

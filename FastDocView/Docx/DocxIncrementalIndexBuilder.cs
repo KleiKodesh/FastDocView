@@ -24,6 +24,9 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
     private readonly long _totalBytes;
     private readonly DocxEntryInflationCursor _bodyCursor;
     private readonly DocxBodyBlockScanner _scanner;
+
+    /// <summary>The XE / TA entries met so far ("block U+0001 code").</summary>
+    public IReadOnlyList<string> KnownIndexEntries => _scanner.IndexEntries;
     private readonly DocxIndexAnchorRecorder _anchors;
     private readonly DocxIncrementalNotesPart? _footnotes;
     private readonly DocxIncrementalNotesPart? _endnotes;
