@@ -1533,3 +1533,8 @@ EnhancedCustomShapeGeometry.cxx (default filling / stroking tables :6155-6213); 
   device pixel wide) between the two curves; the bent image replaces the paint, the text stays (transparent) for selection.
   The writer marks each line with data-fontwork-* attributes (`WordShapeHtml.AppendTextOnPaths`); without the page's script the
   midline layout above remains. Live check: `vue-demo/playwright/fontworkCheck.mjs`.
+- **2026-11-04, bent text keeps its paint and stays sharp**: the page bends a white coverage mask and paints a rectangle with
+  the text's own fill through it (a gradient / pattern paint is kept, as Fontwork fills its outlines with the shape's fill);
+  it bends again when the page zoom or the device pixel ratio changes. Fixture: `fidelity-v1-fontwork-curved.fodt` (inflate
+  with a gradient, wave) saved as .doc by LibreOffice (DocBinaryShapesFidelityTest); live:
+  `vue-demo/playwright/fontworkCheck.mjs <rtf fixture> <curved .doc>` (curved bending, gradient paint, pixel ratio 1 -> 2, Ctrl + =).

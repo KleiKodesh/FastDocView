@@ -66,6 +66,38 @@ public static class DocBinaryShapesFidelityTest
                              "LibreOffice .doc Fontwork: the WordArt string set on the shape's outlines, no outline drawn (" + html + ")");
         }
 
+        TestReport.Step(".doc shapes: curved paired-outline Fontwork (inflate with a gradient, wave) saved as .doc by LibreOffice");
+        string curved = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-fontwork-curved.fodt");
+        const string CurvedDocument = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+            + "xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+            + "xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" "
+            + "office:version=\"1.3\" office:mimetype=\"application/vnd.oasis.opendocument.text\">"
+            + "<office:styles><draw:gradient draw:name=\"G1\" draw:style=\"linear\" draw:start-color=\"#ff0000\" draw:end-color=\"#0000ff\" draw:angle=\"0deg\" draw:border=\"0%\"/></office:styles>"
+            + "<office:automatic-styles><style:style style:name=\"Grad\" style:family=\"graphic\"><style:graphic-properties draw:fill=\"gradient\" draw:fill-gradient-name=\"G1\"/></style:style>"
+            + "<style:style style:name=\"Blue\" style:family=\"graphic\"><style:graphic-properties draw:fill=\"solid\" draw:fill-color=\"#0000ff\"/></style:style></office:automatic-styles>"
+            + "<office:body><office:text><text:p>"
+            + "<draw:custom-shape draw:style-name=\"Grad\" text:anchor-type=\"paragraph\" svg:width=\"3in\" svg:height=\"1in\" svg:x=\"0in\" svg:y=\"0in\"><text:p>InflateText</text:p>"
+            + "<draw:enhanced-geometry svg:viewBox=\"0 0 21600 21600\" draw:type=\"fontwork-inflate\" draw:text-path=\"true\" draw:text-path-mode=\"shape\" draw:text-path-scale=\"shape\"/></draw:custom-shape>"
+            + "</text:p><text:p>"
+            + "<draw:custom-shape draw:style-name=\"Blue\" text:anchor-type=\"paragraph\" svg:width=\"3in\" svg:height=\"1in\" svg:x=\"0in\" svg:y=\"0in\"><text:p>WaveText</text:p>"
+            + "<draw:enhanced-geometry svg:viewBox=\"0 0 21600 21600\" draw:type=\"fontwork-wave\" draw:text-path=\"true\" draw:text-path-mode=\"shape\" draw:text-path-scale=\"shape\"/></draw:custom-shape>"
+            + "</text:p></office:text></office:body></office:document>";
+        if (!File.Exists(curved) || File.ReadAllText(curved) != CurvedDocument) File.WriteAllText(curved, CurvedDocument);
+        if (LibreOfficeConversion.Convert(curved, ".doc", "doc:MS Word 97") is { } curvedDoc)
+        {
+            string html = string.Concat(Render(curvedDoc));
+            foreach (string word in new[] { "InflateText", "WaveText" })
+            {
+                int shown = Occurrences(Tags.Replace(html, ""), word), found = SearchCount(curvedDoc, word);
+                TestReport.Check(shown == 1 && found == 1, $"LibreOffice .doc curved Fontwork: '{word}' shown {shown}, found {found}, expected 1 / 1");
+            }
+            var upper = System.Text.RegularExpressions.Regex.Matches(html, "data-fontwork-upper=\"([^\"]*)\"").Select(m => m.Groups[1].Value).ToList();
+            bool curvedOutline = upper.Any(d => System.Text.RegularExpressions.Regex.Matches(d, @"L[-\d.]+ ([-\d.]+)").Select(m => m.Groups[1].Value).Distinct().Count() > 3);
+            TestReport.Check(upper.Count >= 2 && curvedOutline, $"LibreOffice .doc curved Fontwork: paired outlines, curved ({upper.Count} pairs)");
+            TestReport.Check(System.Text.RegularExpressions.Regex.IsMatch(html, "<text [^>]*fill=\"url\\(#word-officeart-gradient-[^>]*data-fontwork=\"pair\""),
+                             "LibreOffice .doc curved Fontwork: the inflate's text keeps its gradient paint (" + html + ")");
+        }
+
         TestReport.Step(".doc shapes: a header with a text box and a shape (PlcSpaHdr, the header text-box story) saved by LibreOffice");
         string header = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-header-shapes.fodt");
         const string HeaderDocument = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
