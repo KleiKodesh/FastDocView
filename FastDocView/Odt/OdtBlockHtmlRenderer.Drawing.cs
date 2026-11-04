@@ -45,7 +45,33 @@ public sealed partial class OdtBlockHtmlRenderer
         }
     }
 
-    private OdtShapeBuilder ShapeBuilder => _shapeBuilder ??= new OdtShapeBuilder(_styles, GradientAngleIsTenths, FillPictureOf);
+    /// <summary>The shapes connectors may be glued to, by id (the index's <see cref="OdtConnectedShapeTable"/>, or the part known while it is built).</summary>
+    internal Func<string, OdtConnectedShape?>? ConnectedShapes { get; set; }
+
+    private OdtShapeBuilder ShapeBuilder
+    {
+        get
+        {
+            _shapeBuilder ??= new OdtShapeBuilder(_styles, GradientAngleIsTenths, FillPictureOf);
+            _shapeBuilder.ConnectedShapes = ConnectedShapes;
+            _shapeBuilder.CurrentBlockIndex = CurrentBlockIndex;
+            return _shapeBuilder;
+        }
+    }
+
+    /// <summary>
+    /// Index time: records the shapes with an id in one block (a block from <see cref="OdtRandomAccessIndex.ConnectedShapeBlocks"/>) - each
+    /// outermost drawing object in it with the coordinates it stands in (<see cref="OdtConnectedShapeTable.FrameOf"/>).
+    /// </summary>
+    internal void RecordConnectedShapes(XElement block, int blockIndex, Dictionary<string, OdtConnectedShape> into)
+    {
+        foreach (XElement element in block.DescendantsAndSelf())
+        {
+            if (element.Name.Namespace != DrawNs || Array.IndexOf(OdtBodyBlockScanner.BodyDrawingNames, "draw:" + element.Name.LocalName) < 0) continue;
+            (string key, XElement outermost) = OdtConnectedShapeTable.FrameOf(element, blockIndex);
+            if (outermost == element) OdtConnectedShapeTable.Record(element, key, ShapeBuilder, into);
+        }
+    }
 
     /// <summary>A draw:fill-image's picture id ("p:" + package entry, or "f:" + its name for inline data) and its own size.</summary>
     private (string Id, (double W, double H)? Size)? FillPictureOf(XElement fillImage)

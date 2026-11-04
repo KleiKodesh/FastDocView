@@ -65,6 +65,28 @@ internal sealed class OdtShapeBuilder
         _fillPicture = fillPicture;
     }
 
+    /// <summary>The shapes connectors may be glued to, by id (index-time data, <see cref="OdtConnectedShapeTable"/>); null = none known.</summary>
+    public Func<string, OdtConnectedShape?>? ConnectedShapes { get; set; }
+
+    /// <summary>The block being rendered (the coordinates of a paragraph-anchored connector, <see cref="OdtConnectedShapeTable.FrameOf"/>).</summary>
+    public int CurrentBlockIndex { get; set; } = -1;
+
+    /// <summary>The snap rectangle of shapes: their boxes through their transforms (the renderer's frame; a group's union).</summary>
+    internal static (double X, double Y, double Width, double Height) SnapBounds(List<OdtDrawnShape> drawn)
+    {
+        double left = double.MaxValue, top = double.MaxValue, right = double.MinValue, bottom = double.MinValue;
+        foreach (OdtDrawnShape d in drawn)
+        {
+            WordAffine t = d.Shape.Transform ?? WordAffine.Identity;
+            foreach ((double cx, double cy) in new[] { (0.0, 0.0), (d.Shape.Width, 0.0), (0.0, d.Shape.Height), (d.Shape.Width, d.Shape.Height) })
+            {
+                (double px, double py) = t.Apply(cx, cy);
+                left = Math.Min(left, px); top = Math.Min(top, py); right = Math.Max(right, px); bottom = Math.Max(bottom, py);
+            }
+        }
+        return (left, top, right - left, bottom - top);
+    }
+
     public static bool IsShape(XElement element)
         => element.Name.Namespace == Draw && element.Name.LocalName is "custom-shape" or "rect" or "ellipse" or "circle" or "line" or "polygon" or "polyline"
                                                                      or "path" or "connector" or "measure" or "caption" or "regular-polygon" or "g";
@@ -259,11 +281,11 @@ internal sealed class OdtShapeBuilder
                 if (track is not { Count: > 0 } || last is null || Math.Abs(track[0].StartX - x1) > Tolerance || Math.Abs(track[0].StartY - y1) > Tolerance
                     || Math.Abs(last.Value.X - x2) > Tolerance || Math.Abs(last.Value.Y - y2) > Tolerance)
                 {
-                    // no usable stored route: LibreOffice's own routing (svdoedge.cxx ImpCalcEdgeTrack, OdtConnectorRoute); a connected
-                    // shape may stand in another block - read windowed, ends are taken where the file puts them
+                    // no usable stored route: LibreOffice's own routing (svdoedge.cxx ImpCalcEdgeTrack, OdtConnectorRoute) around the shapes
+                    // the ends are glued to - their geometry comes from the index (the shape may stand in another block, never read)
                     double[] skew = ((string?)element.Attribute(Draw + "line-skew") ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
                         .Select(v => OdtShapeStyle.Length(v) ?? 0).ToArray();
-                    track = OdtConnectorRoute.Route((string?)element.Attribute(Draw + "type") ?? "standard", (x1, y1), (x2, y2), skew, null, null);
+                    track = RouteConnected(element, (string?)element.Attribute(Draw + "type") ?? "standard", (x1, y1), (x2, y2), skew);
                 }
                 closedForFill = false;
                 (paths, placement, width, height) = Absolute(track, fill: false);
@@ -388,6 +410,58 @@ internal sealed class OdtShapeBuilder
         var path = new WordShapePath { Fill = fill ? WordShapePathFill.Normal : WordShapePathFill.None };
         path.Subpaths.Add(subpath);
         return path;
+    }
+
+    /// <summary>
+    /// A connector's track around the shapes its ends are glued to (draw:start-shape / draw:end-shape with draw:start-glue-point /
+    /// draw:end-glue-point; restoreConnections, xmloff shapeimport.cxx:805-845: a glue id below 4 is a vertex glue point, a higher one the
+    /// shape's draw:glue-point with that draw:id, none found = -1, the best vertex). The shapes' geometry is index-time data. A shape in the
+    /// connector's own coordinates (same page, same anchoring paragraph, same group) is taken as it is; one anchored elsewhere has no common
+    /// origin in a flow view, so it is moved to where the file put the connector's end (svg:x1 / y1 or x2 / y2 = the glue point when saved):
+    /// with a known glue point exactly, with the best vertex the one vertex whose routed end lands there. An end whose shape is unknown (not
+    /// indexed yet on a first open) or that fits no vertex stays a free point where the file puts it.
+    /// </summary>
+    private List<WordShapeSubpath> RouteConnected(XElement connector, string kind, (double X, double Y) start, (double X, double Y) end, double[] skew)
+    {
+        if (ConnectedShapes is null
+            || ((string?)connector.Attribute(Draw + "start-shape") is null && (string?)connector.Attribute(Draw + "end-shape") is null))
+            return OdtConnectorRoute.Route(kind, start, end, skew, null, null);
+        (string key, XElement outermost) = OdtConnectedShapeTable.FrameOf(connector, CurrentBlockIndex);
+        List<(OdtConnectorEnd? End, bool Verify)> startCandidates = Candidates("start", start), endCandidates = Candidates("end", end);
+        const double Tolerance = 1.5 * 72 / 2540;          // within a hundredth of a millimetre after rounding
+        bool Lands((double X, double Y) at, (double X, double Y) stored) => Math.Abs(at.X - stored.X) <= Tolerance && Math.Abs(at.Y - stored.Y) <= Tolerance;
+        foreach ((OdtConnectorEnd? startEnd, bool verifyStart) in startCandidates)
+            foreach ((OdtConnectorEnd? endEnd, bool verifyEnd) in endCandidates)
+            {
+                List<WordShapeSubpath> track = OdtConnectorRoute.Route(kind, start, end, skew, startEnd, endEnd);
+                if ((!verifyStart || Lands(OdtConnectorRoute.EndOf(track, true), start)) && (!verifyEnd || Lands(OdtConnectorRoute.EndOf(track, false), end)))
+                    return track;
+            }
+        return OdtConnectorRoute.Route(kind, start, end, skew, null, null);
+
+        List<(OdtConnectorEnd?, bool)> Candidates(string side, (double X, double Y) stored)
+        {
+            if ((string?)connector.Attribute(Draw + side + "-shape") is not { Length: > 0 } id || ConnectedShapes(id) is not { } shape) return [(null, false)];
+            int glue = int.TryParse((string?)connector.Attribute(Draw + side + "-glue-point"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) ? parsed : -1;
+            OdtConnectorGluePoint? custom = null;
+            if (glue >= 4)
+            {
+                int at = Array.FindIndex(shape.GluePoints, g => g.Id == glue);
+                if (at >= 0) custom = shape.GluePoints[at].Point; else glue = -1;
+            }
+            if (glue < 0) glue = -1;
+            bool sameFrame = (key.Length > 0 && key == shape.FrameKey) || OdtConnectedShapeTable.Contains(outermost, id);
+            if (sameFrame) return [(new OdtConnectorEnd(shape.SnapRect, glue, custom), false)];
+            var result = new List<(OdtConnectorEnd?, bool)>();
+            foreach (int vertex in glue >= 0 ? new[] { glue } : new[] { 0, 1, 2, 3 })
+            {
+                OdtConnectorGluePoint point = custom ?? OdtConnectorRoute.VertexGluePoint(shape.SnapRect, vertex);
+                OdtConnectedShape moved = shape.Moved(stored.X - point.X, stored.Y - point.Y);
+                OdtConnectorGluePoint? movedCustom = custom is null ? null : moved.GluePoints[Array.FindIndex(moved.GluePoints, g => g.Id == glue)].Point;
+                result.Add((new OdtConnectorEnd(moved.SnapRect, glue, movedCustom), glue < 0));
+            }
+            return result;
+        }
     }
 
     private static (double X, double Y, double W, double H) Bounds(IEnumerable<WordShapeSubpath> subpaths)

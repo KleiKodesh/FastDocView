@@ -1249,7 +1249,14 @@ Sources: LibreOffice core master read 2026-11-04 (cited file:line in each class)
   outlines), lit bitmap / gradient textures (front face drawn with the unlit fill), wide-line contours (centre line extruded). Fill / caps follow the shape's fill style; a point at the viewpoint's depth is skipped; projection / shade-mode read in draw: or dr3d:. Checked by `fidelity-v1-odt-extrusion.fodt` (parallel, perspective, rotated, draft, unfilled, shaded) in --fidelity and live by `vue-demo/playwright/odtExtrusionCheck.mjs`.
 - **Objects** (`Odt/OdtShapeBuilder.cs`): rect (draw:corner-radius only, as LibreOffice), circle / ellipse kinds, line, polygon,
   polyline, path (open = not filled), connector (svg:d when its ends match, else `OdtConnectorRoute` = ImpCalcEdgeTrack; ends
-  connected to shapes are routed as free ends - the other shape may sit in another block, never read), measure
+  glued to shapes are routed around those shapes: every shape with an id - LibreOffice writes one only on a shape something refers
+  to - has its snap rectangle and draw:glue-points recorded at index time (`OdtConnectedShapeTable`, index format 10; the scanner
+  notes the blocks holding one, they are read once when the index is final), so a shape in another block is never read at render
+  time; a shape in other coordinates (another paragraph's anchor) is moved to where svg:x1/y1 or x2/y2 put the end; a shape not
+  known yet on a first open = a free end. Word formats need no routing: LibreOffice turns a .docx wps connector into a routed
+  ConnectorShape only inside a drawing canvas (oox/source/shape/WpsContext.cxx:585-592, one drawing = one block) and reads the
+  .doc/.rtf solver container only for PowerPoint (filter/source/msfilter/svdfppt.cxx:1603-1606; ww8par.cxx / ww8graf.cxx never read
+  it) - Word and LibreOffice draw those connectors from their own stored geometry, which we already do), measure
   (`OdtMeasureShape`; the server lays it out with a 0.5 em-per-character label estimate, the app page lays the dimension line and
   label out again with the label's measured size - `data-measure` inputs, vue-frontend `fastDocViewShapeText.ts`), caption (`OdtCaptionShape`), regular-polygon (not imported
   by LibreOffice; drawn per ODF 19.123 / 19.128 / 19.211), groups; draw:transform as a full matrix (rotate / skew / scale /

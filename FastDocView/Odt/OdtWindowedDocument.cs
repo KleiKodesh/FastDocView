@@ -212,6 +212,30 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         CountNewNoteReferences();
         IsRightToLeft = styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(styles.DefaultParagraph.Formatting.RunFormatting, IsRightToLeft);
+        if (index is not null) RecordConnectedShapes(index);
+    }
+
+    /// <summary>
+    /// Index time, once the blocks are final: the geometry of every shape with an id (snap rectangle, glue points), read from the few blocks
+    /// that hold one (block by block, windowed), so a connector glued to a shape in another block routes without reading that block.
+    /// </summary>
+    private void RecordConnectedShapes(OdtRandomAccessIndex index)
+    {
+        if (index.ConnectedShapes is null)
+        {
+            var shapes = new Dictionary<string, OdtConnectedShape>(StringComparer.Ordinal);
+            _renderer.RootOpenTag ??= _blocks.RootOpenTag;
+            _renderer.Pictures ??= ReadPicture;
+            try
+            {
+                foreach (int blockIndex in index.ConnectedShapeBlocks)
+                    foreach ((int read, XElement element) in _reader.ReadBlocks(blockIndex, 1))
+                        _renderer.RecordConnectedShapes(element, read, shapes);
+            }
+            finally { _releasableFile?.Release(); }
+            index.ConnectedShapes = new OdtConnectedShapeTable(shapes);
+        }
+        _renderer.ConnectedShapes = index.ConnectedShapes.Find;
     }
 
     /// <inheritdoc/>
@@ -298,6 +322,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         _index = index;
         _blocks = _reader.SwitchToIndex(index);
         _builder = null;
+        RecordConnectedShapes(index);
         _noteReferences = null;
         CountNewNoteReferences();
         if (_sidecarPathToSave is not null)
