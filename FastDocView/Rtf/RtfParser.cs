@@ -588,7 +588,12 @@ internal sealed class RtfParser
         switch (word)
         {
             case RtfWord.Unknown:
-                if (_shapes.Count > 0 && _textBoxDepth < 0) return;       // a shape keyword (\shpz, \shplid, \shpbxcolumn, ...) not drawn
+                if (_shapes.Count > 0 && _textBoxDepth < 0)
+                {
+                    // \shpbxpage: \shpleft counts from the page edge (LibreOffice rtfdispatchflag.cxx:1229-1232); other shape keywords (\shpz, \shplid, ...) not drawn
+                    if (name.SequenceEqual("shpbxpage"u8)) _shapes[_shapes.Count - 1].IsPageRelative = true;
+                    return;
+                }
                 if (_sink.WantsUnhandledWords) _sink.UnhandledWord(name);
                 return;
             case RtfWord.SkippedDestination: SkipGroup(name); return;

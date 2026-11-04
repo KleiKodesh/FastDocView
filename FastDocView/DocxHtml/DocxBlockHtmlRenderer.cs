@@ -1090,7 +1090,9 @@ public sealed class DocxBlockHtmlRenderer
         double width = Emu("cx"), height = Emu("cy");
         return new WordPictureLayout(width, height, pictureWrap, side, Emu("distT"), Emu("distR"), Emu("distB"), Emu("distL"), offset,
                                      TextSidesOf((string?)picture.Attribute("wrapText")),
-                                     WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs((string?)picture.Attribute("wrapPolygon")), width, height), ColumnWidthPt);
+                                     WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs((string?)picture.Attribute("wrapPolygon")), width, height),
+                                     // the nearer edge only for an offset from the column / margin (ST_RelFromH, ECMA-376 Part 1 20.4.3.4); page, character ... include more
+                                     (string?)picture.Attribute("relativeFrom") is "column" or "margin" ? ColumnWidthPt : 0);
     }
 
     /// <summary>
@@ -1168,7 +1170,9 @@ public sealed class DocxBlockHtmlRenderer
         return new WordPictureLayout(width, height, pictureWrap, side, Length("mso-wrap-distance-top"), Length("mso-wrap-distance-right"),
                                      Length("mso-wrap-distance-bottom"), Length("mso-wrap-distance-left"), offset,
                                      TextSidesOf((string?)picture.Attribute("wrapText")),
-                                     WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs(coords), width, height), ColumnWidthPt);
+                                     WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs(coords), width, height),
+                                     // mso-position-horizontal-relative: the nearer edge only from the column (text, the default) or margin
+                                     (style.TryGetValue("mso-position-horizontal-relative", out string? relative) ? relative : null) is null or "text" or "margin" ? ColumnWidthPt : 0);
     }
 
     /// <summary>

@@ -366,7 +366,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         // LibreOffice reads 5 as THROUGH = text over the object (rtfdispatchvalue.cxx:1255-1257); Word does not.
         IReadOnlyList<IReadOnlyList<(double X, double Y)>>? contour = shape.Wrap is 4 or 5 ? WordPictureContour.FromWordUnits(shape.WrapPolygon, widthPt, heightPt) : null;
         return new WordPictureLayout(widthPt, heightPt, wrap, side, shape.WrapTop / EmuPerPoint, shape.WrapRight / EmuPerPoint,
-                                     shape.WrapBottom / EmuPerPoint, shape.WrapLeft / EmuPerPoint, offset, sides, contour, ColumnWidthPt);
+                                     shape.WrapBottom / EmuPerPoint, shape.WrapLeft / EmuPerPoint, offset, sides, contour,
+                                     shape.IsPageRelative ? 0 : ColumnWidthPt);   // a page-relative offset includes the margin: no nearer-edge choice
     }
 
     /// <summary>WordArt text centred in its font and size (msdffdef.hxx:121-125 gtextUNICODE / gtextSize / gtextFont), known once the shape closed.</summary>

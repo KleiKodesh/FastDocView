@@ -368,7 +368,9 @@ public sealed partial class OdtBlockHtmlRenderer
             && Property(OdtStyleCascade.Style, "vertical-rel") is null or "paragraph" or "paragraph-content" or "char" or "line")
             top += Math.Max(0, y);
         WordPictureTextSides sides = wrapValue switch { "left" => WordPictureTextSides.LeftOnly, "right" => WordPictureTextSides.RightOnly, _ => WordPictureTextSides.Both };
-        return new WordPictureLayout(width, height, wrap, side, top, Gap("right"), Gap("bottom"), Gap("left"), offset, sides, ColumnWidthPt: ColumnWidthPt);
+        return new WordPictureLayout(width, height, wrap, side, top, Gap("right"), Gap("bottom"), Gap("left"), offset, sides,
+                                     // the nearer edge only for an offset from the paragraph / page text area (20.290 style:horizontal-rel); page / frame include more
+                                     ColumnWidthPt: Property(OdtStyleCascade.Style, "horizontal-rel") is null or "paragraph" or "paragraph-content" or "page-content" ? ColumnWidthPt : 0);
     }
 
     // -- text boxes and shapes -------------------------------------------------------------
