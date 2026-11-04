@@ -173,6 +173,34 @@ public static class WordWindowedDocumentHostExtensions
         return document.KnownBlockCount;
     }
 
+    /// <summary>
+    /// The blocks as a viewer shows them: <see cref="IWordWindowedDocument.RenderBlocks"/> with every block and note HTML
+    /// through <see cref="Html.WordHtmlColor.ThemeAwareMarkup"/> (explicit colours readable in a light and a dark theme).
+    /// THE output path for hosts (the app's service, the dev server): render with this, never with RenderBlocks directly.
+    /// The renderers themselves keep the document's plain colours - that raw output is what the fidelity harness checks
+    /// against Word, and theming is a display concern applied once, here.
+    /// </summary>
+    public static IReadOnlyList<WordDocumentBlockHtml> RenderBlocksForDisplay(this IWordWindowedDocument document, int firstBlockIndex, int count)
+    {
+        IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(firstBlockIndex, count);
+        var result = new List<WordDocumentBlockHtml>(blocks.Count);
+        foreach (WordDocumentBlockHtml block in blocks)
+            result.Add(block with { Html = global::FastDocView.Html.WordHtmlColor.ThemeAwareMarkup(block.Html), Notes = NotesForDisplay(block.Notes) });
+        return result;
+    }
+
+    /// <summary>The notes as a viewer shows them; see <see cref="RenderBlocksForDisplay"/>.</summary>
+    public static IReadOnlyList<WordDocumentNoteHtml> RenderNotesForDisplay(this IWordWindowedDocument document, int firstNoteIndex, int count)
+        => NotesForDisplay(document.RenderNotes(firstNoteIndex, count));
+
+    private static IReadOnlyList<WordDocumentNoteHtml> NotesForDisplay(IReadOnlyList<WordDocumentNoteHtml> notes)
+    {
+        if (notes.Count == 0) return notes;
+        var result = new List<WordDocumentNoteHtml>(notes.Count);
+        foreach (WordDocumentNoteHtml note in notes) result.Add(note with { Html = global::FastDocView.Html.WordHtmlColor.ThemeAwareMarkup(note.Html) });
+        return result;
+    }
+
     /// <summary>The estimated text length of every block known so far (index-time data, no file access).</summary>
     public static int[] EstimatedTextLengths(this IWordWindowedDocument document)
     {

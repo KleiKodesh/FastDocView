@@ -1795,3 +1795,21 @@ formula is not published). Auto colours are never written and inherit the page t
 colours are `var(--fdv-*, Word's value)`: `--fdv-text`, `--fdv-link`, `--fdv-muted`, `--fdv-muted-strong`,
 `--fdv-rule`, `--fdv-table-border`, `--fdv-frame-border`; a host maps them to its theme. Not remapped: shape / text-box
 fills and the text inside them (OfficeArt), which would need the fill and text remapped together.
+Update (same day): shapes, text boxes, drawings, charts and SmartArt are covered too. Hosts pass every block and note
+HTML through `WordHtmlColor.ThemeAwareMarkup` at their transport (Core's `FastDocViewOpenDocuments`, the dev server):
+one pass over the tags rewrites each bare hex colour and each named paint colour (fill / stroke / stop-color /
+colour properties; the 16 HTML names VML uses) to `light-dark()`, so a fill, its line and the auto text on it are
+remapped together. Text content, `url(#id)`, `href="#id"` and values already in `light-dark()` are kept; pictures are
+`<img>` and never change (as in Word). The renderers keep writing plain colours, which the fidelity harness checks.
+Live (2026-11-04, shapes / ODT / RTF / chartex / SmartArt fixtures): fills and strokes remap, HTML identical across
+themes. Known: saturated mid-lightness fills (pure red, accent blue) stay mid-lightness under L' = 110 - L, so light
+auto text on them is about 2-2.6:1 - the same as Chromium's own dark mode.
+Update 2 (same day): the rewrite is an allowlist - only fill / stroke / stop-color / flood-color / lighting-color /
+color / bgcolor attributes and colour properties (color, background*, border*, outline*, column-rule*, text-decoration*,
+text-emphasis*, shadows, SVG paint) inside style="" and <style> sheets; data-*, title, alt and every other attribute
+are copied. The renderers never write <style> (MHTML's are dropped by MarkupBlockRenderer), but the sheets are handled
+anyway. A shape / text box whose first solid fill is better read with dark text once remapped (WCAG contrast of #000
+vs #d4d4d4 against the dark variant) gets class dark-text-on-fill = light-dark(currentColor, #000): red 2.59 -> 5.46:1,
+SmartArt accent blue 2.03 -> 5.71:1 (live). It runs in the library's one host output path,
+RenderBlocksForDisplay / RenderNotesForDisplay (WordWindowedDocumentHostExtensions), used by Core and the dev server;
+the renderers keep plain colours because that raw output is what the fidelity harness compares with Word.

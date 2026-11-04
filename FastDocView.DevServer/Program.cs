@@ -156,7 +156,7 @@ app.MapGet("/api/documents/{id}/weights", (string id) => UseDocument(id, documen
 app.MapGet("/api/documents/{id}/blocks", (string id, int first, int count, HttpResponse response) => UseDocument(id, document =>
 {
     var watch = Stopwatch.StartNew();
-    IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(first, Math.Min(count, 500));
+    IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocksForDisplay(first, Math.Min(count, 500));
     response.Headers["X-Render-Milliseconds"] = watch.Elapsed.TotalMilliseconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Known-Block-Count"] = document.KnownBlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Index-Complete"] = document.IsIndexComplete ? "true" : "false";
@@ -171,7 +171,7 @@ app.MapGet("/api/documents/{id}/pictures", (string id, string pictureId) => UseD
 
 // The notes pane's own windows: notes [first, first + count) of note-references (body order), each read on its own.
 app.MapGet("/api/documents/{id}/notes", (string id, int first, int count) => UseDocument(id, document =>
-    Results.Ok(document.RenderNotes(first, Math.Min(count, 500))
+    Results.Ok(document.RenderNotesForDisplay(first, Math.Min(count, 500))
         .Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())));
 
 // A first open keeps building its index: the demo calls this until it is complete. Each call indexes up to `blocks` more
