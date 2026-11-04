@@ -36,7 +36,7 @@ public static class CorpusRegressionTest
         (@"apache-poi\52117.doc", typeof(NotSupportedException), "Word 6.0 / Word 95"),
         (@"apache-poi\word2.doc", typeof(NotSupportedException), "Word for Windows 2.0"),
         (@"apache-tika\testWORDML_tableInsideParagraph.doc", typeof(NotSupportedException), "Word 2003 XML"),
-        (@"libreoffice\sw\qa\extras\ooxmlexport\data\Encrypted_MSO2007_abc.docx", typeof(NotSupportedException), "Encrypted"),
+        (@"libreoffice\sw\qa\extras\ooxmlexport\data\Encrypted_MSO2007_abc.docx", typeof(WordDocumentEncryptedException), "Encrypted"),
     ];
 
     /// <summary>
@@ -91,6 +91,73 @@ public static class CorpusRegressionTest
             TestReport.Check(caught is not null && caught.GetType() == expected && caught.Message.Contains(messagePart),
                              $"fails with {expected.Name} \"{messagePart}\": {relative}{(caught is null ? "  — opened" : "  — " + caught.GetType().Name + ": " + caught.Message)}");
         }
+    }
+
+    /// <summary>Open failures a host shows as a translated message: (relative path, expected class).</summary>
+    private static readonly (string file, WordDocumentOpenFailure failure)[] OpenFailureClasses =
+    [
+        (@"libreoffice\sw\qa\extras\ooxmlexport\data\Encrypted_MSO2007_abc.docx", WordDocumentOpenFailure.Encrypted),
+        (@"apache-poi\PasswordProtected.doc", WordDocumentOpenFailure.Encrypted),
+        (@"apache-tika\testODTEncrypted.odt", WordDocumentOpenFailure.Encrypted),
+        (@"libreoffice\sw\qa\core\data\ww8\pass\crash-2.doc", WordDocumentOpenFailure.Corrupt),
+        (@"apache-poi\word2.doc", WordDocumentOpenFailure.UnsupportedFormat),
+        (@"apache-poi\no-such-file-exists.docx", WordDocumentOpenFailure.NotFound),
+    ];
+
+    /// <summary>Open failures classify for the host (encrypted, corrupt, unsupported, missing).</summary>
+    public static void RunOpenFailureClasses(string testDataFolder)
+    {
+        TestReport.Step("Open failures classified for the host");
+        var policy = new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory, CacheDirectory = Path.Combine(TestReport.OutputDirectory, "corpus-index-cache") };
+        foreach ((string relative, WordDocumentOpenFailure expected) in OpenFailureClasses)
+        {
+            Exception? caught = null;
+            try { using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(Path.Combine(testDataFolder, relative), policy); document.RenderBlocks(0, 40); }
+            catch (Exception exception) { caught = exception; }
+            WordDocumentOpenFailure? actual = caught is null ? null : WordDocumentOpenFailures.Classify(caught);
+            TestReport.Check(actual == expected, $"classified {expected}: {relative}  — {(caught is null ? "opened" : actual + " / " + caught.GetType().Name + ": " + caught.Message)}");
+        }
+    }
+
+    /// <summary>
+    /// One bad block never fails its window: a real document's window is rendered through the guard with block 2 made
+    /// to throw a content error - the other blocks render, block 2 is the placeholder, reported once; a changed file
+    /// (WordDocumentSourceChangedException) still escapes.
+    /// </summary>
+    public static void RunMalformedBlock(string testDataFolder)
+    {
+        TestReport.Step("A malformed block becomes a placeholder, its window still renders");
+        string path = Path.Combine(testDataFolder, @"apache-poi\MultipleBodyBug.docx");
+        var policy = new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory, CacheDirectory = Path.Combine(TestReport.OutputDirectory, "corpus-index-cache") };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+        int count = Math.Min(document.BlockCount, 6);
+        var guard = new WordDocumentBlockRenderGuard(path);
+        int reports = 0;
+        void OnFailed(string file, int block, Exception cause) { if (file == path) reports++; }
+        WordDocumentBlockRenderGuard.BlockRenderFailed += OnFailed;
+        try
+        {
+            IReadOnlyList<WordDocumentBlockHtml> RenderWithBadBlock(int first, int blocks)
+            {
+                if (first <= 2 && 2 < first + blocks) throw new InvalidDataException("synthetic malformed block 2");
+                return document.RenderBlocks(first, blocks);
+            }
+            for (int round = 0; round < 2; round++)
+            {
+                IReadOnlyList<WordDocumentBlockHtml> window = guard.Render(0, count, document.BlockCount, RenderWithBadBlock, _ => WordDocumentBlockKind.Paragraph);
+                TestReport.Check(window.Count == count && window.Select(b => b.BlockIndex).SequenceEqual(Enumerable.Range(0, count)),
+                                 $"round {round}: every block of the window is returned ({window.Count}/{count})");
+                TestReport.Check(count > 2 && window[2].Html == WordDocumentBlockRenderGuard.PlaceholderHtml
+                                 && window.Where(b => b.BlockIndex != 2).All(b => b.Html != WordDocumentBlockRenderGuard.PlaceholderHtml),
+                                 $"round {round}: only block 2 is the placeholder");
+            }
+            TestReport.Check(reports == 1, $"the bad block is reported once ({reports})");
+            bool escaped = false;
+            try { guard.Render(0, count, document.BlockCount, (_, _) => throw new WordDocumentSourceChangedException(path), _ => WordDocumentBlockKind.Paragraph); }
+            catch (WordDocumentSourceChangedException) { escaped = true; }
+            TestReport.Check(escaped, "a changed file is never turned into placeholders");
+        }
+        finally { WordDocumentBlockRenderGuard.BlockRenderFailed -= OnFailed; }
     }
 
     private static string Shorten(string? html) => html is null ? "" : html.Length > 300 ? html.Substring(0, 300) + "…" : html;

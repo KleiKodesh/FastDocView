@@ -24,6 +24,8 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     private readonly OdtBlockXmlReader _reader;
     private readonly OdtStyleCascade _styles;
     private readonly OdtBlockHtmlRenderer _renderer;
+    private WordDocumentBlockRenderGuard? _blockRenderGuardField;
+    private WordDocumentBlockRenderGuard _blockRenderGuard => _blockRenderGuardField ??= new WordDocumentBlockRenderGuard(FilePath);
     private readonly object _readLock = new();
     private int _footnoteCount, _endnoteCount, _noteReferencesCounted;
     private WordDocumentFileStream? _releasableFile;   // set by Open(path): released after every window
@@ -371,7 +373,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                     if (builder.IsEveryBlockKnown) CompleteIndexLocked();
                     else CountNewNoteReferences();
                 }
-                return RenderBlocksLocked(firstBlockIndex, count);
+                return _blockRenderGuard.Render(firstBlockIndex, count, _blocks.BlockCount, RenderBlocksLocked, _blocks.BlockKindOf);
             }
             finally { _releasableFile?.Release(); }
         }

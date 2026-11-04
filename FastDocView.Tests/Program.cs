@@ -170,7 +170,12 @@ if (odtFirstOpenPaths.Count > 0) OdtFirstOpenTiming.Run(odtFirstOpenPaths.Where(
 if (profilePaths.Count > 0) OpenTimingProfile.Run(profilePaths.Where(File.Exists));
 if (indexProfilePaths.Count > 0) IndexPassProfile.Run(indexProfilePaths.Where(File.Exists));
 if (corpusList is not null && rtfBlocks == 0) WordFormattingAudit.RunCorpus(corpusList, corpusMax, corpusSample);
-if (corpusList is not null && Directory.Exists(corpusList) && File.Exists(Path.Combine(corpusList, "apache-poi", "MultipleBodyBug.docx"))) CorpusRegressionTest.Run(corpusList);
+if (corpusList is not null && Directory.Exists(corpusList) && File.Exists(Path.Combine(corpusList, "apache-poi", "MultipleBodyBug.docx")))
+{
+    CorpusRegressionTest.Run(corpusList);
+    CorpusRegressionTest.RunOpenFailureClasses(corpusList);
+    CorpusRegressionTest.RunMalformedBlock(corpusList);
+}
 if (rtfBlocks > 0) RtfIndexAndRenderTest.Run(rtfBlocks);
 foreach (string path in rtfProfilePaths.Where(File.Exists)) RtfIndexAndRenderTest.Profile(path);
 if (rtfAuditPaths.Count > 0) RtfFormattingAudit.Run(rtfAuditPaths.Where(File.Exists));

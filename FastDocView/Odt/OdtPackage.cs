@@ -129,7 +129,7 @@ public static class OdtPackage
                 if (reader.NodeType != XmlNodeType.Element) continue;
                 if (reader.LocalName == "file-entry") currentPath = reader.GetAttribute("full-path", ManifestNamespace);
                 else if (reader.LocalName == "encryption-data" && currentPath == ContentEntryName)
-                    throw new NotSupportedException("password-protected OpenDocument is not supported");
+                    throw new WordDocumentEncryptedException("password-protected OpenDocument is not supported");
             }
         }
         catch (XmlException exception) { throw WordDocumentXml.Malformed(ManifestEntryName, exception); }

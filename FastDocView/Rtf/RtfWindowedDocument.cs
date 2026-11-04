@@ -14,6 +14,8 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     private readonly RtfCompactBlockTable _table;
     private readonly Stream _file;
     private readonly RtfBlockHtmlRenderer _renderer;
+    private WordDocumentBlockRenderGuard? _blockRenderGuardField;
+    private WordDocumentBlockRenderGuard _blockRenderGuard => _blockRenderGuardField ??= new WordDocumentBlockRenderGuard(FilePath);
     private readonly object _readLock = new();
     private readonly int _footnoteCount, _endnoteCount;
     private WordDocumentFileStream? _releasableFile;
@@ -319,7 +321,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         lock (_readLock)
         {
             if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
-            try { return RenderBlocksLocked(firstBlockIndex, count); }
+            try { return _blockRenderGuard.Render(firstBlockIndex, count, _index.BlockCount, RenderBlocksLocked, _table.BlockKindOf); }
             finally { _releasableFile?.Release(); }
         }
     }
