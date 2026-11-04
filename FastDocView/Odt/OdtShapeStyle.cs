@@ -21,13 +21,13 @@ internal sealed class OdtShapeStyle
 
     private readonly OdtStyleCascade _styles;
     private readonly string? _styleName;
-    private readonly double _officeVersion;
+    private readonly bool _gradientAngleIsTenths;
 
-    public OdtShapeStyle(OdtStyleCascade styles, string? styleName, double officeVersion)
+    public OdtShapeStyle(OdtStyleCascade styles, string? styleName, bool gradientAngleIsTenths)
     {
         _styles = styles;
         _styleName = styleName;
-        _officeVersion = officeVersion;
+        _gradientAngleIsTenths = gradientAngleIsTenths;
     }
 
     public string? Get(XName attribute) => _styles.GraphicProperty(_styleName, attribute);
@@ -84,7 +84,7 @@ internal sealed class OdtShapeStyle
         if (kind == "none") return;
         if (Get(Draw + "opacity") is { } opacityText && OdtFillPaint.Percent(opacityText) is { } opacity) shape.FillOpacity = Math.Max(0, Math.Min(1, opacity));
         OdtFillPaint.GradientModel? transparency = Get(Draw + "opacity-name") is { } opacityName
-            ? OdtFillPaint.Gradient(_styles.DrawingStyle("opacity", opacityName), isOpacity: true, _officeVersion, 0) : null;
+            ? OdtFillPaint.Gradient(_styles.DrawingStyle("opacity", opacityName), isOpacity: true, _gradientAngleIsTenths, 0) : null;
         if (transparency is not null) shape.FillOpacity = 1;            // a transparency gradient replaces the uniform transparency
         string color = ParseColor(Get(Draw + "fill-color")) is { } fillColor ? Hex(fillColor) : DefaultFillColor;
         switch (kind)
@@ -92,7 +92,7 @@ internal sealed class OdtShapeStyle
             case "gradient":
             {
                 int steps = int.TryParse(Get(Draw + "gradient-step-count"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int s) ? s : 0;
-                if (OdtFillPaint.Gradient(_styles.Gradient(Get(Draw + "fill-gradient-name")), isOpacity: false, _officeVersion, steps) is not { } gradient) { shape.FillColor = color; break; }
+                if (OdtFillPaint.Gradient(_styles.Gradient(Get(Draw + "fill-gradient-name")), isOpacity: false, _gradientAngleIsTenths, steps) is not { } gradient) { shape.FillColor = color; break; }
                 shape.FillPainter = brightness => OdtFillPaint.GradientPaint(gradient, transparency, range.X, range.Y, range.W, range.H, Adapter(brightness));
                 return;
             }
@@ -104,7 +104,7 @@ internal sealed class OdtShapeStyle
                 (double, double, double) lineColor = ParseColor((string?)hatch.Attribute(Draw + "color")) is { } hc ? hc : (0, 0, 0);
                 double distance = Length((string?)hatch.Attribute(Draw + "distance")) ?? 0;
                 // draw:rotation: unitless values stay tenths of a degree (HatchStyle.cxx:96-112, tdf#161327)
-                double angle = OdtFillPaint.TenthDegrees((string?)hatch.Attribute(Draw + "rotation"), _officeVersion, alwaysTenths: true) / 10.0 * Math.PI / 180;
+                double angle = OdtFillPaint.TenthDegrees((string?)hatch.Attribute(Draw + "rotation"), unitlessIsTenths: true) / 10.0 * Math.PI / 180;
                 (double, double, double)? background = Get(Draw + "fill-hatch-solid") == "true" ? ParseColor(color) is { } bc ? (bc.R, bc.G, bc.B) : null : null;
                 shape.FillPainter = brightness => OdtFillPaint.HatchPaint(style, lineColor, distance, angle, background, transparency, range.X, range.Y, range.W, range.H, Adapter(brightness));
                 return;

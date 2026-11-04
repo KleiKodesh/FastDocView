@@ -27,6 +27,12 @@ public sealed partial class OdtBlockHtmlRenderer
     /// <summary>Picture ids of fill images stored in the styles (office:binary-data of a draw:fill-image): "f:" + its draw:name.</summary>
     public const string FillImagePrefix = "f:";
 
+    /// <summary>The document's meta:generator (set by the document; null when it has none).</summary>
+    public string? Generator { get; set; }
+
+    /// <summary>How this document's unitless gradient angles read (<see cref="OdtGeneratorVersion.GradientAngleIsTenths"/>).</summary>
+    private bool GradientAngleIsTenths => OdtGeneratorVersion.GradientAngleIsTenths(OfficeVersion, OdtGeneratorVersion.Of(Generator));
+
     private double OfficeVersion
     {
         get
@@ -39,7 +45,7 @@ public sealed partial class OdtBlockHtmlRenderer
         }
     }
 
-    private OdtShapeBuilder ShapeBuilder => _shapeBuilder ??= new OdtShapeBuilder(_styles, OfficeVersion, FillPictureOf);
+    private OdtShapeBuilder ShapeBuilder => _shapeBuilder ??= new OdtShapeBuilder(_styles, GradientAngleIsTenths, FillPictureOf);
 
     /// <summary>A draw:fill-image's picture id ("p:" + package entry, or "f:" + its name for inline data) and its own size.</summary>
     private (string Id, (double W, double H)? Size)? FillPictureOf(XElement fillImage)
@@ -321,7 +327,7 @@ public sealed partial class OdtBlockHtmlRenderer
     /// </summary>
     private void AppendFrameFill(XElement frame, StringBuilder html, double width, double height)
     {
-        var style = new OdtShapeStyle(_styles, (string?)frame.Attribute(DrawNs + "style-name"), OfficeVersion);
+        var style = new OdtShapeStyle(_styles, (string?)frame.Attribute(DrawNs + "style-name"), GradientAngleIsTenths);
         if (style.Get(OdtStyleCascade.Draw + "fill") is not ("gradient" or "hatch" or "bitmap")) return;
         var shape = new WordShape { Geometry = WordShapeGeometry.Path, Width = width, Height = height, Transform = WordAffine.Identity };
         var path = new WordShapePath { Stroke = false };

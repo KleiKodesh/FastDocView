@@ -143,8 +143,99 @@ public static class OdtDrawingFidelityTest
                         + Styles + "<office:body><office:text>" + string.Concat(Body) + "</office:text></office:body></office:document>";
         if (!File.Exists(fodt) || File.ReadAllText(fodt) != document) File.WriteAllText(fodt, document, new UTF8Encoding(false));
         CheckHandWritten(fodt);
+        TestReport.Step("ODT drawing: gradient angle units by generator, automatic steps");
+        CheckGradientAnglesAndSteps();
         TestReport.Step("ODT drawing: the same document saved by LibreOffice");
         if (LibreOfficeConversion.Convert(fodt, ".odt", "odt") is { } odt) CheckLibreOfficeSaved(fodt, odt);
+    }
+
+    private const string MetaNamespace = "xmlns:meta=\"urn:oasis:names:tc:opendocument:xmlns:meta:1.0\"";
+
+    /// <summary>A gradient with a unitless draw:angle of 900 and one with automatic steps, in an ODF 1.2 file by <paramref name="generator"/>.</summary>
+    private static (string Meta, string Styles, string Body) AngleFixture(string? generator)
+        => (generator is null ? "" : "<office:meta><meta:generator>" + generator + "</meta:generator></office:meta>",
+            "<office:styles>"
+            + "<draw:gradient draw:name=\"Turned\" draw:style=\"linear\" draw:start-color=\"#ff0000\" draw:end-color=\"#0000ff\" draw:angle=\"900\" draw:border=\"0%\"/>"
+            + "<draw:gradient draw:name=\"Auto\" draw:style=\"linear\" draw:start-color=\"#ff0000\" draw:end-color=\"#0000ff\" draw:angle=\"0deg\" draw:border=\"0%\"/>"
+            + "<style:style style:name=\"FillTurned\" style:family=\"graphic\"><style:graphic-properties style:wrap=\"none\" style:horizontal-pos=\"left\" draw:fill=\"gradient\" draw:fill-gradient-name=\"Turned\" draw:gradient-step-count=\"2\"/></style:style>"
+            + "<style:style style:name=\"FillAuto\" style:family=\"graphic\"><style:graphic-properties style:wrap=\"none\" style:horizontal-pos=\"left\" draw:fill=\"gradient\" draw:fill-gradient-name=\"Auto\"/></style:style>"
+            + "</office:styles>",
+            "<text:p>" + Rect("FillTurned") + "</text:p><text:p>" + Rect("FillAuto") + "</text:p>");
+
+    private static void CheckGradientAnglesAndSteps()
+    {
+        // generator classification (xmlmetai.cxx:232-298, xmlimp.cxx:171-338)
+        (string? generator, ushort expected)[] generators =
+        [
+            (null, OdtGeneratorVersion.Unknown),
+            ("OpenOffice.org/3.2$Win32 OpenOffice.org_project/320m12$Build-9483", OdtGeneratorVersion.OOo32),
+            ("OpenOffice.org/2.4$Win32 OpenOffice.org_project/680m17$Build-9310", OdtGeneratorVersion.OOo2),
+            ("StarOffice 7", OdtGeneratorVersion.OOo1),
+            ("OpenOffice/4.1.6$Win32 OpenOffice.org_project/416m1$Build-9790", OdtGeneratorVersion.Aoo4),
+            ("LibreOffice/6.4.7.2$Linux_X86_64 LibreOffice_project/40$Build-2", OdtGeneratorVersion.LibreOffice63),
+            ("LibreOffice/7.3.7.2$Windows_X86_64 LibreOffice_project/e114eadc50a9ff8d8c8a0567d6da8f454beeb84f", OdtGeneratorVersion.LibreOffice7),
+            ("LibreOffice/24.8.4.2$Windows_X86_64 LibreOffice_project/bb3cfa12c7b1bf994ecc5649a80400d06cd71002", OdtGeneratorVersion.LibreOffice248),
+            ("LibreOffice/27.2.0.1$Windows_X86_64 LibreOffice_project/0", OdtGeneratorVersion.LibreOfficeNew),
+            ("Microsoft Word 16.0", OdtGeneratorVersion.Unknown),
+        ];
+        foreach ((string? generator, ushort expected) in generators)
+            TestReport.Check(OdtGeneratorVersion.Of(generator) == expected, $"generator \"{generator}\": version code {OdtGeneratorVersion.Of(generator)} (expected {expected})");
+        // tdf#89475 (GradientStyle.cxx:115-128): tenths before ODF 1.2, and in 1.2 from OOo / AOO / LibreOffice before 7; degrees otherwise
+        TestReport.Check(OdtGeneratorVersion.GradientAngleIsTenths(1.1, OdtGeneratorVersion.LibreOffice7)
+                         && OdtGeneratorVersion.GradientAngleIsTenths(1.2, OdtGeneratorVersion.OOo32)
+                         && OdtGeneratorVersion.GradientAngleIsTenths(1.2, OdtGeneratorVersion.Aoo4)
+                         && OdtGeneratorVersion.GradientAngleIsTenths(1.2, OdtGeneratorVersion.LibreOffice63)
+                         && !OdtGeneratorVersion.GradientAngleIsTenths(1.2, OdtGeneratorVersion.LibreOffice7)
+                         && !OdtGeneratorVersion.GradientAngleIsTenths(1.2, OdtGeneratorVersion.Unknown)
+                         && !OdtGeneratorVersion.GradientAngleIsTenths(1.3, OdtGeneratorVersion.OOo32),
+                         "unitless gradient angles: tenths of a degree only for old ODF or old writers");
+
+        const string oldWriter = "OpenOffice.org/3.2$Win32 OpenOffice.org_project/320m12$Build-9483", newWriter = "LibreOffice/7.3.7.2$Windows_X86_64 LibreOffice_project/e114ead";
+        foreach ((string? generator, string label, string rotation) in new[] { ((string?)oldWriter, "OOo 3.2", "rotate(-90)"), (newWriter, "LibreOffice 7.3", "rotate(-180)"), (null, "no generator", "rotate(-180)") })
+        {
+            (string meta, string styles, string body) = AngleFixture(generator);
+            string flat = Path.Combine(TestReport.OutputDirectory, $"fidelity-v1-odt-angle-{(generator is null ? "none" : generator == oldWriter ? "ooo" : "lo")}.fodt");
+            string document = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document " + Namespaces + " " + MetaNamespace + " office:version=\"1.2\" office:mimetype=\"application/vnd.oasis.opendocument.text\">"
+                            + meta + styles + "<office:body><office:text>" + body + "</office:text></office:body></office:document>";
+            File.WriteAllText(flat, document, new UTF8Encoding(false));
+            List<string> html = Render(flat);
+            // 900 unitless: 90 degrees as tenths (start on the left: rotate(-90)), else 900 degrees = 180
+            TestReport.Check(html.Count >= 1 && html[0].Contains(rotation), $".fodt by {label}: draw:angle=\"900\" draws as {rotation} ({(html.Count > 0 ? Clip(html[0]) : "")})");
+            if (generator != oldWriter) continue;
+
+            // automatic steps (no draw:gradient-step-count = 0): red to blue is a colour distance of 1 = 128 bands (gradienttools.cxx:479-497),
+            // band k coloured interpolate(start, end, k / 127) (texture.cxx:169-222): band 1 = #fd0002, two stops per band
+            string auto = html.Count > 1 ? html[1] : "";
+            TestReport.Check(Count(auto, "<stop ") == 256 && auto.Contains("stop-color=\"#fd0002\"") && auto.Contains("stop-color=\"#0000ff\""),
+                             $"automatic steps: 128 bands as LibreOffice's decomposition draws them ({Count(auto, "<stop ")} stops)");
+
+            string package = Path.ChangeExtension(flat, ".odt");
+            if (File.Exists(package)) File.Delete(package);
+            using (var zip = System.IO.Compression.ZipFile.Open(package, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                void Entry(string name, string text, bool stored = false)
+                {
+                    var entry = zip.CreateEntry(name, stored ? System.IO.Compression.CompressionLevel.NoCompression : System.IO.Compression.CompressionLevel.Optimal);
+                    using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
+                    writer.Write(text);
+                }
+                Entry("mimetype", "application/vnd.oasis.opendocument.text", stored: true);
+                Entry("meta.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-meta " + Namespaces + " " + MetaNamespace + " office:version=\"1.2\">" + meta + "</office:document-meta>");
+                Entry("styles.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles " + Namespaces + " office:version=\"1.2\">" + styles + "</office:document-styles>");
+                Entry("content.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-content " + Namespaces + " office:version=\"1.2\"><office:body><office:text>" + body + "</office:text></office:body></office:document-content>");
+            }
+            foreach (WordIndexMode mode in new[] { WordIndexMode.InMemory, WordIndexMode.Sidecar })
+            {
+                var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-angle"), ForcedMode = mode };
+                for (int open = 0; open < 2; open++)     // the second open reuses the sidecar: the generator is read again, not stored
+                {
+                    using IWordWindowedDocument opened = WordWindowedDocumentOpener.Open(package, policy);
+                    while (!opened.IsIndexComplete) opened.ScanAhead(100_000);
+                    string first = opened.RenderBlocks(0, 1).FirstOrDefault()?.Html ?? "";
+                    TestReport.Check(first.Contains("rotate(-90)"), $".odt package by {label}, {mode}, open {open + 1}: meta.xml's generator makes 900 tenths ({Clip(first)})");
+                }
+            }
+        }
     }
 
     internal static List<string> Render(string path)
@@ -211,9 +302,11 @@ public static class OdtDrawingFidelityTest
         TestReport.Check(html[9].Contains("L72 0L72 ") && html[9].Contains("<path d=\"M0 0L21.6 7.2L21.6 -7.2Z\""), "connector: its routed svg:d with its markers (" + Clip(html[9]) + ")");
         TestReport.Check(html[10].Contains("matrix(0.866025 -0.5 0.5 0.866025 ") && html[10].Contains(">turnedtext</span>"), "rotate 30 degrees: counter-clockwise; the text turns with it (" + Clip(html[10]) + ")");
         TestReport.Check(html[11].Contains("matrix(1 0 1 1 "), "skewX(-45 degrees): x' = x + y (" + Clip(html[11]) + ")");
-        TestReport.Check(html[12].Contains("<stop offset=\"0\" stop-color=\"#ffffff\"/><stop offset=\"0.5\" stop-color=\"#000000\"/><stop offset=\"1\" stop-color=\"#ffffff\"/>"),
-                         "axial: the start colour in the middle, the end colour at both edges (" + Clip(html[12]) + ")");
-        TestReport.Check(html[13].Contains("gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\"><stop offset=\"0\" stop-color=\"#ffffff\"/><stop offset=\"1\" stop-color=\"#000000\"/>")
+        TestReport.Check(html[12].Contains("><stop offset=\"0\" stop-color=\"#ffffff\"/>") && html[12].Contains("<stop offset=\"0.5\" stop-color=\"#000000\"/>")
+                         && html[12].Contains("<stop offset=\"1\" stop-color=\"#ffffff\"/>") && Count(html[12], "<stop ") == 511,
+                         "axial: the start colour in the middle, the end colour at both edges, 128 automatic bands each side (" + Clip(html[12]) + ")");
+        TestReport.Check(html[13].Contains("gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\"><stop offset=\"0\" stop-color=\"#ffffff\"/>")
+                         && html[13].Contains("<stop offset=\"1\" stop-color=\"#000000\"/>") && Count(html[13], "<stop ") == 256
                          && html[13].Contains("scale(50.911688 50.911688)"), "radial: the end colour in the centre, radius half the diagonal (72 sqrt 2 / 2 = 50.91) (" + Clip(html[13]) + ")");
         TestReport.Check(html[14].Contains("scale(50.911688 50.911688)"), "ellipsoid: the box times sqrt 2, half of it (" + Clip(html[14]) + ")");
         TestReport.Check(Count(html[15], "<linearGradient") == 4 && Count(html[16], "<linearGradient") == 4, "square / rectangular: four edge regions");

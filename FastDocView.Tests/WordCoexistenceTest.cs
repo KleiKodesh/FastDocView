@@ -63,7 +63,10 @@ public static class WordCoexistenceTest
                 bool isRefused = false;
                 try { document.RenderBlocks(0, 5); }
                 catch (WordDocumentSourceChangedException) { isRefused = true; }
-                bool readsFile = !(mode == WordIndexMode.InMemory && Path.GetExtension(copy) == ".docx");
+                // in-memory mode holds the text only for zip packages, whose parts it inflates once (DocxWindowedDocument / OdtWindowedDocument
+                // OpenFromStream); .doc, flat .fodt, RTF, text and MHTML always read windows from the file
+                bool readsFile = !(mode == WordIndexMode.InMemory && WordWindowedDocumentOpener.DetectFormat(sample)
+                                   is WordWindowedDocumentOpener.WordFileFormat.Docx or WordWindowedDocumentOpener.WordFileFormat.OpenDocument);
                 TestReport.Check(isRefused == readsFile, readsFile ? $"{mode}: render after Word's save is refused (host reopens)" : $"{mode}: in-memory body keeps rendering the opened version");
 
                 // 4. Reopening picks up the new version.
