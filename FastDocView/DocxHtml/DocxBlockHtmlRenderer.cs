@@ -45,6 +45,15 @@ public sealed class DocxBlockHtmlRenderer
     /// <summary>A picture's id (for <see cref="IWordWindowedDocument.ReadPicture"/>) by its r:embed in a part (null = the main part, else that notes part); null when the browser cannot show it.</summary>
     public delegate string? PictureSource(WordDocumentNoteKind? part, string relationshipId);
 
+    /// <summary>A part a drawing names by r:id in a part (chart, diagram data / drawing): its type, name and XML; null when absent.</summary>
+    public Func<WordDocumentNoteKind?, string, (string Type, string PartName, System.Xml.Linq.XDocument Xml)?>? RelatedPart { get; init; }
+
+    /// <summary>A picture's original size in points by its r:embed in a part (tiled picture fills).</summary>
+    public Func<WordDocumentNoteKind?, string, (double WidthPt, double HeightPt)?>? PictureSize { get; init; }
+
+    /// <summary>The id of a picture another part (a diagram drawing) names by r:embed.</summary>
+    public Func<string, string, string?>? PartPictureId { get; init; }
+
     private sealed class DocxField
     {
         public readonly StringBuilder Instruction = new();
@@ -836,7 +845,9 @@ public sealed class DocxBlockHtmlRenderer
             Dictionary<string, string> style = VmlStyle(layout);
             double width = placement.WidthPt, height = placement.HeightPt;
             WordShape shape;
-            if ((string?)layout.Attribute("vmlShape") == "line")
+            if ((string?)layout.Attribute("vmlShape") == "group")
+                shape = null!;   // drawn below as the whole group
+            else if ((string?)layout.Attribute("vmlShape") == "line")
             {
                 (double x1, double y1) = VmlPoint((string?)layout.Attribute("from"));
                 (double x2, double y2) = VmlPoint((string?)layout.Attribute("to"));
@@ -846,11 +857,12 @@ public sealed class DocxBlockHtmlRenderer
                 placement = placement with { WidthPt = width, HeightPt = height };
             }
             else shape = DocxShapeReader.ReadVml(layout, style, width, height);
-            shapes = [shape];
+            shapes = shape is null ? DocxShapeReader.ReadVmlGroup(layout, width, height, embed => _pictures is not null ? _pictures(_currentPicturePart, embed) : null) : [shape];
         }
         else
             shapes = DocxShapeReader.Read(layout.Element("shapes")!, placement.WidthPt, placement.HeightPt, _styles.Theme,
-                                          embed => _pictures is not null ? _pictures(_currentPicturePart, embed) : null);
+                                          embed => _pictures is not null ? _pictures(_currentPicturePart, embed) : null,
+                                          embed => PictureSize?.Invoke(_currentPicturePart, embed));
         List<WordShape> withText = shapes.Where(s => s.TextIndex >= 0 && s.TextIndex < textBoxes.Count).ToList();
         bool inFlow = shapes.Count == 1 && withText.Count == 1 && withText[0].TextStyle.GrowsWithText && withText[0].RotationDegrees == 0;
 

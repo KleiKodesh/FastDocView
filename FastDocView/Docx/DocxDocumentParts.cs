@@ -52,6 +52,40 @@ public sealed class DocxDocumentParts
         return parts;
     }
 
+    /// <summary>Every internal relationship of the main part and the note parts: r:id -> (type, package part name). Small; read at open.
+    /// The drawing parts a drawing names (chart, diagram data / drawing) are read from here on demand, when the block is rendered.</summary>
+    public IReadOnlyDictionary<string, (string Type, string PartName)> RelatedParts { get; }
+    public IReadOnlyDictionary<string, (string Type, string PartName)> FootnoteRelatedParts { get; }
+    public IReadOnlyDictionary<string, (string Type, string PartName)> EndnoteRelatedParts { get; }
+
+    /// <summary>The internal relationships of any part (its .rels), read now: r:id -> (type, resolved part name).</summary>
+    public Dictionary<string, (string Type, string PartName)> ReadRelationshipsOf(string? sourcePartName)
+    {
+        using var zip = new ZipArchive(_package, ZipArchiveMode.Read, leaveOpen: true);
+        return LoadRelatedParts(zip, sourcePartName);
+    }
+
+    private static Dictionary<string, (string Type, string PartName)> LoadRelatedParts(ZipArchive zip, string? sourcePartName)
+    {
+        var parts = new Dictionary<string, (string, string)>(StringComparer.Ordinal);
+        XElement? root = sourcePartName is null ? null : LoadPart(zip, DocxPackagePartNames.RelationshipsPartName(sourcePartName))?.Root;
+        if (root is null) return parts;
+        foreach (XElement relationship in root.Elements())
+        {
+            string? type = (string?)relationship.Attribute("Type"), id = (string?)relationship.Attribute("Id"), target = (string?)relationship.Attribute("Target");
+            if (id is null || string.IsNullOrEmpty(target) || type is null || (string?)relationship.Attribute("TargetMode") == "External") continue;
+            parts[id] = (type, DocxPackagePartNames.ResolveTarget(sourcePartName!, target!));
+        }
+        return parts;
+    }
+
+    /// <summary>A package part parsed (a chart or diagram part a drawing names), read on demand; null when absent.</summary>
+    public XDocument? ReadPartXml(string partName)
+    {
+        using var zip = new ZipArchive(_package, ZipArchiveMode.Read, leaveOpen: true);
+        return LoadPart(zip, partName);
+    }
+
     /// <summary>A picture part's bytes, read on demand when the host asks for that picture (never kept); null when absent.</summary>
     public byte[]? ReadPartBytes(string partName)
     {
@@ -97,6 +131,9 @@ public sealed class DocxDocumentParts
         ImageParts = LoadImageParts(zip, PartNames.Document);
         FootnoteImageParts = LoadImageParts(zip, PartNames.Footnotes);
         EndnoteImageParts = LoadImageParts(zip, PartNames.Endnotes);
+        RelatedParts = LoadRelatedParts(zip, PartNames.Document);
+        FootnoteRelatedParts = LoadRelatedParts(zip, PartNames.Footnotes);
+        EndnoteRelatedParts = LoadRelatedParts(zip, PartNames.Endnotes);
     }
 
     private DocxNumberingDefinitions LoadNumbering()

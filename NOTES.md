@@ -1357,9 +1357,17 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   0.1in / 0.05in, vmltextboxcontext.cxx:186-211), mso-fit-shape-to-text. v:roundrect arcsize = a fraction of half the shorter
   side, default 0.2 (W3C NOTE-VML; vmlshape.cxx:1066-1077 the same radius). Outlines are the rect / roundRect / ellipse
   presets. Placement as VML pictures.
-- Not done yet: gradient a:path rect / shape (LibreOffice's rectangular gradient; drawn as its first stop's colour), blip
-  and pattern fills on shapes (the fill under them stays), the preset text rectangle (text uses the whole box); group
-  rotation / flip applied to children and text boxes; v:group children; wpc canvases, SmartArt and charts.
+- Layout (2026-11-04): the preset / custGeom text rectangle (a:rect) holds the shape's text, mirrored with the shape's flips
+  (EnhancedCustomShape2d::GetTextRect); a vertical flip turns text 180 degrees (shape.cxx:1501-1515, svdoashp.cxx:1551-1566).
+  Groups carry their rotation and flips to every child and its text box as Shape::createAndInsert does (flips toggled,
+  rotation turned by the parent's orientation, centres mirrored and turned about the group centre), with MSO's width / height
+  swap for children turned 45-135 / 225-315 degrees in a scaled group. wpc canvases: a group of their own size, the wpc:bg /
+  wpc:whole background rectangle (WordprocessingCanvasContext.cxx). v:group: every child in the group's coordinate system
+  (coordorigin / coordsize, lclGetAbsRect), nested groups, lines, pictures, text boxes in order.
+- Fills: a:path rect / shape = LibreOffice's rectangular gradient (four edge regions with linear gradients, clipped); a:pattFill
+  = LibreOffice's hatch for the preset (hatchmap.hxx) over the background colour; a:blipFill = an HTML picture layer between SVG
+  layers, clipped to the outline, stretched by fillRect or tiled at the picture's original size (WordPictureSize: PNG pHYs,
+  JPEG JFIF, BMP, else 96 per inch as graphichelper.cxx getOriginalSize).
 - Search: shape text is w:txbxContent text, found once (mc:Fallback skipped by both scanner and reference).
 - Checks: `--fidelity` DocxShapesFidelityTest and DocxDrawingFidelityTest; live `vue-demo/playwright/docxDrawingDetailsCheck.mjs TestOutput/fidelity-v1-drawing-details.docx` (every path parses, gradients resolve, markers measured at the line ends) (hand-worked values from the cited source:
   dashes, every line end, alpha, arcTo, path without w / h, every guide operator, darken / lighten, theme styles, grpFill,

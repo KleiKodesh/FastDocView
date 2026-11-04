@@ -131,7 +131,7 @@ internal static class DocxDrawingStripper
         int dataEnd = ElementEnd(drawing, data, "a:graphicData");
         if (dataEnd < 0) return "";
         ReadOnlySpan<byte> graphic = drawing.Slice(data, dataEnd - data);
-        if (IndexOfOpenTag(graphic, 0, "wps:wsp") < 0 && IndexOfOpenTag(graphic, 0, "wpg:wgp") < 0) return "";
+        if (IndexOfOpenTag(graphic, 0, "wps:wsp") < 0 && IndexOfOpenTag(graphic, 0, "wpg:wgp") < 0 && IndexOfOpenTag(graphic, 0, "wpc:wpc") < 0) return "";
         var tree = new StringBuilder("<shapes>");
         int skipDepth = 0;
         var kept = new Stack<string>();
@@ -192,6 +192,8 @@ internal static class DocxDrawingStripper
         "a:scrgbClr", "a:hslClr", "a:alphaMod", "a:alphaOff", "a:lum", "a:hue", "a:hueMod", "a:hueOff", "a:sat", "a:satMod", "a:satOff",
         "a:red", "a:redMod", "a:redOff", "a:green", "a:greenMod", "a:greenOff", "a:blue", "a:blueMod", "a:blueOff",
         "a:gray", "a:comp", "a:inv", "a:gamma", "a:invGamma", "a:gdLst", "a:fillToRect", "a:custDash", "a:ds",
+        // canvases (wpc), picture and pattern fills, the custom geometry's text rectangle
+        "wpc:wpc", "wpc:bg", "wpc:whole", "a:blipFill", "a:stretch", "a:fillRect", "a:tile", "a:alphaModFix", "a:pattFill", "a:fgClr", "a:bgClr", "a:rect",
         "a:ln", "a:prstDash", "a:headEnd", "a:tailEnd", "a:lnRef", "a:fillRef", "a:spAutoFit",
     };
 
@@ -281,6 +283,7 @@ internal static class DocxDrawingStripper
     {
         ReadOnlySpan<byte> picture = span.Slice(from, to - from);
         int imageData = IndexOfOpenTag(picture, 0, "v:imagedata");
+        if (IndexOfOpenTag(picture, 0, "v:group") is var group and >= 0) { WriteVmlGroupLayout(output, picture, group); return; }
         if (imageData < 0) { WriteVmlShapeLayout(output, picture); return; }
         ReadOnlySpan<byte> imageTag = OpenTagAt(picture, imageData);
         string? embed = AttributeValue(imageTag, "r:id") ?? AttributeValue(imageTag, "o:relid");
@@ -310,7 +313,7 @@ internal static class DocxDrawingStripper
     /// filled, strokecolor / stroked / strokeweight, arcsize (roundrect), from / to (line), the v:fill / v:stroke child's
     /// on / color, and v:textbox inset with textBox="1" when it holds text; w10:wrap as for pictures. The attributes are the
     /// ones LibreOffice reads (oox vmlshapecontext.cxx:397-403 stroke / fill, vmltextboxcontext.cxx:186-211 inset).
-    /// The first such element of the w:pict is the shape; a v:group is drawn as its first shape only.
+    /// The first such element of the w:pict is the shape (a v:group: WriteVmlGroupLayout).
     /// </summary>
     private static void WriteVmlShapeLayout(MemoryStream output, ReadOnlySpan<byte> picture)
     {
@@ -321,13 +324,30 @@ internal static class DocxDrawingStripper
         if (shape < 0) return;
         ReadOnlySpan<byte> shapeTag = OpenTagAt(picture, shape);
         var layout = new StringBuilder("<" + PictureLayoutElementName + " kind=\"vml\" vmlShape=\"" + shapeName.Substring(2) + "\"");
+        int shapeEnd = ElementEnd(picture, shape, shapeName);
+        AppendVmlShapeAttributes(layout, shapeTag, shapeEnd < 0 ? picture.Slice(shape) : picture.Slice(shape, shapeEnd - shape));
+        void Copy(string attribute, ReadOnlySpan<byte> tag, string name)
+        {
+            if (AttributeValue(tag, name) is { } value) layout.Append(' ').Append(attribute).Append("=\"").Append(value).Append('"');
+        }
+        if (IndexOfOpenTag(picture, 0, "w10:wrap") is var wrap and >= 0)
+        {
+            ReadOnlySpan<byte> wrapTag = OpenTagAt(picture, wrap);
+            Copy("wrap", wrapTag, "type");
+            Copy("wrapText", wrapTag, "side");
+        }
+        layout.Append("/>");
+        WriteUtf8(output, layout.ToString());
+    }
+
+    /// <summary>A VML shape's drawing attributes (see <see cref="WriteVmlShapeLayout"/>) from its open tag and body, onto an element being written.</summary>
+    private static void AppendVmlShapeAttributes(StringBuilder layout, ReadOnlySpan<byte> shapeTag, ReadOnlySpan<byte> body)
+    {
         void Copy(string attribute, ReadOnlySpan<byte> tag, string name)
         {
             if (AttributeValue(tag, name) is { } value) layout.Append(' ').Append(attribute).Append("=\"").Append(value).Append('"');
         }
         foreach (string name in new[] { "style", "fillcolor", "filled", "strokecolor", "stroked", "strokeweight", "arcsize", "from", "to" }) Copy(name, shapeTag, name);
-        int shapeEnd = ElementEnd(picture, shape, shapeName);
-        ReadOnlySpan<byte> body = shapeEnd < 0 ? picture.Slice(shape) : picture.Slice(shape, shapeEnd - shape);
         if (IndexOfOpenTag(body, 0, "v:fill") is var fill and >= 0) { Copy("fillOn", OpenTagAt(body, fill), "on"); Copy("fillColor2", OpenTagAt(body, fill), "color"); }
         if (IndexOfOpenTag(body, 0, "v:stroke") is var stroke and >= 0)
         {
@@ -342,15 +362,69 @@ internal static class DocxDrawingStripper
             Copy("insetmode", OpenTagAt(body, textBox), "insetmode");
             if (AttributeValue(OpenTagAt(body, textBox), "style") is { } textStyle && textStyle.Contains("mso-fit-shape-to-text:t")) layout.Append(" autoFit=\"1\"");
         }
+    }
+
+    private static readonly string[] VmlChildNames = ["v:group", "v:rect", "v:roundrect", "v:oval", "v:line", "v:shape", "v:image"];
+
+    /// <summary>
+    /// A w:pict holding a v:group (ECMA-376 Part 4 14.1.2.7): the layout element (kind="vml" vmlShape="group", the group's style
+    /// and w10:wrap) with the group tree inside: a vgroup per v:group (style, coordorigin, coordsize) and a vshape per child
+    /// shape (its element as vmlShape, the attributes of <see cref="AppendVmlShapeAttributes"/>, the v:imagedata r:id as
+    /// embed), in document order, so the n-th text box is the n-th shape with textBox="1" (the w:txbxContent copies follow
+    /// in the same order). LibreOffice reads the children in the group's coordinate system the same way (vmlshape.cxx
+    /// GroupShape::implConvertAndInsert :1575-1585, lclGetAbsRect :105-116).
+    /// </summary>
+    private static void WriteVmlGroupLayout(MemoryStream output, ReadOnlySpan<byte> picture, int group)
+    {
+        var layout = new StringBuilder("<" + PictureLayoutElementName + " kind=\"vml\" vmlShape=\"group\"");
+        if (AttributeValue(OpenTagAt(picture, group), "style") is { } style) layout.Append(" style=\"").Append(style).Append('"');
         if (IndexOfOpenTag(picture, 0, "w10:wrap") is var wrap and >= 0)
         {
             ReadOnlySpan<byte> wrapTag = OpenTagAt(picture, wrap);
-            Copy("wrap", wrapTag, "type");
-            Copy("wrapText", wrapTag, "side");
+            if (AttributeValue(wrapTag, "type") is { } type) layout.Append(" wrap=\"").Append(type).Append('"');
+            if (AttributeValue(wrapTag, "side") is { } side) layout.Append(" wrapText=\"").Append(side).Append('"');
         }
-        layout.Append("/>");
+        layout.Append('>');
+        int end = ElementEnd(picture, group, "v:group");
+        AppendVmlGroup(layout, end < 0 ? picture.Slice(group) : picture.Slice(group, end - group));
+        layout.Append("</").Append(PictureLayoutElementName).Append('>');
         WriteUtf8(output, layout.ToString());
     }
+
+    /// <summary>One v:group (its span from its open tag) as a vgroup element with its children.</summary>
+    private static void AppendVmlGroup(StringBuilder layout, ReadOnlySpan<byte> group)
+    {
+        ReadOnlySpan<byte> tag = OpenTagAt(group, 0);
+        layout.Append("<vgroup");
+        foreach (string name in new[] { "style", "coordorigin", "coordsize" })
+            if (AttributeValue(tag, name) is { } value) layout.Append(' ').Append(name).Append("=\"").Append(value).Append('"');
+        layout.Append('>');
+        int position = tag.Length + 1;
+        while (position < group.Length)
+        {
+            int next = -1;
+            string nextName = "";
+            foreach (string name in VmlChildNames)
+                if (IndexOfOpenTag(group, position, name) is var at and >= 0 && (next < 0 || at < next)) { next = at; nextName = name; }
+            if (next < 0) break;
+            int end = ElementEnd(group, next, nextName);
+            ReadOnlySpan<byte> child = end < 0 ? group.Slice(next) : group.Slice(next, end - next);
+            if (nextName == "v:group") AppendVmlGroup(layout, child);
+            else
+            {
+                layout.Append("<vshape vmlShape=\"").Append(nextName.Substring(2)).Append('"');
+                AppendVmlShapeAttributes(layout, OpenTagAt(child, 0), child);
+                if (IndexOfOpenTag(child, 0, "v:imagedata") is var image and >= 0
+                    && (AttributeValue(OpenTagAt(child, image), "r:id") ?? AttributeValue(OpenTagAt(child, image), "o:relid")) is { } embed)
+                    layout.Append(" embed=\"").Append(embed).Append('"');
+                layout.Append("/>");
+            }
+            if (end < 0) break;
+            position = end;
+        }
+        layout.Append("</vgroup>");
+    }
+
 
     private static void WriteUtf8(MemoryStream output, string text)
     {

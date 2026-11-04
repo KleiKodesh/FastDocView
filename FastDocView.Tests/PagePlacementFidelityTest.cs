@@ -27,6 +27,7 @@ public static class PagePlacementFidelityTest
         DocxTextBoxes();
         DocxShapesFidelityTest.Run();
         DocxDrawingFidelityTest.Run();
+        DocxDrawingLayoutFidelityTest.Run();
     }
 
     /// <summary>The picture ids of a block's &lt;img&gt; elements (data-word-picture), in order.</summary>

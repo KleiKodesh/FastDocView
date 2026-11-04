@@ -184,7 +184,10 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _styles = parts.Styles;
         _noteFormats = parts.NoteNumberFormats;
         RecordNewNoteReferences();
-        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets, PictureId);
+        _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets, PictureId)
+        {
+            RelatedPart = ReadRelatedPart, PictureSize = ReadPictureSize, PartPictureId = PartPictureId,
+        };
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
         Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
@@ -370,6 +373,21 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     public WordDocumentPicture? ReadPicture(string pictureId)
     {
         if (pictureId is not { Length: > 2 } || pictureId[1] != ':') return null;
+        if (pictureId[0] == 'x')
+        {
+            // a picture of a diagram drawing part: only an image relationship of that part resolves
+            int hash = pictureId.LastIndexOf('#');
+            if (hash < 3) return null;
+            string sourcePart = pictureId.Substring(2, hash - 2), relationshipId = pictureId.Substring(hash + 1);
+            if (!RelatedPartsOf(null).Values.Any(p => p.PartName == sourcePart)
+                || !RelationshipsOf(sourcePart).TryGetValue(relationshipId, out var target) || !target.Type.EndsWith("/image", StringComparison.OrdinalIgnoreCase)) return null;
+            lock (_readLock)
+            {
+                if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+                try { return WordPictureHtml.Picture(target.PartName, _parts.ReadPartBytes(target.PartName)); }
+                finally { _releasableFile?.Release(); }
+            }
+        }
         WordDocumentNoteKind? part = pictureId[0] switch { 'm' => null, 'f' => WordDocumentNoteKind.Footnote, 'e' => WordDocumentNoteKind.Endnote, _ => (WordDocumentNoteKind?)255 };
         if (part == (WordDocumentNoteKind)255) return null;
         if (!PicturePartsOf(part).TryGetValue(pictureId.Substring(2), out string? partName)) return null;
@@ -379,6 +397,58 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
             try { return WordPictureHtml.Picture(partName, _parts.ReadPartBytes(partName)); }
             finally { _releasableFile?.Release(); }
         }
+    }
+
+    // ── drawing parts (charts, diagrams) and their pictures, read when a block that names them is rendered ──
+
+    private readonly Dictionary<string, XDocument?> _relatedPartCache = new(StringComparer.Ordinal);   // bounded: a few drawings' parts
+    private readonly Dictionary<string, Dictionary<string, (string Type, string PartName)>> _partRelationshipsCache = new(StringComparer.Ordinal);
+    private const int RelatedPartCacheLimit = 16;
+
+    private IReadOnlyDictionary<string, (string Type, string PartName)> RelatedPartsOf(WordDocumentNoteKind? part) => part switch
+    {
+        null => _parts.RelatedParts,
+        WordDocumentNoteKind.Footnote => _parts.FootnoteRelatedParts,
+        _ => _parts.EndnoteRelatedParts,
+    };
+
+    /// <summary>A part a drawing in <paramref name="part"/> names by r:id (chart, diagram data / drawing), parsed; read on demand, a few kept.</summary>
+    private (string Type, string PartName, XDocument Xml)? ReadRelatedPart(WordDocumentNoteKind? part, string relationshipId)
+    {
+        if (!RelatedPartsOf(part).TryGetValue(relationshipId, out var related)) return null;
+        lock (_readLock)
+        {
+            if (!_relatedPartCache.TryGetValue(related.PartName, out XDocument? xml))
+            {
+                if (_relatedPartCache.Count >= RelatedPartCacheLimit) _relatedPartCache.Clear();
+                xml = _parts.ReadPartXml(related.PartName);
+                _relatedPartCache[related.PartName] = xml;
+            }
+            return xml is null ? null : (related.Type, related.PartName, xml);
+        }
+    }
+
+    /// <summary>The relationships of any part (a diagram drawing's pictures), read once each, a few kept.</summary>
+    private Dictionary<string, (string Type, string PartName)> RelationshipsOf(string partName)
+    {
+        lock (_readLock)
+        {
+            if (_partRelationshipsCache.TryGetValue(partName, out var relationships)) return relationships;
+            if (_partRelationshipsCache.Count >= RelatedPartCacheLimit) _partRelationshipsCache.Clear();
+            return _partRelationshipsCache[partName] = _parts.ReadRelationshipsOf(partName);
+        }
+    }
+
+    /// <summary>A picture's id when it is named by another part (a diagram drawing): "x:" part name "#" r:id; null unless a browser can show it.</summary>
+    private string? PartPictureId(string partName, string relationshipId)
+        => RelationshipsOf(partName).TryGetValue(relationshipId, out var target) && target.Type.EndsWith("/image", StringComparison.OrdinalIgnoreCase)
+           && WordPictureHtml.ContentTypeOf(target.PartName) is not null ? "x:" + partName + "#" + relationshipId : null;
+
+    /// <summary>A picture's original size in points (for tiled fills): its pixels at its resolution (WordPictureSize).</summary>
+    private (double WidthPt, double HeightPt)? ReadPictureSize(WordDocumentNoteKind? part, string relationshipId)
+    {
+        if (!PicturePartsOf(part).TryGetValue(relationshipId, out string? partName)) return null;
+        lock (_readLock) return WordPictureSize.Read(_parts.ReadPartBytes(partName));
     }
 
     private (int number, string label)? ResolveNoteLabel(WordDocumentNoteKind kind, int noteId)

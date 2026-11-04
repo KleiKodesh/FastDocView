@@ -36,6 +36,16 @@ public enum WordLineEndType : byte { None, Triangle, Stealth, Diamond, Oval, Arr
 
 public readonly record struct WordLineEnd(WordLineEndType Type, int Width, int Length);
 
+/// <summary>Hatch lines (LibreOffice drawing::Hatch): colour, opacity, spacing in points, angle in degrees counter-clockwise, 1 / 2 / 3 line sets.</summary>
+public sealed record WordShapeHatch(string Color, double Opacity, double DistancePt, double AngleDegrees, int Sets);
+
+/// <summary>
+/// How a picture fills a shape: stretched into the box inset by (Left, Top, Right, Bottom) fractions (negative = beyond), or
+/// tiled from an offset (points) at a tile size (points), mirrored per <see cref="TileFlip"/> ("x", "y", "xy").
+/// </summary>
+public readonly record struct WordShapePictureFill(double Left, double Top, double Right, double Bottom, bool Tiled, double TileOffsetX, double TileOffsetY,
+                                                   double TileWidth, double TileHeight, string? TileFlip, double Opacity);
+
 /// <summary>Line cap (DrawingML a:ln cap: flat, rnd, sq).</summary>
 public enum WordLineCap : byte { Flat, Round, Square }
 
@@ -77,6 +87,15 @@ public sealed class WordShape
     /// <summary>A radial gradient (DrawingML a:path circle) centred at (<see cref="GradientCenterX"/>, <see cref="GradientCenterY"/>) as fractions of the box.</summary>
     public bool GradientRadial;
     public double GradientCenterX = 0.5, GradientCenterY = 0.5;
+    /// <summary>A rectangular gradient (DrawingML a:path rect / shape) about the same centre.</summary>
+    public bool GradientRectangular;
+    /// <summary>The geometry's text rectangle in the shape's own points (unflipped); null = the whole box.</summary>
+    public (double X, double Y, double Width, double Height)? TextRect;
+    /// <summary>A hatch fill (pattern) drawn over <see cref="FillColor"/> (its background, or none).</summary>
+    public WordShapeHatch? Hatch;
+    /// <summary>A picture fill (blipFill) by picture id, stretched to the box less its fill rectangle, or tiled.</summary>
+    public string? FillPictureId;
+    public WordShapePictureFill FillPicture;
     public int TextIndex = -1;
     public string? PictureId;
     public WordTextBoxStyle TextStyle;
@@ -102,16 +121,26 @@ public static class WordShapeHtml
 
     public static void CloseFrame(StringBuilder html) => html.Append("</span>");
 
-    /// <summary>The outlines of every shape (pictures are drawn as boxes by <see cref="AppendPicture"/>).</summary>
+    /// <summary>The outlines of every shape (pictures are drawn as boxes by <see cref="AppendPicture"/>); a picture-filled shape splits the SVG so its picture layer keeps its place in the drawing order.</summary>
     public static void AppendGeometry(StringBuilder html, IReadOnlyList<WordShape> shapes, double width, double height, bool stretches)
     {
         width = Math.Max(width, 0.01); height = Math.Max(height, 0.01);
-        html.Append("<svg class=\"word-shape-geometry\" aria-hidden=\"true\" viewBox=\"0 0 ").Append(Points(width)).Append(' ').Append(Points(height))
+        void Open() => html.Append("<svg class=\"word-shape-geometry\" aria-hidden=\"true\" viewBox=\"0 0 ").Append(Points(width)).Append(' ').Append(Points(height))
             .Append("\" width=\"").Append(Points(width)).Append("pt\" height=\"").Append(Points(height)).Append("pt\"")
             .Append(stretches ? " preserveAspectRatio=\"none\"" : "")
             .Append(" style=\"position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none\">");
+        Open();
         foreach (WordShape shape in shapes)
-            if (shape.Geometry != WordShapeGeometry.Picture) AppendShape(html, shape, stretches);
+        {
+            if (shape.Geometry == WordShapeGeometry.Picture) continue;
+            if (shape.FillPictureId is not null && shape.Paths is not null)
+            {
+                html.Append("</svg>");
+                AppendPictureFill(html, shape);
+                Open();
+            }
+            AppendShape(html, shape, stretches);
+        }
         html.Append("</svg>");
     }
 
@@ -228,6 +257,144 @@ public static class WordShapeHtml
         return id;
     }
 
+    /// <summary>A clip path of <paramref name="pathData"/> (user space), defined once by its content; returns its id.</summary>
+    private static string AppendClip(StringBuilder html, string pathData)
+    {
+        string id = "word-shape-clip-" + StableHash(pathData);
+        html.Append("<defs><clipPath id=\"").Append(id).Append("\"><path d=\"").Append(pathData).Append("\" clip-rule=\"evenodd\"/></clipPath></defs>");
+        return id;
+    }
+
+    private static string StopsHtml(WordShape shape, double brightness)
+    {
+        var stops = new StringBuilder();
+        var list = shape.GradientStops!;
+        for (int i = 0; i < list.Count; i++)
+        {
+            double opacity = shape.GradientStopOpacities is { } opacities && i < opacities.Count ? opacities[i] : 1;
+            stops.Append("<stop offset=\"").Append(Number(list[i].Offset)).Append("\" stop-color=\"").Append(WordShapeColor.Brightened(list[i].Color, brightness)).Append('"');
+            if (opacity < 1) stops.Append(" stop-opacity=\"").Append(Opacity(opacity)).Append('"');
+            stops.Append("/>");
+        }
+        return stops.ToString();
+    }
+
+    /// <summary>
+    /// LibreOffice's rectangular gradient (a:path rect / shape): basegfx gradienttools.cxx initRectGradientInfo :196-270 places
+    /// the box at the fillToRect centre, getRectangularGradientAlpha :694-755 gives 1 - max(|x|, |y|) with the aspect correction,
+    /// that is the distance to the box's nearest edge over half its shorter side, and the stops run reversed from the centre
+    /// (fillproperties.cxx:549-551): position = 1 - distance / (shorter side / 2). Drawn as the four edge regions (each region
+    /// is nearest one edge, split on the 45-degree lines from the corners), each with a linear gradient across it, clipped
+    /// to the path; outside the box (a moved centre) the last stop (alpha 0).
+    /// </summary>
+    private static void AppendRectangularGradient(StringBuilder html, WordShape shape, string fillData, double brightness)
+    {
+        double w = shape.Width, h = shape.Height, bx = (shape.GradientCenterX - 0.5) * w, by = (shape.GradientCenterY - 0.5) * h, m = Math.Min(w, h) / 2;
+        if (m <= 0) return;
+        string clip = AppendClip(html, fillData);
+        var list = shape.GradientStops!;
+        double lastOpacity = shape.GradientStopOpacities is { } o && o.Count == list.Count ? o[list.Count - 1] : 1;
+        html.Append("<g clip-path=\"url(#").Append(clip).Append(")\"><path d=\"").Append(fillData).Append("\" fill-rule=\"evenodd\" fill=\"")
+            .Append(WordShapeColor.Brightened(list[list.Count - 1].Color, brightness)).Append('"');
+        if (lastOpacity < 1) html.Append(" fill-opacity=\"").Append(Opacity(lastOpacity)).Append('"');
+        html.Append(" stroke=\"none\"/>");
+        string stops = StopsHtml(shape, brightness);
+        string P(double x, double y) => Number(x) + " " + Number(y);
+        (double x1, double y1, double x2, double y2, string polygon)[] regions =
+        [
+            (0, by + m, 0, by, "M" + P(bx, by) + "L" + P(bx + w, by) + "L" + P(bx + w - m, by + m) + "L" + P(bx + m, by + m) + "Z"),
+            (0, by + h - m, 0, by + h, "M" + P(bx, by + h) + "L" + P(bx + m, by + h - m) + "L" + P(bx + w - m, by + h - m) + "L" + P(bx + w, by + h) + "Z"),
+            (bx + m, 0, bx, 0, "M" + P(bx, by) + "L" + P(bx + m, by + m) + "L" + P(bx + m, by + h - m) + "L" + P(bx, by + h) + "Z"),
+            (bx + w - m, 0, bx + w, 0, "M" + P(bx + w, by) + "L" + P(bx + w, by + h) + "L" + P(bx + w - m, by + h - m) + "L" + P(bx + w - m, by + m) + "Z"),
+        ];
+        foreach ((double x1, double y1, double x2, double y2, string polygon) in regions)
+        {
+            string definition = "<linearGradient gradientUnits=\"userSpaceOnUse\" x1=\"" + Number(x1) + "\" y1=\"" + Number(y1) + "\" x2=\"" + Number(x2) + "\" y2=\"" + Number(y2) + "\">" + stops + "</linearGradient>";
+            string id = "word-shape-gradient-" + StableHash(definition);
+            html.Append("<defs>").Append(definition.Insert("<linearGradient".Length, " id=\"" + id + "\"")).Append("</defs>")
+                .Append("<path d=\"").Append(polygon).Append("\" fill=\"url(#").Append(id).Append(")\" stroke=\"none\"/>");
+        }
+        html.Append("</g>");
+    }
+
+    /// <summary>
+    /// A hatch over the fill (LibreOffice draws a pattern fill as a hatch, see DocxPatternHatch): hairline sets of parallel
+    /// lines at the hatch spacing, the first at the hatch angle (counter-clockwise), a second at -90 and a third at -45 degrees
+    /// (drawinglayer fillhatchprimitive2d.cxx:62-88), across the box grown for the angle (texture.cxx GeoTexSvxHatch :810-860),
+    /// clipped to the path; the colour takes the path's darken / lighten too (AdaptObjColor :2851-2865).
+    /// </summary>
+    private static void AppendHatch(StringBuilder html, WordShape shape, string fillData, WordShapeHatch hatch, double brightness)
+    {
+        if (hatch.DistancePt <= 0) return;
+        double w = shape.Width, h = shape.Height, cx = w / 2, cy = h / 2, reach = Math.Sqrt(w * w + h * h) / 2;
+        string clip = AppendClip(html, fillData);
+        var d = new StringBuilder();
+        double[] angles = hatch.Sets switch { 3 => [hatch.AngleDegrees, hatch.AngleDegrees - 90, hatch.AngleDegrees - 45], 2 => [hatch.AngleDegrees, hatch.AngleDegrees - 90], _ => [hatch.AngleDegrees] };
+        foreach (double angle in angles)
+        {
+            double radians = -angle * Math.PI / 180, ux = Math.Cos(radians), uy = Math.Sin(radians), nx = -uy, ny = ux;
+            int count = (int)Math.Ceiling(reach / hatch.DistancePt);
+            for (int k = -count; k <= count; k++)
+            {
+                double ox = cx + nx * k * hatch.DistancePt, oy = cy + ny * k * hatch.DistancePt;
+                d.Append('M').Append(Number(ox - ux * reach)).Append(' ').Append(Number(oy - uy * reach)).Append('L').Append(Number(ox + ux * reach)).Append(' ').Append(Number(oy + uy * reach));
+            }
+        }
+        html.Append("<path clip-path=\"url(#").Append(clip).Append(")\" d=\"").Append(d).Append("\" fill=\"none\" stroke=\"").Append(WordShapeColor.Brightened(hatch.Color, brightness))
+            .Append("\" stroke-width=\"0.75\" vector-effect=\"non-scaling-stroke\"");
+        if (hatch.Opacity < 1) html.Append(" stroke-opacity=\"").Append(Opacity(hatch.Opacity)).Append('"');
+        html.Append("/>");
+    }
+
+    /// <summary>
+    /// A picture fill (a:blipFill) as an HTML layer between two SVG layers, so the shapes after it still draw over it: the
+    /// picture element the host gives its source to, placed and turned like the shape, clipped to the outline by an SVG clip
+    /// path in the box's own units. Stretched: into the box inset by the fill rectangle; tiled: copies from the tile origin.
+    /// </summary>
+    private static void AppendPictureFill(StringBuilder html, WordShape shape)
+    {
+        double w = Math.Max(shape.Width, 0.01), h = Math.Max(shape.Height, 0.01);
+        var unit = new StringBuilder();
+        foreach (WordShapePath path in shape.Paths!)
+            if (path.Fill != WordShapePathFill.None)
+                foreach (WordShapeSubpath subpath in path.Subpaths)
+                {
+                    unit.Append('M').Append(Unit(subpath.StartX / w)).Append(' ').Append(Unit(subpath.StartY / h));
+                    foreach (WordShapeSegment s in subpath.Segments)
+                    {
+                        if (s.IsCurve)
+                            unit.Append('C').Append(Unit(s.Control1X / w)).Append(' ').Append(Unit(s.Control1Y / h)).Append(' ').Append(Unit(s.Control2X / w)).Append(' ')
+                                .Append(Unit(s.Control2Y / h)).Append(' ').Append(Unit(s.X / w)).Append(' ').Append(Unit(s.Y / h));
+                        else unit.Append('L').Append(Unit(s.X / w)).Append(' ').Append(Unit(s.Y / h));
+                    }
+                    unit.Append('Z');
+                }
+        string clip = "word-shape-clip-" + StableHash("bbox" + unit);
+        html.Append("<svg width=\"0\" height=\"0\" style=\"position:absolute\" aria-hidden=\"true\"><defs><clipPath id=\"").Append(clip)
+            .Append("\" clipPathUnits=\"objectBoundingBox\"><path d=\"").Append(unit).Append("\" clip-rule=\"evenodd\"/></clipPath></defs></svg>");
+        var css = new StringBuilder("position:absolute;display:block;overflow:hidden;left:").Append(Points(shape.X)).Append("pt;top:").Append(Points(shape.Y))
+            .Append("pt;width:").Append(Points(w)).Append("pt;height:").Append(Points(h)).Append("pt;clip-path:url(#").Append(clip).Append(");");
+        if (shape.RotationDegrees != 0 || shape.FlipHorizontal || shape.FlipVertical)
+            css.Append("transform:rotate(").Append(Number(shape.RotationDegrees)).Append("deg) scale(").Append(shape.FlipHorizontal ? "-1" : "1").Append(',').Append(shape.FlipVertical ? "-1" : "1").Append(");");
+        WordShapePictureFill fill = shape.FillPicture;
+        if (fill.Opacity < 1) css.Append("opacity:").Append(Opacity(fill.Opacity)).Append(';');
+        html.Append("<span class=\"word-shape-fill-picture\" style=\"").Append(css).Append("\">");
+        void Picture(double left, double top, double width, double height)
+            => html.Append("<img class=\"word-picture\" alt=\"\" ").Append(WordPictureHtml.PictureIdAttribute).Append("=\"").Append(WordHtmlText.Encode(shape.FillPictureId!))
+                   .Append("\" loading=\"lazy\" decoding=\"async\" style=\"position:absolute;max-width:none;left:").Append(Number(left)).Append("pt;top:").Append(Number(top))
+                   .Append("pt;width:").Append(Points(width)).Append("pt;height:").Append(Points(height)).Append("pt;\">");
+        if (fill.Tiled && fill.TileWidth > 0 && fill.TileHeight > 0)
+        {
+            double startX = fill.TileOffsetX - Math.Ceiling(fill.TileOffsetX / fill.TileWidth) * fill.TileWidth, startY = fill.TileOffsetY - Math.Ceiling(fill.TileOffsetY / fill.TileHeight) * fill.TileHeight;
+            for (double y = startY; y < h; y += fill.TileHeight)
+                for (double x = startX; x < w; x += fill.TileWidth) Picture(x, y, fill.TileWidth, fill.TileHeight);
+        }
+        else Picture(fill.Left * w, fill.Top * h, w * (1 - fill.Left - fill.Right), h * (1 - fill.Top - fill.Bottom));
+        html.Append("</span>");
+    }
+
+    private static string Unit(double value) => Math.Round(value, 5).ToString("0.#####", CultureInfo.InvariantCulture);
+
     private static string Opacity(double value) => Math.Round(Math.Max(0, Math.Min(1, value)), 3).ToString("0.###", CultureInfo.InvariantCulture);
 
     /// <summary>
@@ -248,13 +415,19 @@ public static class WordShapeHtml
                 WordShapePathFill.Darken => -0.4, WordShapePathFill.DarkenLess => -0.2,
                 WordShapePathFill.Lighten => 0.4, WordShapePathFill.LightenLess => 0.2, _ => 0,
             };
-            if (path.Fill != WordShapePathFill.None && (shape.FillColor is not null || shape.GradientStops is { Count: > 0 }))
+            if (path.Fill != WordShapePathFill.None)
             {
-                string? gradientId = AppendGradient(html, shape, brightness);
-                html.Append("<path d=\"").Append(PathData(path.Subpaths, closeAll: true)).Append("\" fill-rule=\"evenodd\" fill=\"")
-                    .Append(gradientId is not null ? "url(#" + gradientId + ")" : WordShapeColor.Brightened(shape.FillColor!, brightness)).Append('"');
-                if (gradientId is null && shape.FillOpacity < 1) html.Append(" fill-opacity=\"").Append(Opacity(shape.FillOpacity)).Append('"');
-                html.Append(" stroke=\"none\"/>");
+                string fillData = PathData(path.Subpaths, closeAll: true);
+                if (shape.GradientRectangular && shape.GradientStops is { Count: > 0 }) AppendRectangularGradient(html, shape, fillData, brightness);
+                else if (shape.FillColor is not null || shape.GradientStops is { Count: > 0 })
+                {
+                    string? gradientId = AppendGradient(html, shape, brightness);
+                    html.Append("<path d=\"").Append(fillData).Append("\" fill-rule=\"evenodd\" fill=\"")
+                        .Append(gradientId is not null ? "url(#" + gradientId + ")" : WordShapeColor.Brightened(shape.FillColor!, brightness)).Append('"');
+                    if (gradientId is null && shape.FillOpacity < 1) html.Append(" fill-opacity=\"").Append(Opacity(shape.FillOpacity)).Append('"');
+                    html.Append(" stroke=\"none\"/>");
+                }
+                if (shape.Hatch is { } hatch) AppendHatch(html, shape, fillData, hatch, brightness);
             }
             if (!path.Stroke || shape.LineColor is not { } line) continue;
             var stroke = new StringBuilder(" fill=\"none\" stroke=\"").Append(line).Append("\" stroke-width=\"").Append(Number(lineWidth)).Append('"');
@@ -424,7 +597,13 @@ public static class WordShapeHtml
         return d.ToString();
     }
 
-    /// <summary>Opens the box a shape's text sits in: over the shape's outline, or (a growing single shape) in the frame's flow.</summary>
+    /// <summary>
+    /// Opens the box a shape's text sits in: over the shape's outline, or (a growing single shape) in the frame's flow. The box is
+    /// the geometry's text rectangle when it has one, mirrored with the shape's flips (svx EnhancedCustomShape2d::GetTextRect
+    /// :1152-1175), turned with the shape about the shape's centre; a vertical flip turns the text 180 degrees more and a
+    /// horizontal one leaves it (LibreOffice inverts the stored rotation of a once-flipped shape, oox shape.cxx:1501-1515, and
+    /// SdrObjCustomShape takes 180 - angle for a mirrored Y, svdoashp.cxx:1551-1566).
+    /// </summary>
     public static void OpenShapeText(StringBuilder html, WordShape shape, bool inFlow)
     {
         WordTextBoxStyle style = shape.TextStyle;
@@ -432,9 +611,19 @@ public static class WordShapeHtml
         if (inFlow) css.Append("position:relative;width:100%;");
         else
         {
-            css.Append("position:absolute;left:").Append(Points(shape.X)).Append("pt;top:").Append(Points(shape.Y)).Append("pt;width:").Append(Points(shape.Width))
-               .Append("pt;height:").Append(Points(shape.Height)).Append("pt;overflow:hidden;");
-            if (shape.RotationDegrees != 0) css.Append("transform:rotate(").Append(Number(shape.RotationDegrees)).Append("deg);");
+            (double x, double y, double w, double h) = shape.TextRect ?? (0, 0, shape.Width, shape.Height);
+            if (shape.TextRect is not null && shape.FlipHorizontal) x = shape.Width - x - w;
+            if (shape.TextRect is not null && shape.FlipVertical) y = shape.Height - y - h;
+            css.Append("position:absolute;left:").Append(Points(shape.X + x)).Append("pt;top:").Append(Points(shape.Y + y)).Append("pt;width:").Append(Points(w))
+               .Append("pt;height:").Append(Points(h)).Append("pt;overflow:hidden;");
+            double rotation = shape.RotationDegrees + (shape.FlipVertical ? 180 : 0);
+            rotation -= 360 * Math.Floor(rotation / 360);
+            if (rotation != 0)
+            {
+                if (x != 0 || y != 0 || w != shape.Width || h != shape.Height)
+                    css.Append("transform-origin:").Append(Number(shape.Width / 2 - x)).Append("pt ").Append(Number(shape.Height / 2 - y)).Append("pt;");
+                css.Append("transform:rotate(").Append(Number(rotation)).Append("deg);");
+            }
         }
         css.Append("padding:").Append(Points(style.TopInsetPt)).Append("pt ").Append(Points(style.RightInsetPt)).Append("pt ")
            .Append(Points(style.BottomInsetPt)).Append("pt ").Append(Points(style.LeftInsetPt)).Append("pt;");
@@ -444,11 +633,17 @@ public static class WordShapeHtml
 
     public static void CloseShapeText(StringBuilder html) => html.Append("</span>");
 
-    /// <summary>A picture inside a group, at its box over the frame.</summary>
+    /// <summary>A picture inside a group, at its box over the frame, turned and mirrored like the shapes (flips at its centre).</summary>
     public static void AppendPicture(StringBuilder html, WordShape shape)
     {
         html.Append("<span class=\"word-shape-part\" style=\"position:absolute;display:block;left:").Append(Points(shape.X)).Append("pt;top:").Append(Points(shape.Y)).Append("pt;");
-        if (shape.RotationDegrees != 0) html.Append("transform:rotate(").Append(Number(shape.RotationDegrees)).Append("deg);");
+        if (shape.RotationDegrees != 0 || shape.FlipHorizontal || shape.FlipVertical)
+        {
+            html.Append("transform:");
+            if (shape.RotationDegrees != 0) html.Append("rotate(").Append(Number(shape.RotationDegrees)).Append("deg)");
+            if (shape.FlipHorizontal || shape.FlipVertical) html.Append(" scale(").Append(shape.FlipHorizontal ? "-1" : "1").Append(',').Append(shape.FlipVertical ? "-1" : "1").Append(')');
+            html.Append(';');
+        }
         html.Append("\">");
         WordPictureHtml.Append(html, new WordPictureLayout(shape.Width, shape.Height, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0), shape.PictureId);
         html.Append("</span>");

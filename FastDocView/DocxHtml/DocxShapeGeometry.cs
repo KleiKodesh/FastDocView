@@ -68,15 +68,22 @@ internal static class DocxShapeGeometry
     /// (a name that is no preset, or no path).
     /// </summary>
     public static List<WordShapePath>? Paths(XElement geometry, double widthPt, double heightPt, double ownWidthEmu, double ownHeightEmu)
+        => Paths(geometry, widthPt, heightPt, ownWidthEmu, ownHeightEmu, out _);
+
+    /// <summary>As above, with the text rectangle (a:rect l t r b, in points from the shape's top left; null = none) as LibreOffice reads it
+    /// into TextFrames (customshapegeometry.cxx a:rect, EnhancedCustomShape2d::GetTextRect :1152-1175: in the shape's own coordinates; a
+    /// rectangle of 1 unit or less = the whole shape).</summary>
+    public static List<WordShapePath>? Paths(XElement geometry, double widthPt, double heightPt, double ownWidthEmu, double ownHeightEmu, out (double X, double Y, double Width, double Height)? textRect)
     {
-        XElement? adjustList, guideList, pathList;
+        textRect = null;
+        XElement? adjustList, guideList, pathList, rectangle;
         if (geometry.Name.LocalName == "prstGeom")
         {
             XElement? definition = Preset((string?)geometry.Attribute("prst"));
             if (definition is null) return null;
-            adjustList = definition.Element("avLst"); guideList = definition.Element("gdLst"); pathList = definition.Element("pathLst");
+            adjustList = definition.Element("avLst"); guideList = definition.Element("gdLst"); pathList = definition.Element("pathLst"); rectangle = definition.Element("rect");
         }
-        else { adjustList = geometry.Element("avLst"); guideList = geometry.Element("gdLst"); pathList = geometry.Element("pathLst"); }
+        else { adjustList = geometry.Element("avLst"); guideList = geometry.Element("gdLst"); pathList = geometry.Element("pathLst"); rectangle = geometry.Element("rect"); }
         if (pathList is null) return null;
         if (ownWidthEmu <= 0) ownWidthEmu = widthPt * EmuPerPoint;
         if (ownHeightEmu <= 0) ownHeightEmu = heightPt * EmuPerPoint;
@@ -97,6 +104,14 @@ internal static class DocxShapeGeometry
         foreach (XElement guide in guideList?.Elements("gd") ?? [])
             if ((string?)guide.Attribute("name") is { } name) guides.Define(name, (string?)guide.Attribute("fmla") ?? "");
 
+        if (rectangle is not null && ownWidthEmu > 0 && ownHeightEmu > 0)
+        {
+            double left = guides.Value((string?)rectangle.Attribute("l")), top = guides.Value((string?)rectangle.Attribute("t"));
+            double right = guides.Value((string?)rectangle.Attribute("r")), bottom = guides.Value((string?)rectangle.Attribute("b"));
+            double sx = widthPt / ownWidthEmu, sy = heightPt / ownHeightEmu;
+            if (right - left > 360 && bottom - top > 360)   // 1/100 mm = 360 EMU
+                textRect = (left * sx, top * sy, (right - left) * sx, (bottom - top) * sy);
+        }
         var paths = new List<WordShapePath>();
         foreach (XElement path in pathList.Elements("path"))
         {

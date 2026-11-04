@@ -37,22 +37,77 @@ internal static class DocxShapeReader
 
     public delegate string? PictureIdResolver(string embed);
 
-    public static List<WordShape> Read(XElement shapeTree, double frameWidth, double frameHeight, DocxTheme? theme, PictureIdResolver pictureId)
+    /// <summary>A picture's original size in points (its pixels at its resolution), for tiled picture fills; null when unknown.</summary>
+    public delegate (double WidthPt, double HeightPt)? PictureSizeResolver(string embed);
+
+
+    public static List<WordShape> Read(XElement shapeTree, double frameWidth, double frameHeight, DocxTheme? theme, PictureIdResolver pictureId, PictureSizeResolver? pictureSize = null)
     {
         var shapes = new List<WordShape>();
         int textIndex = 0;
         foreach (XElement child in shapeTree.Elements())
-            Walk(child, shapes, theme, pictureId, ref textIndex, x => x, y => y, 1, 1, frameWidth, frameHeight, isTop: true, groupFill: null);
+            Walk(child, shapes, theme, pictureId, pictureSize, ref textIndex, null, frameWidth, frameHeight, groupFill: null);
         return shapes;
     }
 
     /// <summary>
-    /// One element of the tree. <paramref name="mapX"/> / <paramref name="mapY"/> turn this level's EMU coordinates into frame
-    /// points, <paramref name="scaleX"/> / <paramref name="scaleY"/> its EMU lengths; a top-level shape or group fills the frame.
+    /// A group as its children see it (LibreOffice Shape::createAndInsert, oox/source/drawingml/shape.cxx:1394-1493): its box
+    /// in its parent's unrotated space, its child space (chOff, ext / chExt; a missing or zero chExt = scale 1), its own
+    /// rotation and flips, and the flips and rotation it has on the page (a flip of an odd number of ancestors turns the
+    /// rotation the other way: nOrientation :1481-1488).
     /// </summary>
-    private static void Walk(XElement element, List<WordShape> shapes, DocxTheme? theme, PictureIdResolver pictureId, ref int textIndex,
-                             Func<double, double> mapX, Func<double, double> mapY, double scaleX, double scaleY, double frameWidth, double frameHeight, bool isTop,
-                             ShapeFill? groupFill)
+    private sealed record GroupFrame(double X, double Y, double Width, double Height, double ChildOffsetX, double ChildOffsetY, double ChildScaleX, double ChildScaleY,
+                                     double RotationDegrees, bool FlipHorizontal, bool FlipVertical, GroupFrame? Parent, bool PageFlipHorizontal, bool PageFlipVertical, double PageRotationDegrees)
+    {
+        /// <summary>A point of this group's space on the frame: mirrored at the group's centre, turned about it, then through the parents.</summary>
+        public (double X, double Y) ToFrame(double x, double y)
+        {
+            double cx = X + Width / 2, cy = Y + Height / 2;
+            if (FlipHorizontal) x = 2 * cx - x;
+            if (FlipVertical) y = 2 * cy - y;
+            if (RotationDegrees != 0)
+            {
+                double radians = RotationDegrees * Math.PI / 180, dx = x - cx, dy = y - cy;
+                (x, y) = (cx + dx * Math.Cos(radians) - dy * Math.Sin(radians), cy + dx * Math.Sin(radians) + dy * Math.Cos(radians));
+            }
+            return Parent is null ? (x, y) : Parent.ToFrame(x, y);
+        }
+
+        public bool Mirrors => PageFlipHorizontal != PageFlipVertical;
+    }
+
+    /// <summary>
+    /// A shape's box, flips and rotation on the frame: its a:xfrm in its group's child space scaled to the group (with MSO's
+    /// width / height swap for a child turned 45-135 or 225-315 degrees, lcl_doSpecialMSOWidthHeightToggle shape.cxx:986-999,
+    /// :1456-1473, and 180 degrees more under a mirroring parent), its centre carried through the groups, its flips toggled
+    /// by theirs (:1406-1416), its rotation turned by their orientation and added to theirs (:1481-1491). A top-level element
+    /// fills the frame.
+    /// </summary>
+    private static (double x, double y, double width, double height, double rotation, bool flipH, bool flipV) Place(XElement? transform, GroupFrame? group, double frameWidth, double frameHeight)
+    {
+        double rotation = Attribute(transform, "rot") / 60000;
+        bool flipH = IsOn(transform, "flipH"), flipV = IsOn(transform, "flipV");
+        if (group is null) return (0, 0, frameWidth, frameHeight, rotation, flipH, flipV);
+        double offX = Attribute(transform?.Element("off"), "x"), offY = Attribute(transform?.Element("off"), "y");
+        double cx = Attribute(transform?.Element("ext"), "cx"), cy = Attribute(transform?.Element("ext"), "cy");
+        double centreX = group.X + (offX + cx / 2 - group.ChildOffsetX) * group.ChildScaleX, centreY = group.Y + (offY + cy / 2 - group.ChildOffsetY) * group.ChildScaleY;
+        double width = cx * group.ChildScaleX, height = cy * group.ChildScaleY;
+        int degrees = (int)(Attribute(transform, "rot") / 60000);
+        bool toggle = (group.ChildScaleX != group.ChildScaleY) && ((degrees >= 45 && degrees < 135) || (degrees >= 225 && degrees < 315));
+        double extra = 0;
+        if (toggle)
+        {
+            (width, height) = (cx * group.ChildScaleY, cy * group.ChildScaleX);
+            if (group.Mirrors) extra = 180;
+        }
+        (double x, double y) = group.ToFrame(centreX, centreY);
+        return (x - width / 2, y - height / 2, width, height, (group.Mirrors ? -rotation : rotation) + group.PageRotationDegrees + extra,
+                flipH ^ group.PageFlipHorizontal, flipV ^ group.PageFlipVertical);
+    }
+
+    /// <summary>One element of the tree inside <paramref name="group"/> (null: the drawing's top level, which fills the frame).</summary>
+    private static void Walk(XElement element, List<WordShape> shapes, DocxTheme? theme, PictureIdResolver pictureId, PictureSizeResolver? pictureSize, ref int textIndex,
+                             GroupFrame? group, double frameWidth, double frameHeight, ShapeFill? groupFill)
     {
         switch (element.Name.LocalName)
         {
@@ -60,67 +115,85 @@ internal static class DocxShapeReader
             {
                 XElement? properties = element.Element("grpSpPr");
                 XElement? transform = properties?.Element("xfrm");
-                (double x, double y, double width, double height) = Box(transform, mapX, mapY, scaleX, scaleY, frameWidth, frameHeight, isTop);
-                double childOffsetX = Attribute(transform?.Element("chOff"), "x"), childOffsetY = Attribute(transform?.Element("chOff"), "y");
+                // a group keeps its own unrotated box in its parent's space; its turn and flips apply to its children
+                double x, y, width, height;
+                if (group is null) (x, y, width, height) = (0, 0, frameWidth, frameHeight);
+                else
+                {
+                    double offX = Attribute(transform?.Element("off"), "x"), offY = Attribute(transform?.Element("off"), "y");
+                    width = Attribute(transform?.Element("ext"), "cx") * group.ChildScaleX; height = Attribute(transform?.Element("ext"), "cy") * group.ChildScaleY;
+                    x = group.X + (offX - group.ChildOffsetX) * group.ChildScaleX; y = group.Y + (offY - group.ChildOffsetY) * group.ChildScaleY;
+                }
                 double childWidth = Attribute(transform?.Element("chExt"), "cx"), childHeight = Attribute(transform?.Element("chExt"), "cy");
-                double childScaleX = childWidth > 0 ? width / childWidth : scaleX, childScaleY = childHeight > 0 ? height / childHeight : scaleY;
+                double ownWidth = Attribute(transform?.Element("ext"), "cx"), ownHeight = Attribute(transform?.Element("ext"), "cy");
+                double emuX = group?.ChildScaleX ?? (ownWidth > 0 ? width / ownWidth : 1 / EmuPerPoint), emuY = group?.ChildScaleY ?? (ownHeight > 0 ? height / ownHeight : 1 / EmuPerPoint);
+                double rotation = Attribute(transform, "rot") / 60000;
+                bool flipH = IsOn(transform, "flipH"), flipV = IsOn(transform, "flipV");
+                bool parentMirrors = group?.Mirrors ?? false;
+                var frame = new GroupFrame(x, y, width, height, Attribute(transform?.Element("chOff"), "x"), Attribute(transform?.Element("chOff"), "y"),
+                                           childWidth > 0 ? width / childWidth : emuX, childHeight > 0 ? height / childHeight : emuY,
+                                           rotation, flipH, flipV, group, flipH ^ (group?.PageFlipHorizontal ?? false), flipV ^ (group?.PageFlipVertical ?? false),
+                                           (parentMirrors ? -rotation : rotation) + (group?.PageRotationDegrees ?? 0));
                 ShapeFill? fill = ShapeFill.Apply(ShapeFill.None, OwnFill(properties), theme, null, groupFill);
-                foreach (XElement child in element.Elements())
-                    Walk(child, shapes, theme, pictureId, ref textIndex, cx => x + (cx - childOffsetX) * childScaleX, cy => y + (cy - childOffsetY) * childScaleY,
-                         childScaleX, childScaleY, frameWidth, frameHeight, isTop: false, fill);
+                foreach (XElement child in element.Elements()) Walk(child, shapes, theme, pictureId, pictureSize, ref textIndex, frame, frameWidth, frameHeight, fill);
+                break;
+            }
+            case "wpc":
+            {
+                // a drawing canvas (LibreOffice WordprocessingCanvasContext.cxx:34-52): a group whose child space is its own size, with a
+                // background rectangle taking the wpc:bg fill and the wpc:whole line (:67-72)
+                var frame = new GroupFrame(0, 0, frameWidth, frameHeight, 0, 0, 1 / EmuPerPoint, 1 / EmuPerPoint, 0, false, false, null, false, false, 0);
+                var background = new XElement("spPr");
+                foreach (XElement part in element.Elements().Where(e => e.Name.LocalName is "bg" or "whole")) background.Add(part.Elements());
+                WordShape canvas = Shape(background, null, theme, 0, 0, frameWidth, frameHeight, null, pictureId, pictureSize, null);
+                if (canvas.FillColor is not null || canvas.GradientStops is not null || canvas.LineColor is not null || canvas.FillPictureId is not null) shapes.Add(canvas);
+                foreach (XElement child in element.Elements()) Walk(child, shapes, theme, pictureId, pictureSize, ref textIndex, frame, frameWidth, frameHeight, null);
                 break;
             }
             case "wsp":
             {
                 XElement? properties = element.Element("spPr");
-                XElement? transform = properties?.Element("xfrm");
-                (double x, double y, double width, double height) = Box(transform, mapX, mapY, scaleX, scaleY, frameWidth, frameHeight, isTop);
-                WordShape shape = Shape(properties, element.Element("style"), theme, x, y, width, height, groupFill);
+                (double x, double y, double width, double height, double rotation, bool flipH, bool flipV) = Place(properties?.Element("xfrm"), group, frameWidth, frameHeight);
+                WordShape shape = Shape(properties, element.Element("style"), theme, x, y, width, height, groupFill, pictureId, pictureSize, (rotation, flipH, flipV));
+
                 if (element.Element("txbx") is not null) { shape.TextIndex = textIndex++; shape.TextStyle = TextStyle(element.Element("bodyPr")); }
                 shapes.Add(shape);
                 break;
             }
             case "pic":
             {
-                XElement? transform = element.Element("spPr")?.Element("xfrm");
-                (double x, double y, double width, double height) = Box(transform, mapX, mapY, scaleX, scaleY, frameWidth, frameHeight, isTop);
+                (double x, double y, double width, double height, double rotation, bool flipH, bool flipV) = Place(element.Element("spPr")?.Element("xfrm"), group, frameWidth, frameHeight);
                 string? embed = (string?)element.Element("blipFill")?.Element("blip")?.Attribute("embed");
                 shapes.Add(new WordShape
                 {
                     Geometry = WordShapeGeometry.Picture, X = x, Y = y, Width = width, Height = height,
-                    RotationDegrees = Attribute(transform, "rot") / 60000, PictureId = embed is { Length: > 0 } ? pictureId(embed) : null,
+                    RotationDegrees = rotation, FlipHorizontal = flipH, FlipVertical = flipV, PictureId = embed is { Length: > 0 } ? pictureId(embed) : null,
                 });
                 break;
             }
         }
     }
 
-    private static (double x, double y, double width, double height) Box(XElement? transform, Func<double, double> mapX, Func<double, double> mapY,
-                                                                         double scaleX, double scaleY, double frameWidth, double frameHeight, bool isTop)
-    {
-        if (isTop || transform is null) return (0, 0, frameWidth, frameHeight);
-        return (mapX(Attribute(transform.Element("off"), "x")), mapY(Attribute(transform.Element("off"), "y")),
-                Attribute(transform.Element("ext"), "cx") * scaleX, Attribute(transform.Element("ext"), "cy") * scaleY);
-    }
-
     private static XElement? OwnFill(XElement? properties)
         => properties?.Elements().FirstOrDefault(e => e.Name.LocalName is "noFill" or "solidFill" or "gradFill" or "grpFill" or "blipFill" or "pattFill");
 
-    private static WordShape Shape(XElement? properties, XElement? style, DocxTheme? theme, double x, double y, double width, double height, ShapeFill? groupFill)
+    private static WordShape Shape(XElement? properties, XElement? style, DocxTheme? theme, double x, double y, double width, double height, ShapeFill? groupFill,
+                                   PictureIdResolver? pictureId, PictureSizeResolver? pictureSize, (double Rotation, bool FlipH, bool FlipV)? placement)
     {
         XElement? transform = properties?.Element("xfrm");
         var shape = new WordShape
         {
             X = x, Y = y, Width = width, Height = height,
-            RotationDegrees = Attribute(transform, "rot") / 60000,
-            FlipHorizontal = IsOn(transform, "flipH"), FlipVertical = IsOn(transform, "flipV"),
+            RotationDegrees = placement?.Rotation ?? Attribute(transform, "rot") / 60000,
+            FlipHorizontal = placement?.FlipH ?? IsOn(transform, "flipH"), FlipVertical = placement?.FlipV ?? IsOn(transform, "flipV"),
         };
         double ownWidth = Attribute(transform?.Element("ext"), "cx"), ownHeight = Attribute(transform?.Element("ext"), "cy");
         XElement? geometry = properties?.Elements().FirstOrDefault(e => e.Name.LocalName is "prstGeom" or "custGeom");
-        if (geometry is not null && DocxShapeGeometry.Paths(geometry, width, height, ownWidth, ownHeight) is { } paths)
+        if (geometry is not null && DocxShapeGeometry.Paths(geometry, width, height, ownWidth, ownHeight, out var textRect) is { } paths)
         {
             shape.Geometry = WordShapeGeometry.Path;
             shape.Paths = paths;
+            shape.TextRect = textRect;
         }
         else if (geometry is null)
         {
@@ -137,7 +210,7 @@ internal static class DocxShapeReader
         if (fillReference is not null && theme?.FillStyle((int)Attribute(fillReference, "idx")) is { } themeFill)
             fill = ShapeFill.Apply(fill, themeFill, theme, fillPlaceholder, groupFill) ?? fill;
         fill = ShapeFill.Apply(fill, OwnFill(properties), theme, fillPlaceholder, groupFill) ?? fill;
-        fill.ApplyTo(shape);
+        fill.ApplyTo(shape, pictureId, pictureSize);
 
         // line: none, the theme a:ln, the shape's own
         XElement? lineReference = style?.Element("lnRef");
@@ -153,7 +226,7 @@ internal static class DocxShapeReader
     private sealed class ShapeFill
     {
         public static readonly ShapeFill None = new() { Kind = FillKind.None };
-        public enum FillKind { None, Solid, Gradient }
+        public enum FillKind { None, Solid, Gradient, Pattern, Picture }
         public FillKind Kind;
         public DocxResolvedColor Color;
         public List<(double Position, DocxResolvedColor Color)>? Stops;
@@ -161,11 +234,17 @@ internal static class DocxShapeReader
         public bool? RotateWithShape;
         public string? PathKind;
         public double CenterX = 0.5, CenterY = 0.5;
+        // a:pattFill
+        public string? PatternPreset;
+        public DocxResolvedColor? Foreground, Background;
+        // a:blipFill
+        public string? Embed;
+        public XElement? Blip;
 
         /// <summary>
-        /// <paramref name="element"/> (a fill element) over <paramref name="under"/> as assignUsed does: noFill / solidFill replace
-        /// it, a gradFill keeps the stops, angle and path it does not set itself, a:grpFill takes the group's; a blip or
-        /// pattern fill (not drawn) or no element leaves <paramref name="under"/>. Null only when grpFill has no group.
+        /// <paramref name="element"/> (a fill element) over <paramref name="under"/> as assignUsed does: noFill / solidFill /
+        /// pattFill / blipFill replace it, a gradFill keeps the stops, angle and path it does not set itself, a:grpFill takes
+        /// the group's; no element leaves <paramref name="under"/>. Null only when grpFill has no group.
         /// </summary>
         public static ShapeFill? Apply(ShapeFill under, XElement? element, DocxTheme? theme, string? placeholder, ShapeFill? groupFill)
         {
@@ -175,6 +254,14 @@ internal static class DocxShapeReader
                 case "solidFill":
                     return DocxDrawingColor.Resolve(element, theme, placeholder) is { } color ? new ShapeFill { Kind = FillKind.Solid, Color = color } : under;
                 case "grpFill": return groupFill ?? under;
+                case "pattFill":
+                    return new ShapeFill
+                    {
+                        Kind = FillKind.Pattern, PatternPreset = (string?)element.Attribute("prst"),
+                        Foreground = DocxDrawingColor.Resolve(element.Element("fgClr"), theme, placeholder), Background = DocxDrawingColor.Resolve(element.Element("bgClr"), theme, placeholder),
+                    };
+                case "blipFill":
+                    return (string?)element.Element("blip")?.Attribute("embed") is { Length: > 0 } embed ? new ShapeFill { Kind = FillKind.Picture, Embed = embed, Blip = element } : under;
                 case "gradFill":
                 {
                     var fill = new ShapeFill { Kind = FillKind.Gradient };
@@ -209,28 +296,62 @@ internal static class DocxShapeReader
             }
         }
 
-        public void ApplyTo(WordShape shape)
+        public void ApplyTo(WordShape shape, PictureIdResolver? pictureId = null, PictureSizeResolver? pictureSize = null)
         {
             switch (Kind)
             {
                 case FillKind.Solid:
                     shape.FillColor = Color.Css; shape.FillOpacity = Color.Opacity;
                     break;
-                case FillKind.Gradient when PathKind is null or "circle":
+                case FillKind.Gradient:
                     shape.GradientStops = Stops!.Select(s => (s.Position, s.Color.Css)).ToList();
                     shape.GradientStopOpacities = Stops!.Select(s => s.Color.Opacity).ToList();
                     shape.FillColor = Stops![0].Color.Css;
+                    // fillproperties.cxx:539-547: circle = radial; rect and shape = LibreOffice's rectangular gradient ("shape" is not implemented there)
                     shape.GradientRadial = PathKind == "circle";
+                    shape.GradientRectangular = PathKind is "rect" or "shape";
                     shape.GradientCenterX = CenterX; shape.GradientCenterY = CenterY;
                     double angle = AngleDegrees ?? 0;
                     if (RotateWithShape == false) angle -= shape.FlipHorizontal ^ shape.FlipVertical ? -shape.RotationDegrees : shape.RotationDegrees;
                     shape.GradientAngleDegrees = angle;
                     break;
-                case FillKind.Gradient:
-                    // a:path rect / shape: LibreOffice's rectangular gradient is not drawn here; the first stop's colour fills the shape
-                    shape.FillColor = Stops![0].Color.Css; shape.FillOpacity = Stops[0].Color.Opacity;
+                case FillKind.Pattern:
+                    // fillproperties.cxx:754-781: a hatch in the foreground colour over the background colour; no foreground = the background solid
+                    if (Foreground is { } foreground && PatternPreset is not null && DocxPatternHatch.Of(PatternPreset) is { } hatch)
+                    {
+                        shape.Hatch = new WordShapeHatch(foreground.Css, foreground.Opacity, hatch.DistancePt, hatch.AngleDegrees, hatch.Sets);
+                        if (Background is { } back) { shape.FillColor = back.Css; shape.FillOpacity = back.Opacity; }
+                    }
+                    else if (Background is { } back) { shape.FillColor = back.Css; shape.FillOpacity = back.Opacity; }
+                    break;
+                case FillKind.Picture:
+                    shape.FillPictureId = pictureId?.Invoke(Embed!);
+                    shape.FillPicture = PictureFill(Blip!, shape, () => pictureSize?.Invoke(Embed!));
                     break;
             }
+        }
+
+        /// <summary>
+        /// a:blipFill placement: a:stretch a:fillRect insets of the box (100000ths, negative = beyond; ECMA-376 20.1.8.30), or a:tile
+        /// as LibreOffice reads it (fillproperties.cxx:624-649: tile size = the picture's original size x sx / sy, offset tx / ty in EMU,
+        /// anchored at the algn point; flip is not used there either); alphaModFix = opacity (:749-750).
+        /// </summary>
+        private static WordShapePictureFill PictureFill(XElement blipFill, WordShape shape, Func<(double WidthPt, double HeightPt)?> originalSize)
+        {
+            double opacity = blipFill.Element("blip")?.Element("alphaModFix") is { } alpha ? Attribute(alpha, "amt") / 100000 : 1;
+            if (blipFill.Element("tile") is { } tile && originalSize() is { } size)
+            {
+                double sx = tile.Attribute("sx") is not null ? Attribute(tile, "sx") / 100000 : 1, sy = tile.Attribute("sy") is not null ? Attribute(tile, "sy") / 100000 : 1;
+                double tileWidth = Math.Max(0.01, size.WidthPt * sx), tileHeight = Math.Max(0.01, size.HeightPt * sy);
+                string align = (string?)tile.Attribute("algn") ?? "tl";
+                double originX = align switch { "t" or "ctr" or "b" => (shape.Width - tileWidth) / 2, "tr" or "r" or "br" => shape.Width - tileWidth, _ => 0 };
+                double originY = align switch { "l" or "ctr" or "r" => (shape.Height - tileHeight) / 2, "bl" or "b" or "br" => shape.Height - tileHeight, _ => 0 };
+                return new WordShapePictureFill(0, 0, 0, 0, true, originX + Attribute(tile, "tx") / EmuPerPoint, originY + Attribute(tile, "ty") / EmuPerPoint,
+                                                tileWidth, tileHeight, null, opacity);
+            }
+            XElement? fillRect = blipFill.Element("stretch")?.Element("fillRect");
+            return new WordShapePictureFill(Attribute(fillRect, "l") / 100000, Attribute(fillRect, "t") / 100000, Attribute(fillRect, "r") / 100000, Attribute(fillRect, "b") / 100000,
+                                            false, 0, 0, 0, 0, null, opacity);
         }
     }
 
@@ -433,8 +554,7 @@ internal static class DocxShapeReader
             resolved.ApplyTo(shape);
             shape.LineColor = VmlColor((string?)layout.Attribute("strokecolor")) ?? "#000000";
         }
-        if (style.TryGetValue("rotation", out string? rotation) && double.TryParse(rotation.TrimEnd('f', 'd', 'e', 'g'), NumberStyles.Float, CultureInfo.InvariantCulture, out double degrees))
-            shape.RotationDegrees = degrees;
+        if (style.TryGetValue("rotation", out string? rotation)) shape.RotationDegrees = VmlRotation(rotation);
         if (style.TryGetValue("flip", out string? flip)) { shape.FlipHorizontal = flip.Contains('x'); shape.FlipVertical = flip.Contains('y'); }
         if (layout.Attribute("textBox") is not null)
         {
@@ -478,6 +598,114 @@ internal static class DocxShapeReader
                new XAttribute("type", (string?)layout.Attribute(prefix + "arrow") switch { "block" => "triangle", "classic" => "stealth", "diamond" => "diamond", "oval" => "oval", "open" => "arrow", _ => "none" }),
                new XAttribute("w", (string?)layout.Attribute(prefix + "arrowwidth") switch { "narrow" => "sm", "wide" => "lg", _ => "med" }),
                new XAttribute("len", (string?)layout.Attribute(prefix + "arrowlength") switch { "short" => "sm", "long" => "lg", _ => "med" }));
+
+    /// <summary>VML style rotation in degrees clockwise: a number, or n "fd" in 65536ths (LibreOffice ConversionHelper::decodeRotation, vmlformatting.cxx:130-152).</summary>
+    internal static double VmlRotation(string value)
+    {
+        value = value.Trim();
+        if (value.EndsWith("fd", StringComparison.Ordinal))
+            return double.TryParse(value.Substring(0, value.Length - 2), NumberStyles.Float, CultureInfo.InvariantCulture, out double fixedPoint) ? fixedPoint / 65536 : 0;
+        return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double degrees) ? degrees : 0;
+    }
+
+    private static Dictionary<string, string> VmlStyleOf(XElement element)
+    {
+        var style = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string declaration in ((string?)element.Attribute("style") ?? "").Split(';'))
+        {
+            int colon = declaration.IndexOf(':');
+            if (colon > 0) style[declaration.Substring(0, colon).Trim()] = declaration.Substring(colon + 1).Trim();
+        }
+        return style;
+    }
+
+    private static double VmlNumber(Dictionary<string, string> style, string name)
+        => style.TryGetValue(name, out string? value) && double.TryParse(new string(value.TakeWhile(c => char.IsDigit(c) || c is '-' or '+' or '.').ToArray()),
+                                                                          NumberStyles.Float, CultureInfo.InvariantCulture, out double number) ? number : 0;
+
+    private static (double X, double Y) VmlPair(string? value, (double, double) fallback)
+    {
+        if (value is null) return fallback;
+        string[] parts = value.Split(',');
+        double Part(int i, double otherwise) => i < parts.Length && double.TryParse(parts[i].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : otherwise;
+        return (Part(0, fallback.Item1), Part(1, fallback.Item2));
+    }
+
+    /// <summary>
+    /// A VML group (the vgroup tree DocxDrawingStripper.WriteVmlGroupLayout keeps) as shapes in the frame's points: a child's
+    /// style left / top / width / height are plain numbers in its group's coordinate system (coordorigin, default 0,0;
+    /// coordsize, default 1000,1000, a zero part 1: LibreOffice ShapeType::getCoordSystem vmlshape.cxx:171-180,
+    /// getRelRectangle :224-238 with a zero size 1), placed by lclGetAbsRect (:105-116) into the group's box; a v:line's from / to
+    /// the same way (lclGetAbsPoint :95-103). Group rotation turns its children about its centre (:1621-1622, rotation as
+    /// decodeRotation); flips (style flip x / y) mirror at the group's centre. The top group fills the frame. Pictures (an
+    /// r:id on v:imagedata) are drawn as group pictures; the n-th child with a text box takes the n-th text box.
+    /// </summary>
+    public static List<WordShape> ReadVmlGroup(XElement layout, double frameWidth, double frameHeight, PictureIdResolver pictureId)
+    {
+        var shapes = new List<WordShape>();
+        if (layout.Element("vgroup") is not { } root) return shapes;
+        int textIndex = 0;
+        WalkVml(root, null, 0, 0, frameWidth, frameHeight, shapes, pictureId, ref textIndex);
+        return shapes;
+    }
+
+    private static void WalkVml(XElement group, GroupFrame? parent, double x, double y, double width, double height, List<WordShape> shapes, PictureIdResolver pictureId, ref int textIndex)
+    {
+        Dictionary<string, string> groupStyle = VmlStyleOf(group);
+        (double originX, double originY) = VmlPair((string?)group.Attribute("coordorigin"), (0, 0));
+        (double sizeX, double sizeY) = VmlPair((string?)group.Attribute("coordsize"), (1000, 1000));
+        if (sizeX == 0) sizeX = 1;
+        if (sizeY == 0) sizeY = 1;
+        double rotation = groupStyle.TryGetValue("rotation", out string? r) ? VmlRotation(r) : 0;
+        string flip = groupStyle.TryGetValue("flip", out string? f) ? f : "";
+        bool flipH = flip.Contains('x'), flipV = flip.Contains('y'), parentMirrors = parent?.Mirrors ?? false;
+        var frame = new GroupFrame(x, y, width, height, originX, originY, width / sizeX, height / sizeY, rotation, flipH, flipV, parent,
+                                   flipH ^ (parent?.PageFlipHorizontal ?? false), flipV ^ (parent?.PageFlipVertical ?? false),
+                                   (parentMirrors ? -rotation : rotation) + (parent?.PageRotationDegrees ?? 0));
+        foreach (XElement child in group.Elements())
+        {
+            Dictionary<string, string> style = VmlStyleOf(child);
+            double left = VmlNumber(style, "left"), top = VmlNumber(style, "top"), childWidth = VmlNumber(style, "width"), childHeight = VmlNumber(style, "height");
+            string kind = (string?)child.Attribute("vmlShape") ?? "";
+            if (kind == "line")
+            {
+                (double x1, double y1) = VmlPair((string?)child.Attribute("from"), (0, 0));
+                (double x2, double y2) = VmlPair((string?)child.Attribute("to"), (0, 0));
+                left = Math.Min(x1, x2); top = Math.Min(y1, y2); childWidth = Math.Abs(x2 - x1); childHeight = Math.Abs(y2 - y1);
+                if (x2 < x1) style["flip"] = (style.TryGetValue("flip", out string? lf) ? lf : "") + "x";
+                if (y2 < y1) style["flip"] = (style.TryGetValue("flip", out string? lf2) ? lf2 : "") + "y";
+            }
+            else
+            {
+                if (childWidth == 0) childWidth = 1;
+                if (childHeight == 0) childHeight = 1;
+            }
+            double boxX = frame.X + (left - frame.ChildOffsetX) * frame.ChildScaleX, boxY = frame.Y + (top - frame.ChildOffsetY) * frame.ChildScaleY;
+            double boxWidth = childWidth * frame.ChildScaleX, boxHeight = childHeight * frame.ChildScaleY;
+            if (child.Name.LocalName == "vgroup")
+            {
+                // a nested group keeps its box in this group's space; its own turn and flips apply to its children
+                WalkVml(child, frame, boxX, boxY, boxWidth, boxHeight, shapes, pictureId, ref textIndex);
+                continue;
+            }
+            (double cx, double cy) = frame.ToFrame(boxX + boxWidth / 2, boxY + boxHeight / 2);
+            double ownRotation = style.TryGetValue("rotation", out string? sr) ? VmlRotation(sr) : 0;
+            string ownFlip = style.TryGetValue("flip", out string? of) ? of : "";
+            bool shapeFlipH = ownFlip.Contains('x') ^ frame.PageFlipHorizontal, shapeFlipV = ownFlip.Contains('y') ^ frame.PageFlipVertical;
+            double finalRotation = (frame.Mirrors ? -ownRotation : ownRotation) + frame.PageRotationDegrees;
+            WordShape shape;
+            if (child.Attribute("embed") is { } embed && kind is "image" or "shape" or "rect")
+                shape = new WordShape { Geometry = WordShapeGeometry.Picture, PictureId = pictureId(embed.Value) };
+            else
+            {
+                shape = ReadVml(child, style, boxWidth, boxHeight);
+                if (shape.TextIndex >= 0) shape.TextIndex = textIndex++;
+            }
+            shape.X = cx - boxWidth / 2; shape.Y = cy - boxHeight / 2; shape.Width = boxWidth; shape.Height = boxHeight;
+            shape.RotationDegrees = finalRotation; shape.FlipHorizontal = shapeFlipH; shape.FlipVertical = shapeFlipV;
+            shapes.Add(shape);
+        }
+    }
 
     private static bool IsOff(string? value) => value is "f" or "false" or "0" or "off";
 
