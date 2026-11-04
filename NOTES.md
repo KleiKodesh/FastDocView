@@ -1228,6 +1228,43 @@ others hold the files, as Word retries a save.
   offsets.
 
 
+### OpenDocument drawing (2026-11-04) - supersedes the shape parts of the 2026-11-03 section below
+
+Sources: LibreOffice core master read 2026-11-04 (cited file:line in each class), ODF 1.3 part 3 (OASIS HTML).
+- **One custom-shape engine for every format** (`Html/WordCustomShapeEngine.cs`, port of svx EnhancedCustomShape2d
+  SetPathSize / GetParameter / CreateSubPath / CreatePathObj): every segment command incl. G (arc angle), Q, H..K, checkClosed,
+  stretch points (nXRef / nYRef - msoRoundRectangle keeps circular corners), colour data (cube, can, ... faces), fill + stroke
+  objects and SortFilledObjectsToBack. Formulas (`WordCustomShapeFormula.cs`) follow EnhancedCustomShapeFunctionParser's grammar;
+  OfficeArt calculation records become formulas as GetEquation does, so .doc / RTF presets now share it (expected-value change:
+  the RTF round rectangle 72 x 36 has 6 pt corners, not 12).
+- **ODF geometry** (`Odt/OdtEnhancedGeometry.cs`): enhanced-path, equations by name, modifiers, text-areas, view-box,
+  sub-view-size, mirror, text-rotate-angle; presets by draw:type merged per property (MergeDefaultAttributes); "rectangle" is a
+  plain rectangle; an unknown type without a path draws nothing. 3-D extrusion is drawn flat (a 3-D scene renderer is out of scope).
+- **Objects** (`Odt/OdtShapeBuilder.cs`): rect (draw:corner-radius only, as LibreOffice), circle / ellipse kinds, line, polygon,
+  polyline, path (open = not filled), connector (svg:d when its ends match, else `OdtConnectorRoute` = ImpCalcEdgeTrack; ends
+  connected to shapes are routed as free ends - the other shape may sit in another block, never read), measure
+  (`OdtMeasureShape`, label width estimated as 0.5 em per character), caption (`OdtCaptionShape`), regular-polygon (not imported
+  by LibreOffice; drawn per ODF 19.123 / 19.128 / 19.211), groups; draw:transform as a full matrix (rotate / skew / scale /
+  translate / matrix).
+- **Paint** (`Odt/OdtShapeStyle.cs`, `Odt/OdtFillPaint.cs`): LibreOffice's pool defaults when unset (fill solid #729fcf, line
+  solid #3465a4 hairline, round join); gradients linear / axial / radial / ellipsoid / square / rectangular with border, centre,
+  angle units, intensities, loext gradient stops, step bands; transparency gradients as SVG masks (also over picture fills);
+  hatches single / double / triple with background; bitmap fills stretch / repeat / no-repeat with ref point, offsets, row /
+  column shift; dashes (XDash::CreateDotDashArray, the pool's default dash), joins (none = segments stroked apart), caps,
+  markers from draw:marker paths with width / centre and the notched-back rule. Steps 0 are drawn smooth (within one colour level).
+- **Text**: text areas with padding, vertical / horizontal alignment, writing mode; Fontwork through the shared
+  WordOfficeArtFontwork (align from draw:fit-to-size / textarea-horizontal-align; LibreOffice does not use text-path-mode);
+  text boxes: vertical alignment, painted fills, numbered lists and tables (a paragraph holding a box table becomes
+  `div.word-paragraph-block` - a table inside a `<p>` is split by the HTML parser).
+- **Not possible / not done, with reason**: auto-grow of a shape to its text needs browser text metrics (LibreOffice-saved files
+  carry the grown size); contour-mode "full" and text on both sides of a float cannot be laid out in CSS (CSS Shapes 1 s.2); the
+  ODF 1.2 + LibreOffice 7 unitless-degree gradient angle needs meta.xml's generator, not read (1.2 = tenths).
+- **Wrap**: style:wrap-contour = CSS shape-outside polygon from the outline (1 pt sweep) with shape-margin; page-anchored objects
+  at body level are their own paragraph blocks (index format 9, which also keeps every graphic property and drawing style).
+- **Search**: shapes of every kind, lists / tables / sections in text boxes, lists in shapes, body-level drawings - once.
+- Checks: `--fidelity` (OdtDrawingFidelityTest, OdtConnectorRouteTest, OdtMeasureCaptionTest; LibreOffice conversion compared),
+  live `vue-demo/playwright/odtDrawingCheck.mjs`.
+
 ### OpenDocument text boxes and shapes (2026-11-03)
 
 Sources read online 2026-11-03: ODF 1.3 part 3 (OASIS HTML): 19.759 text:anchor-type, 20.400 style:wrap, 20.298
