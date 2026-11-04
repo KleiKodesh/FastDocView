@@ -5,8 +5,8 @@ namespace FastDocView.Tests;
 /// <summary>
 /// .docx WordArt (--fidelity, seconds): a DrawingML shape with a:prstTxWarp textArchUp (its text box text laid on the arch,
 /// in the run's w14:textFill colour and font, not boxed) and a VML v:shape of type 136 (plain text) with v:textpath, in its fill
-/// colour; both through the shared WordOfficeArtGeometry / WordOfficeArtFontwork. Search unchanged: the DrawingML text box text
-/// is found once; the VML textpath string, an attribute, was never searched and still is not.
+/// colour; both through the shared WordOfficeArtGeometry / WordOfficeArtFontwork. Search: the DrawingML text box text and the
+/// VML textpath string are found once each (byte scanner and reference reader); a v:textpath in mc:Fallback is not.
 /// </summary>
 public static class DocxWordArtFidelityTest
 {
@@ -22,11 +22,15 @@ public static class DocxWordArtFidelityTest
             + "<wps:txbx><w:txbxContent><w:p><w:r><w:rPr><w:rFonts w:ascii=\"Impact\" w:hAnsi=\"Impact\"/><w14:textFill xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\"><w14:solidFill><w14:srgbClr w14:val=\"FF0000\"/></w14:solidFill></w14:textFill></w:rPr><w:t>Arched</w:t></w:r></w:p></w:txbxContent></wps:txbx>"
             + "<wps:bodyPr><a:prstTxWarp prst=\"textArchUp\"><a:avLst><a:gd name=\"adj\" fmla=\"val 10800000\"/></a:avLst></a:prstTxWarp></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>";
         string vml = $"<w:p><w:r><w:pict {Namespaces}><v:shape type=\"#_x0000_t136\" style=\"width:216pt;height:72pt\" fillcolor=\"blue\" stroked=\"f\">"
-            + "<v:textpath style=\"font-family:&quot;Arial Black&quot;\" string=\"VmlArt\"/></v:shape></w:pict></w:r></w:p>";
-        List<string> html = DocxFidelityTest.RenderAll("wordart", drawingMl + vml,
+            + "<v:textpath style=\"font-family:&quot;Arial Black&quot;\" string=\"VmlArt\"/></v:shape></w:pict></w:r></w:p>"
+            + "<w:p><w:r><mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice Requires=\"wps\"><w:t>choice</w:t></mc:Choice><mc:Fallback><w:pict " + Namespaces + "><v:shape type=\"#_x0000_t136\" style=\"width:72pt;height:36pt\"><v:textpath string=\"FallbackArt\"/></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>";
+        // a footnote holding VML WordArt: its textpath string makes the referencing block a hit
+        string footnotes = "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:id=\"1\"><w:p><w:r><w:pict " + Namespaces + "><v:shape type=\"#_x0000_t136\" style=\"width:72pt;height:36pt\"><v:textpath string=\"NoteArt\"/></v:shape></w:pict></w:r></w:p></w:footnote>";
+        vml += "<w:p><w:r><w:t>noted</w:t></w:r><w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>";
+        List<string> html = DocxFidelityTest.RenderAll("wordart", drawingMl + vml, footnotes: footnotes,
             inspect: document =>
             {
-                foreach ((string text, int expected) in new[] { ("Arched", 1), ("VmlArt", 0) })
+                foreach ((string text, int expected) in new[] { ("Arched", 1), ("VmlArt", 1), ("FallbackArt", 0), ("NoteArt", 1) })
                 {
                     int hits = 0;
                     for (int from = 0; from < document.BlockCount;)
@@ -37,6 +41,16 @@ public static class DocxWordArtFidelityTest
                         from = batch.NextBlock;
                     }
                     TestReport.Check(hits == expected, "search: \"" + text + "\" found " + expected + " time(s) (" + hits + ")");
+                    int referenceHits = 0;
+                    if (document is FastDocView.Docx.DocxWindowedDocument docx)
+                        for (int from = 0; from < document.BlockCount;)
+                        {
+                            WordDocumentSearchBatch batch = docx.Search(text, WordDocumentSearchOptions.Default, from, 4, FastDocView.Docx.DocxWindowedDocument.DocxSearchTextMode.ReferenceXmlReader);
+                            referenceHits += batch.HitCounts.Sum();
+                            if (batch.ReachedEnd) break;
+                            from = batch.NextBlock;
+                        }
+                    TestReport.Check(referenceHits == expected, "reference reader: \"" + text + "\" found " + expected + " time(s) (" + referenceHits + ")");
                 }
             });
         // textArchUp -> fontwork-arch-up-curve -> mso_sptTextArchUpCurve 144 (presetgeometrynames.cxx, EnhancedCustomShapeTypeNames.cxx, msdffdef.hxx)

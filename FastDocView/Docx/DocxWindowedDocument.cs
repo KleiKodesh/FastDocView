@@ -413,16 +413,26 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         }
     }
 
-    /// <summary>A note's SmartArt / chart drawings (dgm:relIds r:dm, c:chart r:id outside mc:Fallback), resolved against the note's part.</summary>
+    /// <summary>A note's SmartArt / chart drawings (dgm:relIds r:dm, c:chart r:id outside mc:Fallback), resolved against the note's part, and its VML WordArt text (v:textpath string).</summary>
     private void FeedNoteDrawings(XElement note, WordDocumentNoteKind kind, WordDocumentSearchMatcher matcher)
     {
+        // the note reader parses a note with its drawings stripped (DocxDrawingStripper): a drawing is then its layout element,
+        // its SmartArt / chart as shapes/diagram dm, shapes/chart id, shapes/chartex id, a VML WordArt as textpathString
         XNamespace relationships = WordXmlSearchText.RelationshipsNamespace;
         foreach (XElement element in note.Descendants())
         {
             if (element.Ancestors().Any(a => a.Name.LocalName == "Fallback" && a.Name.NamespaceName == WordXmlSearchText.MarkupCompatibilityNamespace)) continue;
-            string? id = element.Name.NamespaceName == WordXmlSearchText.DiagramNamespace && element.Name.LocalName == "relIds" ? (string?)element.Attribute(relationships + "dm")
-                       : element.Name.NamespaceName is WordXmlSearchText.ChartNamespace or WordXmlSearchText.ChartExNamespace && element.Name.LocalName == "chart" ? (string?)element.Attribute(relationships + "id") : null;
-            if (id is not null) FeedDrawing(kind, id, matcher);
+            string local = element.Name.LocalName;
+            bool stripped = element.Ancestors().Any(a => a.Name.LocalName == "shapes" && a.Parent?.Name.LocalName == DocxDrawingStripper.PictureLayoutElementName);
+            string? id = element.Name.NamespaceName == WordXmlSearchText.DiagramNamespace && local == "relIds" ? (string?)element.Attribute(relationships + "dm")
+                       : element.Name.NamespaceName is WordXmlSearchText.ChartNamespace or WordXmlSearchText.ChartExNamespace && local == "chart" ? (string?)element.Attribute(relationships + "id")
+                       : stripped && local == "diagram" ? (string?)element.Attribute("dm")
+                       : stripped && local is "chart" or "chartex" ? (string?)element.Attribute("id") : null;
+            if (id is not null) { FeedDrawing(kind, id, matcher); continue; }
+            // VML WordArt: the v:textpath string is the text it shows (raw, or kept as textpathString on the stripped layout / its vshapes)
+            string? wordArt = element.Name.NamespaceName == WordXmlSearchText.VmlNamespace && local == "textpath" ? (string?)element.Attribute("string")
+                            : local is DocxDrawingStripper.PictureLayoutElementName or "vshape" ? (string?)element.Attribute("textpathString") : null;
+            if (wordArt is { Length: > 0 }) { matcher.Separator(); matcher.Feed(wordArt.AsSpan()); matcher.Separator(); }
         }
     }
 

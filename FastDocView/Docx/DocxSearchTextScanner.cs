@@ -23,7 +23,7 @@ namespace FastDocView.Docx;
 /// </summary>
 internal sealed class DocxSearchTextScanner
 {
-    private enum NamespaceKind : byte { Other, Wordprocessing, MarkupCompatibility, Diagram, Chart }
+    private enum NamespaceKind : byte { Other, Wordprocessing, MarkupCompatibility, Diagram, Chart, Vml }
 
     /// <summary>The r:ids of the SmartArt (dgm:relIds r:dm) and chart (c:chart r:id) drawings met since the caller last cleared it (outside mc:Fallback), as the reference reader reports them.</summary>
     public List<string> DrawingRelationshipIds { get; } = new();
@@ -37,6 +37,7 @@ internal sealed class DocxSearchTextScanner
         WordXmlSearchText.WordprocessingNamespace or WordXmlSearchText.WordprocessingStrictNamespace => NamespaceKind.Wordprocessing,
         WordXmlSearchText.MarkupCompatibilityNamespace => NamespaceKind.MarkupCompatibility,
         WordXmlSearchText.DiagramNamespace => NamespaceKind.Diagram,
+        WordXmlSearchText.VmlNamespace => NamespaceKind.Vml,
         WordXmlSearchText.ChartNamespace or WordXmlSearchText.ChartExNamespace => NamespaceKind.Chart,
         _ => NamespaceKind.Other,
     };
@@ -201,6 +202,10 @@ internal sealed class DocxSearchTextScanner
                     case 3 when (Is(local, "pPr") || Is(local, "rPr")) && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
                         if (!isEmpty) skipDepth = elementDepth;
                         break;
+                    case 8 when Is(local, "textpath") && Resolve(elementPrefix) == NamespaceKind.Vml && hasAttributes:
+                        // VML WordArt: the v:textpath string is the text it shows (the reference reader feeds it the same way)
+                        if (UnprefixedAttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "string"u8) is { Length: > 0 } wordArt) { matcher.Separator(); matcher.Feed(wordArt.AsSpan()); matcher.Separator(); }
+                        break;
                     case 6 when Is(local, "relIds") && Resolve(elementPrefix) == NamespaceKind.Diagram && hasAttributes:
                         if (AttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "dm"u8) is { } diagram) DrawingRelationshipIds.Add(diagram);
                         break;
@@ -250,6 +255,29 @@ internal sealed class DocxSearchTextScanner
             int colon = name.IndexOf((byte)':');
             if (colon > 0 && name.Slice(colon + 1).SequenceEqual(localName))
                 return Encoding.UTF8.GetString(attributes.Slice(quoteAt + 1, close).ToArray());
+            position = quoteAt + 1 + close + 1;
+        }
+        return null;
+    }
+
+    /// <summary>The value of the unprefixed attribute <paramref name="name"/> in an open tag's attribute text, entities decoded; null when none.</summary>
+    private static string? UnprefixedAttributeValue(ReadOnlySpan<byte> attributes, ReadOnlySpan<byte> name)
+    {
+        int position = 0;
+        while (position < attributes.Length)
+        {
+            int equals = attributes.Slice(position).IndexOf((byte)'=');
+            if (equals < 0) return null;
+            ReadOnlySpan<byte> attribute = attributes.Slice(position, equals);
+            while (attribute.Length > 0 && attribute[0] <= (byte)' ') attribute = attribute.Slice(1);
+            while (attribute.Length > 0 && attribute[attribute.Length - 1] <= (byte)' ') attribute = attribute.Slice(0, attribute.Length - 1);
+            int quoteAt = position + equals + 1;
+            while (quoteAt < attributes.Length && attributes[quoteAt] is not ((byte)'"' or (byte)'\'')) quoteAt++;
+            if (quoteAt >= attributes.Length) return null;
+            int close = attributes.Slice(quoteAt + 1).IndexOf(attributes[quoteAt]);
+            if (close < 0) return null;
+            if (attribute.SequenceEqual(name))
+                return System.Net.WebUtility.HtmlDecode(Encoding.UTF8.GetString(attributes.Slice(quoteAt + 1, close).ToArray()));
             position = quoteAt + 1 + close + 1;
         }
         return null;

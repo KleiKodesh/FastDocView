@@ -223,6 +223,7 @@ internal sealed class WordXmlSearchText
     public const string DiagramNamespace = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
     public const string ChartNamespace = "http://schemas.openxmlformats.org/drawingml/2006/chart";
     public const string ChartExNamespace = "http://schemas.microsoft.com/office/drawing/2014/chartex";
+    public const string VmlNamespace = "urn:schemas-microsoft-com:vml";
     public const string RelationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     public const string OdfOfficeNamespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
     public const string OdfDrawingNamespace = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
@@ -341,6 +342,8 @@ internal sealed class WordXmlSearchText
                     case XmlNodeType.Element:
                         // properties (w:pPr tab stops) and the fallback copy of mc:AlternateContent are not text
                         if (reader.LocalName == "Fallback" && reader.NamespaceURI == MarkupCompatibilityNamespace) { reader.Skip(); skipped = true; continue; }
+                        // VML WordArt: the v:textpath string is the text it shows
+                        if (reader.LocalName == "textpath" && reader.NamespaceURI == VmlNamespace && reader.GetAttribute("string") is { Length: > 0 } wordArt) { matcher.Separator(); matcher.Feed(wordArt.AsSpan()); matcher.Separator(); }
                         // a SmartArt (dgm:relIds r:dm) or chart (c:chart r:id) drawing: its part's text is fed after the block
                         if (drawingRelationshipIds is not null && reader.LocalName == "relIds" && reader.NamespaceURI == DiagramNamespace && reader.GetAttribute("dm", RelationshipsNamespace) is { } diagram) drawingRelationshipIds.Add(diagram);
                         if (drawingRelationshipIds is not null && reader.LocalName == "chart" && reader.NamespaceURI is ChartNamespace or ChartExNamespace && reader.GetAttribute("id", RelationshipsNamespace) is { } chart) drawingRelationshipIds.Add(chart);

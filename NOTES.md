@@ -1385,7 +1385,8 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   categories, data labels; not computed bin ranges).
 - Pattern fills: the exact 8 x 8 cell of each prstPattern (GDI+ hatch bitmaps, Wine gdiplus brush.c), an SVG pattern of
   0.75 pt pixels, over the background colour; replaces LibreOffice's hatch approximation.
-- WordArt (DocxWordArt): DrawingML a:prstTxWarp (wps:bodyPr) mapped to its WordArt shape type and adjust units as LibreOffice  does (presetgeometrynames.cxx, fontworkhelpers.cxx:95-148), VML v:shape types 136-175 with v:textpath; drawn by the shared  WordOfficeArtGeometry.Preset + WordOfficeArtFontwork.Apply in the run's w14:textFill / w:color (DrawingML) or the fill colour  (VML). Search unchanged: the DrawingML text box text once; a VML textpath string (an attribute) is not searched.
+- WordArt (DocxWordArt): DrawingML a:prstTxWarp (wps:bodyPr) mapped to its WordArt shape type and adjust units as LibreOffice  does (presetgeometrynames.cxx, fontworkhelpers.cxx:95-148), VML v:shape types 136-175 with v:textpath; drawn by the shared  WordOfficeArtGeometry.Preset + WordOfficeArtFontwork.Apply in the run's w14:textFill / w:color (DrawingML) or the fill colour  (VML). Search: the DrawingML text box text once; the VML v:textpath string once (byte scanner, reference reader, and notes,
+  where the note parser sees the stripped layout's textpathString); none inside mc:Fallback.
 - Search: SmartArt shape text and chart text (title, axis titles, legend, category and data labels; not value-axis
   numbers) are fed after their block's text, once, by both the byte scanner and the reference reader (dgm:relIds /
   c:chart outside mc:Fallback); notes likewise.
