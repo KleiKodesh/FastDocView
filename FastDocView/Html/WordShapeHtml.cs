@@ -96,6 +96,9 @@ public sealed class WordShape
     /// <summary>A picture fill (blipFill) by picture id, stretched to the box less its fill rectangle, or tiled.</summary>
     public string? FillPictureId;
     public WordShapePictureFill FillPicture;
+    /// <summary>DrawingML text of the shape itself (SmartArt, charts) as HTML, drawn in its text box; <see cref="DrawingTextAnchor"/> t / ctr / b.</summary>
+    public string? DrawingTextHtml;
+    public string DrawingTextAnchor = "t";
     public int TextIndex = -1;
     public string? PictureId;
     public WordTextBoxStyle TextStyle;
@@ -632,6 +635,15 @@ public static class WordShapeHtml
     }
 
     public static void CloseShapeText(StringBuilder html) => html.Append("</span>");
+
+    /// <summary>A shape's own DrawingML text (<see cref="WordShape.DrawingTextHtml"/>) in its text box, anchored top / centre / bottom (bodyPr anchor).</summary>
+    public static void AppendDrawingText(StringBuilder html, WordShape shape, string drawingText)
+    {
+        OpenShapeText(html, shape, inFlow: false);
+        string justify = shape.DrawingTextAnchor switch { "ctr" => "center", "b" => "flex-end", _ => "flex-start" };
+        html.Append("<span style=\"display:flex;flex-direction:column;justify-content:").Append(justify).Append(";height:100%;\">").Append(drawingText).Append("</span>");
+        CloseShapeText(html);
+    }
 
     /// <summary>A picture inside a group, at its box over the frame, turned and mirrored like the shapes (flips at its centre).</summary>
     public static void AppendPicture(StringBuilder html, WordShape shape)

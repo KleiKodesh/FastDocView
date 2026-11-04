@@ -23,7 +23,10 @@ namespace FastDocView.Docx;
 /// </summary>
 internal sealed class DocxSearchTextScanner
 {
-    private enum NamespaceKind : byte { Other, Wordprocessing, MarkupCompatibility }
+    private enum NamespaceKind : byte { Other, Wordprocessing, MarkupCompatibility, Diagram, Chart }
+
+    /// <summary>The r:ids of the SmartArt (dgm:relIds r:dm) and chart (c:chart r:id) drawings met since the caller last cleared it (outside mc:Fallback), as the reference reader reports them.</summary>
+    public List<string> DrawingRelationshipIds { get; } = new();
 
     private readonly WordXmlNamespaceScope _namespaces;
 
@@ -33,6 +36,8 @@ internal sealed class DocxSearchTextScanner
     {
         WordXmlSearchText.WordprocessingNamespace or WordXmlSearchText.WordprocessingStrictNamespace => NamespaceKind.Wordprocessing,
         WordXmlSearchText.MarkupCompatibilityNamespace => NamespaceKind.MarkupCompatibility,
+        WordXmlSearchText.DiagramNamespace => NamespaceKind.Diagram,
+        WordXmlSearchText.ChartNamespace => NamespaceKind.Chart,
         _ => NamespaceKind.Other,
     };
 
@@ -196,6 +201,12 @@ internal sealed class DocxSearchTextScanner
                     case 3 when (Is(local, "pPr") || Is(local, "rPr")) && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
                         if (!isEmpty) skipDepth = elementDepth;
                         break;
+                    case 6 when Is(local, "relIds") && Resolve(elementPrefix) == NamespaceKind.Diagram && hasAttributes:
+                        if (AttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "dm"u8) is { } diagram) DrawingRelationshipIds.Add(diagram);
+                        break;
+                    case 5 when Is(local, "chart") && Resolve(elementPrefix) == NamespaceKind.Chart && hasAttributes:
+                        if (AttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "id"u8) is { } chart) DrawingRelationshipIds.Add(chart);
+                        break;
                     case 8 when Is(local, "Fallback") && Resolve(elementPrefix) == NamespaceKind.MarkupCompatibility:
                         if (!isEmpty) skipDepth = elementDepth;
                         break;
@@ -219,6 +230,30 @@ internal sealed class DocxSearchTextScanner
     /// checks it against the index's offset before it trusts the scanner's block numbering.
     /// </summary>
     public long CurrentBlockStart { get; private set; }
+
+    /// <summary>The value of the prefixed attribute whose local name is <paramref name="localName"/> (r:dm, r:id) in an open tag's attribute text; null when none.</summary>
+    private static string? AttributeValue(ReadOnlySpan<byte> attributes, ReadOnlySpan<byte> localName)
+    {
+        int position = 0;
+        while (position < attributes.Length)
+        {
+            int equals = attributes.Slice(position).IndexOf((byte)'=');
+            if (equals < 0) return null;
+            ReadOnlySpan<byte> name = attributes.Slice(position, equals);
+            while (name.Length > 0 && name[0] <= (byte)' ') name = name.Slice(1);
+            while (name.Length > 0 && name[name.Length - 1] <= (byte)' ') name = name.Slice(0, name.Length - 1);
+            int quoteAt = position + equals + 1;
+            while (quoteAt < attributes.Length && attributes[quoteAt] is not ((byte)'"' or (byte)'\'')) quoteAt++;
+            if (quoteAt >= attributes.Length) return null;
+            int close = attributes.Slice(quoteAt + 1).IndexOf(attributes[quoteAt]);
+            if (close < 0) return null;
+            int colon = name.IndexOf((byte)':');
+            if (colon > 0 && name.Slice(colon + 1).SequenceEqual(localName))
+                return Encoding.UTF8.GetString(attributes.Slice(quoteAt + 1, close).ToArray());
+            position = quoteAt + 1 + close + 1;
+        }
+        return null;
+    }
 
     private static WordSearchBlocksResult Fail(int block, out long stoppedAt) { stoppedAt = block; return WordSearchBlocksResult.Failed; }
 }

@@ -1368,6 +1368,18 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   = LibreOffice's hatch for the preset (hatchmap.hxx) over the background colour; a:blipFill = an HTML picture layer between SVG
   layers, clipped to the outline, stretched by fillRect or tiled at the picture's original size (WordPictureSize: PNG pHYs,
   JPEG JFIF, BMP, else 96 per inch as graphichelper.cxx getOriginalSize).
+- SmartArt (2026-11-04): drawn from its diagramDrawing part (the data part's dsp:dataModelExt relId, resolved against the
+  drawing's own part as LibreOffice does) as shapes with their DrawingML text (DocxDrawingTextHtml, txXfrm box, bodyPr
+  anchor); without a drawing part, an mc:AlternateContent shows its mc:Fallback picture. Pictures of the drawing part get
+  "x:part#rId" ids.
+- Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
+  pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
+  gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns
+  (objectformatter.cxx). Layout and automatic axis scaling are our own. chartex charts (cx:chart: waterfall, treemap,
+  sunburst, histogram, box and whisker, funnel, region map) show their mc:Fallback picture.
+- Search: SmartArt shape text and chart text (title, axis titles, legend, category and data labels; not value-axis
+  numbers) are fed after their block's text, once, by both the byte scanner and the reference reader (dgm:relIds /
+  c:chart outside mc:Fallback); notes likewise.
 - Search: shape text is w:txbxContent text, found once (mc:Fallback skipped by both scanner and reference).
 - Checks: `--fidelity` DocxShapesFidelityTest and DocxDrawingFidelityTest; live `vue-demo/playwright/docxDrawingDetailsCheck.mjs TestOutput/fidelity-v1-drawing-details.docx` (every path parses, gradients resolve, markers measured at the line ends) (hand-worked values from the cited source:
   dashes, every line end, alpha, arcTo, path without w / h, every guide operator, darken / lighten, theme styles, grpFill,

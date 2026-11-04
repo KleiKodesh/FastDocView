@@ -150,6 +150,40 @@ internal static class DocxShapeReader
                 foreach (XElement child in element.Elements()) Walk(child, shapes, theme, pictureId, pictureSize, ref textIndex, frame, frameWidth, frameHeight, null);
                 break;
             }
+            case "spTree":
+            {
+                // a SmartArt drawing (dsp:drawing / dsp:spTree, diagramDrawing part): its shapes are placed in EMU from the graphic
+                // frame's top left, as LibreOffice imports the drawing into the frame (oox diagram.cxx loadDiagram :615-631, the
+                // ext drawing's shapes replace the layout); a group of the frame's own size
+                var frame = new GroupFrame(0, 0, frameWidth, frameHeight, 0, 0, 1 / EmuPerPoint, 1 / EmuPerPoint, 0, false, false, null, false, false, 0);
+                foreach (XElement child in element.Elements()) Walk(child, shapes, theme, pictureId, pictureSize, ref textIndex, frame, frameWidth, frameHeight, null);
+                break;
+            }
+            case "sp":
+            {
+                // a dsp:sp: a shape with its own DrawingML text (dsp:txBody) in its text rectangle (dsp:txXfrm, in the drawing's space)
+                XElement? properties = element.Element("spPr");
+                XElement? transform = properties?.Element("xfrm");
+                (double x, double y, double width, double height, double rotation, bool flipH, bool flipV) = Place(transform, group, frameWidth, frameHeight);
+                WordShape shape = Shape(properties, element.Element("style"), theme, x, y, width, height, groupFill, pictureId, pictureSize, (rotation, flipH, flipV));
+                if (element.Element("txBody") is { } body && DocxDrawingTextHtml.Text(body).Trim().Length > 0)
+                {
+                    shape.DrawingTextHtml = DocxDrawingTextHtml.Render(body, element.Element("style"), theme);
+                    shape.DrawingTextAnchor = DocxDrawingTextHtml.Anchor(body);
+                    (double left, double top, double right, double bottom) = DocxDrawingTextHtml.Insets(body);
+                    shape.TextStyle = new WordTextBoxStyle(left, top, right, bottom, null, 0, false, null, 0,
+                                                           DocxTextBoxWritingMode((string?)body.Element("bodyPr")?.Attribute("vert")), false);
+                    if (element.Element("txXfrm") is { } text && group is not null)
+                    {
+                        double scaleX = group.ChildScaleX, scaleY = group.ChildScaleY;
+                        shape.TextRect = ((Attribute(text.Element("off"), "x") - Attribute(transform?.Element("off"), "x")) * scaleX,
+                                          (Attribute(text.Element("off"), "y") - Attribute(transform?.Element("off"), "y")) * scaleY,
+                                          Attribute(text.Element("ext"), "cx") * scaleX, Attribute(text.Element("ext"), "cy") * scaleY);
+                    }
+                }
+                shapes.Add(shape);
+                break;
+            }
             case "wsp":
             {
                 XElement? properties = element.Element("spPr");

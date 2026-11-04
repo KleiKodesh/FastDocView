@@ -399,6 +399,33 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         }
     }
 
+    // ── drawing text for search: what a SmartArt drawing or chart shows, fed after its block's own text ──
+
+    private readonly List<string> _referenceDrawingIds = new();
+
+    private void FeedDrawing(WordDocumentNoteKind? part, string relationshipId, WordDocumentSearchMatcher matcher)
+    {
+        if (DocxDrawingParts.SearchText(id => ReadRelatedPart(part, id), relationshipId, _styles.Theme) is not { Length: > 0 } text) return;
+        foreach (string line in text.Split('\n'))
+        {
+            matcher.Separator();
+            matcher.Feed(line.AsSpan());
+        }
+    }
+
+    /// <summary>A note's SmartArt / chart drawings (dgm:relIds r:dm, c:chart r:id outside mc:Fallback), resolved against the note's part.</summary>
+    private void FeedNoteDrawings(XElement note, WordDocumentNoteKind kind, WordDocumentSearchMatcher matcher)
+    {
+        XNamespace relationships = WordXmlSearchText.RelationshipsNamespace;
+        foreach (XElement element in note.Descendants())
+        {
+            if (element.Ancestors().Any(a => a.Name.LocalName == "Fallback" && a.Name.NamespaceName == WordXmlSearchText.MarkupCompatibilityNamespace)) continue;
+            string? id = element.Name.NamespaceName == WordXmlSearchText.DiagramNamespace && element.Name.LocalName == "relIds" ? (string?)element.Attribute(relationships + "dm")
+                       : element.Name.NamespaceName == WordXmlSearchText.ChartNamespace && element.Name.LocalName == "chart" ? (string?)element.Attribute(relationships + "id") : null;
+            if (id is not null) FeedDrawing(kind, id, matcher);
+        }
+    }
+
     // ── drawing parts (charts, diagrams) and their pictures, read when a block that names them is rendered ──
 
     private readonly Dictionary<string, XDocument?> _relatedPartCache = new(StringComparer.Ordinal);   // bounded: a few drawings' parts
@@ -576,6 +603,9 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                     var pieceHitStarts = new List<long>();  // to verify the scanner's numbering if the piece fails
                     void BlockEnded(int blockIndex)
                     {
+                        List<string> drawings = mode == DocxSearchTextMode.ReferenceXmlReader ? _referenceDrawingIds : _searchText!.DrawingRelationshipIds;
+                        foreach (string drawing in drawings) FeedDrawing(null, drawing, matcher);
+                        drawings.Clear();
                         if (options.IncludeNotes) FeedNotes(blockIndex, matcher, mode);
                         if (matcher.Count > 0)
                         {
@@ -599,6 +629,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                             pieceHitStarts.Clear();
                             pieceStartOffset = startOffset;
                             matcher.Reset();
+                            _searchText.DrawingRelationshipIds.Clear();
                             WordSearchBlocksResult result = _searchText.FeedBlocks(buffer.AsSpan(start, length), scanFrom, pieceEnd, matcher, BlockEnded, out long stoppedAt);
                             pieceStartOffset = -1;
                             WordSearchPieceVerdict verdict = WordSearchPiece.Judge(result, isEndExact, stoppedAt, length);
@@ -633,7 +664,9 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                         foreach ((int blockIndex, int start, int length) in blocks)
                         {
                             matcher.Reset();
-                            if (mode == DocxSearchTextMode.ReferenceXmlReader) _referenceSearchText!.FeedOoxml(bytes, start, length, matcher);
+                            _searchText.DrawingRelationshipIds.Clear();
+                            _referenceDrawingIds.Clear();
+                            if (mode == DocxSearchTextMode.ReferenceXmlReader) _referenceSearchText!.FeedOoxml(bytes, start, length, matcher, _referenceDrawingIds);
                             else _searchText.Feed(bytes, start, length, matcher);
                             BlockEnded(blockIndex);
                         }
@@ -669,12 +702,13 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                     : _endnoteSearchText ??= new DocxNoteSearchTextScanner(rootOpenTag);
                 if (scanner.TryFeed(_noteSearchBuffer.AsSpan(0, length), matcher)) { NotesSearchedFromBytes++; continue; }
                 matcher.RestoreState(before);
-                if (_noteReader.Read(reference.Kind, reference.NoteId) is { } declined) WordXmlSearchText.FeedOoxml(declined, matcher);
+                if (_noteReader.Read(reference.Kind, reference.NoteId) is { } declined) { WordXmlSearchText.FeedOoxml(declined, matcher); FeedNoteDrawings(declined, reference.Kind, matcher); }
                 continue;
             }
             if (_noteReader.Read(reference.Kind, reference.NoteId) is not { } note) continue;
             matcher.Separator();
             WordXmlSearchText.FeedOoxml(note, matcher);
+            FeedNoteDrawings(note, reference.Kind, matcher);
         }
     }
 

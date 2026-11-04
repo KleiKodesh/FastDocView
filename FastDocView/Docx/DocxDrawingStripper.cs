@@ -131,6 +131,12 @@ internal static class DocxDrawingStripper
         int dataEnd = ElementEnd(drawing, data, "a:graphicData");
         if (dataEnd < 0) return "";
         ReadOnlySpan<byte> graphic = drawing.Slice(data, dataEnd - data);
+        // SmartArt (dgm:relIds r:dm), a chart (c:chart r:id) or a chartex chart (cx:chart, not drawn): the part is read when the block is rendered
+        if (IndexOfOpenTag(graphic, 0, "dgm:relIds") is var relIds and >= 0 && AttributeValue(OpenTagAt(graphic, relIds), "r:dm") is { } dm)
+            return "<shapes><diagram dm=\"" + dm + "\"/></shapes>";
+        if (IndexOfOpenTag(graphic, 0, "c:chart") is var chart and >= 0 && AttributeValue(OpenTagAt(graphic, chart), "r:id") is { } chartId)
+            return "<shapes><chart id=\"" + chartId + "\"/></shapes>";
+        if (IndexOfOpenTag(graphic, 0, "cx:chart") >= 0) return "<shapes><chartex/></shapes>";
         if (IndexOfOpenTag(graphic, 0, "wps:wsp") < 0 && IndexOfOpenTag(graphic, 0, "wpg:wgp") < 0 && IndexOfOpenTag(graphic, 0, "wpc:wpc") < 0) return "";
         var tree = new StringBuilder("<shapes>");
         int skipDepth = 0;

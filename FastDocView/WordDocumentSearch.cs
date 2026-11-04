@@ -220,6 +220,9 @@ internal sealed class WordXmlSearchText
     public const string WordprocessingStrictNamespace = "http://purl.oclc.org/ooxml/wordprocessingml/main";
     public const string OdfTextNamespace = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
     public const string MarkupCompatibilityNamespace = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    public const string DiagramNamespace = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
+    public const string ChartNamespace = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+    public const string RelationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     public const string OdfOfficeNamespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
     public const string OdfDrawingNamespace = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 
@@ -322,7 +325,7 @@ internal sealed class WordXmlSearchText
     /// A .docx body block: the character content of w:t (w:delText, field codes w:instrText and everything else are not
     /// text Word shows); w:tab a space; w:br / w:cr and the end of each w:p separators; w:pPr / w:rPr and mc:Fallback skipped.
     /// </summary>
-    public void FeedOoxml(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher)
+    public void FeedOoxml(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher, List<string>? drawingRelationshipIds = null)
     {
         try
         {
@@ -337,6 +340,9 @@ internal sealed class WordXmlSearchText
                     case XmlNodeType.Element:
                         // properties (w:pPr tab stops) and the fallback copy of mc:AlternateContent are not text
                         if (reader.LocalName == "Fallback" && reader.NamespaceURI == MarkupCompatibilityNamespace) { reader.Skip(); skipped = true; continue; }
+                        // a SmartArt (dgm:relIds r:dm) or chart (c:chart r:id) drawing: its part's text is fed after the block
+                        if (drawingRelationshipIds is not null && reader.LocalName == "relIds" && reader.NamespaceURI == DiagramNamespace && reader.GetAttribute("dm", RelationshipsNamespace) is { } diagram) drawingRelationshipIds.Add(diagram);
+                        if (drawingRelationshipIds is not null && reader.LocalName == "chart" && reader.NamespaceURI == ChartNamespace && reader.GetAttribute("id", RelationshipsNamespace) is { } chart) drawingRelationshipIds.Add(chart);
                         if (!IsWordprocessing(reader.NamespaceURI)) break;
                         if (reader.LocalName is "pPr" or "rPr") { reader.Skip(); skipped = true; continue; }
                         if (reader.LocalName == "t" && !reader.IsEmptyElement) textDepth = reader.Depth;

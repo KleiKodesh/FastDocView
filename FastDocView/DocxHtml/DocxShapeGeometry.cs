@@ -58,9 +58,9 @@ internal static class DocxShapeGeometry
         }
     }
 
-    private static XElement WithoutNamespaces(XElement element)
+    internal static XElement WithoutNamespaces(XElement element)
         => new(element.Name.LocalName, element.Attributes().Where(a => !a.IsNamespaceDeclaration).Select(a => new XAttribute(a.Name.LocalName, a.Value)),
-               element.Elements().Select(WithoutNamespaces));
+               element.HasElements ? element.Elements().Select(WithoutNamespaces) : element.IsEmpty ? null : element.Value);
 
     /// <summary>
     /// The outline of a prefix-free a:prstGeom / a:custGeom for a shape drawn <paramref name="widthPt"/> x <paramref name="heightPt"/>

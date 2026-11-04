@@ -859,6 +859,15 @@ public sealed class DocxBlockHtmlRenderer
             else shape = DocxShapeReader.ReadVml(layout, style, width, height);
             shapes = shape is null ? DocxShapeReader.ReadVmlGroup(layout, width, height, embed => _pictures is not null ? _pictures(_currentPicturePart, embed) : null) : [shape];
         }
+        else if (layout.Element("shapes")!.Element("chart") is { } chart)
+        {
+            WordShapeHtml.OpenFrame(html, placement, growsWithText: false);
+            html.Append(DrawChart(chart, placement.WidthPt, placement.HeightPt));
+            WordShapeHtml.CloseFrame(html);
+            yield break;
+        }
+        else if (layout.Element("shapes")!.Element("diagram") is { } diagram)
+            shapes = DiagramShapes(diagram, placement.WidthPt, placement.HeightPt) ?? [];
         else
             shapes = DocxShapeReader.Read(layout.Element("shapes")!, placement.WidthPt, placement.HeightPt, _styles.Theme,
                                           embed => _pictures is not null ? _pictures(_currentPicturePart, embed) : null,
@@ -878,6 +887,11 @@ public sealed class DocxBlockHtmlRenderer
         foreach (WordShape shape in shapes)
         {
             if (shape.Geometry == WordShapeGeometry.Picture) { WordShapeHtml.AppendPicture(html, shape); continue; }
+            if (shape.DrawingTextHtml is { } drawingText)
+            {
+                WordShapeHtml.AppendDrawingText(html, shape, drawingText);
+                continue;
+            }
             if (shape.TextIndex < 0 || shape.TextIndex >= textBoxes.Count) continue;
             WordShapeHtml.OpenShapeText(html, shape, inFlow);
             _previousStyleKey = null;
@@ -1072,10 +1086,41 @@ public sealed class DocxBlockHtmlRenderer
         return textBoxes;
     }
 
-    /// <summary>mc:AlternateContent → the first mc:Choice (all its requirements are WordprocessingML extensions we degrade gracefully), else mc:Fallback.</summary>
-    private static XElement? ChosenAlternative(XElement alternateContent)
-        => alternateContent.Elements().FirstOrDefault(e => e.Name.LocalName == "Choice")
-        ?? alternateContent.Elements().FirstOrDefault(e => e.Name.LocalName == "Fallback");
+    /// <summary>
+    /// mc:AlternateContent → the first mc:Choice (all its requirements are WordprocessingML extensions we degrade gracefully), else
+    /// mc:Fallback - and the Fallback too when the Choice is a drawing this library does not draw: a chartex chart (cx:chart) or a
+    /// SmartArt without a drawing part (DocxDrawingParts.DiagramDrawing).
+    /// </summary>
+    private XElement? ChosenAlternative(XElement alternateContent)
+    {
+        XElement? choice = alternateContent.Elements().FirstOrDefault(e => e.Name.LocalName == "Choice");
+        XElement? fallback = alternateContent.Elements().FirstOrDefault(e => e.Name.LocalName == "Fallback");
+        if (choice is not null && fallback is not null && !CanDraw(choice)) return fallback;
+        return choice ?? fallback;
+    }
+
+    private bool CanDraw(XElement choice)
+    {
+        foreach (XElement shapes in choice.Descendants().Where(e => e.Name.LocalName == "shapes" && e.Parent?.Name.LocalName == Docx.DocxDrawingStripper.PictureLayoutElementName))
+        {
+            if (shapes.Element("chartex") is not null) return false;
+            if (shapes.Element("diagram") is { } diagram && (RelatedPart is null || DocxDrawingParts.DiagramDrawing(id => RelatedPart(_currentPicturePart, id), (string?)diagram.Attribute("dm") ?? "") is null)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>A SmartArt's shapes from its drawing part (empty when it has none: the drawing keeps its size, nothing drawn).</summary>
+    private List<WordShape>? DiagramShapes(XElement diagram, double width, double height)
+    {
+        if (RelatedPart is null || DocxDrawingParts.DiagramDrawing(id => RelatedPart(_currentPicturePart, id), (string?)diagram.Attribute("dm") ?? "") is not { } drawing) return null;
+        return DocxShapeReader.Read(new XElement("shapes", drawing.Tree), width, height, _styles.Theme,
+                                    embed => PartPictureId?.Invoke(drawing.PartName, embed), null);
+    }
+
+    /// <summary>A chart drawn as SVG from its part's cached values (DocxChart); empty when the part is missing.</summary>
+    private string DrawChart(XElement chart, double width, double height)
+        => RelatedPart is not null && DocxDrawingParts.Chart(id => RelatedPart(_currentPicturePart, id), (string?)chart.Attribute("id") ?? "", _styles.Theme) is { } model
+           ? model.Svg(width, height) : "";
 
     private void AppendNoteReference(StringBuilder html, WordDocumentNoteKind kind, XElement reference)
     {
