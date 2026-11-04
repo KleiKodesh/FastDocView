@@ -78,7 +78,7 @@ public sealed class WordRunFormatting
         var css = new StringBuilder("text-decoration:underline;");
         if (UnderlineStyleCss is { } style) css.Append("text-decoration-style:").Append(style).Append(';');
         if (IsUnderlineThick) css.Append("text-decoration-thickness:0.15em;");
-        if (UnderlineColorHex is not null) css.Append("text-decoration-color:#").Append(UnderlineColorHex).Append(';');
+        if (UnderlineColorHex is not null) css.Append("text-decoration-color:").Append(WordHtmlColor.Css(UnderlineColorHex)).Append(';');
         return css.ToString();
     }
 
@@ -165,10 +165,10 @@ public sealed class WordRunFormatting
         if (size > 0 && (baseline is null || size != baseline.EffectiveFontSizeHalfPoints) && !IsSuperscript && !IsSubscript)
             css.Append("font-size:").Append((size / 2.0).ToString("0.#", CultureInfo.InvariantCulture)).Append("pt;");
 
-        if (ColorHex is not null && (baseline is null || ColorHex != baseline.ColorHex)) css.Append("color:#").Append(ColorHex).Append(';');
+        if (ColorHex is not null && (baseline is null || ColorHex != baseline.ColorHex)) css.Append("color:").Append(WordHtmlColor.Css(ColorHex)).Append(';');
         else if (ColorHex is null && baseline?.ColorHex is not null) css.Append("color:inherit;");
         string? background = BackgroundCss, baselineBackground = baseline?.BackgroundCss;
-        if (background is not null && background != baselineBackground) css.Append("background-color:").Append(background).Append(';');
+        if (background is not null && background != baselineBackground) css.Append("background-color:").Append(WordHtmlColor.Css(background)).Append(';');
 
         string? font = EffectiveFontName;
         if (font is not null && (baseline is null || font != baseline.EffectiveFontName)) css.Append("font-family:'").Append(WordHtmlText.CssFontName(font)).Append("';");

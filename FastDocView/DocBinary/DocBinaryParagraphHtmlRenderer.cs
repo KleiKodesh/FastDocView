@@ -297,7 +297,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 if (rowInfo.CellWidthsTwips is { } widths && cellIndex < widths.Length && widths[cellIndex] > 0)
                     cellCss.Append("width:").Append(WordParagraphFormatting.TwipsToPt(widths[cellIndex])).Append("pt;");
                 if (rowInfo.CellShadingHex is { } shading && cellIndex < shading.Length && shading[cellIndex] is { } fill)
-                    cellCss.Append("background:#").Append(fill).Append(';');
+                    cellCss.Append("background:").Append(WordHtmlColor.Css(fill)).Append(';');
                 if (rowInfo.BorderCss is { } border) cellCss.Append("border:").Append(border).Append(';');
                 html.Append("<td");
                 if (cellCss.Length > 0) html.Append(" style=\"").Append(cellCss).Append('"');

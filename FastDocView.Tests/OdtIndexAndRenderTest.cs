@@ -79,7 +79,7 @@ public static class OdtIndexAndRenderTest
         TestReport.Check(prefix[0].Html.StartsWith("<h1", StringComparison.Ordinal) && prefix[0].Html.Contains("dir=\"rtl\"") && prefix[0].Html.Contains("font-weight:bold"), $"{what}: heading renders <h1 dir=rtl> bold");
         TestReport.Check(prefix[4].Html.Contains("list-marker\">2.a)"), $"{what}: nested list item renders its label");
         string table = prefix[11].Html;
-        TestReport.Check(table.Contains("colspan=\"2\"") && table.Contains("width:144pt") && table.Contains("background-color:#EEEEEE") && table.Contains("vertical-align:middle")
+        TestReport.Check(table.Contains("colspan=\"2\"") && table.Contains("width:144pt") && table.Contains("background-color:light-dark(#EEEEEE,") && table.Contains("vertical-align:middle")
                          && System.Text.RegularExpressions.Regex.Matches(table, "<td").Count == 5 && prefix[11].Notes.Count == 1,
                          $"{what}: table spans, covered cell skipped, column width, cell style, footnote in a cell");
 

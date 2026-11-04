@@ -680,7 +680,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             {
                 int width = boundaries[i] - (i == 0 ? _parser.RowLeftTwips : boundaries[i - 1]);
                 if (width > 0) css.Append("width:").Append(WordParagraphFormatting.TwipsToPt(width)).Append("pt;");
-                if (_tables.ColorHex(shading[i]) is { } fill) css.Append("background:#").Append(fill).Append(';');
+                if (_tables.ColorHex(shading[i]) is { } fill) css.Append("background:").Append(WordHtmlColor.Css(fill)).Append(';');
             }
             html.Append("<td");
             if (css.Length > 0) html.Append(" style=\"").Append(css).Append('"');
