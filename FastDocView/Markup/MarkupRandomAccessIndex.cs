@@ -284,7 +284,7 @@ public sealed class MarkupRandomAccessIndex
         ToratEmetHead? toratEmet = null;
         if (head.Length > 0)
         {
-            if (head.Length % 2 == 0 || !long.TryParse(head[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long headEnd) || headEnd > textEnd)
+            if (head.Length % 2 == 0 || !long.TryParse(head[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long headEnd) || headEnd >= textEnd)
                 throw new InvalidDataException("Text / web archive index: Torat Emet head damaged.");
             var pairs = new List<KeyValuePair<string, string>>((head.Length - 1) / 2);
             for (int i = 1; i < head.Length; i += 2) pairs.Add(new(head[i], head[i + 1]));

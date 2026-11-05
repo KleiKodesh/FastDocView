@@ -231,7 +231,7 @@ public static class ToratEmetFormat
             char first = isEnd ? (i + 2 < text.Length ? text[i + 2] : '\0') : d;
             int tagEnd = IsTagStart(first) ? FindTagEnd(text, i) : -1;
             if (tagEnd < 0) { html.Append("&lt;"); i++; continue; }
-            (string name, _, _) = MarkupBlockScanner.ParseTag(text.Substring(i, tagEnd + 1 - i));
+            (string name, _, bool isSelfClosing) = MarkupBlockScanner.ParseTag(text.Substring(i, tagEnd + 1 - i));
             i = tagEnd + 1;
             if (!FormattingTags.Contains(name)) continue;           // a macro or unknown tag: dropped, its text stays
             if (isEnd)
@@ -244,7 +244,7 @@ public static class ToratEmetFormat
             else
             {
                 html.Append('<').Append(name).Append('>');
-                if (name != "br") open.Add(name);
+                if (name != "br" && !isSelfClosing) open.Add(name);
             }
         }
         for (int k = open.Count - 1; k >= 0; k--) html.Append("</").Append(open[k]).Append('>');
