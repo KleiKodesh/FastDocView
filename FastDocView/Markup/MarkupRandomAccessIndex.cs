@@ -28,7 +28,7 @@ public sealed record MarkupSpanAnchor(MarkupScanState? State, long ScanPosition,
 public sealed class MarkupRandomAccessIndex
 {
     private const string Magic = "KHMKPIDX";
-    private const int FormatVersion = 6; // 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
+    private const int FormatVersion = 7; // 7: Torat Emet head (metadata + where it ends; heading levels from line marks); 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
     public const int AnchorSpanBytes = 64 * 1024;
     /// <summary>
     /// MHTML anchors are 4x denser: decoding plus tag-heavy HTML rescans at ~25 MB/s, so a 64 KB span cost a random block
@@ -56,6 +56,10 @@ public sealed class MarkupRandomAccessIndex
     public int[] TextLengthGroupTotals { get; }
     public List<string> Stacks { get; }
     public WordDocumentHeading[] Headings { get; }
+    /// <summary>.txt in the Torat Emet book format: its metadata head (one hidden block, block 0) and the keys; null for every other text.</summary>
+    public ToratEmetHead? ToratEmet { get; }
+    /// <summary>Where the Torat Emet head ends (text coordinates), -1 for any other text: what a scanner of this index is told.</summary>
+    internal long ToratEmetHeadEnd => ToratEmet?.HeadEndOffset ?? -1;
     /// <summary>
     /// The index of the blocks known so far while an on-demand first open is still scanning (never saved): its last span
     /// ends at <see cref="TextEnd"/>, where the pass had read to, past the start of the block still being read.
@@ -81,8 +85,9 @@ public sealed class MarkupRandomAccessIndex
     public MarkupRandomAccessIndex(MarkupSourceKind kind, long sourceFileLength, long sourceLastWriteTicksUtc, int codePage, string encodingReason,
                                    MimeTransferEncoding transferEncoding, long textEnd, long encodedEnd, bool isRightToLeft, string documentCss,
                                    long textStart, long firstFeedEnd, int blockCount, MarkupSpanAnchor[] anchors, int[] textLengthGroupTotals,
-                                   List<string> stacks, WordDocumentHeading[] headings)
+                                   List<string> stacks, WordDocumentHeading[] headings, ToratEmetHead? toratEmet = null)
     {
+        ToratEmet = toratEmet;
         Kind = kind; SourceFileLength = sourceFileLength; SourceLastWriteTicksUtc = sourceLastWriteTicksUtc; CodePage = codePage;
         EncodingReason = encodingReason; TransferEncoding = transferEncoding; TextEnd = textEnd; EncodedEnd = encodedEnd;
         IsRightToLeft = isRightToLeft; DocumentCss = documentCss; TextStart = textStart; FirstFeedEnd = firstFeedEnd;
@@ -187,6 +192,14 @@ public sealed class MarkupRandomAccessIndex
         WordIndexDeflatedBlob.Write(writer, Headings.Select(h => (byte)h.Level).ToArray());
         WriteStrings(writer, Headings.Select(h => h.Text).ToArray());
         Section($"headings ({Headings.Length})");
+        var head = new List<string>();
+        if (ToratEmet is { } toratEmet)
+        {
+            head.Add(toratEmet.HeadEndOffset.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            foreach (KeyValuePair<string, string> pair in toratEmet.Metadata) { head.Add(pair.Key); head.Add(pair.Value); }
+        }
+        WriteStrings(writer, head);
+        Section($"Torat Emet head ({head.Count / 2} keys)");
         writer.Flush();
     }
 
@@ -267,8 +280,18 @@ public sealed class MarkupRandomAccessIndex
             if ((uint)headingBlocks[i] >= (uint)blockCount) throw new InvalidDataException("Text / web archive index: heading past the blocks.");
             headings[i] = new WordDocumentHeading(headingBlocks[i], levels[i], headingTexts[i]);
         }
+        string[] head = ReadStrings(reader);
+        ToratEmetHead? toratEmet = null;
+        if (head.Length > 0)
+        {
+            if (head.Length % 2 == 0 || !long.TryParse(head[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long headEnd) || headEnd > textEnd)
+                throw new InvalidDataException("Text / web archive index: Torat Emet head damaged.");
+            var pairs = new List<KeyValuePair<string, string>>((head.Length - 1) / 2);
+            for (int i = 1; i < head.Length; i += 2) pairs.Add(new(head[i], head[i + 1]));
+            toratEmet = new ToratEmetHead(headEnd, pairs);
+        }
         return new MarkupRandomAccessIndex(kind, length, ticks, codePage, reason, transfer, textEnd, encodedEnd, rtl, css, textStart, firstFeedEnd,
-                                           blockCount, anchors, groupTotals, stacks, headings);
+                                           blockCount, anchors, groupTotals, stacks, headings, toratEmet);
     }
 
     /// <summary>Strings as varint UTF-8 lengths + bytes, deflated together (any character allowed).</summary>

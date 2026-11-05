@@ -47,6 +47,10 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     public bool IsRightToLeft { get; }                     // fixed at open (an on-demand open: from the first 64 KB of text)
     public string Stylesheet { get; }
     public WordIndexDecision Decision { get; }
+    /// <summary>A .txt in the Torat Emet book format: its metadata (block 0 is the hidden head, drawn as a header); null for any other text.</summary>
+    public ToratEmetHead? ToratEmet => _indexField.ToratEmet;
+    /// <summary>The name a Torat Emet book gives itself (ForcedBookName) for a tab title; null when there is none (the file name stays).</summary>
+    public string? DocumentTitle => _indexField.ToratEmet?.BookName;
 
     /// <summary>The finished index. Throws while an on-demand open is still scanning.</summary>
     public MarkupRandomAccessIndex Index { get { lock (_readLock) return _builder is null ? _indexField : throw new InvalidOperationException("The index is still being built on demand."); } }
@@ -209,6 +213,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         Stylesheet = WordDocumentHtmlStylesheet.Build(new WordRunFormatting(), index.IsRightToLeft)
                      + "\n.word-document .text-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1em; }"
                      + "\n.word-document .image-placeholder { color: #999; font-style: italic; }\n"
+                     + (index.ToratEmet is null ? "" : ToratEmetFormat.Stylesheet)
                      + index.DocumentCss;
     }
 
@@ -261,7 +266,11 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
                         int length = (int)(_table.BlockEnd(block) - blockStart);
                         string content = _encoding.GetString(text, from, Math.Min(length, text.Length - from));
                         matcher.Reset();
-                        if (_index.Kind == MarkupSourceKind.PlainText) matcher.Feed(content.AsSpan()); else matcher.FeedHtml(content);
+                        if (_index.ToratEmet is not null && _index.Kind == MarkupSourceKind.PlainText)
+                        {
+                            if (block > 0) matcher.FeedHtml(ToratEmetFormat.WithoutMark(content));     // block 0 is the hidden metadata head
+                        }
+                        else if (_index.Kind == MarkupSourceKind.PlainText) matcher.Feed(content.AsSpan()); else matcher.FeedHtml(content);
                         if (matcher.Count > 0) { hits.Add(block); counts.Add(matcher.Count); }
                     }
                 }
@@ -296,11 +305,19 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
             int length = (int)(_table.BlockEnd(block) - blockStart);
             string content = _encoding.GetString(text, from, Math.Min(length, text.Length - from));
             string openTags = _table.OpenTags(block);
-            string html = _index.Kind == MarkupSourceKind.PlainText ? MarkupBlockRenderer.RenderLine(openTags, content) : MarkupBlockRenderer.Render(openTags, content);
+            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(openTags, content)
+                        : _index.ToratEmet is { } toratEmet ? (block == 0 ? ToratEmetFormat.RenderHeader(toratEmet, FirstTitle(_index)) : ToratEmetFormat.RenderLine(openTags, content))
+                        : MarkupBlockRenderer.RenderLine(openTags, content);
             WordDocumentBlockKind kind = content.TrimStart().StartsWith("<table", StringComparison.OrdinalIgnoreCase) ? WordDocumentBlockKind.Table : WordDocumentBlockKind.Paragraph;
             result.Add(new WordDocumentBlockHtml(block, kind, html, []));
         }
         return result;
+    }
+
+    private static string? FirstTitle(MarkupRandomAccessIndex index)
+    {
+        foreach (WordDocumentHeading heading in index.Headings) if (heading.Level == 2) return heading.Text;
+        return null;
     }
 
     /// <summary>

@@ -1826,3 +1826,14 @@ the renderers keep plain colours because that raw output is what the fidelity ha
 - Theme colours: `url(...)` / `light-dark(...)` are skipped to their matching parenthesis; rgb() / rgba() / hsl() /
   hsla() (MHTML) get the same light-dark pair as hex colours, alpha kept on the dark side.
 - Checks: StreamingFormatsIncrementalOpenTest (early REF to a late bookmark, RTF on demand), DocxThemeAndUnderlineTest.
+
+## Torat Emet book files read as .txt (2026-11-05)
+
+`Markup/ToratEmetFormat.cs` + scanner / index / document hooks. Index format 7 (head: `ToratEmetHead` = head end offset + key/value pairs, saved after the headings).
+
+- Detection (index pass, on the detection sample, single-byte / UTF-8 only): line 1 starts with `&` and holds a known `&Key=` (a `&word=` that is not a known key stays inside the value: CosmeticsType holds `=` and `&`), and a `$ ` line within 100 lines. Anything else is a plain .txt, unchanged (regression: `ToratEmetTest.RunNotTheFormat`).
+- The head = line 1 plus the following lines that are clearly metadata (blank, `// ...`, `[Section]`, `key=value`, a copy of the `&Key=` line, even inside tags). It is ONE block (block 0): the scanner does not start a block before the head end and treats its `<` as text (line 1 holds unbalanced tags). Block 0 draws a small header: ForcedBookName (else the first `$` title), SpecialTitle, author (RavMechaber / Mehaber), source (TextSource). A text line before the first heading is not metadata and is shown.
+- Marks at a line start followed by a space: `$` h2, `#` h3, `@` and `^` h4, `~` h5 (heading entries of the TOC, all five, whatever LastLevelIndex says: 240 books with LastLevelIndex=2 have `~` as their only structure); `!` hidden, the rest of the line shown. The mark is read across fed pieces (state machine in the scanner), the heading text is recorded without it; the first `$` heading is recorded as ForcedBookName when set (TOC root).
+- Tags: only b i u big small sup sub br are drawn (bare, own renderer, never raw HTML); every other tag and the size macros (`<90>`, `<SZ:150%%>`, `<TF>` ...) are dropped with their text kept; the scanner keeps only the whitelist on the open-element stack. `//` lines in the body stay visible (they are config text of the "mix" files, 419 lines).
+- Search matches block text without the mark and tags; never the hidden head.
+- Checks: `ToratEmetTest.Run` (with `--text`), `--torat-emet <folder> [--torat-emet-sample N | --torat-emet-stats]`.
