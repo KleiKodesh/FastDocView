@@ -14,11 +14,14 @@ public sealed class ToratEmetHead
     /// <summary>Where the head ends (text coordinates): the start of the first line that is not metadata.</summary>
     public long HeadEndOffset { get; }
     public IReadOnlyList<KeyValuePair<string, string>> Metadata { get; }
+    /// <summary>The note lines right after the title (see <see cref="ToratEmetNotes"/>), in text order: hidden from the text, shown in the header line.</summary>
+    public IReadOnlyList<ToratEmetNote> Notes { get; }
 
-    public ToratEmetHead(long headEndOffset, IReadOnlyList<KeyValuePair<string, string>> metadata)
+    public ToratEmetHead(long headEndOffset, IReadOnlyList<KeyValuePair<string, string>> metadata, IReadOnlyList<ToratEmetNote>? notes = null)
     {
         HeadEndOffset = headEndOffset;
         Metadata = metadata;
+        Notes = notes ?? [];
     }
 
     /// <summary>False for a book without line-1 metadata: nothing is hidden, block 0 is an ordinary line.</summary>
@@ -164,8 +167,37 @@ public static class ToratEmetFormat
         for (int i = headLines; i < lines.Count && !hasMark; i++)
             hasMark = lines[i].length >= 2 && sample[lines[i].start + 1] == (byte)' ' && "$#@^~".IndexOf((char)sample[lines[i].start]) >= 0;
         if (!hasMark && !optionsOnly) return null;
-        return new ToratEmetHead(lines[headLines].start, pairs);
+        return new ToratEmetHead(lines[headLines].start, pairs, FindNotes(sample, lines, headLines, encoding));
     }
+
+    /// <summary>
+    /// The note lines of a book with a head: the plain, listed lines within the first <see cref="ToratEmetNotes.MaximumNonBlankLines"/> non-blank lines after the title
+    /// (<paramref name="titleLine"/>, the first line after the head), with only blank lines, comment lines and other notes between, when a section heading follows
+    /// in the sample. No heading after them = the lines are the book's text (a book with only a title keeps everything).
+    /// </summary>
+    private static List<ToratEmetNote> FindNotes(ReadOnlySpan<byte> sample, List<(int start, int length)> lines, int titleLine, Encoding encoding)
+    {
+        var notes = new List<ToratEmetNote>();
+        if (titleLine + 1 >= lines.Count || !IsTitleLine(sample.Slice(lines[titleLine].start, lines[titleLine].length))) return notes;
+        int nonBlank = 0, last = -1;
+        for (int i = titleLine + 1; i < lines.Count - 1 && nonBlank < ToratEmetNotes.MaximumNonBlankLines; i++)
+        {
+            string line = encoding.GetString(sample.Slice(lines[i].start, lines[i].length).ToArray());
+            string text = line.Trim();
+            if (text.Length == 0) continue;
+            nonBlank++;
+            if (text.StartsWith("//", StringComparison.Ordinal)) continue;
+            if (HasMark(line, out _) || !ToratEmetNotes.TryMatch(line, out string display)) break;     // text, a heading or an unlisted line ends the notes
+            notes.Add(new ToratEmetNote(lines[i].start, lines[i + 1].start, display));
+            last = i;
+        }
+        if (notes.Count == 0) return notes;
+        for (int i = last + 1; i < lines.Count; i++)
+            if (lines[i].length >= 2 && sample[lines[i].start + 1] == (byte)' ' && "#@^~".IndexOf((char)sample[lines[i].start]) >= 0) return notes;
+        return [];
+    }
+
+    private static bool IsTitleLine(ReadOnlySpan<byte> line) => line.Length >= 2 && line[0] == (byte)'$' && line[1] == (byte)' ';
 
     /// <summary>Line 1 holds only the wrap / rav options: such a file is in the format even when it has no heading mark.</summary>
     private static bool IsOptionsOnly(List<KeyValuePair<string, string>> pairs)
@@ -231,7 +263,7 @@ public static class ToratEmetFormat
 
     /// <summary>
     /// The metadata header shown in place of the hidden head: ONE quiet line above the title - the book's short name (only when it adds to the
-    /// title heading), the special title, the author and the source, separated by a middle dot. Nothing to show = an empty block (hidden by the stylesheet).
+    /// title heading), the special title, the author, the source and the notes (<see cref="ToratEmetNotes"/>), separated by a middle dot. Nothing to show = an empty block (hidden by the stylesheet).
     /// </summary>
     public static string RenderHeader(ToratEmetHead head, string? firstTitle)
     {
@@ -240,6 +272,7 @@ public static class ToratEmetFormat
         if (head.SpecialTitle is { } special) parts.Add(special);
         if (head.Author is { } author) parts.Add(author);
         if (head.Source is { } source) parts.Add(source);
+        foreach (ToratEmetNote note in head.Notes) parts.Add(note.Text);
         return parts.Count == 0 ? "<div class=\"text-line te-meta\"></div>" : "<div class=\"text-line te-meta\">" + Escape(string.Join(" · ", parts)) + "</div>";
     }
 
@@ -257,7 +290,8 @@ public static class ToratEmetFormat
     public const string Stylesheet =
         "\n.word-document .te-meta { white-space: normal; margin: 0 0 .3em; color: var(--fdv-muted, #666); font-size: .8em; }"
         + "\n.word-document .te-meta:empty { display: none; }"
-        + "\n.word-document .te-heading > h1, .word-document .te-heading > h2, .word-document .te-heading > h3, .word-document .te-heading > h4 { margin: .4em 0 .1em; border: 0; padding: 0; font-weight: 700; }"   // the shared stylesheet resets headings to inherit: bold and the size steps are set here, scoped to Torat Emet headings
+        + "\n.word-document .te-heading > h1, .word-document .te-heading > h2, .word-document .te-heading > h3, .word-document .te-heading > h4 { margin: .4em 0 .2em; border: 0; padding: 0; font-weight: 700; }"   // the shared stylesheet resets headings to inherit: bold and the size steps are set here, scoped to Torat Emet headings
+        + "\n.word-document .te-heading::after { content: none !important; }"   // the page gives every .text-line a zero-width-space ::after (an empty run keeps a line height): after a block-level heading it became a whole extra line, the gap after every heading
         + "\n.word-document .te-heading > h1 { font-size: 1.6em; }"
         + "\n.word-document .te-heading > h2 { font-size: 1.35em; }"
         + "\n.word-document .te-heading > h3 { font-size: 1.15em; }"

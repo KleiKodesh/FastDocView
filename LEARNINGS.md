@@ -470,3 +470,11 @@ window) and the p95 (a slow path hit by more than one window in twenty); the wor
 - The harness's minimal .docx packages open in our readers but Word calls them damaged: build Word fixtures with Word
   itself (test-data/word-fields/make-fields-fixtures.ps1), not by converting the harness's files.
 - Old harness checks used PAGE as "a field with a result": page fields are placeholders now, so such fixtures use AUTHOR.
+
+## 2026-11-05: the gap after a Torat Emet heading was a pseudo-element, not a blank block
+
+- The app's page styles give `.text-line::after` a zero-width space. A `.text-line` that holds a block-level `h1`-`h4` got an anonymous line after it: about 25 css px
+  (one line-height), the same for every level. Dropping the blank blocks (658e68c) could not remove it. Measure heading bottom -> next block top with
+  `playwright/toratEmetGapCheck.mjs` (it lists every contributor); the wrapper's height was far larger than its heading's.
+- Corpus: 1,246 books have a title and a later section heading; 416 have plain short lines between them, 603 distinct texts, 523 of them in one book only.
+  47 texts occur in 3 or more books (the notes list). Many are credits ("Rav X shlita"), not remarks about the book.

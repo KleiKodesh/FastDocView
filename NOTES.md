@@ -1900,3 +1900,17 @@ Findings. (1) The Torat Emet handling costs nothing measurable against a plain .
 (344-523 ms on a cold first run) and saved no index, so a second open paid it again. `WordIndexPolicy.PlainTextSidecarThresholdBytes` (2 MB) now makes .txt / web
 archives open on demand from 2 MB: the open returns in 5-7 ms, the first window in ~2 ms, the rest of the index is pulled as the reader asks and saved; a reopen is 2-12 ms.
 (3) Every normal book (up to ~2 MB) opens and shows text in under 25 ms. Earlier live-check numbers (largest 111 ms, Sfat Emet 197 ms) were this blocking pass.
+
+## Torat Emet note lines in the header (2026-11-05, index format 14)
+
+- A short plain line right after the `$` title that is in a data list (`ToratEmetNotes.Data.cs`, the texts found as such a line in at least 3 books of the
+  corpus, normalised: tags removed, white space collapsed, trailing punctuation dropped) is a NOTE: it joins the one header line after the source
+  (`name . special title . author . source . notes`) and is not a block. Regenerate the list with `scripts/analyse-torat-emet-notes.py --emit-cs`.
+- Decided on the detection sample only (same bytes for a one-pass open, an on-demand first open and a rebuild): within the first 5 non-blank lines after the
+  title, only blank / comment / other note lines between, at most 120 characters, and a section heading (`# @ ^ ~`) later in the sample. A book with only a
+  title, or whose heading is past the sample, keeps every line as text. Only books with line-1 metadata have a header to hold notes.
+- The index carries the note byte ranges with the head (sidecar format 14). The scanner drops the bytes of a note as they are fed (so a block never starts
+  inside one, and no span anchor is taken inside one); a block that contains a note range in its byte span is decoded without it.
+- Search does not read the header (before and after), so a note is not searchable; it is a header line like the name, author and source.
+- Heading gap: the page gives every `.text-line` a zero-width-space `::after` (an empty run keeps a line's height). After a block-level heading it made a whole
+  extra line (about 25 css px) - the "empty line after a heading". Torat Emet heading wrappers switch it off; the heading's own bottom margin is `.2em`.

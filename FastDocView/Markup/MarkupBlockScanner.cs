@@ -94,6 +94,9 @@ public sealed class MarkupBlockScanner
     // Torat Emet text (.txt book files): the metadata head (text before _toratEmetHeadEnd) is ONE block, a line that starts with a mark and a
     // space is a heading (its text recorded without the mark), and only the formatting whitelist is kept on the element stack.
     private readonly long _toratEmetHeadEnd = -1;            // >= 0: Torat Emet text; where its head ends
+    private readonly ToratEmetNote[] _notes = [];            // the note lines (hidden: no block, no text), in text order
+    private int _noteCursor;                                 // the first note not yet passed
+    private long _noteSkipEnd;                               // bytes before this offset belong to a note line and are dropped (0: not inside one)
     private readonly bool _isDroppingBlankLines;             // PutNewLinesAsIs=0: blank and whitespace-only lines are not blocks
     private readonly bool _isTildeInContents;                // LastLevelIndex >= 1 (or no metadata): a tilde line is a table-of-contents entry
     private int _markState;                                  // 0 none, 1 at a line start, 2 mark read - a space must follow
@@ -108,6 +111,7 @@ public sealed class MarkupBlockScanner
         if (toratEmet is not null && mode == MarkupBlockMode.Lines && unitSize == 1)
         {
             _toratEmetHeadEnd = toratEmet.HeadEndOffset;
+            _notes = toratEmet.Notes.ToArray();
             _isDroppingBlankLines = !toratEmet.IsNewLinesAsIs;
             _isTildeInContents = !toratEmet.HasHead || toratEmet.LastLevelIndex >= 1;
         }
@@ -153,7 +157,7 @@ public sealed class MarkupBlockScanner
         while (i < end)
         {
             if (IsBodyEnded) return;
-            if (_state == State.Text && !_pendingCarriageReturn && _labelState < 2)
+            if (_state == State.Text && !_pendingCarriageReturn && _labelState < 2 && _noteSkipEnd == 0)
             {
                 // vectorised skip over a text run: only '<' and line breaks matter here
                 ReadOnlySpan<byte> rest = buffer.AsSpan(i, end - i);
@@ -198,6 +202,11 @@ public sealed class MarkupBlockScanner
             _pendingCarriageReturn = false;
             if (unit == '\n') { AddTextUnit(unit, first, second); EndLine(offset + _unitSize); return; }
             EndLine(offset);
+        }
+        if (offset < _noteSkipEnd)
+        {   // inside a note line (the header shows it): dropped whole, line break included
+            if (offset + _unitSize >= _noteSkipEnd) _noteSkipEnd = 0;
+            return;
         }
         if (_labelState >= 2 && ResolveLabel(unit, offset, first, second)) return;
         switch (_state)
@@ -500,6 +509,7 @@ public sealed class MarkupBlockScanner
     /// <summary>A real line break after a Torat Emet label line (an exclamation mark and a space) does not start a block yet: the next line's first bytes decide (see <see cref="ResolveLabel"/>). A split inside a long line never merges.</summary>
     private void EndLine(long nextBlockOffset, bool isLineBreak = true)
     {
+        if (isLineBreak && _notes.Length > 0) nextBlockOffset = SkipNotes(nextBlockOffset);
         if (isLineBreak && _labelState == 1) { _labelState = _isDroppingBlankLines ? 4 : 2; _labelNextStart = nextBlockOffset; _labelAtLineStart = true; return; }
         if (isLineBreak && _labelState == 4) return;                       // the label absorbs blank lines until its text (or a heading) shows
         if (isLineBreak && (_isDroppingBlankLines || _isAfterHeading) && !_blockHasContent && BlockIndexBase + BlockStartOffsets.Count > 1 && _labelState == 0 && nextBlockOffset >= _toratEmetHeadEnd)
@@ -512,6 +522,19 @@ public sealed class MarkupBlockScanner
             return;
         }
         StartBlock(nextBlockOffset);
+    }
+
+    /// <summary>Where the next block starts when a line starts at <paramref name="offset"/>: after every note line that starts there (the bytes of a note are dropped as they are fed).</summary>
+    private long SkipNotes(long offset)
+    {
+        while (_noteCursor < _notes.Length && _notes[_noteCursor].End <= offset) _noteCursor++;
+        while (_noteCursor < _notes.Length && _notes[_noteCursor].Start == offset)
+        {
+            offset = _notes[_noteCursor].End;
+            _noteSkipEnd = offset;
+            _noteCursor++;
+        }
+        return offset;
     }
 
     // Torat Emet label lines: 0 not in one, 1 inside the label line, 2 its line break was read and the next line's first byte is awaited,
@@ -642,7 +665,7 @@ public sealed class MarkupBlockScanner
     /// pending CR or half a code unit), inside the body with a block open: a <see cref="ExportSpanState"/> taken here
     /// lets a fresh scanner continue exactly as this one would.
     /// </summary>
-    public bool IsAtSpanPoint => _state == State.Text && !_pendingCarriageReturn && _carry < 0 && _labelState == 0 && _markState != 2 && !IsToratEmetMarkLost && _isInBody && !IsBodyEnded
+    public bool IsAtSpanPoint => _state == State.Text && !_pendingCarriageReturn && _carry < 0 && _labelState == 0 && _noteSkipEnd == 0 && _markState != 2 && !IsToratEmetMarkLost && _isInBody && !IsBodyEnded
                                  && BlockStartOffsets.Count > 0;
 
     /// <summary>Torat Emet: a tag opened at a line start cleared the mark state; a resumed scanner could not know that, so no span point here.</summary>

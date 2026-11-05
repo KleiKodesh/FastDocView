@@ -28,7 +28,7 @@ public sealed record MarkupSpanAnchor(MarkupScanState? State, long ScanPosition,
 public sealed class MarkupRandomAccessIndex
 {
     private const string Magic = "KHMKPIDX";
-    private const int FormatVersion = 13; // 13: a blank line right after a Torat Emet heading is dropped in every book (anchors carry it); 12: the first title heading keeps its own text (no ForcedBookName root); 11: blank lines dropped unless PutNewLinesAsIs=1, tilde headings return when the contents would be empty; 10: (also covers 8, the path rule: an empty head, no head block) PutNewLinesAsIs=0 books drop blank lines, LastLevelIndex 0 hides tilde headings; 9: heading levels 1-4 (dollar = 1), label lines merge with the next line; 8: Torat Emet without line-1 metadata (empty head) and without a title line; 7: Torat Emet head (metadata + where it ends; heading levels from line marks); 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
+    private const int FormatVersion = 14; // 14: Torat Emet note lines (hidden from the text, carried with the head); 13: a blank line right after a Torat Emet heading is dropped in every book (anchors carry it); 12: the first title heading keeps its own text (no ForcedBookName root); 11: blank lines dropped unless PutNewLinesAsIs=1, tilde headings return when the contents would be empty; 10: (also covers 8, the path rule: an empty head, no head block) PutNewLinesAsIs=0 books drop blank lines, LastLevelIndex 0 hides tilde headings; 9: heading levels 1-4 (dollar = 1), label lines merge with the next line; 8: Torat Emet without line-1 metadata (empty head) and without a title line; 7: Torat Emet head (metadata + where it ends; heading levels from line marks); 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
     public const int AnchorSpanBytes = 64 * 1024;
     /// <summary>
     /// MHTML anchors are 4x denser: decoding plus tag-heavy HTML rescans at ~25 MB/s, so a 64 KB span cost a random block
@@ -199,6 +199,16 @@ public sealed class MarkupRandomAccessIndex
         }
         WriteStrings(writer, head);
         Section($"Torat Emet head ({head.Count / 2} keys)");
+        var notes = new List<string>();
+        if (ToratEmet is { } withNotes)
+            foreach (ToratEmetNote note in withNotes.Notes)
+            {
+                notes.Add(note.Start.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                notes.Add(note.End.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                notes.Add(note.Text);
+            }
+        WriteStrings(writer, notes);
+        Section($"Torat Emet notes ({notes.Count / 3})");
         writer.Flush();
     }
 
@@ -288,6 +298,23 @@ public sealed class MarkupRandomAccessIndex
             var pairs = new List<KeyValuePair<string, string>>((head.Length - 1) / 2);
             for (int i = 1; i < head.Length; i += 2) pairs.Add(new(head[i], head[i + 1]));
             toratEmet = new ToratEmetHead(headEnd, pairs);
+        }
+        string[] noteStrings = ReadStrings(reader);
+        if (noteStrings.Length > 0)
+        {
+            if (toratEmet is null || noteStrings.Length % 3 != 0) throw new InvalidDataException("Text / web archive index: Torat Emet notes damaged.");
+            var notes = new List<ToratEmetNote>(noteStrings.Length / 3);
+            long previousEnd = toratEmet.HeadEndOffset;
+            for (int i = 0; i < noteStrings.Length; i += 3)
+            {
+                if (!long.TryParse(noteStrings[i], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long start)
+                    || !long.TryParse(noteStrings[i + 1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long end)
+                    || start < previousEnd || end <= start || end > textEnd)
+                    throw new InvalidDataException("Text / web archive index: Torat Emet notes damaged.");
+                notes.Add(new ToratEmetNote(start, end, noteStrings[i + 2]));
+                previousEnd = end;
+            }
+            toratEmet = new ToratEmetHead(toratEmet.HeadEndOffset, toratEmet.Metadata, notes);
         }
         return new MarkupRandomAccessIndex(kind, length, ticks, codePage, reason, transfer, textEnd, encodedEnd, rtl, css, textStart, firstFeedEnd,
                                            blockCount, anchors, groupTotals, stacks, headings, toratEmet);

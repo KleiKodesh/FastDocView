@@ -262,10 +262,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
                     byte[] text = ReadText(fromBlock, end, out long textStart);
                     for (int block = fromBlock; block < end; block++)
                     {
-                        long blockStart = _table.BlockStart(block);
-                        int from = (int)(blockStart - textStart);
-                        int length = (int)(_table.BlockEnd(block) - blockStart);
-                        string content = _encoding.GetString(text, from, Math.Min(length, text.Length - from));
+                        string content = DecodeBlock(text, textStart, block);
                         matcher.Reset();
                         if (_index.ToratEmet is not null && _index.Kind == MarkupSourceKind.PlainText)
                         {
@@ -301,10 +298,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         byte[] text = ReadText(first, last, out long textStart);
         for (int block = first; block < last; block++)
         {
-            long blockStart = _table.BlockStart(block);
-            int from = (int)(blockStart - textStart);
-            int length = (int)(_table.BlockEnd(block) - blockStart);
-            string content = _encoding.GetString(text, from, Math.Min(length, text.Length - from));
+            string content = DecodeBlock(text, textStart, block);
             string openTags = _table.OpenTags(block);
             string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(openTags, content)
                         : _index.ToratEmet is { } toratEmet ? (block == 0 && toratEmet.HasHead ? ToratEmetFormat.RenderHeader(toratEmet, FirstTitle(_index)) : ToratEmetFormat.RenderLine(openTags, content))
@@ -313,6 +307,26 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
             result.Add(new WordDocumentBlockHtml(block, kind, html, []));
         }
         return result;
+    }
+
+    /// <summary>The characters of one block: its bytes, without the note lines of a Torat Emet book that lie in them (the header shows those; the scanner gave them no block).</summary>
+    private string DecodeBlock(byte[] text, long textStart, int block)
+    {
+        long blockStart = _table.BlockStart(block), blockEnd = _table.BlockEnd(block);
+        int from = (int)(blockStart - textStart);
+        int length = Math.Min((int)(blockEnd - blockStart), text.Length - from);
+        if (_index.ToratEmet is not { Notes.Count: > 0 } toratEmet || _index.Kind != MarkupSourceKind.PlainText || blockStart >= toratEmet.Notes[toratEmet.Notes.Count - 1].End)
+            return _encoding.GetString(text, from, length);
+        var content = new StringBuilder();
+        int at = from, end = from + length;
+        foreach (ToratEmetNote note in toratEmet.Notes)
+        {
+            int noteStart = (int)Math.Min(end, Math.Max(at, note.Start - textStart)), noteEnd = (int)Math.Min(end, Math.Max(at, note.End - textStart));
+            if (noteEnd == noteStart) continue;
+            content.Append(_encoding.GetString(text, at, noteStart - at));
+            at = noteEnd;
+        }
+        return content.Append(_encoding.GetString(text, at, end - at)).ToString();
     }
 
     private static string? FirstTitle(MarkupRandomAccessIndex index)

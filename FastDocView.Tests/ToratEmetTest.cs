@@ -56,6 +56,7 @@ public static class ToratEmetTest
         ToratEmetWidenedTest.Run(directory);
         RunSplitPieces(directory);
         ToratEmetHeadingBlankTest.Run(directory);
+        ToratEmetNotesTest.Run(directory);
         RunOnDemand(directory);
         RunTagExamples();
     }
