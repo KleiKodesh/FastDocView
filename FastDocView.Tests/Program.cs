@@ -203,7 +203,7 @@ if (odtBlocks > 0)
     }
 }
 
-if (textBlocks > 0) { MarkupIndexAndRenderTest.RunEdgeCases(); MarkupIndexAndRenderTest.RunDoubleByteSplit(); MarkupIndexAndRenderTest.RunText(textBlocks); ToratEmetTest.Run(); }
+if (textBlocks > 0) { MarkupIndexAndRenderTest.RunEdgeCases(); MarkupIndexAndRenderTest.RunDoubleByteSplit(); MarkupIndexAndRenderTest.RunText(textBlocks); ToratEmetTest.Run(); ToratEmetPathRuleTest.Run(); }
 if (mhtmlBlocks > 0) { MarkupIndexAndRenderTest.RunNestedMultipart(); MarkupIndexAndRenderTest.RunMhtml(mhtmlBlocks); }
 if (markupProfilePaths.Count > 0)
 {

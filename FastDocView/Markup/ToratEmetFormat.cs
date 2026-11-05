@@ -75,6 +75,8 @@ public static class ToratEmetFormat
     /// one at line 101 (53 KB in), so heading marks are looked for in <see cref="MarkSearchLines"/> lines of the whole sample.
     /// </summary>
     public const int MarkSearchLines = 200;
+    /// <summary>Where the path rule looks for line 1's end (see ToratEmetPathRule).</summary>
+    public const int HeadSearchBytes = 32 * 1024;
     /// <summary>A "$ " title line without line-1 metadata must be within this many lines.</summary>
     public const int TitleSearchLines = 100;
 

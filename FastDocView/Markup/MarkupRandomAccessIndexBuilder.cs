@@ -25,8 +25,8 @@ public static class MarkupRandomAccessIndexBuilder
     }
 
     public static MarkupRandomAccessIndex BuildPlainText(Stream file, long sourceLength, long sourceTicks,
-                                                         IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
-        => new MarkupIncrementalIndexBuilder(MarkupSourceKind.PlainText, file, sourceLength, sourceTicks, progress, cancellation).Complete();
+                                                         IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation, bool isToratEmetByPath = false)
+        => new MarkupIncrementalIndexBuilder(MarkupSourceKind.PlainText, file, sourceLength, sourceTicks, progress, cancellation, isToratEmetByPath).Complete();
 
     internal static int ReadFully(Stream stream, byte[] buffer, int count)
     {

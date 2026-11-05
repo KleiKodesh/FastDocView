@@ -170,7 +170,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
             ? cachedIndex
             : kind switch
             {
-                MarkupSourceKind.PlainText => MarkupRandomAccessIndexBuilder.BuildPlainText(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation),
+                MarkupSourceKind.PlainText => MarkupRandomAccessIndexBuilder.BuildPlainText(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation, ToratEmetPathRule.Applies(displayPath)),
                 _ => MarkupRandomAccessIndexBuilder.BuildWebArchive(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation),
             };
         return new MarkupWindowedDocument(displayPath, file, index, null, decision, sidecarPathToSave: null);
@@ -184,7 +184,8 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
                                                        long sourceLastWriteTicksUtc, IProgress<WordDocumentIndexProgress>? progress,
                                                        CancellationToken cancellation, string sidecarPathToSave)
     {
-        var builder = new MarkupIncrementalIndexBuilder(kind, file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
+        var builder = new MarkupIncrementalIndexBuilder(kind, file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation,
+                                                        isToratEmetByPath: kind == MarkupSourceKind.PlainText && ToratEmetPathRule.Applies(displayPath));
         builder.AdvanceUntilKnown(OnDemandFirstBlockCount);
         while (!builder.HasDirectionSample) builder.AdvanceUntilKnown(builder.KnownBlockCount + 1);
         if (builder.IsEveryBlockKnown)
