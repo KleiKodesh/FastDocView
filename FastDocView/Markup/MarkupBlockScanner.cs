@@ -99,9 +99,6 @@ public sealed class MarkupBlockScanner
     private int _markState;                                  // 0 none, 1 at a line start, 2 mark read - a space must follow
     private int _markLevel;
     private bool _isMarkHeading;
-    private bool _isBookNameUsed;
-    /// <summary>Torat Emet: the first title heading is recorded under this name (ForcedBookName) when set.</summary>
-    public string? BookName { get; set; }
 
     public MarkupBlockScanner(MarkupBlockMode mode, int unitSize, bool bigEndian, Encoding encoding, ToratEmetHead? toratEmet = null)
     {
@@ -583,8 +580,7 @@ public sealed class MarkupBlockScanner
     {
         string text = WebUtility.HtmlDecode(_encoding.GetString(_headingBytes.ToArray()));
         text = string.Join(" ", text.Split([' ', '\t', '\r', '\n', ' '], StringSplitOptions.RemoveEmptyEntries));
-        if (_isMarkHeading && _headingLevel == 1 && !_isBookNameUsed && BookName is { Length: > 0 }) { text = BookName; _isBookNameUsed = true; }
-        bool isHiddenTilde = _isMarkHeading && _headingLevel == 4 && !_isTildeInContents;     // LastLevelIndex 0: the lowest level is not in the index
+               bool isHiddenTilde = _isMarkHeading && _headingLevel == 4 && !_isTildeInContents;     // LastLevelIndex 0: the lowest level is not in the index
         if (text.Length > 0 && isHiddenTilde) _hiddenTildeHeadings.Add(new WordDocumentHeading(_headingBlock, _headingLevel, text));
         else if (text.Length > 0) Headings.Add(new WordDocumentHeading(_headingBlock, _headingLevel, text));
         _isMarkHeading = false;

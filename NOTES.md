@@ -1872,3 +1872,31 @@ the renderers keep plain colours because that raw output is what the fidelity ha
 Every key is kept in `ToratEmetHead.Metadata` (also `key=value` head lines), typed accessors for all of them. Sources: `Config.txt` `[BooksParameters]` and the comment under `[General]`, `BooksConfig.txt`, data counts above. The public repos ToratEmetInWord/ToratEmetInWord and JewishOfficeAddIn only list the keys (metadata lines are skipped when building / searching); no semantics there.
 Things the format simply does (left as is): a `!` label followed by another label does not merge (each label merges only with a text line); a line holding only tags such as `<BR>` is kept as a line (explicit intent); a mark-only line such as `# ` is a (blank) heading line; with no line-1 metadata a blank FIRST line stays as an empty block 0; `wrap` has no documented effect, it is parsed (`IsWrap`) only.
 - Checks: `ToratEmetWidenedTest` (with `--text`): detection and plain regressions, labels (all line endings, first open, saved index), label / blank-run boundaries at the two feed-piece ends (every shift of the interesting bytes), PutNewLinesAsIs 0 / 1 / absent, LastLevelIndex, all keys. Corpus detection (`--torat-emet-stats`): MyBooks 11 -> 698 of 1,523; Books 1,543 -> 1,546 of 1,553.
+
+## Torat Emet first-open timings (2026-11-05)
+
+Library API (`WordWindowedDocumentOpener.Open` with `IndexesOnDemand`, a fresh index folder, then `RenderBlocksForDisplay(0, 40)`, then `ScanAhead` to the end),
+not the service path. OS file cache WARM (files were read once before). Machine shared with other work, so a run varies by 2x; ms are min/median/max of 3 files
+(the first file in a process also pays ~150-250 ms JIT, left out). The plain rows are the same books with the head and the marks stripped, in a path without the
+folder word. Heap = managed heap after a full GC with the document open (1.3-2.1 MB everywhere).
+
+Classes: small 1-5 KB, median 65-111 KB, large 1.2-2.0 MB, largest = the three biggest files of Books (5.7-7.2 MB, mishna_brura 27,495 blocks),
+MyBooks largest = the three biggest of MyBooks (8-19 MB).
+
+| class (ms) | open | first window | rest of index | reopen |
+|---|---|---|---|---|
+| small, before = after | 1/1/2 | 0/0/1 | in the open | 1/1/5 |
+| median, before = after | 3/4/6 | 1/2/6 | in the open | 3/5/10 |
+| large, before (8 MB rule) | 14/45/433 | 2/6/14 | in the open | 25/33/271 |
+| large, after (2 MB rule) | 9/21/22 | 1/1/2 | in the open | 8/19/31 |
+| largest, before | 66/193/344 | 2/4/4 | in the open | 65/95/218 |
+| largest, after | 5/5/7 | 2/2/2 | 77/82/114 (pulled) | 2/3/12 |
+| MyBooks largest, before | 5/35/64 | 1/2/2 | 0/31/416 | 3/29/31 |
+| MyBooks largest, after | 4/4/31 | 1/1/1 | 38/40/45 | 1/1/1 |
+| plain .txt of the same size, after (largest / MyBooks largest) | 6/7/12 / 4/4/38 | 2/4/10 / 1/1/1 | 71/83/186 / 30/33/49 | 2/2/7 / 1/1/1 |
+
+Findings. (1) The Torat Emet handling costs nothing measurable against a plain .txt of the same size (marks, heading levels, head parsing are inside the one scan).
+(2) The scan runs at ~50 MB/s, so a .txt under the 8 MB sidecar threshold was opened by ONE blocking pass: the largest books took 120-240 ms before the first window
+(344-523 ms on a cold first run) and saved no index, so a second open paid it again. `WordIndexPolicy.PlainTextSidecarThresholdBytes` (2 MB) now makes .txt / web
+archives open on demand from 2 MB: the open returns in 5-7 ms, the first window in ~2 ms, the rest of the index is pulled as the reader asks and saved; a reopen is 2-12 ms.
+(3) Every normal book (up to ~2 MB) opens and shows text in under 25 ms. Earlier live-check numbers (largest 111 ms, Sfat Emet 197 ms) were this blocking pass.

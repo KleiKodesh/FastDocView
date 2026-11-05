@@ -47,16 +47,23 @@ public sealed class WordIndexPolicy
     /// </summary>
     public bool IndexesOnDemand { get; init; }
 
-    public WordIndexDecision Decide(string filePath, long bodyBytes, bool hasCachedIndex)
+    /// <summary>
+    /// A .txt / web archive is scanned at ~50 MB/s (measured on the Torat Emet books, 7 MB = 120-240 ms before the first window), so from 2 MB
+    /// its open is on demand (first window after the first blocks, the rest as the reader asks) instead of one blocking pass.
+    /// </summary>
+    public const long PlainTextSidecarThresholdBytes = 2L << 20;
+
+    public WordIndexDecision Decide(string filePath, long bodyBytes, bool hasCachedIndex, long? thresholdCapBytes = null)
     {
+        long threshold = Math.Min(SidecarThresholdBytes, thresholdCapBytes ?? long.MaxValue);
         long estimatedIndexBytes = bodyBytes / 2048 + 8192;     // compact .docx sidecar: ~45 KB per 90 MB; the other formats' per-block layouts are bigger
         if (hasCachedIndex)
             return new WordIndexDecision(filePath, WordIndexMode.Sidecar, true, bodyBytes, estimatedIndexBytes, "index already built");
         if (ForcedMode is { } forced)
             return new WordIndexDecision(filePath, forced, false, bodyBytes, estimatedIndexBytes, "forced by settings");
-        return bodyBytes >= SidecarThresholdBytes
-            ? new WordIndexDecision(filePath, WordIndexMode.Sidecar, false, bodyBytes, estimatedIndexBytes, $"text {bodyBytes >> 20} MB ≥ {SidecarThresholdBytes >> 20} MB")
-            : new WordIndexDecision(filePath, WordIndexMode.InMemory, false, bodyBytes, 0, $"text {Math.Max(1, bodyBytes >> 10)} KB < {SidecarThresholdBytes >> 20} MB — one pass is cheaper than an index");
+        return bodyBytes >= threshold
+            ? new WordIndexDecision(filePath, WordIndexMode.Sidecar, false, bodyBytes, estimatedIndexBytes, $"text {bodyBytes >> 20} MB ≥ {threshold >> 20} MB")
+            : new WordIndexDecision(filePath, WordIndexMode.InMemory, false, bodyBytes, 0, $"text {Math.Max(1, bodyBytes >> 10)} KB < {threshold >> 20} MB — one pass is cheaper than an index");
     }
 
     public string IndexPathFor(string filePath) => WordDocumentIndexCacheLocation.IndexPathFor(filePath, CacheDirectory);

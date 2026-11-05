@@ -229,25 +229,35 @@ public static class ToratEmetFormat
 
     // -- rendering ------------------------------------------------------------------------
 
-    /// <summary>The metadata header shown in place of the hidden head: the book's name, its author and its source.</summary>
+    /// <summary>
+    /// The metadata header shown in place of the hidden head: ONE quiet line above the title - the book's short name (only when it adds to the
+    /// title heading), the special title, the author and the source, separated by a middle dot. Nothing to show = an empty block (hidden by the stylesheet).
+    /// </summary>
     public static string RenderHeader(ToratEmetHead head, string? firstTitle)
     {
-        string? name = head.BookName ?? firstTitle;
-        var html = new StringBuilder("<div class=\"text-line te-meta\">");
-        if (name is not null) html.Append("<div class=\"te-meta-name\">").Append(Escape(name)).Append("</div>");
-        if (head.SpecialTitle is { } special) html.Append("<div class=\"te-meta-line\">").Append(Escape(special)).Append("</div>");
-        if (head.Author is { } author) html.Append("<div class=\"te-meta-line\">").Append(Escape(author)).Append("</div>");
-        if (head.Source is { } source) html.Append("<div class=\"te-meta-line te-meta-source\">").Append(Escape(source)).Append("</div>");
-        return html.Append("</div>").ToString();
+        var parts = new List<string>();
+        if (head.BookName is { } name && !IsSameText(name, firstTitle)) parts.Add(name);
+        if (head.SpecialTitle is { } special) parts.Add(special);
+        if (head.Author is { } author) parts.Add(author);
+        if (head.Source is { } source) parts.Add(source);
+        return parts.Count == 0 ? "<div class=\"text-line te-meta\"></div>" : "<div class=\"text-line te-meta\">" + Escape(string.Join(" · ", parts)) + "</div>";
+    }
+
+    private static bool IsSameText(string a, string? b) => b is not null && string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The title of the tab and of the table of contents: the first title heading (the full title), else ForcedBookName, else null (the file name stays).</summary>
+    public static string? TitleOf(ToratEmetHead head, IReadOnlyList<WordDocumentHeading> headings)
+    {
+        foreach (WordDocumentHeading heading in headings) if (heading.Level == 1) return heading.Text;
+        return head.BookName;
     }
 
     private static string Escape(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
     public const string Stylesheet =
-        "\n.word-document .te-meta { white-space: normal; margin: 0 0 1em; padding-bottom: .5em; border-bottom: 1px solid var(--fdv-rule, #ccc); }"
-        + "\n.word-document .te-meta-name { font-size: 1.4em; font-weight: bold; }"
-        + "\n.word-document .te-meta-line { color: var(--fdv-muted, #666); font-size: .9em; }"
-        + "\n.word-document .te-heading > h1, .word-document .te-heading > h2, .word-document .te-heading > h3, .word-document .te-heading > h4 { margin: .3em 0; }";
+        "\n.word-document .te-meta { white-space: normal; margin: 0 0 .3em; color: var(--fdv-muted, #666); font-size: .8em; }"
+        + "\n.word-document .te-meta:empty { display: none; }"
+        + "\n.word-document .te-heading > h1, .word-document .te-heading > h2, .word-document .te-heading > h3, .word-document .te-heading > h4 { margin: .3em 0; border: 0; padding: 0; }";
 
     /// <summary>
     /// One line of text: the mark (and its space) removed, a heading line wrapped in its h2-h5, the formatting whitelist drawn (the tags still

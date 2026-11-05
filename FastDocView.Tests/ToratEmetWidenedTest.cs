@@ -76,7 +76,7 @@ public static class ToratEmetWidenedTest
             if (!isDetected) { TestReport.Check(whole.Headings.Count == 0 && whole.DocumentTitle is null, $"{name}: no headings, no title"); }
             else
             {
-                TestReport.Check(whole.ToratEmet!.HasHead == hasHead && whole.ToratEmet.BookName is null && whole.DocumentTitle is null, $"{name}: head {(hasHead ? "hidden" : "empty")}, no book name (the file name is the title)");
+                TestReport.Check(whole.ToratEmet!.HasHead == hasHead && whole.ToratEmet.BookName is null && whole.DocumentTitle == whole.Headings.FirstOrDefault(h => h.Level == 1)?.Text, $"{name}: head {(hasHead ? "hidden" : "empty")}, no book name (the title is the first title heading, else the file name)");
                 string got = string.Join(",", whole.Headings.Select(h => $"{h.Level}:{h.BlockIndex}"));
                 TestReport.Check(got == headings, $"{name}: the headings that exist, no root ({got})");
                 string first = whole.RenderBlocks(0, 1)[0].Html;
@@ -330,7 +330,36 @@ public static class ToratEmetWidenedTest
                              && head.SpecialTitle == "P" && !head.ChainFolderName && head.HiddenFromIndex && head.MixedDisplay && head.CosmeticsType == "#a=1" && head.Author == "R" && head.Get("Mehaber") == "M"
                              && head.Haskamot == "H" && head.FilesGotFrom == "F" && head.ParagraphPrefix == "~" && head.Comments == "C" && head.CreateIndex == "I" && head.SourceUrl == "U" && head.Group == "G"
                              && head.UniqueId == "5" && head.IsWrap && head.Rav == "V", "every setting is parsed and exposed on the document");
-            TestReport.Check(document.Headings.Count == 1 && document.DocumentTitle == "N", "ForcedBookName is the title");
+            TestReport.Check(document.Headings.Count == 1 && document.DocumentTitle == "T" && document.Headings[0].Text == "T", "the first title heading is the title (not ForcedBookName)");
+            string header = document.RenderBlocks(0, 1)[0].Html;
+            TestReport.Check(header == "<div class=\"text-line te-meta\">N · P · R · S</div>", $"the header is one quiet line: name, special title, author, source ({header})");
+        }
+        RunHeaderAndTitle(directory);
+    }
+
+    /// <summary>The tab title (first title heading, else ForcedBookName, else none) and the one-line header (name only when it adds to the title; nothing to show = empty block).</summary>
+    private static void RunHeaderAndTitle(string directory)
+    {
+        TestReport.Step("Torat Emet: tab title and one-line header");
+        foreach ((string name, string[] lines, string? title, string header) in new (string, string[], string?, string)[]
+        {
+            ("same-name", ["&ForcedBookName=Same", "$ Same", "text", "# A"], "Same", ""),
+            ("same-name-case", ["&ForcedBookName=same ", "$ Same", "text", "# A"], "Same", ""),
+            ("name-and-author", ["&ForcedBookName=Auth &x", "$ Full Title", "text", "# A"], "Full Title", "Auth &amp;x"),
+            ("source-only", ["&TextSource=Src", "$ Full Title", "text", "# A"], "Full Title", "Src"),
+            ("author-source", ["&ForcedBookName=Full Title&RavMechaber=Au&TextSource=So", "$ Full Title", "text", "# A"], "Full Title", "Au · So"),
+            ("no-title-line", ["&ForcedBookName=OnlyName", "text", "# A"], "OnlyName", "OnlyName"),
+            ("nothing", ["&UniqueId=1", "text", "# A"], null, ""),
+        })
+        {
+            string path = Path1(directory, "header-" + name);
+            File.WriteAllBytes(path, Hebrew1255.GetBytes(Lines(lines)));
+            using var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+            while (!document.IsIndexComplete) document.ScanAhead(5000);
+            string html = document.RenderBlocks(0, 1)[0].Html;
+            string expected = "<div class=\"text-line te-meta\">" + header + "</div>";
+            TestReport.Check(document.DocumentTitle == title && html == expected, $"{name}: title {title ?? "(file name)"}, header {(header.Length == 0 ? "none" : header)} ({html})");
+            TestReport.Check(!ToratEmetFormat.Stylesheet.Contains("border-bottom") && ToratEmetFormat.Stylesheet.Contains("te-meta:empty"), $"{name}: the stylesheet has no rule under the header and hides an empty one");
         }
     }
 

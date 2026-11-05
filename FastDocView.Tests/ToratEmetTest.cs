@@ -62,7 +62,7 @@ public static class ToratEmetTest
     private static void VerifySynthetic(MarkupWindowedDocument document, string what)
     {
         TestReport.Check(document.ToratEmet is not null, $"{what}: detected as a Torat Emet book");
-        TestReport.Check(document.DocumentTitle == Name, $"{what}: ForcedBookName is the document title");
+        TestReport.Check(document.DocumentTitle == "Book Title" && document.Headings[0].Text == "Book Title", $"{what}: the first title heading is the document title and the contents root");
         TestReport.Check(document.ToratEmet!.Get("CosmeticsType")!.StartsWith("#wp=//x.bmp#rep3=<b115>=<b style='a=b&c'>", StringComparison.Ordinal)
                          && document.ToratEmet.Get("GroupId") == "g" && document.ToratEmet.Get("RavMechaber") == "Auth" && document.ToratEmet.Get("Key") == "value",
                          $"{what}: metadata parsed ('=' and '&' inside a value stay)");
@@ -71,7 +71,7 @@ public static class ToratEmetTest
                          && !blocks[0].Html.Contains("UniqueId") && !blocks[0].Html.Contains("editor comment") && !blocks[0].Html.Contains("Dup") && !blocks[0].Html.Contains("[General]"),
                          $"{what}: block 0 is the small metadata header, the head lines are not shown");
         TestReport.Check(string.Join(",", document.Headings.Select(h => $"{h.Level}:{h.BlockIndex}")) == "1:1,3:3,2:4,3:5,4:6", $"{what}: heading levels ({string.Join(",", document.Headings.Select(h => h.Level + ":" + h.BlockIndex))})");
-        TestReport.Check(document.Headings[0].Text == Name && document.Headings[4].Text == "Chapter bold", $"{what}: the TOC root is the book name; a heading's text has no mark and no tags");
+        TestReport.Check(document.Headings[0].Text == "Book Title" && document.Headings[4].Text == "Chapter bold", $"{what}: the TOC root is the first title; a heading's text has no mark and no tags");
         TestReport.Check(blocks[1].Html == "<div class=\"text-line te-heading\"><h1>Book Title</h1></div>", $"{what}: $ is an h1 ({blocks[1].Html})");
         TestReport.Check(blocks[4].Html.Contains("<h2>Hash title</h2>") && blocks[5].Html.Contains("<h3>At title</h3>") && blocks[3].Html.Contains("<h3>Parsha</h3>")
                          && blocks[6].Html.Contains("<h4>Chapter <b>bold</b></h4>"), $"{what}: # h2, @ and ^ h3, ~ h4");
@@ -127,7 +127,7 @@ public static class ToratEmetTest
             File.WriteAllBytes(path, Encoding.ASCII.GetBytes(text.ToString()));
             using var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
             WordDocumentHeading? split = document.Headings.FirstOrDefault(h => h.Text == "Split heading");
-            TestReport.Check(split is { Level: 2 } && document.Headings.Any(h => h.Text == "Second" && h.Level == 3) && document.Headings[0].Text == "X",
+            TestReport.Check(split is { Level: 2 } && document.Headings.Any(h => h.Text == "Second" && h.Level == 3) && document.Headings[0].Text == "T",
                              $"mark and space split at byte {boundary}: heading found without the mark ({string.Join("|", document.Headings.Select(h => h.Level + h.Text))})");
             IReadOnlyList<WordDocumentBlockHtml> rendered = document.RenderBlocks(split!.BlockIndex, 1);
             TestReport.Check(rendered[0].Html == "<div class=\"text-line te-heading\"><h2>Split heading</h2></div>", "the split heading renders as an h2");

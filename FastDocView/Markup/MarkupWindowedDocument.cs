@@ -49,8 +49,8 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     public WordIndexDecision Decision { get; }
     /// <summary>A .txt in the Torat Emet book format: its metadata (block 0 is the hidden head, drawn as a header, when it has metadata); null for any other text.</summary>
     public ToratEmetHead? ToratEmet => _indexField.ToratEmet;
-    /// <summary>The name a Torat Emet book gives itself (ForcedBookName) for a tab title; null when there is none (the file name stays).</summary>
-    public string? DocumentTitle => _indexField.ToratEmet?.BookName;
+    /// <summary>A Torat Emet book's tab title: its first title heading (full title), else ForcedBookName; null when it has neither (the file name stays).</summary>
+    public string? DocumentTitle => _indexField.ToratEmet is { } head ? ToratEmetFormat.TitleOf(head, Headings) : null;
 
     /// <summary>The finished index. Throws while an on-demand open is still scanning.</summary>
     public MarkupRandomAccessIndex Index { get { lock (_readLock) return _builder is null ? _indexField : throw new InvalidOperationException("The index is still being built on demand."); } }
@@ -127,7 +127,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy, MarkupSourceKind kind)
     {
         bool hasCachedIndex = MarkupRandomAccessIndex.TryLoad(policy.IndexPathFor(filePath), filePath, kind) is not null;
-        return policy.Decide(filePath, new FileInfo(filePath).Length, hasCachedIndex);
+        return policy.Decide(filePath, new FileInfo(filePath).Length, hasCachedIndex, WordIndexPolicy.PlainTextSidecarThresholdBytes);
     }
 
     public static MarkupWindowedDocument Open(string filePath, MarkupSourceKind kind, WordIndexPolicy? policy = null,
@@ -140,7 +140,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         var file = new WordDocumentFileStream(filePath);
         try
         {
-            WordIndexDecision decision = policy.Decide(filePath, file.Length, cached is not null);
+            WordIndexDecision decision = policy.Decide(filePath, file.Length, cached is not null, WordIndexPolicy.PlainTextSidecarThresholdBytes);
             bool isOnDemand = decision.Mode == WordIndexMode.Sidecar && cached is null && policy.IndexesOnDemand;
             MarkupWindowedDocument document = isOnDemand
                 ? OpenOnDemand(file, filePath, kind, decision, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation, indexPath)
