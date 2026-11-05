@@ -59,7 +59,7 @@ internal sealed class MarkupIncrementalIndexBuilder
     private int CurrentBlock => _scanner.BlockIndexBase + _scanner.BlockStartOffsets.Count - 1;
 
     public MarkupIncrementalIndexBuilder(MarkupSourceKind kind, Stream file, long sourceLength, long sourceTicks,
-                                         IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
+                                         IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation, bool isToratEmetByPath = false)
     {
         _kind = kind; _file = file; _sourceLength = sourceLength; _sourceTicks = sourceTicks; _progress = progress; _cancellation = cancellation;
         if (kind == MarkupSourceKind.PlainText)
@@ -72,7 +72,8 @@ internal sealed class MarkupIncrementalIndexBuilder
             (_, _unitSize, _encoding) = MarkupRandomAccessIndexBuilder.PlainTextEncoding(_codePage);
             int sampleText = Math.Min(_sampleLength - _bomLength, RightToLeftSampleBytes) & ~(_unitSize - 1);
             _isPlainTextRightToLeft = MarkupTextEncoding.ContainsHebrew(_encoding.GetString(_chunk, _bomLength, Math.Max(0, sampleText)));
-            _toratEmet = ToratEmetFormat.TryReadHead(_chunk.AsSpan(0, _sampleLength), _bomLength, _encoding);
+            _toratEmet = isToratEmetByPath ? ToratEmetPathRule.ReadHead(_chunk.AsSpan(0, _sampleLength), _bomLength, _encoding)   // the path rule: no detection
+                                           : ToratEmetFormat.TryReadHead(_chunk.AsSpan(0, _sampleLength), _bomLength, _encoding);
             _scanner = new MarkupBlockScanner(MarkupBlockMode.Lines, _unitSize, _codePage == MarkupTextEncoding.Utf16BigEndian, _encoding, _toratEmet?.HeadEndOffset ?? -1)
                 { BookName = _toratEmet?.BookName };
             _anchors = [new(null, _bomLength, 0, 0)];
