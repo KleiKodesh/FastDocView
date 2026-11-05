@@ -73,7 +73,7 @@ internal sealed class MarkupIncrementalIndexBuilder
             int sampleText = Math.Min(_sampleLength - _bomLength, RightToLeftSampleBytes) & ~(_unitSize - 1);
             _isPlainTextRightToLeft = MarkupTextEncoding.ContainsHebrew(_encoding.GetString(_chunk, _bomLength, Math.Max(0, sampleText)));
             _toratEmet = ToratEmetFormat.TryReadHead(_chunk.AsSpan(0, _sampleLength), _bomLength, _encoding);
-            _scanner = new MarkupBlockScanner(MarkupBlockMode.Lines, _unitSize, _codePage == MarkupTextEncoding.Utf16BigEndian, _encoding, _toratEmet?.HeadEndOffset ?? -1)
+            _scanner = new MarkupBlockScanner(MarkupBlockMode.Lines, _unitSize, _codePage == MarkupTextEncoding.Utf16BigEndian, _encoding, _toratEmet)
                 { BookName = _toratEmet?.BookName };
             _anchors = [new(null, _bomLength, 0, 0)];
             _scanner.Begin(_bomLength);

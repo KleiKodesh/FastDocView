@@ -17,6 +17,8 @@ public static class ToratEmetWidenedTest
         RunDetection(directory);
         RunLabels(directory);
         RunLabelBoundaries(directory);
+        RunBlankLines(directory);
+        RunBlankLineBoundaries(directory);
     }
 
     private static string Path1(string directory, string name) => Path.Combine(directory, $"torat-emet-widened-{name}-v2.txt");
@@ -31,9 +33,10 @@ public static class ToratEmetWidenedTest
         string plain150 = string.Concat(Enumerable.Repeat("plain\r\n", 150));
         var cases = new (string name, string text, bool isDetected, bool hasHead, string headings)[]
         {
-            ("wrap-marks", Lines("&wrap=1", "@ Part", "~ Chapter", "text"), true, true, "3:1,4:2"),
+            ("wrap-marks", Lines("&wrap=1", "@ Part", "~ Chapter", "text"), true, true, "3:1"),
+            ("wrap-lli1", Lines("&wrap=1&LastLevelIndex=1", "@ Part", "~ Chapter", "text"), true, true, "3:1,4:2"),
             ("wrap-upper", Lines("&WRAP=1", "# T", "@ A", "text"), true, true, "2:1,3:2"),
-            ("wrap-tilde-only", Lines("&wrap=1", "~ C", "text"), true, true, "4:1"),
+            ("wrap-tilde-only", Lines("&wrap=1", "~ C", "text"), true, true, ""),
             ("rav-at-only", Lines("&rav=X", "@ C", "text"), true, true, "3:1"),
             ("wrap-caret", Lines("&wrap=1", "^ C", "text"), true, true, "3:1"),
             ("wrap-no-marks", Lines("&wrap=1", "plain", "more plain"), true, true, ""),
@@ -98,7 +101,7 @@ public static class ToratEmetWidenedTest
             string line = lines[i];
             if (line.StartsWith("! ", StringComparison.Ordinal) && i + 1 < lines.Length && lines[i + 1].Length > 0
                 && !(lines[i + 1].Length >= 2 && lines[i + 1][1] == ' ' && "$#@^~!".IndexOf(lines[i + 1][0]) >= 0))
-            { result.Add("!M" + line.Substring(2) + " " + lines[i + 1]); i++; }
+            { result.Add("!M" + line.Substring(2) + " " + lines[i + 1].TrimStart()); i++; }
             else result.Add(line);
         }
         return result;
@@ -165,7 +168,7 @@ public static class ToratEmetWidenedTest
         }
         string pathAlone = Path1(directory, "label-label-then-heading-crlf");
         using (var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(pathAlone, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory }))
-            TestReport.Check(document.RenderBlocks(2, 1)[0].Html == "<div class=\"text-line\">{A}</div>" && document.Headings.Any(h => h.Text == "Chapter" && h.Level == 4 && h.BlockIndex == 3), "a label before a heading stays alone; the heading is the next block");
+            TestReport.Check(document.RenderBlocks(2, 1)[0].Html == "<div class=\"text-line\">{A}</div>" && document.RenderBlocks(3, 1)[0].Html.Contains("<h4>Chapter</h4>"), "a label before a heading stays alone; the heading is the next block");
 
         TestReport.Step("Torat Emet: a long line after a label is split, the label merges with the first piece only");
         string longText = "&UniqueId=1&ForcedBookName=X\r\n$ T\r\n! {A}\r\n" + string.Join(" ", Enumerable.Repeat("word", 20000)) + "\r\nend\r\n";
@@ -237,5 +240,123 @@ public static class ToratEmetWidenedTest
             }
         }
         TestReport.Check(failures == 0, $"label boundary cases: {checks} checks, {failures} failures");
+    }
+
+    // -- blank lines (PutNewLinesAsIs) ---------------------------------------------------------
+
+    private static bool IsBlank(string line) => line.Trim(' ', (char)9).Length == 0;
+
+    private static List<string> ExpectedFor(string[] lines, bool isAsIs) => ExpectedLines(isAsIs ? lines : lines.Where(l => !IsBlank(l)).ToArray());
+
+    private static void RunBlankLines(string directory)
+    {
+        TestReport.Step("Torat Emet: PutNewLinesAsIs 0 drops blank lines, 1 / absent keeps the lines as they are");
+        string tab = ((char)9).ToString();
+        string[] body =
+        [
+            "$ T", "a", "", "", "b", "  ", tab, "c", "! {A}", "", "", "verse", "", "~ H", "! {B}", "", "  ", "~ H2", "! {C}", "", "! {D}", "", "text d", "", "", "end", "", "",
+        ];
+        var heads = new (string name, string head, bool isAsIs)[]
+        {
+            ("pnl0", "&PutNewLinesAsIs=0&LastLevelIndex=2", false),
+            ("pnl0-lower", "&PutNewlinesAsIs=0&LastLevelIndex=2", false),
+            ("pnl0-line", "&LastLevelIndex=2@@NL@@PutNewLinesAsIs=0", false),
+            ("pnl1", "&PutNewLinesAsIs=1&LastLevelIndex=2", true),
+            ("absent", "&LastLevelIndex=2", true),
+        };
+        foreach ((string name, string head, bool isAsIs) in heads)
+        {
+            foreach ((string ending, string tag) in new[] { ("\r\n", "crlf"), ("\n", "lf"), ("\r", "cr") })
+            {
+                string path = Path1(directory, $"blank-{name}-{tag}");
+                File.WriteAllBytes(path, Hebrew1255.GetBytes(head.Replace("@@NL@@", ending) + ending + string.Join(ending, body) + ending));
+                var onDemandPolicy = new WordIndexPolicy { CacheDirectory = Path.Combine(directory, "index-cache-ondemand"), ForcedMode = WordIndexMode.Sidecar, IndexesOnDemand = true };
+                if (File.Exists(onDemandPolicy.IndexPathFor(path))) File.Delete(onDemandPolicy.IndexPathFor(path));
+                List<string> expected = ExpectedFor(body, isAsIs);
+                using var whole = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+                CheckBlocks(whole, 1, expected, $"{name} {tag}: {(isAsIs ? "lines as they are" : "no empty blocks")}");
+                using var onDemand = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, onDemandPolicy);
+                while (!onDemand.IsIndexComplete) onDemand.ScanAhead(5000);
+                CheckBlocks(onDemand, 1, expected, $"{name} {tag} (first-open path)");
+                using var saved = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, onDemandPolicy);
+                TestReport.Check(saved.Decision.HasCachedIndex && saved.IsIndexComplete, $"{name} {tag}: reopened from the saved index");
+                CheckBlocks(saved, 1, expected, $"{name} {tag} (saved index)");
+                if (!isAsIs && tag == "crlf")
+                {
+                    TestReport.Check(!whole.RenderBlocks(1, whole.BlockCount - 1).Any(b => b.Html.Contains("<br></div>")), "no empty line is drawn");
+                    TestReport.Check(whole.Search("{A} verse", WordDocumentSearchOptions.Default, 0, 100).HitBlocks.Length == 1, "a label merges with its text across a blank run, search matches the merged text");
+                }
+            }
+        }
+        TestReport.Step("Torat Emet: LastLevelIndex 0 keeps tilde lines out of the contents (the lines are still drawn)");
+        foreach ((string head, string expectedHeadings) in new[] { ("&LastLevelIndex=0", "1:1,3:3"), ("&LastLevelIndex=1", "1:1,3:3,4:4"), ("&LastLevelIndex=2", "1:1,3:3,4:4"), ("&UniqueId=1", "1:1,3:3") })
+        {
+            string path = Path1(directory, "lli-" + head.Substring(1).Replace("=", ""));
+            File.WriteAllBytes(path, Hebrew1255.GetBytes(Lines(head, "$ T", "text", "@ A", "~ C", "more")));
+            using var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+            string got = string.Join(",", document.Headings.Select(h => $"{h.Level}:{h.BlockIndex}"));
+            TestReport.Check(got == expectedHeadings && document.RenderBlocks(4, 1)[0].Html.Contains("<h4>C</h4>"), $"{head}: contents {got}, the tilde line is still a heading in the text");
+        }
+        string allKeys = "&SearchInTitles=0&LastLevelIndex=1&PutNewLinesAsIs=0&PasukIndMode=2&TextSource=S&GroupId=g&ForcedBookName=N&SpecialTitle=P&ChainFolderName=0&HiddenFromIndex=1&MixedDisplay=1&CosmeticsType=#a=1&RavMechaber=R&Mehaber=M&Haskamot=H&FilesGotFrom=F&ParagraphPrefix=~&Comments=C&CreateIndex=I&SourceUrl=U&Group=G&UniqueId=5&wrap=1&rav=V";
+        string keysPath = Path1(directory, "all-keys");
+        File.WriteAllBytes(keysPath, Hebrew1255.GetBytes(Lines(allKeys, "$ T", "text")));
+        using (var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(keysPath, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory }))
+        {
+            ToratEmetHead head = document.ToratEmet!;
+            TestReport.Check(!head.SearchInTitles && head.LastLevelIndex == 1 && !head.IsNewLinesAsIs && head.PasukIndMode == 2 && head.Source == "S" && head.GroupId == "g" && head.BookName == "N"
+                             && head.SpecialTitle == "P" && !head.ChainFolderName && head.HiddenFromIndex && head.MixedDisplay && head.CosmeticsType == "#a=1" && head.Author == "R" && head.Get("Mehaber") == "M"
+                             && head.Haskamot == "H" && head.FilesGotFrom == "F" && head.ParagraphPrefix == "~" && head.Comments == "C" && head.CreateIndex == "I" && head.SourceUrl == "U" && head.Group == "G"
+                             && head.UniqueId == "5" && head.IsWrap && head.Rav == "V", "every setting is parsed and exposed on the document");
+            TestReport.Check(document.Headings.Count == 1 && document.DocumentTitle == "N", "ForcedBookName is the title");
+        }
+    }
+
+    /// <summary>A blank run split across fed pieces (and between a label and its text): the blocks must not depend on where the pieces end.</summary>
+    private static void RunBlankLineBoundaries(string directory)
+    {
+        TestReport.Step("Torat Emet: blank runs across fed-piece boundaries (PutNewLinesAsIs 0, first open and one pass)");
+        var tails = new (string name, string[] tail)[]
+        {
+            ("run", ["text1", "", "  ", "", "", "text2", "tail"]),
+            ("label-run", ["! {A}", "", "", "  ", "verse x", "tail"]),
+            ("label-run-heading", ["! {A}", "", "", "~ Chapter", "tail"]),
+            ("label-run-end", ["! {A}", "", "", ""]),
+            ("run-mark", ["text1", "", "", "~ Chapter", "", "", "tail"]),
+        };
+        int checks = 0, failures = 0;
+        foreach (int boundary in new[] { MarkupTextEncoding.DetectionSampleBytes, MarkupTextEncoding.DetectionSampleBytes + MarkupRandomAccessIndexBuilder.ChunkSize })
+        foreach ((string tailName, string[] tail) in tails)
+        foreach (string ending in new[] { "\r\n", "\n" })
+        for (int shift = -3; shift <= 12; shift++)
+        {
+            var text = new StringBuilder("&UniqueId=1&PutNewLinesAsIs=0&LastLevelIndex=2" + ending + "$ T" + ending);
+            while (text.Length < boundary - 80) text.Append("filler line of ascii text" + ending);
+            int pad = boundary - shift - text.Length - ending.Length;
+            text.Append(new string('f', pad)).Append(ending);
+            string prefix = text.ToString();
+            string path = Path1(directory, $"blankbound-{boundary}-{tailName}-{(ending.Length == 2 ? "crlf" : "lf")}-{shift + 3}");
+            File.WriteAllBytes(path, Encoding.ASCII.GetBytes(prefix + string.Join(ending, tail) + ending));
+            string[] lines = (prefix + string.Join(ending, tail) + ending).Split([ending], StringSplitOptions.None);
+            List<string> expected = ExpectedFor(lines.Skip(1).ToArray(), false);
+            var onDemandPolicy = new WordIndexPolicy { CacheDirectory = Path.Combine(directory, "index-cache-ondemand"), ForcedMode = WordIndexMode.Sidecar, IndexesOnDemand = true };
+            if (File.Exists(onDemandPolicy.IndexPathFor(path))) File.Delete(onDemandPolicy.IndexPathFor(path));
+            using var whole = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+            using var onDemand = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, onDemandPolicy);
+            while (!onDemand.IsIndexComplete) onDemand.ScanAhead(5000);
+            foreach ((MarkupWindowedDocument document, string how) in new[] { (whole, "one pass"), (onDemand, "first open") })
+            {
+                checks++;
+                string detail = "";
+                bool ok = document.BlockCount == 1 + expected.Count;
+                if (ok)
+                {
+                    IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(1, expected.Count);
+                    for (int i = Math.Max(0, expected.Count - 5); i < expected.Count && ok; i++)
+                    { ok = blocks[i].Html == ExpectedHtml(expected[i]); if (!ok) detail = blocks[i].Html + " <> " + ExpectedHtml(expected[i]); }
+                }
+                if (!ok) { failures++; Console.WriteLine($"   FAIL blank boundary {boundary} {tailName} shift {shift} {how}: {document.BlockCount} blocks, expected {1 + expected.Count} {detail}"); }
+            }
+        }
+        TestReport.Check(failures == 0, $"blank-run boundary cases: {checks} checks, {failures} failures");
     }
 }

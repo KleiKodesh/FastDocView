@@ -37,6 +37,33 @@ public sealed class ToratEmetHead
     public string? Author => NonEmpty(Get("RavMechaber")) ?? NonEmpty(Get("Mehaber"));
     public string? SpecialTitle => NonEmpty(Get("SpecialTitle"));
 
+    // Every setting the files carry, parsed and kept even when no feature uses it yet. Defaults are the program's own (Config.txt [BooksParameters]).
+    /// <summary>PutNewLinesAsIs (default 1): 1 = the file's line structure is kept; 0 = blank and whitespace-only lines are dropped (no empty blocks).</summary>
+    public bool IsNewLinesAsIs => Flag("PutNewLinesAsIs", true);
+    /// <summary>LastLevelIndex (default 0): 1 or more = the lowest heading level (tilde) is in the table of contents; 0 = it is not. Value 2 is treated like 1 (its extra meaning is unknown).</summary>
+    public int LastLevelIndex => Number("LastLevelIndex", 0);
+    public bool SearchInTitles => Flag("SearchInTitles", true);
+    public int PasukIndMode => Number("PasukIndMode", 0);
+    public string? GroupId => NonEmpty(Get("GroupId"));
+    public string? Group => NonEmpty(Get("Group"));
+    public bool ChainFolderName => Flag("ChainFolderName", true);
+    public bool HiddenFromIndex => Flag("HiddenFromIndex", false);
+    public bool MixedDisplay => Flag("MixedDisplay", false);
+    public string? CosmeticsType => NonEmpty(Get("CosmeticsType"));
+    public string? Haskamot => NonEmpty(Get("Haskamot"));
+    public string? FilesGotFrom => NonEmpty(Get("FilesGotFrom"));
+    public string? Comments => NonEmpty(Get("Comments"));
+    public string? ParagraphPrefix => NonEmpty(Get("ParagraphPrefix"));
+    public string? SourceUrl => NonEmpty(Get("SourceUrl"));
+    public string? CreateIndex => NonEmpty(Get("CreateIndex"));
+    public string? UniqueId => NonEmpty(Get("UniqueId"));
+    /// <summary>The first-line option wrap=1 (a documented option; its effect in the original program is not documented).</summary>
+    public bool IsWrap => Flag("wrap", false);
+    public string? Rav => NonEmpty(Get("rav"));
+
+    private bool Flag(string key, bool fallback) => (Get(key) ?? (key == "PutNewLinesAsIs" ? Get("PutNewlinesAsIs") : null))?.Trim() is { Length: > 0 } value ? value != "0" : fallback;
+    private int Number(string key, int fallback) => int.TryParse(Get(key)?.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int value) ? value : fallback;
+
     private static string? NonEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value!.Trim();
 }
 
@@ -220,7 +247,7 @@ public static class ToratEmetFormat
     {
         int end = line.Length;
         while (end > 0 && (line[end - 1] == '\n' || line[end - 1] == '\r')) end--;
-        string content = line.Substring(0, end);
+        string content = TrimBlankTail(line.Substring(0, end));
         int level = 0;
         if (HasMark(content, out int markLevel)) { level = markLevel; content = content.Substring(2); if (markLevel < 0) content = MergeLabelBreak(content); }
         string body = RenderInline(openTags, content);
@@ -235,7 +262,21 @@ public static class ToratEmetFormat
     }
 
     /// <summary>The line without its mark: what a search matches (the same removal as <see cref="RenderLine"/>).</summary>
-    public static string WithoutMark(string line) => HasMark(line, out int level) ? (level < 0 ? MergeLabelBreak(line.Substring(2)) : line.Substring(2)) : line;
+    public static string WithoutMark(string line)
+    {
+        line = TrimBlankTail(line);
+        return HasMark(line, out int level) ? (level < 0 ? MergeLabelBreak(line.Substring(2)) : line.Substring(2)) : line;
+    }
+
+    /// <summary>A block that absorbed blank lines after its text (PutNewLinesAsIs=0, or a label waiting for its text) loses them: the trailing white space goes when a line break is inside the block's text.</summary>
+    private static string TrimBlankTail(string content)
+    {
+        int end = content.Length;
+        while (end > 0 && content[end - 1] is '\r' or '\n') end--;
+        if (content.IndexOfAny(['\r', '\n'], 0, end) < 0) return content.Substring(0, end);
+        while (end > 0 && content[end - 1] is '\r' or '\n' or ' ' or '\t') end--;
+        return content.Substring(0, end);
+    }
 
     /// <summary>A label block holds the label line and the line merged into it: the line break between them becomes one space (a break at the very end stays for the caller to trim).</summary>
     private static string MergeLabelBreak(string content)
@@ -244,7 +285,8 @@ public static class ToratEmetFormat
         while (end > 0 && (content[end - 1] == '\n' || content[end - 1] == '\r')) end--;
         int at = content.IndexOfAny(['\r', '\n']);
         if (at < 0 || at >= end) return content;
-        int after = at + (content[at] == '\r' && at + 1 < content.Length && content[at + 1] == '\n' ? 2 : 1);
+        int after = at;
+        while (after < content.Length && content[after] is '\r' or '\n' or ' ' or '\t') after++;     // blank lines between the label and its text collapse too
         return content.Substring(0, at) + " " + content.Substring(after);
     }
 

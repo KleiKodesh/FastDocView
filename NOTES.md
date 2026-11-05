@@ -1837,3 +1837,36 @@ the renderers keep plain colours because that raw output is what the fidelity ha
 - Tags: only b i u big small sup sub br are drawn (bare, own renderer, never raw HTML); every other tag and the size macros (`<90>`, `<SZ:150%%>`, `<TF>` ...) are dropped with their text kept; the scanner keeps only the whitelist on the open-element stack. `//` lines in the body stay visible (they are config text of the "mix" files, 419 lines).
 - Search matches block text without the mark and tags; never the hidden head.
 - Checks: `ToratEmetTest.Run` (with `--text`), `--torat-emet <folder> [--torat-emet-sample N | --torat-emet-stats]`.
+
+### Torat Emet update (2026-11-05, index format 10; supersedes the detection, level and `!` bullets above)
+
+- **Detection** (`ToratEmetFormat.TryReadHead`, only the detection sample, so first open / one pass / saved index always agree; the result is stored in the sidecar and never re-decided):
+  (a) line 1 starts with `&` and holds a known key (`wrap` and `rav` count, case-insensitive): a book when a heading mark line (`$ # @ ^ ~` and a space) is within the first 200 lines, or when line 1 holds only `wrap` / `rav` options (hidden head, plain text). No `$` title is needed. 200 lines because in 687 user books with a line-1 option the first mark is within 31 lines except one at line 101 (53 KB in); the whole 128 KB sample is searched (not 32 KB). Books folder: all 1,524 key books have a mark within 25 lines.
+  (b) no line 1 metadata: a book only with a `$ ` line within 100 lines AND an `@`, `#` or `~` line. The head is empty (`HasHead` false): block 0 is an ordinary line. A line 1 that starts with `&` but holds no known key (`&word=1`) stays plain .txt.
+  Plain .txt stays plain: a markdown `# Title`, `$` only, a key line without marks (unless wrap/rav only), a one-line `&wrap=1`.
+- **No `$` title**: no root heading; `DocumentTitle` is null (the host uses the file name); the contents list the headings that exist.
+- **Levels** (user, 2026-11-05): `$` h1, `#` h2, `@` and `^` h3, `~` h4 (index heading levels 1-4).
+- **`!` label lines**: `! {X}` loses the mark; its line break goes and the next line joins it with one space as ONE block (no block for the label alone). The label stays alone when it is the last line, the next line is blank, or the next line starts with a mark and a space (heading or another label). The scanner holds the decision (`_labelState` 2/3/4, one held byte) across fed pieces; a span point is never taken while it is open. A label before a long line merges with the first piece only.
+- **PutNewLinesAsIs** (Config.txt `[BooksParameters]` default 1): 0 = blank and whitespace-only lines are no blocks (the open block restarts at the next line; the previous block absorbs the blank bytes and the renderer trims them; a label waits across the blank run for its text). 1, absent or any other value keeps the file's lines. Data (Books): value 0 in 497 books (16.8% blank lines, 150 chars/line), 1 in 216 (34.8%, 173), absent in 819 (46.1%, 143); user books: absent in all 1,523 (49.8% blank). The source of the original program is not public; the semantics (1 = lines as they are) is the most defensible reading of the name and the 0/1 data, confirm.
+- **LastLevelIndex** (Config.txt: "~ (paragraph prefix) - lowest level, appears in index only if LastLevelIndex=1"; default 0): a `~` line is a contents entry only when the value is 1 or more (2 treated like 1: its extra meaning is unknown, 1,094 books carry it); absent or 0 hides tilde lines from the contents (they are still drawn as h4). A book without line-1 metadata keeps `~` in the contents. Data: absent 285 / 0: 18 / 1: 136 / 2: 1,094 books.
+- Blank-line counts (user books / Books, lines after the head): blank 1.39M of 2.80M / 1.35M of 2.93M (absent-key books); runs of 2: 80k / 61k, runs of 3: 191k / 10k, 4+: 2k / 3k; whitespace-only lines 180 / 3,369; trailing-space lines 389k / 242k; tab lines 405 / 6,161; NBSP lines 966 / 31; lines holding only tags 1,745 / 3,541 (kept: an explicit `<BR>` line is intent).
+
+| Key | Meaning (source) | Treatment |
+|---|---|---|
+| `wrap` (line 1) | `&wrap=1`, documented first-line option, no description found | parsed (`IsWrap`), shown nowhere; makes line 1 a book marker |
+| `rav` (line 1) | `&rav=<author>` documented option | parsed (`Rav`); also a book marker |
+| `UniqueId` | book id (BooksConfig.txt) | parsed, hidden |
+| `ForcedBookName` | book name | applied: document title, TOC root text of the `$` title, header |
+| `SpecialTitle` | extra title line | shown in the header |
+| `RavMechaber` / `Mehaber` | author | shown in the header (`Author`); `Mehaber` parsed |
+| `TextSource` | source | shown in the header |
+| `LastLevelIndex` | see above (Config.txt) | applied |
+| `PutNewLinesAsIs` | see above (Config.txt default 1) | applied |
+| `SearchInTitles` | default 1; the program's search scope | parsed (`SearchInTitles`), not used (UI of the original program) |
+| `PasukIndMode` | default 0; verse index display | parsed, not used (no documentation) |
+| `GroupId`, `Group`, `ChainFolderName`, `HiddenFromIndex`, `MixedDisplay` | library tree / grouping / mixed-text display of the original program | parsed and exposed on `ToratEmetHead`, not used (program UI only) |
+| `CosmeticsType` | `#key=value` display options (fonts, index prefixes, `#ip2=` ...) | parsed raw (`CosmeticsType`), not used; its tags are dropped like all non-whitelisted tags |
+| `Haskamot`, `FilesGotFrom`, `Comments`, `ParagraphPrefix`, `CreateIndex`, `SourceUrl`, `CommentSZ` | free text / options | parsed (`Get`), not shown |
+
+Every key is kept in `ToratEmetHead.Metadata` (also `key=value` head lines), typed accessors for all of them. Sources: `Config.txt` `[BooksParameters]` and the comment under `[General]`, `BooksConfig.txt`, data counts above. The public repos ToratEmetInWord/ToratEmetInWord and JewishOfficeAddIn only list the keys (metadata lines are skipped when building / searching); no semantics there.
+- Checks: `ToratEmetWidenedTest` (with `--text`): detection and plain regressions, labels (all line endings, first open, saved index), label / blank-run boundaries at the two feed-piece ends (every shift of the interesting bytes), PutNewLinesAsIs 0 / 1 / absent, LastLevelIndex, all keys. Corpus detection (`--torat-emet-stats`): MyBooks 11 -> 698 of 1,523; Books 1,543 -> 1,546 of 1,553.
