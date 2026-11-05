@@ -38,8 +38,8 @@ public sealed class ToratEmetHead
     public string? SpecialTitle => NonEmpty(Get("SpecialTitle"));
 
     // Every setting the files carry, parsed and kept even when no feature uses it yet. Defaults are the program's own (Config.txt [BooksParameters]).
-    /// <summary>PutNewLinesAsIs (default 1): 1 = the file's line structure is kept; 0 = blank and whitespace-only lines are dropped (no empty blocks).</summary>
-    public bool IsNewLinesAsIs => Flag("PutNewLinesAsIs", true);
+    /// <summary>PutNewLinesAsIs: only an explicit 1 keeps the file's line structure; 0 or absent = blank and whitespace-only lines are dropped (user decision 2026-11-05, not Config.txt's default of 1).</summary>
+    public bool IsNewLinesAsIs => (Get("PutNewLinesAsIs") ?? Get("PutNewlinesAsIs"))?.Trim() == "1";
     /// <summary>LastLevelIndex (default 0): 1 or more = the lowest heading level (tilde) is in the table of contents; 0 = it is not. Value 2 is treated like 1 (its extra meaning is unknown).</summary>
     public int LastLevelIndex => Number("LastLevelIndex", 0);
     public bool SearchInTitles => Flag("SearchInTitles", true);
@@ -133,13 +133,21 @@ public static class ToratEmetFormat
 
         if (pairs.Count == 0)
         {
-            bool hasTitle = false, hasSubHeading = false;
+            // the title must be the first line that is not blank and not a "//" comment (a README with a "$ cmd" line further down is not a book)
+            bool hasTitle = false, hasSubHeading = false, isFirstContentSeen = false;
             for (int i = 0; i < lines.Count; i++)
             {
-                if (lines[i].length < 2 || sample[lines[i].start + 1] != (byte)' ') continue;
-                byte mark = sample[lines[i].start];
-                if (mark == (byte)'$' && i < TitleSearchLines) hasTitle = true;
-                else if (mark is (byte)'#' or (byte)'@' or (byte)'~') hasSubHeading = true;
+                ReadOnlySpan<byte> line = sample.Slice(lines[i].start, lines[i].length);
+                bool isBlank = true;
+                foreach (byte b in line) if (b != 32 && b != 9) { isBlank = false; break; }
+                if (!isFirstContentSeen && !isBlank && !(line.Length >= 2 && line[0] == (byte)47 && line[1] == (byte)47))
+                {
+                    isFirstContentSeen = true;
+                    hasTitle = i < TitleSearchLines && line.Length >= 2 && line[0] == (byte)36 && line[1] == (byte)32;
+                    if (!hasTitle) return null;
+                    continue;
+                }
+                if (line.Length >= 2 && line[1] == (byte)32 && line[0] is (byte)35 or (byte)64 or (byte)126) hasSubHeading = true;
             }
             return hasTitle && hasSubHeading ? new ToratEmetHead(lines[0].start, pairs) : null;
         }

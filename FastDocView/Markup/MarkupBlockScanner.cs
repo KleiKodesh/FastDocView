@@ -54,6 +54,8 @@ public sealed class MarkupBlockScanner
     /// <summary>The document-wide index of <see cref="BlockStartOffsets"/>[0] (blocks before it were handed off and removed).</summary>
     public int BlockIndexBase { get; private set; }
     public List<WordDocumentHeading> Headings { get; } = [];
+    /// <summary>LastLevelIndex 0: tilde headings kept aside; <see cref="Finish"/> adds them back when the contents would otherwise hold nothing besides the title (a book is never un-navigable).</summary>
+    private readonly List<WordDocumentHeading> _hiddenTildeHeadings = [];
     public bool IsBodyStarted => _isInBody;
 
 
@@ -583,7 +585,8 @@ public sealed class MarkupBlockScanner
         text = string.Join(" ", text.Split([' ', '\t', '\r', '\n', ' '], StringSplitOptions.RemoveEmptyEntries));
         if (_isMarkHeading && _headingLevel == 1 && !_isBookNameUsed && BookName is { Length: > 0 }) { text = BookName; _isBookNameUsed = true; }
         bool isHiddenTilde = _isMarkHeading && _headingLevel == 4 && !_isTildeInContents;     // LastLevelIndex 0: the lowest level is not in the index
-        if (text.Length > 0 && !isHiddenTilde) Headings.Add(new WordDocumentHeading(_headingBlock, _headingLevel, text));
+        if (text.Length > 0 && isHiddenTilde) _hiddenTildeHeadings.Add(new WordDocumentHeading(_headingBlock, _headingLevel, text));
+        else if (text.Length > 0) Headings.Add(new WordDocumentHeading(_headingBlock, _headingLevel, text));
         _isMarkHeading = false;
         _headingBlock = -1;
         _headingBytes.Clear();
@@ -597,6 +600,12 @@ public sealed class MarkupBlockScanner
         if (_labelState == 3) { _labelState = 0; ProcessUnit(_labelHeld, _labelHeldOffset, _labelHeld, 0); }   // a label then one mark byte at the very end: that byte joins the label
         _labelState = 0;
         if (_headingBlock >= 0) FinishHeading();
+        if (_hiddenTildeHeadings.Count > 0 && !Headings.Any(heading => heading.Level > 1))
+        {
+            Headings.AddRange(_hiddenTildeHeadings);
+            Headings.Sort((a, b) => a.BlockIndex.CompareTo(b.BlockIndex));
+        }
+        _hiddenTildeHeadings.Clear();
         if (BlockStartOffsets.Count > 0 && BlockStartOffsets[BlockStartOffsets.Count - 1] >= endOffset)
         {
             BlockStartOffsets.RemoveAt(BlockStartOffsets.Count - 1);

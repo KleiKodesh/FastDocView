@@ -17,7 +17,7 @@ public static class ToratEmetTest
     private static readonly Encoding Hebrew1255 = MarkupTextEncoding.FromCodePage(MarkupTextEncoding.HebrewWindows);
 
     private static string BookLines(string head = "") =>
-        "&UniqueId=7&LastLevelIndex=2&ForcedBookName=" + Name + "&TextSource=Src&RavMechaber=Auth&CosmeticsType=#wp=//x.bmp#rep3=<b115>=<b style='a=b&c'>#rep4=<span style='open &GroupId=g\r\n"
+        "&UniqueId=7&LastLevelIndex=2&PutNewLinesAsIs=1&ForcedBookName=" + Name + "&TextSource=Src&RavMechaber=Auth&CosmeticsType=#wp=//x.bmp#rep3=<b115>=<b style='a=b&c'>#rep4=<span style='open &GroupId=g\r\n"
         + "// editor comment\r\n[General]\r\nKey=value\r\n<B>&LastLevelIndex=2&TextSource=Dup</B>\r\n\r\n"
         + head
         + "$ Book Title\r\n\r\n^ Parsha\r\n# Hash title\r\n@ At title\r\n~ Chapter <B>bold</B>\r\n! {" + Letter + "}\r\n"

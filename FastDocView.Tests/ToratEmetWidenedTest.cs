@@ -36,7 +36,7 @@ public static class ToratEmetWidenedTest
             ("wrap-marks", Lines("&wrap=1", "@ Part", "~ Chapter", "text"), true, true, "3:1"),
             ("wrap-lli1", Lines("&wrap=1&LastLevelIndex=1", "@ Part", "~ Chapter", "text"), true, true, "3:1,4:2"),
             ("wrap-upper", Lines("&WRAP=1", "# T", "@ A", "text"), true, true, "2:1,3:2"),
-            ("wrap-tilde-only", Lines("&wrap=1", "~ C", "text"), true, true, ""),
+            ("wrap-tilde-only", Lines("&wrap=1", "~ C", "text"), true, true, "4:1"),   // nothing else to navigate by: the tilde is in the contents anyway
             ("rav-at-only", Lines("&rav=X", "@ C", "text"), true, true, "3:1"),
             ("wrap-caret", Lines("&wrap=1", "^ C", "text"), true, true, "3:1"),
             ("wrap-no-marks", Lines("&wrap=1", "plain", "more plain"), true, true, ""),
@@ -47,6 +47,9 @@ public static class ToratEmetWidenedTest
             ("dollar-tilde", Lines("$ Title", "~ Chapter", "text"), true, false, "1:0,4:1"),
             ("dollar-at", Lines("$ Title", "text", "@ A"), true, false, "1:0,3:2"),
             // plain .txt regressions
+            ("readme", Lines("My project", "", "$ npm install", "# Setup", "text"), false, false, ""),
+            ("readme-comment-first", Lines("// notes", "text", "$ cmd", "# Heading"), false, false, ""),
+            ("title-after-blank-and-comment", Lines("", "// c", "$ Title", "text", "# Sub"), true, false, "1:2,2:4"),
             ("md-title", Lines("# Title", "some text <b>b</b>", "more"), false, false, ""),
             ("md-title-sub", Lines("# Title", "text", "## not a mark", "more"), false, false, ""),
             ("dollar-only", Lines("$ Title", "text", "! label"), false, false, ""),
@@ -144,7 +147,7 @@ public static class ToratEmetWidenedTest
         {
             foreach ((string ending, string tag) in new[] { ("\r\n", "crlf"), ("\n", "lf"), ("\r", "cr") })
             {
-                string text = "&UniqueId=1&ForcedBookName=X\r\n" + string.Join(ending, lines) + ending;
+                string text = "&UniqueId=1&PutNewLinesAsIs=1&ForcedBookName=X\r\n" + string.Join(ending, lines) + ending;
                 if (name == "label-last" && tag == "lf") text = text.TrimEnd('\n');     // no line break after the very last line
                 string path = Path1(directory, $"label-{name}-{tag}");
                 File.WriteAllBytes(path, Hebrew1255.GetBytes(text));
@@ -171,7 +174,7 @@ public static class ToratEmetWidenedTest
             TestReport.Check(document.RenderBlocks(2, 1)[0].Html == "<div class=\"text-line\">{A}</div>" && document.RenderBlocks(3, 1)[0].Html.Contains("<h4>Chapter</h4>"), "a label before a heading stays alone; the heading is the next block");
 
         TestReport.Step("Torat Emet: a long line after a label is split, the label merges with the first piece only");
-        string longText = "&UniqueId=1&ForcedBookName=X\r\n$ T\r\n! {A}\r\n" + string.Join(" ", Enumerable.Repeat("word", 20000)) + "\r\nend\r\n";
+        string longText = "&UniqueId=1&PutNewLinesAsIs=1&ForcedBookName=X\r\n$ T\r\n! {A}\r\n" + string.Join(" ", Enumerable.Repeat("word", 20000)) + "\r\nend\r\n";
         string longPath = Path1(directory, "label-long-line");
         File.WriteAllBytes(longPath, Hebrew1255.GetBytes(longText));
         using (var whole = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(longPath, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory }))
@@ -206,7 +209,7 @@ public static class ToratEmetWidenedTest
         for (int shift = -3; shift <= 9; shift++)
         {
             // the label line starts at (boundary - shift) in file bytes: shift 0 = the label's first byte is the first of the next piece
-            var text = new StringBuilder("&UniqueId=1&ForcedBookName=X" + ending + "$ T" + ending);
+            var text = new StringBuilder("&UniqueId=1&PutNewLinesAsIs=1&ForcedBookName=X" + ending + "$ T" + ending);
             while (text.Length < boundary - 80) text.Append("filler line of ascii text" + ending);
             int pad = boundary - shift - text.Length - ending.Length;
             if (pad < 0) { text.Length = text.Length - 30; pad = boundary - shift - text.Length - ending.Length; }
@@ -262,7 +265,7 @@ public static class ToratEmetWidenedTest
             ("pnl0-lower", "&PutNewlinesAsIs=0&LastLevelIndex=2", false),
             ("pnl0-line", "&LastLevelIndex=2@@NL@@PutNewLinesAsIs=0", false),
             ("pnl1", "&PutNewLinesAsIs=1&LastLevelIndex=2", true),
-            ("absent", "&LastLevelIndex=2", true),
+            ("absent", "&LastLevelIndex=2", false),   // absent normalizes like 0 (only an explicit 1 keeps the lines)
         };
         foreach ((string name, string head, bool isAsIs) in heads)
         {
@@ -296,6 +299,26 @@ public static class ToratEmetWidenedTest
             using var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
             string got = string.Join(",", document.Headings.Select(h => $"{h.Level}:{h.BlockIndex}"));
             TestReport.Check(got == expectedHeadings && document.RenderBlocks(4, 1)[0].Html.Contains("<h4>C</h4>"), $"{head}: contents {got}, the tilde line is still a heading in the text");
+        }
+        TestReport.Step("Torat Emet: LastLevelIndex 0 never leaves a book without a way to navigate");
+        foreach ((string name, string[] lines, string expectedHeadings) in new (string, string[], string)[]
+        {
+            ("title-and-tildes", ["&LastLevelIndex=0", "$ T", "text", "~ C1", "more", "~ C2"], "1:1,4:3,4:5"),
+            ("tildes-only", ["&LastLevelIndex=0", "~ C1", "more", "~ C2"], "4:1,4:3"),
+            ("absent-tildes-only", ["&UniqueId=1", "~ C1", "more", "~ C2"], "4:1,4:3"),
+            ("with-at-heading", ["&LastLevelIndex=0", "$ T", "@ A", "~ C1"], "1:1,3:2"),
+        })
+        {
+            string path = Path1(directory, "lli-fallback-" + name);
+            File.WriteAllBytes(path, Hebrew1255.GetBytes(Lines(lines)));
+            foreach (WordIndexPolicy policy in new[] { new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory }, new WordIndexPolicy { CacheDirectory = Path.Combine(directory, "index-cache-ondemand"), ForcedMode = WordIndexMode.Sidecar, IndexesOnDemand = true } })
+            {
+                if (policy.ForcedMode == WordIndexMode.Sidecar && File.Exists(policy.IndexPathFor(path))) File.Delete(policy.IndexPathFor(path));
+                using var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, policy);
+                while (!document.IsIndexComplete) document.ScanAhead(5000);
+                string got = string.Join(",", document.Headings.Select(h => $"{h.Level}:{h.BlockIndex}"));
+                TestReport.Check(got == expectedHeadings, $"{name} ({policy.ForcedMode}): contents {got}");
+            }
         }
         string allKeys = "&SearchInTitles=0&LastLevelIndex=1&PutNewLinesAsIs=0&PasukIndMode=2&TextSource=S&GroupId=g&ForcedBookName=N&SpecialTitle=P&ChainFolderName=0&HiddenFromIndex=1&MixedDisplay=1&CosmeticsType=#a=1&RavMechaber=R&Mehaber=M&Haskamot=H&FilesGotFrom=F&ParagraphPrefix=~&Comments=C&CreateIndex=I&SourceUrl=U&Group=G&UniqueId=5&wrap=1&rav=V";
         string keysPath = Path1(directory, "all-keys");
