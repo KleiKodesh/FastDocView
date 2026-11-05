@@ -41,6 +41,7 @@ for (const [n, file] of files.entries()) {
     console.log(`  [${scheme}] headings=${info.headings} blankAfter=${info.blankAfter} ` + Object.entries(info.levels).sort().map(([t, v]) => `${t} w=${v.weight} s=${v.size} m=${v.margin}`).join(' | '))
     check(info.headings > 0 && info.blankAfter === 0, `${scheme}: no empty block directly after a heading`)
     check(Object.values(info.levels).every(v => v.weight === '700' || Number(v.weight) >= 700), `${scheme}: every heading level bold`)
+    if (file.includes('all-levels')) check(['H1', 'H2', 'H3', 'H4'].every(t => info.levels[t]?.weight === '700'), `${scheme}: all four levels present and bold (${Object.keys(info.levels).sort().join(',')})`)
     const sizes = ['H1', 'H2', 'H3', 'H4'].filter(t => info.levels[t]).map(t => parseFloat(info.levels[t].size))
     check(sizes.every((s, i) => i === 0 || s < sizes[i - 1]), `${scheme}: sizes step down (${sizes.join('>')})`)
   }
