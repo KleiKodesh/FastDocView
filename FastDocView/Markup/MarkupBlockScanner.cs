@@ -502,6 +502,7 @@ public sealed class MarkupBlockScanner
             BlockStartOffsets[BlockStartOffsets.Count - 1] = nextBlockOffset;
             BlockTextLengths[BlockTextLengths.Count - 1] = 0;
             _blockStartOffset = nextBlockOffset;
+            BlockStackIds[BlockStackIds.Count - 1] = CurrentStackId();     // tags of the dropped line stay open
             _markState = 1;
             return;
         }
@@ -627,8 +628,12 @@ public sealed class MarkupBlockScanner
     /// pending CR or half a code unit), inside the body with a block open: a <see cref="ExportSpanState"/> taken here
     /// lets a fresh scanner continue exactly as this one would.
     /// </summary>
-    public bool IsAtSpanPoint => _state == State.Text && !_pendingCarriageReturn && _carry < 0 && _labelState == 0 && _markState != 2 && _isInBody && !IsBodyEnded
+    public bool IsAtSpanPoint => _state == State.Text && !_pendingCarriageReturn && _carry < 0 && _labelState == 0 && _markState != 2 && !IsToratEmetMarkLost && _isInBody && !IsBodyEnded
                                  && BlockStartOffsets.Count > 0;
+
+    /// <summary>Torat Emet: a tag opened at a line start cleared the mark state; a resumed scanner could not know that, so no span point here.</summary>
+    private bool IsToratEmetMarkLost => _toratEmetHeadEnd >= 0 && _markState == 0 && BlockStartOffsets.Count > 0
+        && BlockStartOffsets[BlockStartOffsets.Count - 1] >= _toratEmetHeadEnd && BlockTextLengths[BlockTextLengths.Count - 1] == 0;
 
     /// <summary>What a span rescan needs to continue from here (see <see cref="IsAtSpanPoint"/>); headings are not carried.</summary>
     public MarkupScanState ExportSpanState()
