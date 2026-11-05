@@ -99,6 +99,8 @@ public sealed class MarkupBlockScanner
     private int _markState;                                  // 0 none, 1 at a line start, 2 mark read - a space must follow
     private int _markLevel;
     private bool _isMarkHeading;
+    private bool _isHeadingLine;                                // Torat Emet: the open block is a heading line (carried across span points: a rescan resumes mid-line)
+    private bool _isAfterHeading;                                // Torat Emet: the open block follows a heading line; blank lines there are dropped even with PutNewLinesAsIs=1
 
     public MarkupBlockScanner(MarkupBlockMode mode, int unitSize, bool bigEndian, Encoding encoding, ToratEmetHead? toratEmet = null)
     {
@@ -301,6 +303,10 @@ public sealed class MarkupBlockScanner
                     _headingBytes.Clear();
                     _isMarkHeading = true;
                 }
+                if (_markLevel > 0)
+                {
+                    _isHeadingLine = true;
+                }
             }
         }
         return used;
@@ -496,7 +502,7 @@ public sealed class MarkupBlockScanner
     {
         if (isLineBreak && _labelState == 1) { _labelState = _isDroppingBlankLines ? 4 : 2; _labelNextStart = nextBlockOffset; _labelAtLineStart = true; return; }
         if (isLineBreak && _labelState == 4) return;                       // the label absorbs blank lines until its text (or a heading) shows
-        if (isLineBreak && _isDroppingBlankLines && !_blockHasContent && BlockIndexBase + BlockStartOffsets.Count > 1 && _labelState == 0 && nextBlockOffset >= _toratEmetHeadEnd)
+        if (isLineBreak && (_isDroppingBlankLines || _isAfterHeading) && !_blockHasContent && BlockIndexBase + BlockStartOffsets.Count > 1 && _labelState == 0 && nextBlockOffset >= _toratEmetHeadEnd)
         {   // PutNewLinesAsIs=0: a blank or whitespace-only line is no block; the open block restarts at the next line (the line before it absorbs the blank bytes)
             BlockStartOffsets[BlockStartOffsets.Count - 1] = nextBlockOffset;
             BlockTextLengths[BlockTextLengths.Count - 1] = 0;
@@ -545,8 +551,11 @@ public sealed class MarkupBlockScanner
     {
         _labelState = 0;
         if (_toratEmetHeadEnd >= 0 && BlockStartOffsets.Count > 0 && offset < _toratEmetHeadEnd) return;   // the metadata head is one block
+        bool isMarkedHeadingEnd = _isHeadingLine;
+        _isHeadingLine = false;
         if (_headingBlock >= 0 && (_mode == MarkupBlockMode.Elements || _isMarkHeading)) FinishHeading();   // a .txt heading may run over several lines; a marked one is one line
         if (BlockStartOffsets.Count > 0 && BlockStartOffsets[BlockStartOffsets.Count - 1] == offset) return;
+        _isAfterHeading = isMarkedHeadingEnd && _toratEmetHeadEnd >= 0;
         if (_toratEmetHeadEnd >= 0)
         {
             _markState = offset >= _toratEmetHeadEnd ? 1 : 0;
@@ -650,7 +659,7 @@ public sealed class MarkupBlockScanner
         var tagLengths = new int[_stack.Count];
         for (int i = 0; i < _stack.Count; i++) tagLengths[i] = _stack[i].tag.Length;
         return new MarkupScanState(BlockIndexBase + last, BlockStartOffsets[last], BlockStackIds[last], BlockTextLengths[last],
-                                   liveStackId, tagLengths, _unpushedDepth, _tableDepth, _blockHasContent, _isDoubleByteTrailNext);
+                                   liveStackId, tagLengths, _unpushedDepth, _tableDepth, _blockHasContent, _isDoubleByteTrailNext, _isAfterHeading, _isHeadingLine);
     }
 
     /// <summary>A scanner that continues from <paramref name="state"/> with the index pass's interned stacks.</summary>
@@ -682,6 +691,8 @@ public sealed class MarkupBlockScanner
         scanner._blockStartOffset = state.BlockStart;
         scanner._blockHasContent = state.BlockHasContent;
         scanner._isDoubleByteTrailNext = state.IsDoubleByteTrailNext;
+        scanner._isAfterHeading = state.IsAfterHeading;
+        scanner._isHeadingLine = state.IsHeadingLine;
         // Torat Emet: a block that has read no text yet is at a line start, where a mark (and a label) is still to come
         if (scanner._toratEmetHeadEnd >= 0 && state.BlockTextLength == 0 && state.BlockStart >= scanner._toratEmetHeadEnd) scanner._markState = 1;
         return scanner;
@@ -707,4 +718,4 @@ public sealed class MarkupBlockScanner
 /// <summary>A <see cref="MarkupBlockScanner"/> snapshot at a span point: the open block (document index, start, stack id,
 /// text length so far) and the text-level state (element stack as an interned stack + its tags' lengths, depths, flags).</summary>
 public sealed record MarkupScanState(int Block, long BlockStart, int BlockStackId, int BlockTextLength, int LiveStackId, int[] TagLengths,
-                                     int UnpushedDepth, int TableDepth, bool BlockHasContent, bool IsDoubleByteTrailNext);
+                                     int UnpushedDepth, int TableDepth, bool BlockHasContent, bool IsDoubleByteTrailNext, bool IsAfterHeading = false, bool IsHeadingLine = false);

@@ -28,7 +28,7 @@ public sealed record MarkupSpanAnchor(MarkupScanState? State, long ScanPosition,
 public sealed class MarkupRandomAccessIndex
 {
     private const string Magic = "KHMKPIDX";
-    private const int FormatVersion = 12; // 12: the first title heading keeps its own text (no ForcedBookName root); 11: blank lines dropped unless PutNewLinesAsIs=1, tilde headings return when the contents would be empty; 10: (also covers 8, the path rule: an empty head, no head block) PutNewLinesAsIs=0 books drop blank lines, LastLevelIndex 0 hides tilde headings; 9: heading levels 1-4 (dollar = 1), label lines merge with the next line; 8: Torat Emet without line-1 metadata (empty head) and without a title line; 7: Torat Emet head (metadata + where it ends; heading levels from line marks); 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
+    private const int FormatVersion = 13; // 13: a blank line right after a Torat Emet heading is dropped in every book (anchors carry it); 12: the first title heading keeps its own text (no ForcedBookName root); 11: blank lines dropped unless PutNewLinesAsIs=1, tilde headings return when the contents would be empty; 10: (also covers 8, the path rule: an empty head, no head block) PutNewLinesAsIs=0 books drop blank lines, LastLevelIndex 0 hides tilde headings; 9: heading levels 1-4 (dollar = 1), label lines merge with the next line; 8: Torat Emet without line-1 metadata (empty head) and without a title line; 7: Torat Emet head (metadata + where it ends; heading levels from line marks); 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
     public const int AnchorSpanBytes = 64 * 1024;
     /// <summary>
     /// MHTML anchors are 4x denser: decoding plus tag-heavy HTML rescans at ~25 MB/s, so a 64 KB span cost a random block
@@ -163,7 +163,7 @@ public sealed class MarkupRandomAccessIndex
             IndexBinaryArrays.AppendVarint(raw, ZigZag(anchor.ScanResume - (previous?.ScanResume ?? 0)));
             IndexBinaryArrays.AppendVarint(raw, ZigZag(anchor.ScanResume - anchor.BlockResume));
             MarkupScanState? state = anchor.State;
-            raw.Add((byte)(state is null ? 0 : 1 | (state.BlockHasContent ? 2 : 0) | (state.IsDoubleByteTrailNext ? 4 : 0)));
+            raw.Add((byte)(state is null ? 0 : 1 | (state.BlockHasContent ? 2 : 0) | (state.IsDoubleByteTrailNext ? 4 : 0) | (state.IsAfterHeading ? 8 : 0) | (state.IsHeadingLine ? 16 : 0)));
             if (state is not null)
             {
                 IndexBinaryArrays.AppendVarint(raw, (uint)(state.Block - (previous?.FirstBlock ?? 0)));
@@ -249,7 +249,7 @@ public sealed class MarkupRandomAccessIndex
                 int unpushed = (int)IndexBinaryArrays.ReadVarint(raw, ref at);
                 int tableDepth = (int)IndexBinaryArrays.ReadVarint(raw, ref at);
                 state = new MarkupScanState(block, blockStart, blockStackId, textLength, liveStackId, tagLengths, unpushed, tableDepth,
-                                            (flags & 2) != 0, (flags & 4) != 0);
+                                            (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0, (flags & 16) != 0);
             }
             var anchor = new MarkupSpanAnchor(state, position, scanResume, blockResume);
             if ((i == 0) != (state is null) || anchor.FirstBlock >= blockCount || (i > 0 && anchor.FirstBlock <= previous!.FirstBlock)

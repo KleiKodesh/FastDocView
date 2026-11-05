@@ -257,7 +257,11 @@ public static class ToratEmetFormat
     public const string Stylesheet =
         "\n.word-document .te-meta { white-space: normal; margin: 0 0 .3em; color: var(--fdv-muted, #666); font-size: .8em; }"
         + "\n.word-document .te-meta:empty { display: none; }"
-        + "\n.word-document .te-heading > h1, .word-document .te-heading > h2, .word-document .te-heading > h3, .word-document .te-heading > h4 { margin: .3em 0; border: 0; padding: 0; }";
+        + "\n.word-document .te-heading > h1, .word-document .te-heading > h2, .word-document .te-heading > h3, .word-document .te-heading > h4 { margin: .4em 0 .1em; border: 0; padding: 0; font-weight: 700; }"   // the shared stylesheet resets headings to inherit: bold and the size steps are set here, scoped to Torat Emet headings
+        + "\n.word-document .te-heading > h1 { font-size: 1.6em; }"
+        + "\n.word-document .te-heading > h2 { font-size: 1.35em; }"
+        + "\n.word-document .te-heading > h3 { font-size: 1.15em; }"
+        + "\n.word-document .te-heading > h4 { font-size: 1em; }";
 
     /// <summary>
     /// One line of text: the mark (and its space) removed, a heading line wrapped in its h2-h5, the formatting whitelist drawn (the tags still

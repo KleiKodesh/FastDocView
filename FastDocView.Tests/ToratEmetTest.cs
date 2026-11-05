@@ -55,6 +55,7 @@ public static class ToratEmetTest
         RunNotTheFormat(directory);
         ToratEmetWidenedTest.Run(directory);
         RunSplitPieces(directory);
+        ToratEmetHeadingBlankTest.Run(directory);
         RunOnDemand(directory);
         RunTagExamples();
     }
@@ -70,22 +71,22 @@ public static class ToratEmetTest
         TestReport.Check(blocks[0].Html.Contains(Name) && blocks[0].Html.Contains("Auth") && blocks[0].Html.Contains("Src")
                          && !blocks[0].Html.Contains("UniqueId") && !blocks[0].Html.Contains("editor comment") && !blocks[0].Html.Contains("Dup") && !blocks[0].Html.Contains("[General]"),
                          $"{what}: block 0 is the small metadata header, the head lines are not shown");
-        TestReport.Check(string.Join(",", document.Headings.Select(h => $"{h.Level}:{h.BlockIndex}")) == "1:1,3:3,2:4,3:5,4:6", $"{what}: heading levels ({string.Join(",", document.Headings.Select(h => h.Level + ":" + h.BlockIndex))})");
+        TestReport.Check(string.Join(",", document.Headings.Select(h => $"{h.Level}:{h.BlockIndex}")) == "1:1,3:2,2:3,3:4,4:5", $"{what}: heading levels ({string.Join(",", document.Headings.Select(h => h.Level + ":" + h.BlockIndex))})");
         TestReport.Check(document.Headings[0].Text == "Book Title" && document.Headings[4].Text == "Chapter bold", $"{what}: the TOC root is the first title; a heading's text has no mark and no tags");
         TestReport.Check(blocks[1].Html == "<div class=\"text-line te-heading\"><h1>Book Title</h1></div>", $"{what}: $ is an h1 ({blocks[1].Html})");
-        TestReport.Check(blocks[4].Html.Contains("<h2>Hash title</h2>") && blocks[5].Html.Contains("<h3>At title</h3>") && blocks[3].Html.Contains("<h3>Parsha</h3>")
-                         && blocks[6].Html.Contains("<h4>Chapter <b>bold</b></h4>"), $"{what}: # h2, @ and ^ h3, ~ h4");
-        TestReport.Check(blocks[7].Html.StartsWith("<div class=\"text-line\">{" + Letter + "} text <b>bold", StringComparison.Ordinal), $"{what}: the exclamation mark and its space are stripped, the label merged with the next line by one space ({blocks[7].Html})");
-        string text = blocks[7].Html;
+        TestReport.Check(blocks[3].Html.Contains("<h2>Hash title</h2>") && blocks[4].Html.Contains("<h3>At title</h3>") && blocks[2].Html.Contains("<h3>Parsha</h3>")
+                         && blocks[5].Html.Contains("<h4>Chapter <b>bold</b></h4>"), $"{what}: # h2, @ and ^ h3, ~ h4");
+        TestReport.Check(blocks[6].Html.StartsWith("<div class=\"text-line\">{" + Letter + "} text <b>bold", StringComparison.Ordinal), $"{what}: the exclamation mark and its space are stripped, the label merged with the next line by one space ({blocks[6].Html})");
+        string text = blocks[6].Html;
         TestReport.Check(text.Contains("<b>bold<small>x</small></b>") && text.EndsWith("end<br></div>", StringComparison.Ordinal)
                          && !text.Contains("<span") && !text.Contains("<script") && !text.Contains("&lt;90") && !text.Contains("<sz") && !text.Contains("hidden")
                          && text.Contains("tail ") && text.Contains("sp") && text.Contains("a &lt; b"),
                          $"{what}: whitelist tags drawn, other tags dropped with their text kept, a stray '<' is text ({text})");
-        TestReport.Check(blocks[8].Html.Contains("// body slash line"), $"{what}: a body '//' line stays visible");
-        TestReport.Check(blocks[9].Html.Contains("<b>open across</b>") && blocks[10].Html.Contains("<b>next line</b>") && blocks[11].Html.Contains("closed") && !blocks[11].Html.Contains("<b>closed"),
+        TestReport.Check(blocks[7].Html.Contains("// body slash line"), $"{what}: a body '//' line stays visible");
+        TestReport.Check(blocks[8].Html.Contains("<b>open across</b>") && blocks[9].Html.Contains("<b>next line</b>") && blocks[10].Html.Contains("closed") && !blocks[10].Html.Contains("<b>closed"),
                          $"{what}: a tag open across lines carries to the next line");
         WordDocumentSearchBatch hits = document.Search("Chapter", WordDocumentSearchOptions.Default, 0, 100);
-        TestReport.Check(hits.HitBlocks.SequenceEqual([6]), $"{what}: search finds the heading text, never the hidden head");
+        TestReport.Check(hits.HitBlocks.SequenceEqual([5]), $"{what}: search finds the heading text, never the hidden head");
         TestReport.Check(document.Search("UniqueId", WordDocumentSearchOptions.Default, 0, 100).HitBlocks.Length == 0, $"{what}: search does not match the hidden metadata");
     }
 
