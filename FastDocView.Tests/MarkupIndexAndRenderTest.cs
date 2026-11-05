@@ -145,16 +145,15 @@ public static class MarkupIndexAndRenderTest
                   && H(2).Contains("<b>" + Bold) && H(2).Contains("</b></div>")
                   && H(3).StartsWith("<div class=\"text-line\"><b>" + Bold + " end</b>")
                   && H(4).Contains("title='y>z'") && H(4).Contains(Line + " div</div>")
-                  && H(5) == "<div class=\"text-line\"><br></div>"
-                  && H(6).Contains(After) && !H(6).Contains(Hidden)
-                  && H(7).Contains("<h2>" + Title) && H(8).Contains("2</h2>") && H(8).Contains("<h2>")
-                  && H(9).Contains(Line + " s") && !H(9).Contains("alert")
-                  && H(10).Contains("<p>" + Paragraph + "</p>") && !H(10).Contains("onclick");
+                  && H(5).Contains(After) && !H(5).Contains(Hidden)
+                  && H(6).Contains("<h2>" + Title) && H(7).Contains("2</h2>") && H(7).Contains("<h2>")
+                  && H(8).Contains(Line + " s") && !H(8).Contains("alert")
+                  && H(9).Contains("<p>" + Paragraph + "</p>") && !H(9).Contains("onclick");
         if (!ok) for (int i = 0; i < prefix.Count; i++) Console.WriteLine($"      {i}: {Ascii(prefix[i].Html)}");
-        TestReport.Check(ok, $"{what}: stray '<' escaped, open <b> reopened, tag over two lines one block, empty line, comment dropped, script and onclick removed");
+        TestReport.Check(ok, $"{what}: stray '<' escaped, open <b> reopened, tag over two lines one block, the empty line dropped, comment dropped, script and onclick removed");
         IReadOnlyList<WordDocumentHeading> headings = document.Headings;
         TestReport.Check(headings.Count == ExpectedHeadingCount(count) && headings[0] == new WordDocumentHeading(0, 1, Title + " 1")
-                         && headings[1] == new WordDocumentHeading(7, 2, Title + " 2") && headings[2].BlockIndex == PrefixBlockCount && headings[2].Level == 3,
+                         && headings[1] == new WordDocumentHeading(6, 2, Title + " 2") && headings[2].BlockIndex == PrefixBlockCount && headings[2].Level == 3,
                          $"{what}: headings ({headings.Count}) incl. one spanning two lines");
         var random = new Random(7);
         bool windowsOk = true;

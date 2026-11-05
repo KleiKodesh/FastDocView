@@ -214,7 +214,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         Stylesheet = WordDocumentHtmlStylesheet.Build(new WordRunFormatting(), index.IsRightToLeft)
                      + "\n.word-document .text-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1em; }"
                      + "\n.word-document .image-placeholder { color: #999; font-style: italic; }\n"
-                     + (index.ToratEmet is null ? "" : ToratEmetFormat.Stylesheet)
+                     + (index.ToratEmet is not null ? ToratEmetFormat.Stylesheet : index.Kind == MarkupSourceKind.PlainText ? MarkupBlockRenderer.PlainTextHeadingStylesheet : "")
                      + index.DocumentCss;
     }
 

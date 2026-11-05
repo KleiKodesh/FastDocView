@@ -115,6 +115,7 @@ public sealed class MarkupBlockScanner
             _isDroppingBlankLines = !toratEmet.IsNewLinesAsIs;
             _isTildeInContents = !toratEmet.HasHead || toratEmet.LastLevelIndex >= 1;
         }
+        else if (mode == MarkupBlockMode.Lines) _isDroppingBlankLines = true;      // plain text: blank and whitespace-only lines are no blocks
         _isUtf8 = encoding.CodePage == 65001;
         _isDoubleByte = encoding.CodePage is 932 or 936 or 949 or 950 or 51949;
         if (mode == MarkupBlockMode.Lines) { _isInBody = true; }
@@ -512,13 +513,13 @@ public sealed class MarkupBlockScanner
         if (isLineBreak && _notes.Length > 0) nextBlockOffset = SkipNotes(nextBlockOffset);
         if (isLineBreak && _labelState == 1) { _labelState = _isDroppingBlankLines ? 4 : 2; _labelNextStart = nextBlockOffset; _labelAtLineStart = true; return; }
         if (isLineBreak && _labelState == 4) return;                       // the label absorbs blank lines until its text (or a heading) shows
-        if (isLineBreak && (_isDroppingBlankLines || _isAfterHeading) && !_blockHasContent && BlockIndexBase + BlockStartOffsets.Count > 1 && _labelState == 0 && nextBlockOffset >= _toratEmetHeadEnd)
+        if (isLineBreak && (_isDroppingBlankLines || _isAfterHeading) && !_blockHasContent && (BlockIndexBase + BlockStartOffsets.Count > 1 || _toratEmetHeadEnd < 0) && _labelState == 0 && nextBlockOffset >= _toratEmetHeadEnd)
         {   // PutNewLinesAsIs=0: a blank or whitespace-only line is no block; the open block restarts at the next line (the line before it absorbs the blank bytes)
             BlockStartOffsets[BlockStartOffsets.Count - 1] = nextBlockOffset;
             BlockTextLengths[BlockTextLengths.Count - 1] = 0;
             _blockStartOffset = nextBlockOffset;
             BlockStackIds[BlockStackIds.Count - 1] = CurrentStackId();     // tags of the dropped line stay open
-            _markState = 1;
+            if (_toratEmetHeadEnd >= 0) _markState = 1;
             return;
         }
         StartBlock(nextBlockOffset);
