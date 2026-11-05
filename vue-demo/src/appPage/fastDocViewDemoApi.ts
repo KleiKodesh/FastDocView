@@ -25,7 +25,7 @@ const BLOCK_KIND_NAMES: Record<number, string> = { 0: 'paragraph', 1: 'table', 2
 
 interface DevServerSummary {
   id: number; blockCount: number; knownBlockCount: number; isIndexComplete: boolean; isRightToLeft: boolean
-  stylesheet: string; headingCount: number; footnoteCount: number; endnoteCount: number
+  stylesheet: string; headingCount: number; footnoteCount: number; endnoteCount: number; title?: string | null
   openMilliseconds: number; mode: string; hasCachedIndex: boolean; readerType: string; reason: string
 }
 
@@ -49,6 +49,7 @@ export const fastDocViewApi: FastDocViewApi = {
       documentId: String(summary.id), blockCount: summary.blockCount, knownBlockCount: summary.knownBlockCount,
       isIndexComplete: summary.isIndexComplete, isRightToLeft: summary.isRightToLeft, stylesheet: summary.stylesheet,
       headingCount: summary.headingCount, footnoteCount: summary.footnoteCount, endnoteCount: summary.endnoteCount,
+      title: summary.title,
     }
     return result
   },

@@ -244,9 +244,9 @@ public static class ToratEmetFormat
     private static string Escape(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
     public const string Stylesheet =
-        "\n.word-document .te-meta { white-space: normal; margin: 0 0 1em; padding-bottom: .5em; border-bottom: 1px solid #ccc; }"
+        "\n.word-document .te-meta { white-space: normal; margin: 0 0 1em; padding-bottom: .5em; border-bottom: 1px solid var(--fdv-rule, #ccc); }"
         + "\n.word-document .te-meta-name { font-size: 1.4em; font-weight: bold; }"
-        + "\n.word-document .te-meta-line { color: #666; font-size: .9em; }"
+        + "\n.word-document .te-meta-line { color: var(--fdv-muted, #666); font-size: .9em; }"
         + "\n.word-document .te-heading > h1, .word-document .te-heading > h2, .word-document .te-heading > h3, .word-document .te-heading > h4 { margin: .3em 0; }";
 
     /// <summary>
