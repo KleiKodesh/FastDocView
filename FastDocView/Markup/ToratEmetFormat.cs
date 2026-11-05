@@ -21,6 +21,9 @@ public sealed class ToratEmetHead
         Metadata = metadata;
     }
 
+    /// <summary>False for a book without line-1 metadata: nothing is hidden, block 0 is an ordinary line.</summary>
+    public bool HasHead => Metadata.Count > 0;
+
     public string? Get(string key)
     {
         foreach (KeyValuePair<string, string> pair in Metadata)
@@ -39,11 +42,16 @@ public sealed class ToratEmetHead
 
 public static class ToratEmetFormat
 {
-    /// <summary>The head is looked for in the first bytes only: the real heads are under 2.5 KB (1,530 files).</summary>
-    public const int HeadSearchBytes = 32 * 1024;
-    public const int HeadingSearchLines = 100;
+    /// <summary>
+    /// The decision is made on the detection sample only (the same bytes on a first open, a one-pass open and a rebuild), so a file's result never
+    /// changes. Real heads are under 2.5 KB (1,530 files); in 687 user books with a line-1 option the first heading mark is within 31 lines except
+    /// one at line 101 (53 KB in), so heading marks are looked for in <see cref="MarkSearchLines"/> lines of the whole sample.
+    /// </summary>
+    public const int MarkSearchLines = 200;
+    /// <summary>A "$ " title line without line-1 metadata must be within this many lines.</summary>
+    public const int TitleSearchLines = 100;
 
-    /// <summary>The keys of line 1 (the corpus' whole vocabulary plus the two lowercase ones); an "&amp;word=" that is not one is part of the value.</summary>
+    /// <summary>The keys of line 1 (the corpus' whole vocabulary plus the two lowercase options, wrap and rav); an "&amp;word=" that is not one is part of the value.</summary>
     private static readonly string[] KnownKeys =
     {
         "UniqueId", "CosmeticsType", "TextSource", "LastLevelIndex", "ForcedBookName", "GroupId", "SearchInTitles", "PutNewLinesAsIs",
@@ -54,10 +62,10 @@ public static class ToratEmetFormat
     /// <summary>Inline tags that are drawn (bare, never with their attributes); everything else is dropped.</summary>
     internal static readonly HashSet<string> FormattingTags = new(StringComparer.Ordinal) { "b", "i", "u", "big", "small", "sup", "sub", "br" };
 
-    /// <summary>Heading level of a line mark (dollar 2, hash 3, at and caret 4, tilde 5), -1 for the exclamation mark (text, mark hidden), 0 for any other character.</summary>
+    /// <summary>Heading level of a line mark (dollar 1, hash 2, at and caret 3, tilde 4), -1 for the exclamation mark (text, mark hidden), 0 for any other character.</summary>
     public static int LevelOfMark(int mark) => mark switch
     {
-        '$' => 2, '#' => 3, '@' => 4, '^' => 4, '~' => 5, '!' => -1, _ => 0,
+        '$' => 1, '#' => 2, '@' => 3, '^' => 3, '~' => 4, '!' => -1, _ => 0,
     };
 
     /// <summary>True when the line starts with a mark and a space: the mark and the space are not shown.</summary>
@@ -68,40 +76,66 @@ public static class ToratEmetFormat
     }
 
     /// <summary>
-    /// Reads the head from the detection sample of a .txt, or null when the file is not a Torat Emet book: line 1 must start with
-    /// an ampersand and hold at least one known "Key=", and a heading line (dollar and a space) must follow within <see cref="HeadingSearchLines"/> lines.
-    /// Single-byte and UTF-8 text only (the marks are ASCII bytes).
+    /// Reads the head from the detection sample of a .txt, or null when the file is not a Torat Emet book. Two ways in:
+    /// (a) line 1 starts with an ampersand and holds a known "Key=" (wrap and rav count): a book when a heading-mark line (dollar, hash, at, caret or
+    /// tilde and a space) follows within <see cref="MarkSearchLines"/> lines, or when the line holds only wrap / rav options (a book in the format that
+    /// draws plain: line 1 is a hidden head); no title line is needed. (b) no line-1 metadata (and line 1 is not an ampersand line): a dollar title line within
+    /// <see cref="TitleSearchLines"/> lines and at least one hash, at or tilde heading line; the head is then empty. Single-byte and UTF-8 text only.
     /// </summary>
     public static ToratEmetHead? TryReadHead(ReadOnlySpan<byte> sample, int bomLength, Encoding encoding)
     {
         if (encoding.CodePage is MarkupTextEncoding.Utf16LittleEndian or MarkupTextEncoding.Utf16BigEndian) return null;
-        if (bomLength >= sample.Length || sample[bomLength] != (byte)'&') return null;
-        int length = Math.Min(sample.Length, bomLength + HeadSearchBytes);
+        if (bomLength >= sample.Length) return null;
         var lines = new List<(int start, int length)>();
-        for (int at = bomLength; at < length && lines.Count < HeadingSearchLines + 1;)
+        for (int at = bomLength; at < sample.Length && lines.Count < MarkSearchLines + 1;)
         {
-            int next = sample.Slice(at, length - at).IndexOfAny((byte)'\r', (byte)'\n');
-            if (next < 0) break;                              // the line does not end inside the search window: not a head
+            int next = sample.Slice(at, sample.Length - at).IndexOfAny((byte)'\r', (byte)'\n');
+            if (next < 0) break;                              // the line does not end inside the sample: not counted
             lines.Add((at, next));
             at += next;
-            if (at + 1 < length && sample[at] == '\r' && sample[at + 1] == '\n') at++;
+            if (at + 1 < sample.Length && sample[at] == '\r' && sample[at + 1] == '\n') at++;
             at++;
         }
         if (lines.Count == 0) return null;
-        string first = encoding.GetString(sample.Slice(lines[0].start, lines[0].length).ToArray());
-        List<KeyValuePair<string, string>> pairs = ParseKeyValueLine(first);
-        if (pairs.Count == 0) return null;
+        bool startsWithAmpersand = lines[0].length > 0 && sample[lines[0].start] == (byte)'&';
+        List<KeyValuePair<string, string>> pairs = startsWithAmpersand
+            ? ParseKeyValueLine(encoding.GetString(sample.Slice(lines[0].start, lines[0].length).ToArray())) : [];
+        if (startsWithAmpersand && pairs.Count == 0) return null;   // an unrecognised ampersand line: plain text
+
+        if (pairs.Count == 0)
+        {
+            bool hasTitle = false, hasSubHeading = false;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                if (lines[i].length < 2 || sample[lines[i].start + 1] != (byte)' ') continue;
+                byte mark = sample[lines[i].start];
+                if (mark == (byte)'$' && i < TitleSearchLines) hasTitle = true;
+                else if (mark is (byte)'#' or (byte)'@' or (byte)'~') hasSubHeading = true;
+            }
+            return hasTitle && hasSubHeading ? new ToratEmetHead(lines[0].start, pairs) : null;
+        }
+
+        bool optionsOnly = IsOptionsOnly(pairs);
         int headLines = 1;
         for (; headLines < lines.Count; headLines++)
         {
             string line = encoding.GetString(sample.Slice(lines[headLines].start, lines[headLines].length).ToArray());
             if (!IsMetadataLine(line, pairs)) break;
         }
-        bool hasHeading = false;
-        for (int i = Math.Min(headLines, lines.Count); i < lines.Count && !hasHeading; i++)
-            hasHeading = lines[i].length >= 2 && sample[lines[i].start] == (byte)'$' && sample[lines[i].start + 1] == (byte)' ';
-        if (!hasHeading || headLines >= lines.Count) return null;
+        if (headLines >= lines.Count) return null;
+        bool hasMark = false;
+        for (int i = headLines; i < lines.Count && !hasMark; i++)
+            hasMark = lines[i].length >= 2 && sample[lines[i].start + 1] == (byte)' ' && "$#@^~".IndexOf((char)sample[lines[i].start]) >= 0;
+        if (!hasMark && !optionsOnly) return null;
         return new ToratEmetHead(lines[headLines].start, pairs);
+    }
+
+    /// <summary>Line 1 holds only the wrap / rav options: such a file is in the format even when it has no heading mark.</summary>
+    private static bool IsOptionsOnly(List<KeyValuePair<string, string>> pairs)
+    {
+        foreach (KeyValuePair<string, string> pair in pairs)
+            if (!string.Equals(pair.Key, "wrap", StringComparison.OrdinalIgnoreCase) && !string.Equals(pair.Key, "rav", StringComparison.OrdinalIgnoreCase)) return false;
+        return true;
     }
 
     /// <summary>"&amp;Key=Value&amp;Key=Value": a key is a known name between an ampersand and "="; everything up to the next known key is the value ('=' and '&amp;' inside it stay).</summary>
@@ -176,7 +210,7 @@ public static class ToratEmetFormat
         "\n.word-document .te-meta { white-space: normal; margin: 0 0 1em; padding-bottom: .5em; border-bottom: 1px solid #ccc; }"
         + "\n.word-document .te-meta-name { font-size: 1.4em; font-weight: bold; }"
         + "\n.word-document .te-meta-line { color: #666; font-size: .9em; }"
-        + "\n.word-document .te-heading > h2, .word-document .te-heading > h3, .word-document .te-heading > h4, .word-document .te-heading > h5 { margin: .3em 0; }";
+        + "\n.word-document .te-heading > h1, .word-document .te-heading > h2, .word-document .te-heading > h3, .word-document .te-heading > h4 { margin: .3em 0; }";
 
     /// <summary>
     /// One line of text: the mark (and its space) removed, a heading line wrapped in its h2-h5, the formatting whitelist drawn (the tags still
@@ -188,7 +222,7 @@ public static class ToratEmetFormat
         while (end > 0 && (line[end - 1] == '\n' || line[end - 1] == '\r')) end--;
         string content = line.Substring(0, end);
         int level = 0;
-        if (HasMark(content, out int markLevel)) { level = markLevel; content = content.Substring(2); }
+        if (HasMark(content, out int markLevel)) { level = markLevel; content = content.Substring(2); if (markLevel < 0) content = MergeLabelBreak(content); }
         string body = RenderInline(openTags, content);
         if (level > 0) return "<div class=\"text-line te-heading\"><h" + level + ">" + (body.Length == 0 ? "<br>" : body) + "</h" + level + "></div>";
         return "<div class=\"text-line\">" + (IsVisiblyEmpty(body) ? "<br>" : body) + "</div>";
@@ -201,7 +235,18 @@ public static class ToratEmetFormat
     }
 
     /// <summary>The line without its mark: what a search matches (the same removal as <see cref="RenderLine"/>).</summary>
-    public static string WithoutMark(string line) => HasMark(line, out _) ? line.Substring(2) : line;
+    public static string WithoutMark(string line) => HasMark(line, out int level) ? (level < 0 ? MergeLabelBreak(line.Substring(2)) : line.Substring(2)) : line;
+
+    /// <summary>A label block holds the label line and the line merged into it: the line break between them becomes one space (a break at the very end stays for the caller to trim).</summary>
+    private static string MergeLabelBreak(string content)
+    {
+        int end = content.Length;
+        while (end > 0 && (content[end - 1] == '\n' || content[end - 1] == '\r')) end--;
+        int at = content.IndexOfAny(['\r', '\n']);
+        if (at < 0 || at >= end) return content;
+        int after = at + (content[at] == '\r' && at + 1 < content.Length && content[at + 1] == '\n' ? 2 : 1);
+        return content.Substring(0, at) + " " + content.Substring(after);
+    }
 
     internal static string RenderInline(string openTags, string content)
     {

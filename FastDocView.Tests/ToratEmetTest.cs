@@ -53,6 +53,7 @@ public static class ToratEmetTest
         }
 
         RunNotTheFormat(directory);
+        ToratEmetWidenedTest.Run(directory);
         RunSplitPieces(directory);
         RunOnDemand(directory);
         RunTagExamples();
@@ -69,19 +70,19 @@ public static class ToratEmetTest
         TestReport.Check(blocks[0].Html.Contains(Name) && blocks[0].Html.Contains("Auth") && blocks[0].Html.Contains("Src")
                          && !blocks[0].Html.Contains("UniqueId") && !blocks[0].Html.Contains("editor comment") && !blocks[0].Html.Contains("Dup") && !blocks[0].Html.Contains("[General]"),
                          $"{what}: block 0 is the small metadata header, the head lines are not shown");
-        TestReport.Check(string.Join(",", document.Headings.Select(h => $"{h.Level}:{h.BlockIndex}")) == "2:1,4:3,3:4,4:5,5:6", $"{what}: heading levels ({string.Join(",", document.Headings.Select(h => h.Level + ":" + h.BlockIndex))})");
+        TestReport.Check(string.Join(",", document.Headings.Select(h => $"{h.Level}:{h.BlockIndex}")) == "1:1,3:3,2:4,3:5,4:6", $"{what}: heading levels ({string.Join(",", document.Headings.Select(h => h.Level + ":" + h.BlockIndex))})");
         TestReport.Check(document.Headings[0].Text == Name && document.Headings[4].Text == "Chapter bold", $"{what}: the TOC root is the book name; a heading's text has no mark and no tags");
-        TestReport.Check(blocks[1].Html == "<div class=\"text-line te-heading\"><h2>Book Title</h2></div>", $"{what}: $ is an h2 ({blocks[1].Html})");
-        TestReport.Check(blocks[4].Html.Contains("<h3>Hash title</h3>") && blocks[5].Html.Contains("<h4>At title</h4>") && blocks[3].Html.Contains("<h4>Parsha</h4>")
-                         && blocks[6].Html.Contains("<h5>Chapter <b>bold</b></h5>"), $"{what}: # h3, @ and ^ h4, ~ h5");
-        TestReport.Check(blocks[7].Html == "<div class=\"text-line\">{" + Letter + "}</div>", $"{what}: the exclamation mark and its space are stripped, the label kept ({blocks[7].Html})");
-        string text = blocks[8].Html;
+        TestReport.Check(blocks[1].Html == "<div class=\"text-line te-heading\"><h1>Book Title</h1></div>", $"{what}: $ is an h1 ({blocks[1].Html})");
+        TestReport.Check(blocks[4].Html.Contains("<h2>Hash title</h2>") && blocks[5].Html.Contains("<h3>At title</h3>") && blocks[3].Html.Contains("<h3>Parsha</h3>")
+                         && blocks[6].Html.Contains("<h4>Chapter <b>bold</b></h4>"), $"{what}: # h2, @ and ^ h3, ~ h4");
+        TestReport.Check(blocks[7].Html.StartsWith("<div class=\"text-line\">{" + Letter + "} text <b>bold", StringComparison.Ordinal), $"{what}: the exclamation mark and its space are stripped, the label merged with the next line by one space ({blocks[7].Html})");
+        string text = blocks[7].Html;
         TestReport.Check(text.Contains("<b>bold<small>x</small></b>") && text.EndsWith("end<br></div>", StringComparison.Ordinal)
                          && !text.Contains("<span") && !text.Contains("<script") && !text.Contains("&lt;90") && !text.Contains("<sz") && !text.Contains("hidden")
                          && text.Contains("tail ") && text.Contains("sp") && text.Contains("a &lt; b"),
                          $"{what}: whitelist tags drawn, other tags dropped with their text kept, a stray '<' is text ({text})");
-        TestReport.Check(blocks[9].Html.Contains("// body slash line"), $"{what}: a body '//' line stays visible");
-        TestReport.Check(blocks[10].Html.Contains("<b>open across</b>") && blocks[11].Html.Contains("<b>next line</b>") && blocks[12].Html.Contains("closed") && !blocks[12].Html.Contains("<b>closed"),
+        TestReport.Check(blocks[8].Html.Contains("// body slash line"), $"{what}: a body '//' line stays visible");
+        TestReport.Check(blocks[9].Html.Contains("<b>open across</b>") && blocks[10].Html.Contains("<b>next line</b>") && blocks[11].Html.Contains("closed") && !blocks[11].Html.Contains("<b>closed"),
                          $"{what}: a tag open across lines carries to the next line");
         WordDocumentSearchBatch hits = document.Search("Chapter", WordDocumentSearchOptions.Default, 0, 100);
         TestReport.Check(hits.HitBlocks.SequenceEqual([6]), $"{what}: search finds the heading text, never the hidden head");
@@ -95,8 +96,8 @@ public static class ToratEmetTest
         var cases = new (string name, string text)[]
         {
             ("unknown-key", "&foo=1&bar=2\r\n$ Title\r\n# x\r\n! y <b>b</b><span>s</span>\r\n"),
-            ("no-heading", "&UniqueId=3\r\n" + string.Concat(Enumerable.Repeat("plain line\r\n", 150)) + "$ Title too far\r\n"),
-            ("no-metadata", "$ Title\r\n# x\r\n<b>b</b><span>s</span>\r\n"),
+            ("no-heading", "&UniqueId=3\r\n" + string.Concat(Enumerable.Repeat("plain line\r\n", 250)) + "$ Title too far\r\n"),
+            ("no-metadata", "# Title\r\n<b>b</b><span>s</span>\r\n"),
         };
         foreach ((string name, string text) in cases)
         {
@@ -126,10 +127,10 @@ public static class ToratEmetTest
             File.WriteAllBytes(path, Encoding.ASCII.GetBytes(text.ToString()));
             using var document = (MarkupWindowedDocument)WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
             WordDocumentHeading? split = document.Headings.FirstOrDefault(h => h.Text == "Split heading");
-            TestReport.Check(split is { Level: 3 } && document.Headings.Any(h => h.Text == "Second" && h.Level == 4) && document.Headings[0].Text == "X",
+            TestReport.Check(split is { Level: 2 } && document.Headings.Any(h => h.Text == "Second" && h.Level == 3) && document.Headings[0].Text == "X",
                              $"mark and space split at byte {boundary}: heading found without the mark ({string.Join("|", document.Headings.Select(h => h.Level + h.Text))})");
             IReadOnlyList<WordDocumentBlockHtml> rendered = document.RenderBlocks(split!.BlockIndex, 1);
-            TestReport.Check(rendered[0].Html == "<div class=\"text-line te-heading\"><h3>Split heading</h3></div>", "the split heading renders as an h3");
+            TestReport.Check(rendered[0].Html == "<div class=\"text-line te-heading\"><h2>Split heading</h2></div>", "the split heading renders as an h2");
         }
     }
 
@@ -196,7 +197,7 @@ public static class ToratEmetTest
                 blocks += document.BlockCount;
                 foreach (WordDocumentHeading heading in document.Headings) levels[heading.Level]++;
                 if (isFullPass) continue;
-                if (document.Headings.Count == 0 || document.Headings[0].Level != 2) { failures++; Console.WriteLine($"   FAIL no title heading: {Ascii(path)} headings {document.Headings.Count}: {string.Join(",", document.Headings.Take(4).Select(h => h.Level + ":" + h.BlockIndex))} head end {document.ToratEmet.HeadEndOffset}"); }
+                if ((document.Headings.Count > 0 ? false : !document.ToratEmet.Metadata.All(m => m.Key.Equals("wrap", StringComparison.OrdinalIgnoreCase) || m.Key.Equals("rav", StringComparison.OrdinalIgnoreCase)))) { failures++; Console.WriteLine($"   FAIL no headings: {Ascii(path)} headings {document.Headings.Count}: {string.Join(",", document.Headings.Take(4).Select(h => h.Level + ":" + h.BlockIndex))} head end {document.ToratEmet.HeadEndOffset}"); }
                 foreach (int from in new[] { 0, document.BlockCount / 2, Math.Max(0, document.BlockCount - 40) })
                 {
                     foreach (WordDocumentBlockHtml block in document.RenderBlocks(from, 40))
@@ -211,7 +212,7 @@ public static class ToratEmetTest
             catch (Exception exception) { failures++; Console.WriteLine($"   CRASH {Ascii(path)}: {exception.GetType().Name} {Ascii(exception.Message)}"); }
         }
         Console.WriteLine($"   detected {detected}, not detected {notDetected} ({Ascii(string.Join(", ", undetected.Take(12)))}), {blocks:N0} blocks, {watch.Elapsed:mm\\:ss}");
-        Console.WriteLine($"   headings by level: h2 {levels[2]:N0}, h3 {levels[3]:N0}, h4 {levels[4]:N0}, h5 {levels[5]:N0}; code pages: {string.Join(", ", codePages.Select(p => p.Key + ":" + p.Value))}");
+        Console.WriteLine($"   headings by level: h1 {levels[1]:N0}, h2 {levels[2]:N0}, h3 {levels[3]:N0}, h4 {levels[4]:N0}; code pages: {string.Join(", ", codePages.Select(p => p.Key + ":" + p.Value))}");
         TestReport.Check(failures == 0, $"Torat Emet real books: {failures} failures");
     }
 
