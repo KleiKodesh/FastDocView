@@ -26,10 +26,8 @@ public static class WordDocumentIndexCacheLocation
             for (int i = 0; i < 16; i++) sb.Append(digest[i].ToString("x2"));
             hash = sb.ToString();
         }
-        string fileName = Path.GetFileNameWithoutExtension(fullPath);
-        if (fileName.Length > 40) fileName = fileName.Substring(0, 40);
-        foreach (char invalid in Path.GetInvalidFileNameChars()) fileName = fileName.Replace(invalid, '_');
-        string indexPath = Path.Combine(cacheDirectory ?? DefaultCacheDirectory, $"{fileName}.{hash}{WordDocumentIndexCache.SidecarExtension}");
+        // The hash of the full path alone: unique per document, no name cleaning; the record beside it names the document.
+        string indexPath = Path.Combine(cacheDirectory ?? DefaultCacheDirectory, hash + WordDocumentIndexCache.SidecarExtension);
         WordDocumentIndexCache.RememberDocument(indexPath, fullPath);     // its record names the document (stale-sidecar cleanup)
         return indexPath;
     }
