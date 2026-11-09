@@ -23,6 +23,7 @@ public sealed class RtfDocumentTables
         public bool Legal;
         public int Justification;       // \leveljc: 0 left, 1 center, 2 right (LibreOffice rtfdispatchvalue.cxx reads \leveljc, not \leveljcn)
         public int Follow;              // \levelfollow: 0 tab, 1 space, 2 nothing
+        public int Font = -1;           //  in the \listlevel group: the label's font (a symbol-font bullet is recoded against it)
     }
 
     public sealed class ListDefinition { public int ListId; public ListLevelDefinition[] Levels = []; }
@@ -94,7 +95,7 @@ public sealed class RtfDocumentTables
             {
                 writer.Write(level.NumberFormat); writer.Write(level.StartAt); writer.Write(level.Text);
                 writer.Write(level.NumberPositions.Length); writer.Write(level.NumberPositions);
-                writer.Write(level.NoRestart); writer.Write(level.Legal); writer.Write(level.Justification); writer.Write(level.Follow);
+                writer.Write(level.NoRestart); writer.Write(level.Legal); writer.Write(level.Justification); writer.Write(level.Follow); writer.Write(level.Font);
             }
         }
         writer.Write(ListOverrides.Count);
@@ -141,7 +142,7 @@ public sealed class RtfDocumentTables
                 definition.NumberPositions = reader.ReadBytes(positions);
                 if (definition.NumberPositions.Length != positions) throw new EndOfStreamException("RTF index: list table truncated.");
                 definition.NoRestart = reader.ReadBoolean(); definition.Legal = reader.ReadBoolean();
-                definition.Justification = reader.ReadInt32(); definition.Follow = reader.ReadInt32();
+                definition.Justification = reader.ReadInt32(); definition.Follow = reader.ReadInt32(); definition.Font = reader.ReadInt32();
                 list.Levels[level] = definition;
             }
             tables.Lists[key] = list;

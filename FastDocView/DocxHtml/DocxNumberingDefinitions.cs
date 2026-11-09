@@ -237,9 +237,22 @@ public sealed class DocxNumberingDefinitions
         return label.ToString();
     }
 
-    private static string BulletCharacter(string text)
-        => text.Length == 1 && text[0] is >= '' and <= '' ? "•" : text.Length == 0 ? "•" : text;
+    /// <summary>A bullet's level text as written; a symbol-font code is resolved against the level's font by
+    /// <see cref="Html.WordSymbolFontBullet"/> where the label's run properties are known.</summary>
+    private static string BulletCharacter(string text) => text.Length == 0 ? "•" : text;
 
+    /// <summary>The font a level's w:rPr/w:rFonts names for its label (ascii, else hAnsi, else cs).</summary>
+    public static string? FontOf(XElement? runProperties)
+    {
+        XElement? fonts = runProperties?.Element(W + "rFonts");
+        return (string?)fonts?.Attribute(W + "ascii") ?? (string?)fonts?.Attribute(W + "hAnsi") ?? (string?)fonts?.Attribute(W + "cs");
+    }
+
+    /// <summary>
+    /// A counter in an ECMA-376 ST_NumberFormat (17.18.59). Every result was compared with Word 16's own ListFormat.ListString
+    /// (test-data/word-lists, ListNumberFormatsFidelityTest); formats not listed here (CJK / Korean / Thai / Vietnamese
+    /// counting words, kana orders) show decimal, as LibreOffice does for numbering types it lacks.
+    /// </summary>
     public static string FormatNumber(int value, string format) => format switch
     {
         "lowerLetter" => Letters(value, 'a'),
@@ -250,8 +263,79 @@ public sealed class DocxNumberingDefinitions
         "hebrew2" => HebrewLetters(value),
         "decimalZero" => value.ToString("00"),
         "none" => "",
+        "ordinal" => value.ToString() + EnglishOrdinalSuffix(value),
+        "cardinalText" => value < 0 ? value.ToString() : Capitalize(Fields.WordFieldFormat.CardinalText(value)),
+        "ordinalText" => value < 0 ? value.ToString() : Capitalize(Fields.WordFieldFormat.OrdinalText(value)),
+        "decimalFullWidth" or "decimalFullWidth2" => Digits(value, (char)0xFF10),
+        "hindiNumbers" => Digits(value, (char)0x0966),
+        "thaiNumbers" => Digits(value, (char)0x0E50),
+        "ideographDigital" or "japaneseDigitalTenThousand" => Digits(value, '\0', IdeographDigits),
+        "taiwaneseDigital" => Digits(value, '\0', (char)0x25CB + IdeographDigits.Substring(1)),     // Word 16: 10 = one + white circle
+        "koreanDigital2" => Digits(value, '\0', (char)0x96F6 + IdeographDigits.Substring(1)),       // Word 16: 10 = one + U+96F6
+        "decimalEnclosedCircle" or "decimalEnclosedCircleChinese" => value is >= 1 and <= 20 ? ((char)(0x2460 + value - 1)).ToString() : value.ToString(),
+        "decimalEnclosedFullstop" => value is >= 1 and <= 20 ? ((char)(0x2488 + value - 1)).ToString() : value.ToString(),
+        "decimalEnclosedParen" => value is >= 1 and <= 20 ? ((char)(0x2474 + value - 1)).ToString() : value.ToString(),
+        "ideographEnclosedCircle" => value is >= 1 and <= 10 ? ((char)(0x3220 + value - 1)).ToString() : value.ToString(),
+        "ideographTraditional" => Cycle(value, HeavenlyStems),
+        "ideographZodiac" => Cycle(value, EarthlyBranches),
+        "ideographZodiacTraditional" => value <= 0 ? value.ToString()
+            : HeavenlyStems[(value - 1) % 10].ToString() + EarthlyBranches[(value - 1) % 12],
+        "numberInDash" => "- " + value + " -",
+        "russianLower" => RepeatedLetters(value, RussianLetters, toUpper: false),
+        "russianUpper" => RepeatedLetters(value, RussianLetters, toUpper: true),
+        "thaiLetters" => RepeatedLetters(value, ThaiLetters, toUpper: false),
+        "arabicAlpha" => RepeatedLetters(value, ArabicAlphaLetters, toUpper: false, joinerAfter: (char)0x200C),
+        "arabicAbjad" => RepeatedLetters(value, ArabicAbjadLetters, toUpper: false, joinerBefore: (char)0x200C),
         _ => value.ToString(),
     };
+
+    // Word 16 (ListString): 10 = U+4E00 U+3007, 1234 = one two three four - each decimal digit as an ideograph
+    private static readonly string IdeographDigits = "〇一二三四五六七八九";
+    private static readonly string HeavenlyStems = "甲乙丙丁戊己庚辛壬癸";
+    private static readonly string EarthlyBranches = "子丑寅卯辰巳午未申酉戍亥";
+    // Word's Russian list letters: 29 (no yo, short i, hard / soft sign): 10 = ka, 27 = e, 50 = kha kha
+    private static readonly string RussianLetters = "абвгдежзиклмнопрстуфхцчшщыэюя";
+    // LibreOffice defaultnumberingprovider.cxx:103 table_Alphabet_th less the two vowels U+0E24 / U+0E26: Word repeats after 41 (50 = 9th letter twice)
+    private static readonly string ThaiLetters = "กขคงจฉชซฌญฎฏฐฑฒณดตถทธนบปผฝพฟภมยรลวศษสหฬอฮ";
+    // defaultnumberingprovider.cxx:89 table_Alphabet_ar / :96 table_Alphabet_ar_abjad (Word repeats the letter; ZWNJ after / before each, as its ListString)
+    private static readonly string ArabicAlphaLetters = "أبتثجحخدذرزسشصضطظعغفقكلمنهوي";
+    private static readonly string ArabicAbjadLetters = "أبجدهوزحطيكلمنسعفصقرشتثخذضظغ";
+
+    private static string Digits(int value, char zero, string? digits = null)
+    {
+        string plain = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var result = new StringBuilder(plain.Length);
+        foreach (char c in plain) result.Append(c is >= '0' and <= '9' ? (digits is null ? (char)(zero + (c - '0')) : digits[c - '0']) : c);
+        return result.ToString();
+    }
+
+    private static string Cycle(int value, string symbols) => value <= 0 ? value.ToString() : symbols[(value - 1) % symbols.Length].ToString();
+
+    /// <summary>Word's letter lists: the letter of (n - 1) mod count, written (n - 1) / count + 1 times.</summary>
+    private static string RepeatedLetters(int value, string letters, bool toUpper, char joinerAfter = '\0', char joinerBefore = '\0')
+    {
+        if (value <= 0) return "";
+        char letter = letters[(value - 1) % letters.Length];
+        if (toUpper) letter = char.ToUpperInvariant(letter);
+        int repeat = (value - 1) / letters.Length + 1;
+        var result = new StringBuilder(repeat * 2);
+        for (int i = 0; i < repeat; i++)
+        {
+            if (joinerBefore != '\0') result.Append(joinerBefore);
+            result.Append(letter);
+            if (joinerAfter != '\0') result.Append(joinerAfter);
+        }
+        return result.ToString();
+    }
+
+    private static string EnglishOrdinalSuffix(int value)
+    {
+        int lastTwo = Math.Abs(value) % 100;
+        if (lastTwo is >= 11 and <= 13) return "th";
+        return (Math.Abs(value) % 10) switch { 1 => "st", 2 => "nd", 3 => "rd", _ => "th" };
+    }
+
+    private static string Capitalize(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text.Substring(1);
 
     private static string Letters(int value, char first)
     {
@@ -291,12 +375,12 @@ public sealed class DocxNumberingDefinitions
         return letters.ToString();
     }
 
-    /// <summary>Word's hebrew2: the 22 letters cycling (א..ת, then אא..).</summary>
+    /// <summary>Word's hebrew2 list format: one TAV per full 22, then the letter (Word 16 ListString: 27 = TAV HE, 50 = TAV TAV VAV, 100 = four TAV + LAMED).</summary>
     public static string HebrewLetters(int value)
     {
         if (value <= 0) return "";
         const string alphabet = "אבגדהוזחטיכלמנסעפצקרשת";
-        int repeat = (value - 1) / alphabet.Length + 1;
-        return new string(alphabet[(value - 1) % alphabet.Length], repeat);
+        return new string(alphabet[21], (value - 1) / alphabet.Length) + alphabet[(value - 1) % alphabet.Length];
     }
+
 }

@@ -296,7 +296,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         else
         {
             if (isTopLevel && _isFirstParagraph && _indexListLabel is { Length: > 0 } label)
-                WordListLabelHtml.Append(html, label, null, listLevel?.Follow switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab },
+                WordListLabelHtml.Append(html, label, SymbolFontCss(label, listLevel), listLevel?.Follow switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab },
                                          formatting, WordListLabelHtml.DefaultTabStopTwips, labelAlignment);
             html.Append(_flow.Inline);
         }
@@ -310,6 +310,15 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
         if (isInTable) CellOf(Math.Max(1, (int)state.NestingLevel)).Cell.Append(html);
         else _flow.Output.Append(html);
+    }
+
+    /// <summary>A Wingdings / Webdings bullet keeps its code (WordSymbolFontBullet) and is drawn in the level's font.</summary>
+    private string? SymbolFontCss(string label, RtfDocumentTables.ListLevelDefinition? listLevel)
+    {
+        if (listLevel is null || _tables.FontName(listLevel.Font) is not { } font) return null;
+        foreach (char c in label)
+            if (c is >= (char)0xF020 and <= (char)0xF0FF) return "font-family:'" + font.Replace("'", "") + "';";
+        return null;
     }
 
     private WordParagraphFormatting ParagraphFormatting(in RtfGroupState state)

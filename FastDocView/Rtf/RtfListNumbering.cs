@@ -36,11 +36,11 @@ internal sealed class RtfListNumbering
         _appliedStartOverrides.UnionWith(overrides);
     }
 
-    /// <summary>LibreOffice rtfdispatchvalue.cxx getNumberFormat: \levelnfc values (the MSONFC numbers) to the shared formatter's names.</summary>
+    /// <summary>\levelnfc / \levelnfcn values are MSONFC numbers (LibreOffice rtfdispatchvalue.cxx getNumberFormat): the .doc table.</summary>
     public static string FormatName(int numberFormat) => numberFormat switch
     {
-        0 => "decimal", 1 => "upperRoman", 2 => "lowerRoman", 3 => "upperLetter", 4 => "lowerLetter",
-        22 => "decimalZero", 23 => "bullet", 45 => "hebrew1", 47 => "hebrew2", 255 or 8 or 9 => "none",
+        255 or 8 or 9 => "none",                                       // rtfdispatchvalue.cxx:39-50 getNumberFormat: 8, 9 undefined in RTF 1.8
+        >= 0 and < 255 => DocBinary.DocBinaryListDefinitions.NumberFormatName((byte)numberFormat),
         _ => "decimal",
     };
 
@@ -74,13 +74,13 @@ internal sealed class RtfListNumbering
                 counters[level] = startAt - 1;
             counters[level]++;
         }
-        return FormatLabel(list, definition, counters);
+        return FormatLabel(list, definition, counters, _tables);
     }
 
-    private static string FormatLabel(RtfDocumentTables.ListDefinition list, RtfDocumentTables.ListLevelDefinition definition, int[] counters)
+    private static string FormatLabel(RtfDocumentTables.ListDefinition list, RtfDocumentTables.ListLevelDefinition definition, int[] counters, RtfDocumentTables tables)
     {
         string text = definition.Text;
-        if (FormatName(definition.NumberFormat) == "bullet") return BulletOf(text);
+        if (FormatName(definition.NumberFormat) == "bullet") return BulletOf(text, tables.FontName(definition.Font));
         var label = new StringBuilder(text.Length + 4);
         for (int i = 0; i < text.Length; i++)
         {
@@ -97,12 +97,6 @@ internal sealed class RtfListNumbering
         return label.ToString();
     }
 
-    /// <summary>A Symbol / Wingdings bullet (U+F0xx) shows as •.</summary>
-    public static string BulletOf(string text)
-    {
-        if (text.Length == 0) return "\u2022";
-        var bullet = new StringBuilder(text.Length);
-        foreach (char c in text) bullet.Append(c is >= '\uF000' and <= '\uF0FF' ? '\u2022' : c);
-        return bullet.ToString();
-    }
+    /// <summary>A symbol-font bullet (U+F0xx) recoded against the level's font (<see cref="Html.WordSymbolFontBullet"/>).</summary>
+    public static string BulletOf(string text, string? fontName) => Html.WordSymbolFontBullet.Resolve(text, fontName).text;
 }

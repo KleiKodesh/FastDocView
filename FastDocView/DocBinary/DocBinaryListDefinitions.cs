@@ -137,7 +137,7 @@ public sealed class DocBinaryListDefinitions
     /// <summary>
     /// The number text of a level with its placeholders replaced from the counters (§2.4.6.3 part 2):
     /// a placeholder is the char at each rgbxchNums offset, its value the level it shows; a bullet
-    /// xst is its first char, with symbol-font codes (0xF0xx) shown as a plain bullet.
+    /// xst is its first char (a symbol-font code 0xF0xx is resolved by WordSymbolFontBullet where the label is drawn).
     /// </summary>
     public string FormatLabel(ListOverride listOverride, ListDefinition list, int level, LevelDefinition definition, int[] counters)
     {
@@ -145,7 +145,7 @@ public sealed class DocBinaryListDefinitions
         if (definition.IsBullet)
         {
             if (text.Length == 0) return "•";
-            return text[0] is (>= '' and <= '') or < ' ' ? "•" : text.Substring(0, 1);   // symbol-font code (xchBullet & 0xF000)
+            return text[0] < ' ' ? "•" : text.Substring(0, 1);    // a symbol-font code (0xF0xx) is resolved against the label's font when drawn
         }
         if (!definition.HasNumberSequence && definition.PlaceholderOffsets.Length == 0) return text;
 
@@ -170,21 +170,27 @@ public sealed class DocBinaryListDefinitions
         return label.ToString();
     }
 
-    /// <summary>MSONFC ([MS-OSHARED] §2.2.1.3) → ECMA-376 ST_NumberFormat names the shared formatter knows; the rest fall back to decimal.</summary>
-    public static string NumberFormatName(byte code) => code switch
-    {
-        0x00 => "decimal",
-        0x01 => "upperRoman",
-        0x02 => "lowerRoman",
-        0x03 => "upperLetter",
-        0x04 => "lowerLetter",
-        0x16 => "decimalZero",
-        0x17 => "bullet",
-        0x2D => "hebrew1",
-        0x2F => "hebrew2",
-        0xFF => "none",
-        _ => "decimal",
-    };
+    /// <summary>
+    /// MSONFC ([MS-OSHARED] 2.2.1.3; the same numbers as Word's WdListNumberStyle) to ECMA-376 ST_NumberFormat names: the
+    /// .docx numFmt Word 16 writes for each code (test-data/word-lists: each code saved as .docx). 49 / 50 Word saves and
+    /// draws as hebrew1 / hebrew2. Codes past 59 are Word's custom formats (Greek, Turkish, Bulgarian letters, 001...).
+    /// </summary>
+    private static readonly string[] NumberFormatNames =
+    [
+        "decimal", "upperRoman", "lowerRoman", "upperLetter", "lowerLetter", "ordinal",
+        "cardinalText", "ordinalText", "hex", "chicago", "ideographDigital", "japaneseCounting",
+        "aiueo", "iroha", "decimalFullWidth", "decimalHalfWidth", "japaneseLegal", "japaneseDigitalTenThousand",
+        "decimalEnclosedCircle", "decimalFullWidth2", "aiueoFullWidth", "irohaFullWidth", "decimalZero", "bullet",
+        "ganada", "chosung", "decimalEnclosedFullstop", "decimalEnclosedParen", "decimalEnclosedCircleChinese", "ideographEnclosedCircle",
+        "ideographTraditional", "ideographZodiac", "ideographZodiacTraditional", "taiwaneseCounting", "ideographLegalTraditional", "taiwaneseCountingThousand",
+        "taiwaneseDigital", "chineseCounting", "chineseLegalSimplified", "chineseCountingThousand", "decimal", "koreanDigital",
+        "koreanCounting", "koreanLegal", "koreanDigital2", "hebrew1", "arabicAlpha", "hebrew2",
+        "arabicAbjad", "hebrew1", "hebrew2", "hindiNumbers", "hindiCounting", "thaiLetters",
+        "thaiNumbers", "thaiCounting", "vietnameseCounting", "numberInDash", "russianLower", "russianUpper"
+    ];
+
+    public static string NumberFormatName(byte code) => code == NoNumberFormatCode ? "none"
+        : code < NumberFormatNames.Length ? NumberFormatNames[code] : "decimal";
 
     // ── PlfLst + LVL array ──────────────────────────────────────────────────────────────
 

@@ -1975,3 +1975,44 @@ archives open on demand from 2 MB: the open returns in 5-7 ms, the first window 
   knows. Hebrew has no hyphenation dictionary, so this matters for LTR text only.
 - Test: `DropCapsAndHyphenationFidelityTest` (`--fidelity`) over test-data/drop-caps-hyphenation/drop-caps-hyphenation-v1.docx / .doc / .rtf / .odt
   (Word 16 via COM, make-drop-caps-hyphenation-fixtures.ps1).
+
+## List numbering and bullets: audit and Word-verified number formats (all formats, 2026-11-09; RTF index format 13)
+
+Audit (yes / partial / no per .docx | .doc | RTF | ODT):
+
+| Feature | .docx | .doc | RTF | ODT |
+|---|---|---|---|---|
+| Number formats (ST_NumberFormat / MSONFC / \levelnfc(n)) | partial: 37 of Word's 60 styles exact, rest decimal | same table | Word's \listtext drawn as written (any format); counted labels use the .doc table | partial: 1 a A i I, hebrew1 / hebrew2 |
+| Start at (w:start, LVLF iStartAt, \levelstartat, start-value) | yes | yes | yes | yes |
+| lvlRestart (after a higher level / never) | yes | yes (fNoRestart + ilvlRestartLim) | partial: \levelnorestart, no limit level | yes (nested-list rules) |
+| lvlOverride / startOverride (LFOLVL, \lfolevel) | yes | yes | start-at yes, replaced level no | text:start-value on the item |
+| Restart at a section break | n/a: Word has no such list setting (restart per section exists for pages, line numbers and notes only) |
+| Continue a list across other lists | yes (shared abstractNum) | yes (lsid) | yes (\listid) | yes (continue-numbering / continue-list) |
+| isLgl | yes | yes | yes (\levellegal) | n/a |
+| Suffix tab / space / nothing | yes | yes | yes | yes (label-followed-by) |
+| lvlJc, level indents / tab | yes | yes | yes (\leveljc) | yes (label-alignment) |
+| Label rPr (font, size, colour, b, i, u) | yes | yes (grpprlChpx) | no (counted path); \listtext runs keep their formatting | no |
+| Legacy numbering (w:legacy) | no (indent rules of Word 6 lists ignored) | no | no | n/a |
+| Style-linked numbering (pStyle in lvl, numStyleLink / styleLink) | yes | yes (rgistdPara) | no | n/a |
+| Symbol-font bullets | yes | yes | yes | no (U+F0xx shows a plain bullet) |
+| Picture bullets (numPicBullet, \listpicture, list-level-style-image) | no (plain bullet) | no | no | no (plain bullet) |
+| Bullet colour and size | yes (level rPr) | yes | no (counted path) | no |
+
+- **Number formats**: `DocxNumberingDefinitions.FormatNumber` gained ordinal, cardinalText, ordinalText, decimalFullWidth(2), decimalHalfWidth,
+  hindiNumbers, thaiNumbers, ideographDigital / japaneseDigitalTenThousand / taiwaneseDigital / koreanDigital2, decimalEnclosedCircle(Chinese) /
+  Fullstop / Paren, ideographEnclosedCircle, ideographTraditional / Zodiac / ZodiacTraditional, numberInDash, russianLower / Upper (29 letters),
+  thaiLetters (LibreOffice defaultnumberingprovider.cxx:103 less U+0E24 / U+0E26), arabicAlpha / arabicAbjad (defaultnumberingprovider.cxx:89 / :96,
+  with Word's ZWNJ after / before each letter). Word repeats the letter past the end of an alphabet (aa, bb), LibreOffice counts (aa, ab): Word wins.
+  hebrew2 in a list is Word's field algorithm (one tav per full 22, then the letter: 27 = tav he), not a repeated letter; Word's ListString starts it
+  with U+200F, which is not drawn. MSONFC -> name is one table (`DocBinaryListDefinitions.NumberFormatName`), the .docx numFmt Word 16 writes for
+  each code; RTF uses it too, with 8 / 9 = none (rtfdispatchvalue.cxx:39-50 getNumberFormat). Still decimal: counting words (Japanese, Chinese,
+  Korean, Thai, Vietnamese, Hindi), kana orders (aiueo, iroha), ganada / chosung, koreanDigital, Word's custom formats (numFmt custom, MSONFC 60+).
+- **Symbol-font bullets** (`WordSymbolFontBullet`): Symbol is recoded with LibreOffice's Adobe Symbol table (unotools fontcvt.cxx:707
+  aAdobeSymbolToAppleSymbolTab) and drawn in the text's font; Wingdings / Wingdings 2 / 3 / Webdings keep their U+F0xx code and their font, as Word
+  draws them and as w:sym already did - LibreOffice's tables for those fonts (fontcvt.cxx:185-482) target OpenSymbol's private-use area (197 of 224
+  Wingdings codes), which a browser cannot draw. Any other font: a plain bullet. RTF levels now keep their \f (index format 13).
+- Test: `ListNumberFormatsFidelityTest` (`--list-formats`, in `--fidelity`) over test-data/word-lists/list-formats-v1-a / -b .docx / .doc / .rtf
+  (Word 16 via COM, make-list-formats-fixture.ps1: every WdListNumberStyle x 13 start values, Word's ListString saved beside). Word 16's RTF writer
+  leaves `{\*\pn` open for MSONFC 36 and up (the next \listtext group closes it), so those RTF paragraphs are not checked. Symbol / Wingdings
+  bullets: DocxFidelityTest list labels.
+- Drop caps (.doc): notes referenced inside the initial now come with the paragraph that draws it, not the empty frame block.

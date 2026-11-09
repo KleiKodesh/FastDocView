@@ -1,3 +1,4 @@
+using FastDocView.Html;
 using System.IO.Compression;
 using System.Xml;
 using System.Xml.Linq;
@@ -191,13 +192,20 @@ public sealed class DocxDocumentParts
                 (numId, level) = _styles.NumberingOf(styleId);
             if (numId <= 0 || _counter.NextWithDefinition(numId, level) is not { } next) return null;
             DocxNumberingDefinitions.LevelDefinition? definition = next.definition;
+            string label = next.label;
+            bool isBulletMapped = false;
+            if (definition is { Format: "bullet" })
+            {
+                (label, bool keepsFont) = WordSymbolFontBullet.Resolve(label, DocxNumberingDefinitions.FontOf(definition.RunProperties));
+                isBulletMapped = !keepsFont;
+            }
             string css = "";
             if (definition is not null && !_levelCss.TryGetValue(definition, out css!))
-                _levelCss[definition] = css = _styles.LevelRunCss(definition.RunProperties, isBulletMapped: definition.Format == "bullet" && next.label != definition.Text);
+                _levelCss[definition] = css = _styles.LevelRunCss(definition.RunProperties, isBulletMapped);
             string paragraphXml = "";
             if (definition is not null && !_levelParagraphXml.TryGetValue(definition, out paragraphXml!))
                 _levelParagraphXml[definition] = paragraphXml = definition.ParagraphProperties?.ToString(SaveOptions.DisableFormatting) ?? "";
-            return new DocxListLabel(next.label, DocxListLabel.SuffixOf(definition?.Suffix), css, paragraphXml, DocxListLabel.AlignmentOf(definition?.Justification),
+            return new DocxListLabel(label, DocxListLabel.SuffixOf(definition?.Suffix), css, paragraphXml, DocxListLabel.AlignmentOf(definition?.Justification),
                                      string.Join("\u0001", _counter.ContextOf(numId, level)));
         }
 

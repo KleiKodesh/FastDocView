@@ -981,6 +981,7 @@ internal sealed class RtfParser
                 return;
             case RtfWord.Font: case RtfWord.AssociatedFont:
                 if (_headerDepth >= 0 && _stack[_headerDepth].Destination == RtfDestination.FontTable) { StartFontEntry(parameter); return; }
+                if (word == RtfWord.Font && _level is not null && _levelDepth >= 0) _level.Font = parameter;
                 if (isComplexSlot) { state.ComplexFont = (short)parameter; state.Set(RtfStateFlags.ComplexFontSet, true); }
                 else state.Font = (short)parameter;
                 if (word == RtfWord.Font) state.CodePage = _tables.CodePageOfFont(parameter);   // LibreOffice: only \f changes the encoding

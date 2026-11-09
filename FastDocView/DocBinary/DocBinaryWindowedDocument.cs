@@ -439,15 +439,17 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
             _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             string html;
-            if (kind == WordDocumentBlockKind.TableRow) html = _renderer.RenderRow(start, end);
-            else if (IsDropCapJoiningNext(blockIndex)) html = "";          // drawn at the start of the next paragraph
+            IReadOnlyList<WordDocumentNoteHtml> notes;
+            if (kind == WordDocumentBlockKind.TableRow) { html = _renderer.RenderRow(start, end); notes = RenderNotesIn(start, end); }
+            else if (IsDropCapJoiningNext(blockIndex)) { html = ""; notes = []; }      // drawn, with its notes, by the next paragraph
             else
             {
-                (int, int)? dropCap = IsDropCapJoiningNext(blockIndex - 1)
+                (int start, int end)? dropCap = IsDropCapJoiningNext(blockIndex - 1)
                     ? (_table.BlockStartCp(blockIndex - 1), _table.BlockEndCp(blockIndex - 1)) : null;
                 html = _renderer.Render(start, end, PreviousStyleKey(blockIndex), listLabel: _table.ListLabelOf(blockIndex), dropCapParagraph: dropCap);
+                notes = dropCap is { } initial ? [.. RenderNotesIn(initial.start, initial.end), .. RenderNotesIn(start, end)] : RenderNotesIn(start, end);
             }
-            result.Add(new WordDocumentBlockHtml(blockIndex, kind, html, RenderNotesIn(start, end)));
+            result.Add(new WordDocumentBlockHtml(blockIndex, kind, html, notes));
         }
         return result;
     }

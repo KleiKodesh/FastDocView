@@ -256,12 +256,23 @@ public sealed class DocBinaryParagraphHtmlRenderer
     {
         DocBinaryListDefinitions.LevelDefinition? level = Lists.LevelOfParagraph(formatting.NumberingId, formatting.NumberingLevel);
         string? css = null;
+        WordRunFormatting labelFormatting = formatting.RunFormatting;
         if (level is { CharacterGrpprl.Length: > 0 })
         {
-            WordRunFormatting labelFormatting = formatting.RunFormatting.Clone();
+            labelFormatting = formatting.RunFormatting.Clone();
             DocBinaryPropertyModifiers.ApplyCharacterSprms(labelFormatting, level.CharacterGrpprl, 0, level.CharacterGrpprl.Length, fonts: _styles.Fonts);
-            css = labelFormatting.ToCss(formatting.RunFormatting);
         }
+        if (level is { IsBullet: true })
+        {
+            (label, bool keepsFont) = WordSymbolFontBullet.Resolve(label, labelFormatting.FontName);
+            if (!keepsFont)
+            {
+                if (ReferenceEquals(labelFormatting, formatting.RunFormatting)) labelFormatting = labelFormatting.Clone();
+                labelFormatting.FontName = formatting.RunFormatting.FontName;                 // the recoded bullet draws in the text's font
+                labelFormatting.ComplexScriptFontName = formatting.RunFormatting.ComplexScriptFontName;
+            }
+        }
+        if (!ReferenceEquals(labelFormatting, formatting.RunFormatting)) css = labelFormatting.ToCss(formatting.RunFormatting);
         WordListLabelSuffix suffix = level?.FollowCharacter switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab };
         WordListLabelAlignment alignment = level?.Justification switch { 1 => WordListLabelAlignment.Center, 2 => WordListLabelAlignment.End, _ => WordListLabelAlignment.Start };
         WordListLabelHtml.Append(html, label, css, suffix, formatting, DefaultTabStopTwips, alignment);

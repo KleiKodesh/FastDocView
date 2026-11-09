@@ -21,7 +21,7 @@ public static class DocxNumberingAndPolicyTest
         TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(500) == "קח", "hebrew1 500 as Word shows it");
         TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(1000) == "רטז", "hebrew1 1000 as Word shows it");
         TestReport.Check(DocxNumberingDefinitions.HebrewNumeral(5784) == "רצו", "hebrew1 5784 as Word shows it");
-        TestReport.Check(DocxNumberingDefinitions.HebrewLetters(23) == "אא", "hebrew2 23 → אא");
+        TestReport.Check(DocxNumberingDefinitions.HebrewLetters(23) == "תא", "hebrew2 23: TAV ALEF (Word 16 ListString)");
         TestReport.Check(DocxNumberingDefinitions.FormatNumber(4, "lowerRoman") == "iv", "lowerRoman 4 → iv");
         TestReport.Check(DocxNumberingDefinitions.FormatNumber(28, "upperLetter") == "BB", "upperLetter 28 → BB");
 

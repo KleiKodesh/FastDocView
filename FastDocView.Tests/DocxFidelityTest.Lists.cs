@@ -61,10 +61,13 @@ public static partial class DocxFidelityTest
               <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:suff w:val="space"/><w:lvlText w:val="%2)"/></w:lvl>
               <w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:suff w:val="nothing"/><w:lvlText w:val="%3]"/></w:lvl>
               <w:lvl w:ilvl="3"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="&#xF0B7;"/><w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol"/></w:rPr></w:lvl>
+              <w:lvl w:ilvl="4"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="&#xF0A7;"/><w:rPr><w:rFonts w:ascii="Wingdings" w:hAnsi="Wingdings"/></w:rPr></w:lvl>
+              <w:lvl w:ilvl="5"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="&#xF0E0;"/><w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol"/></w:rPr></w:lvl>
             </w:abstractNum>
             <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
             """;
         string body = ListParagraph(1, 0, "a") + ListParagraph(1, 1, "b") + ListParagraph(1, 2, "c") + ListParagraph(1, 3, "d")
+                    + ListParagraph(1, 4, "w") + ListParagraph(1, 5, "s")
                     + "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"1\"/><w:numId w:val=\"1\"/></w:numPr><w:rPr><w:i/></w:rPr></w:pPr><w:r><w:t>e</w:t></w:r></w:p>"
                     + "<w:p><w:pPr><w:rPr><w:sz w:val=\"48\"/></w:rPr></w:pPr></w:p>";
         List<string> html = RenderAll("list-labels", body, "", numbering);
@@ -72,8 +75,10 @@ public static partial class DocxFidelityTest
         TestReport.Check(html[1].Contains(">1)</span> a") == false && html[1].Contains(">1)</span> b"), "suff space");
         TestReport.Check(html[2].Contains(">1]</span>c"), "suff nothing");
         TestReport.Check(html[3].Contains(">•</span>") && !html[3].Contains("Symbol"), "a Symbol-font bullet is mapped to a bullet and drops the symbol font");
-        TestReport.Check(html[4].Contains("style=\"font-style:italic;\">2)</span>") && !html[4].Contains("<p style=\"font-style:italic"), "paragraph-mark rPr formats the label, not the text");
-        TestReport.Check(html[5].Contains("font-size:24pt;"), "an empty paragraph takes its height from the mark's size");
+        TestReport.Check(html[4].Contains("font-family:'Wingdings'") && html[4].Contains("</span>"), "a Wingdings bullet keeps its code and its font, as Word draws it (" + Marker(html[4]) + ")");
+        TestReport.Check(Marker(html[5]).EndsWith("◊") && !html[5].Contains("Symbol"), "a Symbol bullet is recoded with LibreOffice's Adobe Symbol table (F0E0 -> U+25CA lozenge)");
+        TestReport.Check(html[6].Contains("style=\"font-style:italic;\">2)</span>") && !html[6].Contains("<p style=\"font-style:italic"), "paragraph-mark rPr formats the label, not the text");
+        TestReport.Check(html[7].Contains("font-size:24pt;"), "an empty paragraph takes its height from the mark's size");
     }
 
     /// <summary>
