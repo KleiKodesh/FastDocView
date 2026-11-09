@@ -167,10 +167,11 @@ public sealed partial class OdtBlockHtmlRenderer
         bool hasLabel = false;
         if (isTopLevel && _listLabel is { Length: > 0 } label)
         {
+            string? labelCss = LabelCss(formatting.RunFormatting);
             if (layout is not null)
-                WordListLabelHtml.Append(html, label, null, layout[3] switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab },
+                WordListLabelHtml.Append(html, label, labelCss, layout[3] switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab },
                                          formatting, WordListLabelHtml.DefaultTabStopTwips);
-            else html.Append("<span class=\"list-marker\">").Append(WordHtmlText.Encode(label)).Append("</span> ");
+            else WordListLabelHtml.Append(html, label, labelCss, WordListLabelSuffix.Space, formatting, WordListLabelHtml.DefaultTabStopTwips);
             hasLabel = true;
         }
         RenderInline(paragraph, html, styleName, formatting.RunFormatting, formatting.RunFormatting, hasLabel);
@@ -191,10 +192,25 @@ public sealed partial class OdtBlockHtmlRenderer
         return Math.Max(1, end);
     }
 
+    /// <summary>
+    /// The label's own look after the paragraph's: the level's text:style-name character style (LibreOffice draws the number
+    /// portion with it: xmlnumi.cxx:276-278 CharStyleName) and a kept symbol bullet font (OdtListStyle.Level.Layout's tail).
+    /// </summary>
+    private string? LabelCss(WordRunFormatting paragraphRun)
+    {
+        int look = _listLayout.IndexOf(OdtListStyle.LayoutLabelLookSeparator);
+        if (look < 0) return null;
+        string[] parts = _listLayout.Substring(look + 1).Split(OdtListStyle.LayoutLabelLookSeparator);
+        string css = parts[0].Length > 0 ? _styles.ApplySpan(paragraphRun, parts[0]).ToCss(paragraphRun) : "";
+        if (parts.Length > 1 && parts[1].Length > 0) css += "font-family:'" + WordHtmlText.Encode(parts[1].Replace("'", "")) + "';";
+        return css.Length > 0 ? css : null;
+    }
+
     /// <summary>"margin,indent,tab,follow" (OdtListStyle.Level.Layout), null when empty or damaged.</summary>
     private static int[]? ParseLayout(string layout)
     {
-        string[] parts = layout.Split(',');
+        int look = layout.IndexOf(OdtListStyle.LayoutLabelLookSeparator);
+        string[] parts = (look < 0 ? layout : layout.Substring(0, look)).Split(',');
         if (parts.Length != 4) return null;
         var values = new int[4];
         for (int i = 0; i < 4; i++)

@@ -22,7 +22,17 @@ public sealed class DocxNumberingDefinitions
     /// <param name="RunProperties">The level's w:rPr: the label's own formatting.</param>
     public sealed record LevelDefinition(string Format, string Text, int Start, int? Restart = null, bool IsLegal = false,
                                          string Suffix = "tab", XElement? RunProperties = null,
-                                         XElement? ParagraphProperties = null, string Justification = "left");
+                                         XElement? ParagraphProperties = null, string Justification = "left", int? PictureBulletId = null);
+
+    /// <summary>
+    /// A w:numPicBullet (17.9.20): the picture's relationship id in numbering.xml's part (VML v:imagedata r:id or a DrawingML
+    /// a:blip r:embed) and its stored size, points. Word scales the bullet to the label's font and keeps only this ratio.
+    /// </summary>
+    public readonly record struct PictureBullet(string RelationshipId, double WidthPt, double HeightPt);
+
+    private Dictionary<int, PictureBullet>? _pictureBullets;
+    private readonly byte[]? _partBytes;
+    private readonly XElement? _partRoot;
 
     private readonly Dictionary<int, int> _abstractIdByNumId = new();
     private readonly Dictionary<int, Dictionary<int, int>> _startOverridesByNumId = new();
@@ -41,6 +51,7 @@ public sealed class DocxNumberingDefinitions
     public DocxNumberingDefinitions(XDocument? numberingDocument, Func<string, int>? numIdOfStyle = null)
     {
         _numIdOfStyle = numIdOfStyle;
+        _partRoot = numberingDocument?.Root;
         ReadWhole(numberingDocument);
     }
 
@@ -53,6 +64,7 @@ public sealed class DocxNumberingDefinitions
     {
         _numIdOfStyle = numIdOfStyle;
         if (numberingPart is null) return;
+        _partBytes = numberingPart;
         _slices = DocxNumberingPartSlices.TryCut(numberingPart);
         if (_slices is null) ReadWholeBytes(numberingPart);
     }
@@ -161,7 +173,77 @@ public sealed class DocxNumberingDefinitions
         string suffix = (string?)level.Element(W + "suff")?.Attribute(W + "val") ?? "tab";
         // w:lvlJc (17.9.7): where the label sits against its position; w:pPr (17.9.23): the level's indents and tab stops
         string justification = (string?)level.Element(W + "lvlJc")?.Attribute(W + "val") ?? "left";
-        return new LevelDefinition(format, text, start, restart, isLegal, suffix, level.Element(W + "rPr"), level.Element(W + "pPr"), justification);
+        int? pictureBulletId = DocxStyleCascade.TwipsAttribute(level.Element(W + "lvlPicBulletId"), "val");
+        return new LevelDefinition(format, text, start, restart, isLegal, suffix, level.Element(W + "rPr"), level.Element(W + "pPr"), justification, pictureBulletId);
+    }
+
+    /// <summary>
+    /// The w:numPicBullet with this id, read on first use: the part's leading numPicBullet elements only (the schema puts them
+    /// first, CT_Numbering 17.9.17), with a forward-only reader that stops at the first other element. LibreOffice reads the
+    /// same picture (NumberingManager.cxx:864-881 numPicBullet / pict, :884-933 lvlPicBulletId: only the aspect ratio kept).
+    /// </summary>
+    public PictureBullet? PictureBulletOf(int id)
+    {
+        Dictionary<int, PictureBullet>? bullets = _pictureBullets;
+        if (bullets is null)
+        {
+            // filled locally and published whole: labeller passes may share these definitions
+            bullets = new Dictionary<int, PictureBullet>();
+            if (_partRoot is not null)
+                foreach (XElement bullet in _partRoot.Elements(W + "numPicBullet")) ReadPictureBullet(bullet, bullets);
+            else if (_partBytes is not null)
+                try { ReadLeadingPictureBullets(_partBytes, bullets); }
+                catch (System.Xml.XmlException) { }   // a malformed part: the bullets read before the error stay
+            _pictureBullets = bullets;
+        }
+        return bullets.TryGetValue(id, out PictureBullet bulletFound) ? bulletFound : null;
+    }
+
+    private static void ReadLeadingPictureBullets(byte[] part, Dictionary<int, PictureBullet> bullets)
+    {
+        using var reader = System.Xml.XmlReader.Create(new MemoryStream(part, writable: false),
+            new System.Xml.XmlReaderSettings { IgnoreWhitespace = true, IgnoreComments = true, DtdProcessing = System.Xml.DtdProcessing.Ignore });
+        if (!reader.ReadToFollowing("numbering", W.NamespaceName) || reader.IsEmptyElement) return;
+        reader.Read();
+        while (!reader.EOF && reader.NodeType != System.Xml.XmlNodeType.EndElement)
+        {
+            if (reader.NodeType != System.Xml.XmlNodeType.Element) { reader.Read(); continue; }
+            if (reader.LocalName != "numPicBullet" || reader.NamespaceURI != W.NamespaceName) return;
+            ReadPictureBullet((XElement)XNode.ReadFrom(reader), bullets);
+        }
+    }
+
+    private static readonly XNamespace RelationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+    private static void ReadPictureBullet(XElement bullet, Dictionary<int, PictureBullet> bullets)
+    {
+        if (DocxStyleCascade.TwipsAttribute(bullet, "numPicBulletId") is not { } id) return;
+        // VML (what Word writes): v:shape style width / height + v:imagedata r:id; DrawingML (w:drawing): wp:extent cx / cy + a:blip r:embed
+        string? relationshipId = null;
+        double width = 0, height = 0;
+        foreach (XElement element in bullet.Descendants())
+        {
+            switch (element.Name.LocalName)
+            {
+                case "imagedata": relationshipId ??= (string?)element.Attribute(RelationshipsNamespace + "id"); break;
+                case "blip": relationshipId ??= (string?)element.Attribute(RelationshipsNamespace + "embed"); break;
+                case "shape" when (string?)element.Attribute("style") is { } style:
+                    foreach (string declaration in style.Split(';'))
+                    {
+                        int colon = declaration.IndexOf(':');
+                        if (colon < 0) continue;
+                        string name = declaration.Substring(0, colon).Trim();
+                        if (name == "width") width = DocxBlockHtmlRenderer.VmlLengthPoints(declaration.Substring(colon + 1).Trim());
+                        else if (name == "height") height = DocxBlockHtmlRenderer.VmlLengthPoints(declaration.Substring(colon + 1).Trim());
+                    }
+                    break;
+                case "extent" when width <= 0:
+                    if (long.TryParse((string?)element.Attribute("cx"), out long cx) && long.TryParse((string?)element.Attribute("cy"), out long cy))
+                        (width, height) = (cx / 12700.0, cy / 12700.0);
+                    break;
+            }
+        }
+        if (relationshipId is not null) bullets[id] = new PictureBullet(relationshipId, width, height);
     }
 
     /// <summary>No list at all (with the lazy source: no w:num with an id — a num without an abstractNumId then resolves to no list, as before).</summary>

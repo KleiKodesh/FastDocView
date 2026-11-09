@@ -19,7 +19,7 @@ namespace FastDocView.Docx;
 public sealed class DocxRandomAccessIndex
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 18;     // 18: list labels in every Word number format, symbol-font bullets resolved; 17: gutter placement (w:rtlGutter / w:gutterAtTop) in section widths; 16: section column lefts; 15: XE / TA entries;     // 14: field counters (SEQ / AUTONUM / LISTNUM) in the open-field stacks; 12: compact per-block tables; 13: no per-block tables — span anchors + list counter state, one window store, Elias-Fano block lists
+    private const int FormatVersion = 19;     // 19: picture bullets (numPicBullet); 18: list labels in every Word number format, symbol-font bullets resolved; 17: gutter placement (w:rtlGutter / w:gutterAtTop) in section widths; 16: section column lefts; 15: XE / TA entries;     // 14: field counters (SEQ / AUTONUM / LISTNUM) in the open-field stacks; 12: compact per-block tables; 13: no per-block tables — span anchors + list counter state, one window store, Elias-Fano block lists
     public const int TextLengthGroupSize = 64;
     /// <summary>Output bytes between span anchors: a random block rescans at most this much (~1-2 ms) on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;

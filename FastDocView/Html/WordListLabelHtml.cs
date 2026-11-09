@@ -45,12 +45,50 @@ public static class WordListLabelHtml
         // which only shows when the label (nearly) fills its gap.
         bool keepsTabGap = suffix == WordListLabelSuffix.Tab && alignment == WordListLabelAlignment.Start;
         if (keepsTabGap) html.Append("<span style=\"padding-inline-end:").Append(MinimumTabGapEm).Append("em\">");
-        html.Append(isLabelHtml ? label : WordHtmlText.Encode(label));
+        if (PictureOf(label) is { } picture) AppendPicture(html, picture);
+        else html.Append(isLabelHtml ? label : WordHtmlText.Encode(label));
         if (keepsTabGap) html.Append("</span>");
         if (alignment != WordListLabelAlignment.Start) html.Append("</span>");
         html.Append("</span>");
         if (suffix == WordListLabelSuffix.Space) html.Append(' ');
     }
+
+    /// <summary>Marks a picture bullet's label text: U+FFFC, the picture's width "/" height (any unit, only the ratio counts), U+0001, its picture id.</summary>
+    public const char PictureLabelMark = '\uFFFC';
+
+    /// <summary>
+    /// The label text of a picture bullet (.docx w:lvlPicBulletId, .doc sprmCPbiIBullet, RTF \levelpicture, ODF
+    /// list-level-style-image): drawn as the picture, not as text. Null id: a plain bullet (the picture cannot be shown).
+    /// </summary>
+    public static string PictureLabel(string? pictureId, double width, double height)
+        => pictureId is null || width <= 0 || height <= 0 ? "\u2022"
+           : PictureLabelMark + Number(width) + "/" + Number(height) + "\u0001" + pictureId;
+
+    /// <summary>The picture of a <see cref="PictureLabel"/>; null for a text label.</summary>
+    public static (string PictureId, double Width, double Height)? PictureOf(string label)
+    {
+        if (label.Length < 5 || label[0] != PictureLabelMark) return null;
+        int slash = label.IndexOf('/'), mark = label.IndexOf('\u0001');
+        if (slash < 0 || mark < slash
+            || !double.TryParse(label.Substring(1, slash - 1), NumberStyles.Float, CultureInfo.InvariantCulture, out double width)
+            || !double.TryParse(label.Substring(slash + 1, mark - slash - 1), NumberStyles.Float, CultureInfo.InvariantCulture, out double height)) return null;
+        return (label.Substring(mark + 1), width, height);
+    }
+
+    /// <summary>
+    /// Word scales a picture bullet to the label's font, keeping only the picture's aspect ratio (measured in Word 16, PDF export
+    /// of test-data/word-lists/list-bullets-v1.docx: a 2:1 picture is drawn 8.85 pt high at 11 pt and 21.85 pt at 24 pt, about the
+    /// font's ascent; LibreOffice uses a fixed 14 pt height instead: NumberingManager.cxx:917-926, ww8par.cxx:5355-5362). Drawn
+    /// 0.9 em high (Arial's ascent, 0.905 em) on the baseline; the &lt;img&gt; goes through the picture endpoint like any picture.
+    /// </summary>
+    private static void AppendPicture(StringBuilder html, (string PictureId, double Width, double Height) picture)
+    {
+        html.Append("<img class=\"word-picture word-picture-bullet\" alt=\"\" ").Append(WordPictureHtml.PictureIdAttribute).Append("=\"")
+            .Append(WordHtmlText.Encode(picture.PictureId)).Append("\" decoding=\"async\" style=\"height:0.9em;width:auto;aspect-ratio:")
+            .Append(Number(picture.Width)).Append('/').Append(Number(picture.Height)).Append(";vertical-align:baseline\">");
+    }
+
+    private static string Number(double value) => Math.Round(value, 3).ToString(CultureInfo.InvariantCulture);
 
     /// <summary>From the label's start to the tab stop its text goes to, twips.</summary>
     public static int TabGapTwips(WordParagraphFormatting paragraph, int defaultTabStopTwips)

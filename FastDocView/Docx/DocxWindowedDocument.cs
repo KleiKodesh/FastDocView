@@ -6,9 +6,9 @@ namespace FastDocView.Docx;
 
 /// <summary>
 /// A .docx opened for windowed rendering. Two ways in:
-///   • <see cref="Open"/> — file-system hosts: the policy picks in-memory vs sidecar, the sidecar
+///   \u2022 <see cref="Open"/> — file-system hosts: the policy picks in-memory vs sidecar, the sidecar
 ///     is cached next to the other indexes;
-///   • <see cref="OpenFromStream"/> — any host (WASM): the caller supplies the package stream and
+///   \u2022 <see cref="OpenFromStream"/> — any host (WASM): the caller supplies the package stream and
 ///     an optional previously saved index; nothing touches a file system.
 /// A sidecar first open with <see cref="WordIndexPolicy.IndexesOnDemand"/> returns after the first
 /// blocks are scanned: <see cref="RenderBlocks"/> extends the index as far as it is asked
@@ -190,7 +190,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         {
             RelatedPart = ReadRelatedPart, PictureSize = ReadPictureSize, PartPictureId = PartPictureId,
             FieldContext = DocxFieldProperties.Context(() => new DocxFieldProperties(parts.ReadPartXml, parts.PartNames.Settings), filePath, BookmarkText,
-                                                       new FieldLookups(KnownBookmark, () => _index is not null, block => _blocks.ListLabelOf(block)?.Text, NoteMarkOfBookmark,
+                                                       new FieldLookups(KnownBookmark, () => _index is not null, block => _blocks.ListLabelOf(block)?.Text is { } text && WordListLabelHtml.PictureOf(text) is not null ? "\u2022" : _blocks.ListLabelOf(block)?.Text, NoteMarkOfBookmark,
                                                                         StyledParagraph, () => Headings, IndexEntries, block => _blocks.ListLabelOf(block)?.Context)),
         };
         Decision = decision;

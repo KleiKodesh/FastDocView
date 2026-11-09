@@ -156,7 +156,17 @@ public sealed class DocxDocumentParts
     public DocxListLabelResolver CreateListLabelResolver() => CreateListLabeller().Resolve;
 
     /// <summary>The list numbering of one pass: the resolver plus its counter state (stored per checkpoint by the compact index).</summary>
-    public DocxListLabeller CreateListLabeller() => new(Numbering, Styles);
+    public DocxListLabeller CreateListLabeller() => new(Numbering, Styles, PartNames.Numbering, IsShowableNumberingPicture);
+
+    private Dictionary<string, (string Type, string PartName)>? _numberingRelationships;
+
+    /// <summary>A numbering.xml r:id that names an image a browser shows (the same test DocxWindowedDocument.PartPictureId makes).</summary>
+    private bool IsShowableNumberingPicture(string relationshipId)
+    {
+        Dictionary<string, (string Type, string PartName)> relationships = _numberingRelationships ??= ReadRelationshipsOf(PartNames.Numbering);
+        return relationships.TryGetValue(relationshipId, out var target) && target.Type.EndsWith("/image", StringComparison.OrdinalIgnoreCase)
+               && WordPictureHtml.ContentTypeOf(target.PartName) is not null;
+    }
 
     /// <summary>
     /// Counts list labels along one pass over body-level paragraphs (<see cref="Resolve"/> is the scanner's hook), and
@@ -178,8 +188,14 @@ public sealed class DocxDocumentParts
             public int GetHashCode(DocxNumberingDefinitions.LevelDefinition definition) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(definition);
         }
 
-        internal DocxListLabeller(DocxNumberingDefinitions numbering, DocxStyleCascade styles)
+        private readonly string? _numberingPartName;
+
+        private readonly Func<string, bool>? _isShowablePicture;
+
+        internal DocxListLabeller(DocxNumberingDefinitions numbering, DocxStyleCascade styles, string? numberingPartName = null, Func<string, bool>? isShowablePicture = null)
         {
+            _numberingPartName = numberingPartName;
+            _isShowablePicture = isShowablePicture;
             _numbering = numbering;
             _styles = styles;
             _counter = numbering.IsEmpty ? null : new DocxListCounter(numbering);
@@ -194,7 +210,13 @@ public sealed class DocxDocumentParts
             DocxNumberingDefinitions.LevelDefinition? definition = next.definition;
             string label = next.label;
             bool isBulletMapped = false;
-            if (definition is { Format: "bullet" })
+            // w:lvlPicBulletId (17.9.10): the picture of a numPicBullet, read through the numbering part's relationships (the "x:"
+            // picture id); a missing picture or one a browser cannot show keeps the level's text bullet (resolved below)
+            if (definition is { PictureBulletId: { } pictureBulletId } && _numberingPartName is not null
+                && _numbering.PictureBulletOf(pictureBulletId) is { } picture && _isShowablePicture?.Invoke(picture.RelationshipId) == true)
+                label = WordListLabelHtml.PictureLabel("x:" + _numberingPartName + "#" + picture.RelationshipId,
+                                                       picture.WidthPt > 0 ? picture.WidthPt : 1, picture.HeightPt > 0 ? picture.HeightPt : 1);
+            else if (definition is { Format: "bullet" })
             {
                 (label, bool keepsFont) = WordSymbolFontBullet.Resolve(label, DocxNumberingDefinitions.FontOf(definition.RunProperties));
                 isBulletMapped = !keepsFont;

@@ -3,6 +3,7 @@ using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 using FastDocView.DocxHtml;
+using FastDocView.Html;
 
 namespace FastDocView.Odt;
 
@@ -52,7 +53,11 @@ public sealed class OdtListStyle
             string layout = LayoutOf((string?)properties?.Attribute(text + "list-level-position-and-space-mode"), alignment is not null,
                                      (string?)alignment?.Attribute(fo + "margin-left"), (string?)alignment?.Attribute(fo + "text-indent"),
                                      (string?)alignment?.Attribute(text + "list-tab-stop-position"), (string?)alignment?.Attribute(text + "label-followed-by"));
-            AddLevel(element.Name.LocalName, element.Name.Namespace == text, (local, isStyle) => (string?)element.Attribute((isStyle ? style : text) + local), layout);
+            XElement? textProperties = element.Element(style + "text-properties");
+            var extras = new LevelExtras((string?)element.Attribute(text + "style-name"), (string?)element.Attribute(Xlink + "href"),
+                                         (string?)textProperties?.Attribute(fo + "font-family") ?? (string?)textProperties?.Attribute(style + "font-name"),
+                                         (string?)properties?.Attribute(fo + "width"), (string?)properties?.Attribute(fo + "height"));
+            AddLevel(element.Name.LocalName, element.Name.Namespace == text, (local, isStyle) => (string?)element.Attribute((isStyle ? style : text) + local), layout, extras);
         }
     }
 
@@ -80,6 +85,8 @@ public sealed class OdtListStyle
                 if (reader.GetAttribute(name, isStyle ? styleNs : textNs) is { } value) attributes[(isStyle ? "s:" : "t:") + name] = value;
             }
             string? mode = null, margin = null, indent = null, tab = null, follow = null;
+            string? labelStyle = reader.GetAttribute("style-name", textNs), href = reader.GetAttribute("href", Xlink.NamespaceName);
+            string? fontFamily = null, width = null, height = null;
             bool hasAlignment = false;
             int levelDepth = reader.Depth;
             if (reader.IsEmptyElement) reader.Read();
@@ -91,7 +98,13 @@ public sealed class OdtListStyle
                     if (reader.NodeType == XmlNodeType.Element && reader.NamespaceURI == styleNs)
                     {
                         if (reader.LocalName == "list-level-properties" && reader.Depth == levelDepth + 1)
+                        {
                             mode = reader.GetAttribute("list-level-position-and-space-mode", textNs);
+                            width = reader.GetAttribute("width", foNs);
+                            height = reader.GetAttribute("height", foNs);
+                        }
+                        else if (reader.LocalName == "text-properties" && reader.Depth == levelDepth + 1)
+                            fontFamily = reader.GetAttribute("font-family", foNs) ?? reader.GetAttribute("font-name", styleNs);
                         else if (reader.LocalName == "list-level-label-alignment" && reader.Depth == levelDepth + 2)
                         {
                             hasAlignment = true;
@@ -106,7 +119,7 @@ public sealed class OdtListStyle
                 if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == levelDepth) reader.Read();
             }
             listStyle.AddLevel(local, isText, (name, isStyle) => attributes.TryGetValue((isStyle ? "s:" : "t:") + name, out string? value) ? value : null,
-                               LayoutOf(mode, hasAlignment, margin, indent, tab, follow));
+                               LayoutOf(mode, hasAlignment, margin, indent, tab, follow), new LevelExtras(labelStyle, href, fontFamily, width, height));
         }
         if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth) reader.Read();
         return listStyle;
@@ -187,8 +200,17 @@ public sealed class OdtListStyle
             {
                 levelLocalName = Encoding.UTF8.GetString(qualifiedName.Slice(textPrefix.Length + 1).ToArray());
                 for (int i = 0; i < ParseNames.Mode; i++) level[i] = tag[i];
+                level[ParseNames.StyleName] = tag[ParseNames.StyleName];
+                level[ParseNames.Href] = tag[ParseNames.Href];
             }
-            else if (levelLocalName is not null && qualifiedName.SequenceEqual(names.Properties)) level[ParseNames.Mode] = tag[ParseNames.Mode];
+            else if (levelLocalName is not null && qualifiedName.SequenceEqual(names.Properties))
+            {
+                level[ParseNames.Mode] = tag[ParseNames.Mode];
+                level[ParseNames.Width] = tag[ParseNames.Width];
+                level[ParseNames.Height] = tag[ParseNames.Height];
+            }
+            else if (levelLocalName is not null && qualifiedName.SequenceEqual(names.TextProperties))
+                level[ParseNames.FontFamily] = tag[ParseNames.FontFamily] ?? tag[ParseNames.FontName];
             else if (levelLocalName is not null && qualifiedName.SequenceEqual(names.Alignment))
             {
                 level[ParseNames.HasAlignment] = "";
@@ -198,7 +220,8 @@ public sealed class OdtListStyle
         if (levelLocalName is null) return (-1, new Level());
         string layout = LayoutOf(level[ParseNames.Mode], level[ParseNames.HasAlignment] is not null, level[ParseNames.MarginLeft],
                                  level[ParseNames.TextIndent], level[ParseNames.TabStop], level[ParseNames.FollowedBy]);
-        return BuildLevel(levelLocalName, true, (local, isStyle) => ParseNames.SlotOf(local, isStyle) is { } slot ? level[slot] : null, layout) ?? (-1, new Level());
+        var extras = new LevelExtras(level[ParseNames.StyleName], level[ParseNames.Href], level[ParseNames.FontFamily], level[ParseNames.Width], level[ParseNames.Height]);
+        return BuildLevel(levelLocalName, true, (local, isStyle) => ParseNames.SlotOf(local, isStyle) is { } slot ? level[slot] : null, layout, extras) ?? (-1, new Level());
     }
 
     /// <summary>
@@ -239,18 +262,23 @@ public sealed class OdtListStyle
     private sealed class ParseNames
     {
         // attribute slots; text:bullet-char shares slot 0 with style:name (a level element has no style:name)
-        public const int Name = 0, Mode = 7, MarginLeft = 8, TextIndent = 9, TabStop = 10, FollowedBy = 11, HasAlignment = 12, SlotCount = 13;
+        public const int Name = 0, Mode = 7, MarginLeft = 8, TextIndent = 9, TabStop = 10, FollowedBy = 11, HasAlignment = 12,
+                         StyleName = 13, Href = 14, Width = 15, Height = 16, FontFamily = 17, FontName = 18, SlotCount = 19;
+        // xlink:href is matched with the "xlink" prefix every ODF writer uses (the root's own prefix is not passed here)
         private static readonly (bool isStyle, bool isFo, string local)[] Slots =
         [
             (true, false, "name"), (false, false, "level"), (true, false, "num-prefix"), (true, false, "num-suffix"), (true, false, "num-format"),
             (false, false, "start-value"), (false, false, "display-levels"),
             (false, false, "list-level-position-and-space-mode"), (false, true, "margin-left"), (false, true, "text-indent"),
             (false, false, "list-tab-stop-position"), (false, false, "label-followed-by"),
+            (false, false, " has-alignment"),   // HasAlignment: no attribute (a name no tag can carry)
+            (false, false, "style-name"), (false, false, "xlink:href"), (false, true, "width"), (false, true, "height"),
+            (false, true, "font-family"), (true, false, "font-name"),
         ];
         private static ParseNames? _last;
 
         private readonly string _key;
-        public readonly byte[] LevelPrefix, LevelStartMarker, Properties, Alignment, BulletCharacter;
+        public readonly byte[] LevelPrefix, LevelStartMarker, Properties, Alignment, BulletCharacter, TextProperties;
         public readonly byte[][] SlotNames;
 
         private ParseNames(string key, string text, string style, string fo)
@@ -261,7 +289,9 @@ public sealed class OdtListStyle
             Properties = Encoding.UTF8.GetBytes(style + ":list-level-properties");
             Alignment = Encoding.UTF8.GetBytes(style + ":list-level-label-alignment");
             BulletCharacter = Encoding.UTF8.GetBytes(text + ":bullet-char");
-            SlotNames = Slots.Select(slot => Encoding.UTF8.GetBytes((slot.isStyle ? style : slot.isFo ? fo : text) + ":" + slot.local)).ToArray();
+            TextProperties = Encoding.UTF8.GetBytes(style + ":text-properties");
+            SlotNames = Slots.Select(slot => Encoding.UTF8.GetBytes(slot.local.StartsWith("xlink:", StringComparison.Ordinal) ? slot.local
+                                                                     : (slot.isStyle ? style : slot.isFo ? fo : text) + ":" + slot.local)).ToArray();
         }
 
         public static ParseNames For(string text, string style, string fo)
@@ -317,16 +347,30 @@ public sealed class OdtListStyle
     }
 
     /// <param name="attribute">(local name, is style: namespace else text:) -> value.</param>
-    private void AddLevel(string localName, bool isTextNamespace, Func<string, bool, string?> attribute, string layout)
+    private void AddLevel(string localName, bool isTextNamespace, Func<string, bool, string?> attribute, string layout, LevelExtras extras)
     {
-        if (BuildLevel(localName, isTextNamespace, attribute, layout) is { } built) _levels[built.index] = built.level;
+        if (BuildLevel(localName, isTextNamespace, attribute, layout, extras) is { } built) _levels[built.index] = built.level;
     }
 
-    private static (int index, Level level)? BuildLevel(string localName, bool isTextNamespace, Func<string, bool, string?> attribute, string layout)
+    private static readonly XNamespace Xlink = "http://www.w3.org/1999/xlink";
+
+    /// <summary>
+    /// A level's label look (xmloff xmlnumi.cxx): text:style-name, the label's character style (:276-278); xlink:href of a
+    /// list-level-style-image (:285-287); the bullet font from style:text-properties fo:font-family / style:font-name (:579-583,
+    /// :645-694 - a font-name is a font-face-decls name, taken here as the family it nearly always equals); the image's
+    /// fo:width / fo:height on style:list-level-properties (:604-611).
+    /// </summary>
+    private readonly record struct LevelExtras(string? StyleName, string? ImageHref, string? FontFamily, string? Width, string? Height);
+
+    /// <summary>Separates <see cref="Level.Layout"/>'s geometry from the label's text style name and kept bullet font.</summary>
+    public const char LayoutLabelLookSeparator = '\u0001';
+
+    private static (int index, Level level)? BuildLevel(string localName, bool isTextNamespace, Func<string, bool, string?> attribute, string layout, LevelExtras extras)
     {
         if (!int.TryParse(attribute("level", false), NumberStyles.Integer, CultureInfo.InvariantCulture, out int levelNumber)) return null;
         int index = Math.Max(1, Math.Min(MaxLevels, levelNumber)) - 1;
         var level = new Level { Prefix = attribute("num-prefix", true) ?? "", Suffix = attribute("num-suffix", true) ?? "" };
+        string? bulletFont = null;
         if (isTextNamespace && localName == "list-level-style-number")
         {
             level.NumberFormat = attribute("num-format", true) ?? "1";
@@ -337,11 +381,25 @@ public sealed class OdtListStyle
         {
             level.IsBullet = true;
             string bullet = attribute("bullet-char", false) ?? "";
-            // Private-use symbol-font bullets (Wingdings/Symbol) have no glyph without their font.
-            level.BulletCharacter = bullet.Length == 0 || bullet[0] is >= '\uE000' and <= '\uF8FF' ? "\u2022" : bullet;
+            // A symbol-font bullet (U+F0xx) as in .docx: Symbol recoded to Unicode, Wingdings / Webdings keep their code and font,
+            // any other font a plain bullet (WordSymbolFontBullet; LibreOffice: xmlnumi.cxx:456-480 recodes StarBats / StarMath only)
+            string? font = extras.FontFamily?.Trim('\'', '"');
+            (string resolved, bool keepsFont) = bullet.Length == 0 ? ("\u2022", false) : WordSymbolFontBullet.Resolve(bullet, font);
+            level.BulletCharacter = resolved;
+            if (keepsFont) bulletFont = font;
         }
-        else { level.IsBullet = true; level.BulletCharacter = "\u2022"; }   // list-level-style-image: a plain bullet
-        level.Layout = layout;
+        else
+        {
+            // list-level-style-image (ODF 16.37): the package picture its xlink:href names, at its fo:width / fo:height ratio
+            // (xmlnumi.cxx:486-509 GraphicBitmap + GraphicSize); embedded office:binary-data or a missing size: a plain bullet
+            level.IsBullet = true;
+            string? href = extras.ImageHref is { Length: > 0 } link && !link.Contains(':') ? (link.StartsWith("./", StringComparison.Ordinal) ? link.Substring(2) : link) : null;
+            double width = extras.Width is null ? 0 : OdtStyleCascade.Twips(extras.Width) ?? 0, height = extras.Height is null ? 0 : OdtStyleCascade.Twips(extras.Height) ?? 0;
+            level.BulletCharacter = WordListLabelHtml.PictureLabel(href is not null && WordPictureHtml.ContentTypeOf(href) is not null ? OdtBlockHtmlRenderer.PackagePicturePrefix + href : null,
+                                                                   width, height);
+        }
+        level.Layout = extras.StyleName is null && bulletFont is null ? layout
+            : layout + LayoutLabelLookSeparator + (extras.StyleName ?? "") + LayoutLabelLookSeparator + (bulletFont ?? "");
         return (index, level);
     }
 

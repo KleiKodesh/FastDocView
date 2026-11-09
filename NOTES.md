@@ -1991,11 +1991,11 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 | isLgl | yes | yes | yes (\levellegal) | n/a |
 | Suffix tab / space / nothing | yes | yes | yes | yes (label-followed-by) |
 | lvlJc, level indents / tab | yes | yes | yes (\leveljc) | yes (label-alignment) |
-| Label rPr (font, size, colour, b, i, u) | yes | yes (grpprlChpx) | no (counted path); \listtext runs keep their formatting | no |
+| Label rPr (font, size, colour, b, i, u) | yes | yes (grpprlChpx) | no (counted path); \listtext runs keep their formatting | yes (text:style-name) |
 | Legacy numbering (w:legacy) | no (indent rules of Word 6 lists ignored) | no | no | n/a |
 | Style-linked numbering (pStyle in lvl, numStyleLink / styleLink) | yes | yes (rgistdPara) | no | n/a |
-| Symbol-font bullets | yes | yes | yes | no (U+F0xx shows a plain bullet) |
-| Picture bullets (numPicBullet, \listpicture, list-level-style-image) | no (plain bullet) | no | no | no (plain bullet) |
+| Symbol-font bullets | yes | yes | yes | yes (text-properties fo:font-family / style:font-name) |
+| Picture bullets (numPicBullet, \listpicture, list-level-style-image) | yes (VML / DrawingML) | no (text bullet) | no (text bullet) | yes (package picture) |
 | Bullet colour and size | yes (level rPr) | yes | no (counted path) | no |
 
 - **Number formats**: `DocxNumberingDefinitions.FormatNumber` gained ordinal, cardinalText, ordinalText, decimalFullWidth(2), decimalHalfWidth,
@@ -2018,3 +2018,25 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   rtfdocumentimpl.cxx:1695-1697), so those paragraphs keep their text and are checked again. Symbol / Wingdings
   bullets: DocxFidelityTest list labels.
 - Drop caps (.doc): notes referenced inside the initial now come with the paragraph that draws it, not the empty frame block.
+
+## Picture bullets, ODT symbol bullets and label styles (2026-11-09; index formats .docx 19, ODT 14)
+
+- **Picture bullets** are a label text of their own (`WordListLabelHtml.PictureLabel`: U+FFFC, width/height, U+0001, picture id) drawn as an
+  `<img class="word-picture word-picture-bullet">` through the picture endpoint, never the bytes. Size: Word scales the picture to the label's font and
+  keeps only its ratio. Measured in Word 16 (PDF export of list-bullets-v1.docx, PyMuPDF): a 2:1 picture is 8.85 pt high at 11 pt and 21.85 pt at
+  24 pt (Arial, ascent 0.905 em); drawn 0.9 em high here (exact at 24 pt, 1 pt too tall at 11 pt - Word's small-size rule is not known).
+  LibreOffice uses a fixed 14 pt height instead (NumberingManager.cxx:917-926, ww8par.cxx:5355-5362).
+- .docx: w:numPicBullet (VML v:shape style width/height + v:imagedata r:id, or DrawingML wp:extent + a:blip r:embed) read once from the head of
+  numbering.xml (CT_Numbering puts them first), w:lvlPicBulletId on the level (LibreOffice NumberingManager.cxx:864-933); picture id "x:" numbering part
+  "#" r:id, resolved through numbering.xml's relationships.
+- ODT: text:list-level-style-image xlink:href (package picture, "p:" id) with fo:width / fo:height on style:list-level-properties
+  (xmlnumi.cxx:285-287, :486-509, :604-611); embedded office:binary-data stays a plain bullet. All three list-style parsers (DOM, XmlReader, byte walk) read it.
+- ODT symbol-font bullets: the level's style:text-properties fo:font-family (or style:font-name, taken as the family) goes through
+  `WordSymbolFontBullet` as in .docx (xmlnumi.cxx:579-583, :645-694). ODT label style: text:style-name (xmlnumi.cxx:276-278) applied over the paragraph's
+  run formatting; both ride in `OdtListStyle.Level.Layout` after U+0001.
+- **Not done**: .doc picture bullets (sprmCPbiIBullet 0x6887 + sprmCPbiGrf 0x4888 in the LVL grpprlChpx, the picture being the n-th inline picture after
+  the hidden "_PictureBullets" bookmark: ww8par3.cxx:798-877, ww8par.cxx:5302-5370) and RTF picture bullets ({\*\listpicture} shppict groups numbered
+  from 0, \levelpicture N: rtfdispatchdestination.cxx:131-133, rtfdispatchvalue.cxx:130, rtfdocumentimpl.cxx:3854-3858) still draw the level's text bullet.
+  Fixtures for both are in test-data/word-lists (list-bullets-v1.doc / .rtf).
+- Test: `ListBulletsFidelityTest` (`--list-bullets`, in `--fidelity`) over test-data/word-lists/list-bullets-v1.docx / .odt (make-list-bullets-fixture.ps1:
+  Word 16's ListLevel.ApplyPictureBullet does nothing through COM, so add-picture-bullet.py writes Word's numPicBullet markup and Word re-saves the file).

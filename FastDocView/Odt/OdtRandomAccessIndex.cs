@@ -18,7 +18,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 13;    // 13: style sections keep fo:hyphenate, fo:language / fo:country and style:drop-cap; 12: loext:margin-gutter no longer added twice to section widths; 11: section column lefts (+1, 0 = unknown); 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
+    private const int FormatVersion = 14;    // 14: list levels keep picture bullets, symbol-font bullets and the label text style; 13: style sections keep fo:hyphenate, fo:language / fo:country and style:drop-cap; 12: loext:margin-gutter no longer added twice to section widths; 11: section column lefts (+1, 0 = unknown); 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
     /// <summary>Body bytes between span anchors: a random block rescans at most this much on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
 
