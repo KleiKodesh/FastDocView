@@ -411,6 +411,15 @@ public sealed class DocxStyleCascade
                     string? fillColor = property.Descendants().FirstOrDefault(e => e.Name.LocalName == "srgbClr")?.Attributes()
                         .FirstOrDefault(a => a.Name.LocalName == "val")?.Value;
                     if (fillColor is { Length: 6 }) formatting.ColorHex = fillColor;
+                    formatting.IsTextFillNone = property.Elements().Any(e => e.Name.LocalName == "noFill");
+                    break;
+                case "textOutline":
+                    // Word 2010 text outline ([MS-DOCX] 2.5.26): w14:w = ST_LineWidth in EMU (12700 per pt; absent = no width);
+                    // fill = noFill (no outline) / solidFill / gradFill (its first stop's colour).
+                    long outlineEmu = long.TryParse(property.Attributes().FirstOrDefault(a => a.Name.LocalName == "w")?.Value, out long emu) ? emu : 0;
+                    XElement? outlineFill = property.Elements().FirstOrDefault(e => e.Name.LocalName is "solidFill" or "gradFill" or "noFill");
+                    formatting.TextOutlineWidthPt = outlineFill is null || outlineFill.Name.LocalName == "noFill" ? 0 : outlineEmu / 12700.0;
+                    formatting.TextOutlineColorHex = outlineFill is null ? null : TextEffectColorHex(outlineFill, theme);
                     break;
                 case "caps": formatting.Toggles.Set(layer, WordToggleProperty.Caps, IsOn(property.Attribute(W + "val"))); break;
                 case "spacing": formatting.CharacterSpacingTwips = TwipsAttribute(property, "val") ?? formatting.CharacterSpacingTwips; break;
@@ -514,6 +523,22 @@ public sealed class DocxStyleCascade
     };
 
     private static int HexToRgb(string hex) => int.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int rgb) ? rgb : 0;
+
+    /// <summary>"RRGGBB" of a w14 text-effect fill (solidFill, or a gradFill's first stop), theme colours and their
+    /// lumMod/tint/shade/alpha transforms included. w14 writes the DrawingML colour elements with namespaced
+    /// attributes (w14:val), so they are re-read as plain DrawingML colours.</summary>
+    private static string? TextEffectColorHex(XElement fill, DocxTheme? theme)
+    {
+        XElement? colorParent = fill.Name.LocalName == "gradFill"
+            ? fill.Descendants().FirstOrDefault(e => e.Name.LocalName == "gs")
+            : fill;
+        return colorParent is null ? null : DocxDrawingColor.Hex(WithoutAttributeNamespaces(colorParent), theme);
+    }
+
+    private static XElement WithoutAttributeNamespaces(XElement element) =>
+        new(element.Name.LocalName,
+            element.Attributes().Where(a => !a.IsNamespaceDeclaration).Select(a => new XAttribute(a.Name.LocalName, a.Value)),
+            element.Elements().Select(WithoutAttributeNamespaces));
 
     public static bool IsOn(XAttribute? value)
     {

@@ -40,6 +40,9 @@ public sealed class WordRunFormatting
     public int CharacterSpacingTwips;
     public int PositionHalfPoints;          // raised (+) / lowered (−) text, w:position / sprmCHpsPos
     public bool IsOutline;
+    public double TextOutlineWidthPt;       // Word 2010 text outline (w14:textOutline): stroke width in pt, 0 = none
+    public string? TextOutlineColorHex;     // its colour "RRGGBB"
+    public bool IsTextFillNone;             // w14:textFill/w14:noFill: hollow letters (only the outline shows)
     public bool IsShadow;
     public bool IsEmboss;
     public bool IsImprint;
@@ -59,6 +62,18 @@ public sealed class WordRunFormatting
     public WordToggleLayers Toggles;
 
     public WordRunFormatting Clone() => (WordRunFormatting)MemberwiseClone();
+
+    /// <summary>Word 2010 text outline ([MS-DOCX] 2.5.26 CT_TextOutlineEffect): a stroke of its own width and colour,
+    /// centred on the glyph edge (algn default "ctr"), over the normal fill; w14:textFill/noFill leaves only the outline.
+    /// LibreOffice keeps w14:textOutline only in a grab bag and does not draw it (sw/source/writerfilter/dmapper/DomainMapper.cxx:3750).</summary>
+    private string? TextOutlineCss()
+    {
+        if (TextOutlineWidthPt <= 0) return IsTextFillNone ? "color:transparent;" : null;
+        // an unresolvable outline colour (a theme colour with no theme part) falls back to the text colour, then black - never invisible text
+        string colorHex = TextOutlineColorHex ?? ColorHex ?? "000000";
+        string css = "-webkit-text-stroke:" + TextOutlineWidthPt.ToString("0.##", CultureInfo.InvariantCulture) + "pt " + WordHtmlColor.Css(colorHex) + ";";
+        return IsTextFillNone ? css + "color:transparent;" : css;
+    }
 
     /// <summary>Shadow / emboss / imprint as CSS text-shadow (Word draws them as offset copies of the glyphs).</summary>
     private string TextShadowCss()
@@ -157,6 +172,8 @@ public sealed class WordRunFormatting
         string effects = TextShadowCss();
         if (effects.Length > 0 && (baseline is null || effects != baseline.TextShadowCss())) css.Append("text-shadow:").Append(effects).Append(';');
         if (IsOutline && (baseline is null || !baseline.IsOutline)) css.Append("-webkit-text-stroke:0.6px currentColor;color:transparent;");
+        string? textOutline = TextOutlineCss();
+        if (textOutline is not null && (baseline is null || textOutline != baseline.TextOutlineCss())) css.Append(textOutline);
         if (BorderCss is not null && BorderCss != "none" && (baseline is null || BorderCss != baseline.BorderCss)) css.Append("border:").Append(BorderCss).Append(';');
         if (CharacterSpacingTwips != 0 && (baseline is null || CharacterSpacingTwips != baseline.CharacterSpacingTwips))
             css.Append("letter-spacing:").Append((CharacterSpacingTwips / 20.0).ToString("0.##", CultureInfo.InvariantCulture)).Append("pt;");
