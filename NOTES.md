@@ -1939,3 +1939,19 @@ archives open on demand from 2 MB: the open returns in 5-7 ms, the first window 
   (`WordShadingColor.Mix`; it wins over `\cb`); a `\bg*` / `\chbg*` pattern counts as 33.3 %. LibreOffice reads only `\cbpat` / `\chcbpat` (the fill): the pattern words follow the RTF 1.5 spec and Word.
 - RTF index format 10 (the group state grew). Test: `FormattingMarksFidelityTest` (`--fidelity`) over test-data/word-formatting/marks-borders-v1.doc / .rtf
   (Word 16, make-marks-borders-fixture.ps1), hand-written RTF and .fodt.
+
+## Second production review (2026-11-09; index formats .docx 17, .doc 8, RTF 11, ODT 12)
+
+- **Formula fields**: nesting deeper than Word's own limit gives Word's "too complex" error (about 27 levels, measured in
+  Word 16 via COM); cell ranges are clamped to the table; DollarText spells the whole part and rounds cents without a carry.
+- **EQ** is walked with an explicit stack (50,000 nested \f or groups render, no stack overflow; Word itself defines no
+  depth). Options may stand apart from their switch (`\a \co2 (..)`, which Word accepts); `\co` larger than the element count
+  is one row. Checks: `WordFieldsFidelityTest` (EQ nested, EQ \a).
+- **Contour wrap** polygons are written as percentages of the float's box, so a float drawn narrower than its size (narrow
+  window) keeps its outline; the gap stays in points (shape-margin). The app's shape-text page script writes the same form.
+- **Gutter placement**: a right-to-left gutter (w:rtlGutter, \rtlgutter, sprmSFRTLGutter 0x322A) narrows the text but does
+  not move the column; gutter at top (w:gutterAtTop, \gutterprl, Dop iGutterPos) takes nothing from the width; ODT's
+  loext:margin-gutter is already inside fo:margin-left and is no longer added twice (sources in `WordDocumentPageSetup.GutterPlacement`).
+  Stored section widths change, so the four index formats were bumped and old sidecars rebuild.
+- **RTF \posrelh3** handled. Harness: the failure count is atomic and every exit path returns non-zero on any FAIL (read the
+  harness's own exit code, never a pipe's).
