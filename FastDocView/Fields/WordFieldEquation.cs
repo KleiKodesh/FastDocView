@@ -135,9 +135,12 @@ public static class WordFieldEquation
             _position++;                                  // the backslash
             string name = ReadSwitchName();
             var options = new List<(string name, string value)>();
-            while (_position + 1 < code.Length && code[_position] == '\\' && char.IsLetter(code[_position + 1]))
+            while (true)
             {
+                // options may be written apart from the switch and each other (\a \co2 \al(...))
                 int save = _position;
+                while (_position < code.Length && char.IsWhiteSpace(code[_position])) _position++;
+                if (!(_position + 1 < code.Length && code[_position] == '\\' && char.IsLetter(code[_position + 1]))) { _position = save; break; }
                 _position++;
                 string option = ReadOptionName(name);
                 if (option.Length == 0) { _position = save; break; }

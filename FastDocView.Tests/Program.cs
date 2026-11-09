@@ -116,7 +116,7 @@ for (int i = 0; i < args.Length; i++)
             string dumpPath = args[++i];
             using FastDocView.IWordWindowedDocument dumped = FastDocView.WordWindowedDocumentOpener.Open(dumpPath, new FastDocView.WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") });
             foreach (var block in dumped.RenderBlocks(0, dumped.BlockCount)) Console.WriteLine(block.Html);
-            return 0;
+            return TestReport.FailureCount == 0 ? 0 : 1;
         }
         case "--golden": goldenDirectory = args[++i]; while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) goldenPaths.Add(args[++i]); break;   // <out-dir> <files...>: observable-output dump per file (index-change proof)
         case "--doc-search-golden": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) docSearchGoldenPaths.Add(args[++i]); break;   // .doc one-pass search = the old block-range path, on these files only
@@ -128,7 +128,7 @@ for (int i = 0; i < args.Length; i++)
         case "--compact-report": while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) compactReportPaths.Add(args[++i]); break;   // sidecar size breakdown + reopen / window / random-block timings
         case "--corpus-max": corpusMax = int.Parse(args[++i]); break;
         case "--corpus-sample": corpusSample = int.Parse(args[++i]); break;   // a fixed-seed random sample of N corpus files (quick regression pass)
-        case "--word-compare-page": WordComparisonPage.Run(args[++i], args[++i], args[++i]); return 0;   // <document> <word.json> <out.html>: blocks matching Word's sampled paragraphs
+        case "--word-compare-page": WordComparisonPage.Run(args[++i], args[++i], args[++i]); return TestReport.FailureCount == 0 ? 0 : 1;   // <document> <word.json> <out.html>: blocks matching Word's sampled paragraphs
         case "--list-labels-fallback": listLabelsFallback = args[++i]; break;   // a path list to scan for a .doc with lists when the --real ones have none
     }
 }

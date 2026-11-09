@@ -5,13 +5,16 @@ namespace FastDocView.Tests;
 /// <summary>Per-step console reporting with timings; every check prints PASS/FAIL and the run exits non-zero on any FAIL.</summary>
 public static class TestReport
 {
-    public static int FailureCount { get; private set; }
+    private static int _failureCount;
+
+    /// <summary>Checks that failed so far (counted atomically: some checks run on worker threads).</summary>
+    public static int FailureCount => Volatile.Read(ref _failureCount);
 
     public static void Step(string message) => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
 
     public static void Check(bool condition, string what)
     {
-        if (!condition) FailureCount++;
+        if (!condition) Interlocked.Increment(ref _failureCount);
         Console.WriteLine($"   {(condition ? "PASS" : "FAIL")}  {what}");
     }
 
