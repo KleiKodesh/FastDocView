@@ -59,6 +59,8 @@ internal enum RtfStateFlags : uint
     // paragraph
     RightToLeftParagraph = 1 << 20, InTable = 1 << 21, PageBreakBefore = 1 << 22, LineSpacingMultiple = 1 << 23,
     HasStartIndent = 1 << 24, HasEndIndent = 1 << 25,
+    NoAutoHyphenation = 1 << 26,  // \hyphpar0 (LibreOffice rtfdocumentimpl.cxx:2366: suppressAutoHyphens = bParam && nParam == 0)
+    DropCapInMargin = 1 << 27,    // \dropcapt2
     ParagraphMask = 0xFFu << 20,
     // group
     // \lbrN: the clearing of the next \line (1 left, 2 right, 3 all; LibreOffice rtfdispatchvalue.cxx:1779-1800 LBR -> w:br clear),
@@ -122,6 +124,9 @@ internal struct RtfGroupState
     public RtfBorder BorderTop, BorderLeft, BorderBottom, BorderRight;   // \brdrt / \brdrl / \brdrb / \brdrr / \box (physical sides)
     public short ParagraphBackgroundColor, ParagraphPatternColor;       // \cbpat (the fill), \cfpat (the pattern colour)
     public short ParagraphShading;         // \shading, hundredths of a percent (a \bg* pattern = 3333)
+    public short FrameHorizontalDistance;  // \dxfrtext / \dfrmtxtx twips: a frame's gap to the text (a drop cap's distance)
+    public byte DropCapLines;              // \dropcapliN: the paragraph is a drop-cap frame dropping N lines (0 = none)
+    public ushort Language;                // \langN (LCID), 0 = the document default (\deflang)
 
     public static int Size => System.Runtime.CompilerServices.Unsafe.SizeOf<RtfGroupState>();
 
@@ -144,7 +149,7 @@ internal struct RtfGroupState
         FontSize = 24; ComplexFontSize = 24;     // \fs default 24 (RTF 1.5 spec, LibreOffice table)
         ForegroundColor = 0; BackgroundColor = 0; ShadingColor = 0; Highlight = 0;
         Position = 0; CharacterSpacing = 0; CharacterScale = 0;
-        UnderlineColor = 0; EmphasisMark = 0; CharacterPatternColor = 0; CharacterShading = 0; CharacterBorder = default;
+        UnderlineColor = 0; EmphasisMark = 0; CharacterPatternColor = 0; CharacterShading = 0; CharacterBorder = default; Language = 0;
         if (BorderTarget == RtfBorderTarget.Character) BorderTarget = RtfBorderTarget.None;
         CodePage = defaultCodePage;
     }
@@ -158,6 +163,7 @@ internal struct RtfGroupState
         LeftIndent = RightIndent = StartIndent = EndIndent = FirstLineIndent = SpaceBefore = SpaceAfter = LineSpacing = 0;
         BorderTop = BorderLeft = BorderBottom = BorderRight = default;
         ParagraphBackgroundColor = ParagraphPatternColor = ParagraphShading = 0;
+        DropCapLines = 0; FrameHorizontalDistance = 0;
         if (BorderTarget != RtfBorderTarget.Character) BorderTarget = RtfBorderTarget.None;
     }
 

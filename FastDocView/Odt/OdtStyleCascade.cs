@@ -32,7 +32,7 @@ public sealed class OdtStyleCascade
         "style:text-line-through-style", "style:text-line-through-type", "fo:font-size", "style:font-size-complex",
         "style:font-name", "style:font-name-complex", "fo:font-family", "style:font-family-complex", "fo:color", "fo:background-color",
         "style:text-position", "fo:text-transform", "fo:font-variant", "fo:letter-spacing", "text:display", "style:text-outline",
-        "fo:text-shadow", "style:font-relief", "fo:border", "style:text-emphasize", "style:text-scale",
+        "fo:text-shadow", "style:font-relief", "fo:border", "style:text-emphasize", "style:text-scale", "fo:hyphenate", "fo:language", "fo:country",
     ];
 
     /// <summary>Attributes of style:paragraph-properties this cascade maps.</summary>
@@ -176,7 +176,8 @@ public sealed class OdtStyleCascade
                         if (handled is null) continue;
                         // graphic properties are kept whole: every drawing attribute (fill, stroke, markers, text area, wrap) is read
                         var kept = new XElement(properties.Name, properties.Attributes().Where(attribute => properties.Name.LocalName == "graphic-properties" || handled.Contains(QualifiedName(attribute.Name))));
-                        if (kept.HasAttributes) style.Add(kept);
+                        if (properties.Element(Style + "drop-cap") is { } dropCap) kept.Add(new XElement(dropCap.Name, dropCap.Attributes()));   // style:drop-cap is a child element
+                        if (kept.HasAttributes || kept.HasElements) style.Add(kept);
                     }
                     copy.Add(style);
                 }
@@ -305,10 +306,14 @@ public sealed class OdtStyleCascade
         public string? Background;
         public string? BorderTop, BorderBottom, BorderLeft, BorderRight;
         public bool IsPageBreakBefore;
+        public int DropCapLines, DropCapLength, DropCapDistance;
 
         public WordParagraphFormatting ToFormatting()
         {
-            var formatting = new WordParagraphFormatting { IsRightToLeft = IsRightToLeft };
+            var formatting = new WordParagraphFormatting
+            {
+                IsRightToLeft = IsRightToLeft, DropCapLines = DropCapLines, DropCapCharacterCount = DropCapLength, DropCapDistanceTwips = DropCapDistance,
+            };
             formatting.Alignment = Align switch
             {
                 "center" => WordParagraphAlignment.Center,
@@ -366,6 +371,17 @@ public sealed class OdtStyleCascade
         raw.BorderLeft = BorderCss(properties.Attribute(Fo + "border-left")) ?? raw.BorderLeft;
         raw.BorderRight = BorderCss(properties.Attribute(Fo + "border-right")) ?? raw.BorderRight;
         if ((string?)properties.Attribute(Fo + "break-before") is { } breakBefore) raw.IsPageBreakBefore = breakBefore == "page";
+        // style:drop-cap (ODF 1.3 17.9), read as LibreOffice xmloff txtdropi.cxx ProcessAttrs: style:lines below 2 = no drop cap,
+        // style:length a count or "word" (-1 here), with lines and no length 1 character; style:distance the gap to the text.
+        if (properties.Element(Style + "drop-cap") is { } dropCap)
+        {
+            int lines = int.TryParse((string?)dropCap.Attribute(Style + "lines"), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int parsedLines) ? parsedLines : 1;
+            raw.DropCapLines = lines is >= 2 and <= 255 ? lines : 0;
+            string? length = (string?)dropCap.Attribute(Style + "length");
+            raw.DropCapLength = length == "word" ? -1
+                : int.TryParse(length, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int count) && count is >= 1 and <= 255 ? count : 1;
+            raw.DropCapDistance = Math.Max(0, Twips(dropCap.Attribute(Style + "distance")) ?? 0);
+        }
     }
 
     // ── text properties ───────────────────────────────────────────────────────────────
@@ -413,6 +429,11 @@ public sealed class OdtStyleCascade
         if ((string?)properties.Attribute(Style + "text-scale") is { } textScale)
             run.CharacterScalePercent = int.TryParse(textScale.TrimEnd('%'), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int scalePercent) ? scalePercent : 100;
         if ((string?)properties.Attribute(Text + "display") is { } display) run.IsHidden = display == "none";
+        if ((string?)properties.Attribute(Fo + "hyphenate") is { } hyphenate) run.Hyphenate = hyphenate == "true";
+        // fo:language + fo:country (ODF 20.218 / 20.183): the Latin-text language, for the hyphenated paragraph lang attribute
+        if ((string?)properties.Attribute(Fo + "language") is { } language)
+            run.Language = language is "none" or "zxx" ? null
+                : (string?)properties.Attribute(Fo + "country") is { Length: > 0 } country && country != "none" ? language + "-" + country : language;
         if ((string?)properties.Attribute(Style + "text-outline") is { } outline) run.IsOutline = outline == "true";
         if ((string?)properties.Attribute(Fo + "text-shadow") is { } shadow) run.IsShadow = shadow != "none";
         if ((string?)properties.Attribute(Style + "font-relief") is { } relief) { run.IsEmboss = relief == "embossed"; run.IsImprint = relief == "engraved"; }

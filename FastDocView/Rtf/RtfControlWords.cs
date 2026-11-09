@@ -13,7 +13,7 @@ internal enum RtfWord : byte
     ListOverrideTable, ListOverride, ListOverrideLevel, ListOverrideStartAt, ListOverrideIndex, ListLevelIndex,
     FootnoteNumberingArabic, FootnoteNumberingLowerAlpha, FootnoteNumberingUpperAlpha, FootnoteNumberingLowerRoman, FootnoteNumberingUpperRoman, FootnoteNumberingChicago,
     EndnoteNumberingArabic, EndnoteNumberingLowerAlpha, EndnoteNumberingUpperAlpha, EndnoteNumberingLowerRoman, EndnoteNumberingUpperRoman, EndnoteNumberingChicago,
-    FootnoteStart, EndnoteStart, RightToLeftDocument,
+    FootnoteStart, EndnoteStart, RightToLeftDocument, AutoHyphenation, DefaultLanguage,
     //  page setup (document defaults, then per section) 
     PaperWidth, LeftMargin, RightMargin, Gutter, SectionDefault, SectionPageWidth, SectionLeftMargin, SectionRightMargin, SectionGutter, RightToLeftGutter, GutterAtTop,
     // ── destinations rendered ──
@@ -30,7 +30,7 @@ internal enum RtfWord : byte
     // ── paragraph ──
     ParagraphDefault, AlignLeft, AlignRight, AlignCenter, AlignJustify, AlignDistribute,
     LeftIndent, RightIndent, StartIndent, EndIndent, FirstLineIndent, SpaceBefore, SpaceAfter, LineSpacing, LineSpacingMultiple,
-    RightToLeftParagraph, LeftToRightParagraph, InTable, NestingLevel, PageBreakBefore,
+    RightToLeftParagraph, LeftToRightParagraph, InTable, NestingLevel, PageBreakBefore, DropCapLines, DropCapType, FrameHorizontalDistance, ParagraphHyphenation,
     // ── table row ──
     RowDefault, CellBoundary, CellShading, RightToLeftRow, LeftToRightRow, RowLeft, RowAlignLeft, RowAlignCenter, RowAlignRight,
     // ── character ──
@@ -38,7 +38,7 @@ internal enum RtfWord : byte
     UnderlineThick, UnderlineWords, UnderlineNone, Strike, StrikeDouble, FontSize, AssociatedFontSize, ForegroundColor, BackgroundColor,
     CharacterShading, Highlight, Superscript, Subscript, NoSuperSubscript, RaisedPosition, LoweredPosition, Hidden, AllCaps, SmallCaps,
     Outline, Shadow, Emboss, Imprint, CharacterSpacing, CharacterScale, RightToLeftCharacters, LeftToRightCharacters, LineBreakClear,
-    UnderlineColor, CharacterPatternColor, CharacterShadingPercent, CharacterShadingPattern,
+    UnderlineColor, CharacterPatternColor, CharacterShadingPercent, CharacterShadingPattern, Language,
     EmphasisNone, EmphasisDot, EmphasisComma, EmphasisCircle, EmphasisUnderDot,
     // ── borders and paragraph shading ──
     CharacterBorder, ParagraphBorderTop, ParagraphBorderLeft, ParagraphBorderBottom, ParagraphBorderRight, ParagraphBorderBox, OtherBorder,
@@ -104,7 +104,7 @@ internal static class RtfControlWords
         ("ftnnrlc", RtfWord.FootnoteNumberingLowerRoman), ("ftnnruc", RtfWord.FootnoteNumberingUpperRoman), ("ftnnchi", RtfWord.FootnoteNumberingChicago),
         ("aftnnar", RtfWord.EndnoteNumberingArabic), ("aftnnalc", RtfWord.EndnoteNumberingLowerAlpha), ("aftnnauc", RtfWord.EndnoteNumberingUpperAlpha),
         ("aftnnrlc", RtfWord.EndnoteNumberingLowerRoman), ("aftnnruc", RtfWord.EndnoteNumberingUpperRoman), ("aftnnchi", RtfWord.EndnoteNumberingChicago),
-        ("ftnstart", RtfWord.FootnoteStart), ("aftnstart", RtfWord.EndnoteStart), ("rtldoc", RtfWord.RightToLeftDocument),
+        ("ftnstart", RtfWord.FootnoteStart), ("aftnstart", RtfWord.EndnoteStart), ("rtldoc", RtfWord.RightToLeftDocument), ("hyphauto", RtfWord.AutoHyphenation), ("deflang", RtfWord.DefaultLanguage),
         ("paperw", RtfWord.PaperWidth), ("margl", RtfWord.LeftMargin), ("margr", RtfWord.RightMargin), ("gutter", RtfWord.Gutter),
         ("sectd", RtfWord.SectionDefault), ("pgwsxn", RtfWord.SectionPageWidth), ("marglsxn", RtfWord.SectionLeftMargin),
         ("margrsxn", RtfWord.SectionRightMargin), ("guttersxn", RtfWord.SectionGutter), ("rtlgutter", RtfWord.RightToLeftGutter), ("gutterprl", RtfWord.GutterAtTop),
@@ -130,7 +130,7 @@ internal static class RtfControlWords
         ("qd", RtfWord.AlignDistribute), ("li", RtfWord.LeftIndent), ("ri", RtfWord.RightIndent), ("lin", RtfWord.StartIndent), ("rin", RtfWord.EndIndent),
         ("fi", RtfWord.FirstLineIndent), ("sb", RtfWord.SpaceBefore), ("sa", RtfWord.SpaceAfter), ("sl", RtfWord.LineSpacing), ("slmult", RtfWord.LineSpacingMultiple),
         ("rtlpar", RtfWord.RightToLeftParagraph), ("ltrpar", RtfWord.LeftToRightParagraph), ("intbl", RtfWord.InTable), ("itap", RtfWord.NestingLevel),
-        ("pagebb", RtfWord.PageBreakBefore),
+        ("pagebb", RtfWord.PageBreakBefore), ("dropcapli", RtfWord.DropCapLines), ("dropcapt", RtfWord.DropCapType), ("dxfrtext", RtfWord.FrameHorizontalDistance), ("dfrmtxtx", RtfWord.FrameHorizontalDistance), ("hyphpar", RtfWord.ParagraphHyphenation), ("lang", RtfWord.Language),
         ("trowd", RtfWord.RowDefault), ("cellx", RtfWord.CellBoundary), ("clcbpat", RtfWord.CellShading), ("rtlrow", RtfWord.RightToLeftRow), ("ltrrow", RtfWord.LeftToRightRow),
         ("trleft", RtfWord.RowLeft), ("trql", RtfWord.RowAlignLeft), ("trqc", RtfWord.RowAlignCenter), ("trqr", RtfWord.RowAlignRight),
         ("plain", RtfWord.Plain), ("b", RtfWord.Bold), ("i", RtfWord.Italic), ("ab", RtfWord.AssociatedBold), ("ai", RtfWord.AssociatedItalic),

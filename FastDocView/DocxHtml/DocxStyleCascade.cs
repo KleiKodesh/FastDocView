@@ -280,6 +280,9 @@ public sealed class DocxStyleCascade
         return built;
     }
 
+    /// <summary>Whether the paragraph style or a style it is based on has w:framePr (a drop cap can come from a style).</summary>
+    public bool HasDropCapStyle(string? styleId) => ResolveParagraphStyle(styleId).DropCapLines > 0;
+
     private List<XElement> BuildStyleChain(string? styleId)
     {
         var chain = new List<XElement>();
@@ -344,6 +347,22 @@ public sealed class DocxStyleCascade
             formatting.BorderEndCss = DocxTableFormatting.BorderCss(borders.Element(W + "end") ?? borders.Element(W + "right"), theme) ?? formatting.BorderEndCss;
             formatting.BorderBetweenCss = DocxTableFormatting.BorderCss(borders.Element(W + "between"), theme) ?? formatting.BorderBetweenCss;
         }
+        // w:framePr dropCap (ST_DropCap none / drop / margin, §17.3.1.11), lines, hSpace — read as LibreOffice's DomainMapper.cxx
+        // LN_CT_FramePr_dropCap / _lines / _hSpace does; DomainMapper_Impl.cxx finishParagraph: lines outside 1..127 → 2.
+        if (pPr.Element(W + "framePr") is { } frame)
+        {
+            string? dropCap = (string?)frame.Attribute(W + "dropCap");
+            if (dropCap is "drop" or "margin")
+            {
+                int lines = TwipsAttribute(frame, "lines") ?? 0;
+                formatting.DropCapLines = lines is > 0 and < 128 ? lines : 2;
+                formatting.IsDropCapInMargin = dropCap == "margin";
+                formatting.DropCapDistanceTwips = Math.Max(0, TwipsAttribute(frame, "hSpace") ?? 0);
+            }
+            else formatting.DropCapLines = 0;                  // a framePr without a drop cap replaces an inherited one
+        }
+        // w:suppressAutoHyphens (§17.3.1.34): LibreOffice DomainMapper.cxx LN_CT_PPrBase_suppressAutoHyphens → ParaIsHyphenation = !val.
+        if (pPr.Element(W + "suppressAutoHyphens") is { } suppressHyphens) formatting.IsAutoHyphenationSuppressed = IsOn(suppressHyphens.Attribute(W + "val"));
         if (pPr.Element(W + "contextualSpacing") is { } contextual) formatting.IsContextualSpacing = IsOn(contextual.Attribute(W + "val"));
         if (pPr.Element(W + "shd") is { } shading) formatting.ShadingHex = FillHex(shading, theme);
         if (pPr.Element(W + "tabs") is { } tabs)
@@ -451,6 +470,7 @@ public sealed class DocxStyleCascade
                 case "shd":
                     formatting.ShadingHex = FillHex(property, theme);
                     break;
+                case "lang": formatting.Language = (string?)property.Attribute(W + "val") ?? formatting.Language; break;   // §17.3.2.20: val = Latin text
                 case "rFonts":
                     // The theme attribute wins over the explicit one (rFonts §17.3.2.26: "If the asciiTheme attribute is also
                     // specified, then this attribute shall be ignored"); a theme slot that resolves to nothing falls back to the explicit face.

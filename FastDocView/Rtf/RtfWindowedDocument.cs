@@ -459,13 +459,26 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         int first = Math.Max(0, firstBlockIndex);
         int end = (int)Math.Min(_index.BlockCount, (long)firstBlockIndex + Math.Max(0, count));
         var result = new List<WordDocumentBlockHtml>(Math.Max(0, end - first));
+        // A drop-cap frame paragraph at the end of the block before the window is drawn in the window's first paragraph.
+        (WordParagraphFormatting format, string html)? carried = null;
+        if (first > 0 && first < end && _table.BlockKindOf(first - 1) == WordDocumentBlockKind.Paragraph)   // a table row never ends in a drop cap
+        {
+            _fieldContext.CurrentBlock = first - 1;
+            _renderer.IncomingDropCap = null;
+            _renderer.Render(_file, _index, _table, first - 1);
+            carried = _renderer.PendingDropCap;
+        }
         for (int blockIndex = first; blockIndex < end; blockIndex++)
         {
+            _renderer.IncomingDropCap = carried;
             _fieldContext.CurrentBlock = blockIndex;
             _fieldContext.UsedIncompleteIndex = false;
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
             _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(_file, _index, _table, blockIndex);
+            carried = _renderer.PendingDropCap ?? _renderer.IncomingDropCap;     // an initial before a table runs on to the next paragraph
+            if (carried is { } last && blockIndex == _index.BlockCount - 1)
+                html += "<p>" + last.html + "</p>";                                   // nothing follows: the initial stays a paragraph
             result.Add(new WordDocumentBlockHtml(blockIndex, _table.BlockKindOf(blockIndex), html, notes, _fieldContext.UsedIncompleteIndex));
         }
         return result;

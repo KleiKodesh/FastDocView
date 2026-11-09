@@ -41,6 +41,10 @@ public sealed class RtfDocumentTables
     public int FootnoteStart { get; set; } = 1;
     public int EndnoteStart { get; set; } = 1;
     public bool IsRightToLeftDocument { get; set; }
+    /// <summary>\hyphauto: the document hyphenates automatically.</summary>
+    public bool IsAutoHyphenation { get; set; }
+    /// <summary>\deflang: the document default language (LCID), 0 = none.</summary>
+    public ushort DefaultLanguage { get; set; }
 
     /// <summary>The code page text in font <paramref name="font"/> decodes with: its \fcharset / \cpg / name suffix, else \ansicpg.</summary>
     public ushort CodePageOfFont(int font)
@@ -72,6 +76,7 @@ public sealed class RtfDocumentTables
         writer.Write(DefaultFont); writer.Write(AnsiCodePage);
         writer.Write(FootnoteFormat); writer.Write(EndnoteFormat); writer.Write(FootnoteStart); writer.Write(EndnoteStart);
         writer.Write(IsRightToLeftDocument);
+        writer.Write(IsAutoHyphenation); writer.Write(DefaultLanguage);
         writer.Write(Fonts.Count);
         foreach (KeyValuePair<int, FontEntry> font in Fonts) { writer.Write(font.Key); writer.Write(font.Value.Name); writer.Write(font.Value.Charset); writer.Write(font.Value.CodePage); }
         writer.Write(Colors.Count);
@@ -110,6 +115,8 @@ public sealed class RtfDocumentTables
             DefaultFont = reader.ReadInt32(), AnsiCodePage = reader.ReadInt32(),
             FootnoteFormat = reader.ReadString(), EndnoteFormat = reader.ReadString(), FootnoteStart = reader.ReadInt32(), EndnoteStart = reader.ReadInt32(),
             IsRightToLeftDocument = reader.ReadBoolean(),
+            IsAutoHyphenation = reader.ReadBoolean(),
+            DefaultLanguage = reader.ReadUInt16(),
         };
         int fonts = reader.ReadInt32();
         for (int i = 0; i < fonts; i++) tables.Fonts[reader.ReadInt32()] = new FontEntry { Name = reader.ReadString(), Charset = reader.ReadInt32(), CodePage = reader.ReadInt32() };

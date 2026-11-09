@@ -73,8 +73,15 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     public static WordRunFormatting DocumentRunFormatting(RtfDocumentTables tables)
         => new() { FontName = tables.FontName(tables.DefaultFont), FontSizeHalfPoints = 24 };
 
+    /// <summary>After <see cref="Render"/>: a drop-cap frame paragraph the block ended with, to be drawn at the start of the next paragraph.</summary>
+    public (WordParagraphFormatting format, string html)? PendingDropCap { get; private set; }
+
+    /// <summary>Before <see cref="Render"/>: a drop-cap frame paragraph the previous block ended with (its <see cref="PendingDropCap"/>).</summary>
+    public (WordParagraphFormatting format, string html)? IncomingDropCap { get; set; }
+
     public (string html, IReadOnlyList<WordDocumentNoteHtml> notes) Render(Stream file, RtfRandomAccessIndex index, RtfCompactBlockTable table, int blockIndex)
     {
+        PendingDropCap = null;
         _blockIndex = blockIndex;
         _pictureOrdinal = 0;
         _bodyFlow = new Flow();
@@ -135,7 +142,14 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         StringBuilder target = _listTextTarget ?? _flow.Inline;
         // \rtlch marks a right-to-left run (RTF 1.5 spec); inside an \ltrpar paragraph it is an RTL embedding, as w:rtl is
         bool isRunRightToLeft = _runState.RunType is RtfRunType.RightToLeftFirst or RtfRunType.LeftToRightThenRightToLeft;
-        string css = RunFormatting(_runState, IsComplexScript(text)).ToCss(_documentRun) + BaselineShiftCss
+        WordRunFormatting runFormatting = RunFormatting(_runState, IsComplexScript(text));
+        if (_runState.DropCapLines > 0)
+        {
+            // the size and raised position Word gives the initial to fill its frame: the drop-cap span sizes it instead
+            runFormatting.FontSizeHalfPoints = runFormatting.ComplexScriptFontSizeHalfPoints = _documentRun.FontSizeHalfPoints;
+            runFormatting.PositionHalfPoints = 0;
+        }
+        string css = runFormatting.ToCss(_documentRun) + BaselineShiftCss
                      + WordHtmlText.RunDirectionCss(isRunRightToLeft, _runState.Has(RtfStateFlags.RightToLeftParagraph));
         string encoded = WordHtmlText.Encode(text);
         if (css.Length == 0) { WordHtmlText.AppendScaled(target, encoded, _runState.CharacterScale); return; }
@@ -242,9 +256,30 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         // a link field whose result spans paragraphs: closed with each paragraph and reopened in the next
         string? openLink = _flow.OpenLink;
         if (openLink is not null) _flow.Inline.Append("</a>");
+        // A drop-cap frame paragraph (\dropcapli) is not drawn where it stands: its runs go into a drop-cap span at the start
+        // of the next top-level paragraph (Word keeps the initial in a paragraph of its own; the .docx / .doc paths join the two
+        // the same way). The windowed document carries it across a block edge (PendingDropCap / IncomingDropCap).
+        if (isTopLevel && formatting.DropCapLines > 0 && _flow.ListText is null)
+        {
+            PendingDropCap = (formatting, _flow.Inline.ToString() + (openLink is not null ? "</a>" : ""));
+            _flow.Inline.Clear();
+            _flow.HasInline = false;
+            if (openLink is not null) _flow.Inline.Append(openLink);
+            _baselineShift = 0;                                            // the text paragraph stays the block's first
+            return;
+        }
+        (WordParagraphFormatting format, string html)? dropCap = isTopLevel ? IncomingDropCap ?? PendingDropCap : null;
+        if (isTopLevel) { IncomingDropCap = null; PendingDropCap = null; }
         var html = new StringBuilder(_flow.Inline.Length + 64);
         if (state.Has(RtfStateFlags.PageBreakBefore) && isTopLevel) html.Append("<span class=\"page-break\"></span>");
-        WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss() + (_flow.IsTextBox ? "display:block;" : ""), _flow.IsTextBox ? "text-box-paragraph" : null, formatting.IsRightToLeft);
+        WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss() + (_flow.IsTextBox ? "display:block;" : ""), _flow.IsTextBox ? "text-box-paragraph" : null, formatting.IsRightToLeft,
+                                   formatting.HyphenationLanguageAttribute);
+        if (dropCap is { } initial)
+        {
+            WordDropCapHtml.Open(html, initial.format);
+            html.Append(initial.html);
+            WordDropCapHtml.Close(html);
+        }
         // The label sits at the first-line position and a tab after it reaches the next stop (WordListLabelHtml): the flat
         // \listtext label Word wrote (its \tab = the tab suffix, RTF 1.5 \listtext), or the label counted at index time
         // (its \levelfollow); \leveljc places the label.
@@ -304,7 +339,13 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             BorderBottomCss = BorderCss(state.BorderBottom),
             BorderStartCss = BorderCss(state.BorderLeft),
             BorderEndCss = BorderCss(state.BorderRight),
+            DropCapLines = state.DropCapLines,
+            IsDropCapInMargin = state.Has(RtfStateFlags.DropCapInMargin),
+            DropCapDistanceTwips = state.FrameHorizontalDistance,
+            IsAutoHyphenationSuppressed = state.Has(RtfStateFlags.NoAutoHyphenation),
         };
+        formatting.IsHyphenated = _tables.IsAutoHyphenation && !formatting.IsAutoHyphenationSuppressed;
+        formatting.RunFormatting.Language = WordLanguageIds.TagOf(state.Language != 0 ? state.Language : _tables.DefaultLanguage);
         // \slN: none / 1000 = auto; with \slmult1 a multiple of 240; else negative = exactly, positive = at least (RTF 1.5 spec)
         if (state.LineSpacing != 0 && state.LineSpacing != 1000)
         {

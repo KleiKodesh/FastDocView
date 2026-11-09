@@ -65,6 +65,10 @@ public sealed class WordRunFormatting
     public string? ComplexScriptFontName;
     public bool IsComplexScript;            // .docx w:cs: complex-script properties without right-to-left direction
     public string? EastAsianFontName;       // .docx rFonts eastAsia: the face Word draws CJK characters with
+    /// <summary>The Latin-text language as a BCP 47 tag ("en-US"): .docx w:lang val, .doc sprmCRgLid0, RTF \lang, ODT fo:language + fo:country. Used for hyphenation only.</summary>
+    public string? Language;
+    /// <summary>ODT only: fo:hyphenate (a text property in ODF 20.206; LibreOffice xmloff txtprmap.cxx:345 maps it to ParaIsHyphenation), null = not stated.</summary>
+    public bool? Hyphenate;
     public bool IsWebHidden;                // w:webHidden: hidden in a web view (not a toggle property)
     /// <summary>.docx only: the toggle properties per style layer; <c>DocxStyleCascade</c> resolves them into the flags above.</summary>
     public WordToggleLayers Toggles;

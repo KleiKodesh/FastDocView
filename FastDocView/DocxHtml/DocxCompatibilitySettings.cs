@@ -45,8 +45,12 @@ public sealed class DocxCompatibilitySettings
     /// <summary>w:defaultTabStop (ECMA-376 17.15.1.25): the interval of the default tab stops, twips; 720 when absent.</summary>
     public int DefaultTabStopTwips { get; } = 720;
 
+    /// <summary>w:autoHyphenation (§17.15.1.10): the document hyphenates automatically (LibreOffice SettingsTable.cxx m_bAutoHyphenation → ParaIsHyphenation on the default style).</summary>
+    public bool IsAutoHyphenation { get; }
+
     public DocxCompatibilitySettings(XDocument? settingsDocument)
     {
+        if (settingsDocument?.Root?.Element(W + "autoHyphenation") is { } autoHyphenation) IsAutoHyphenation = DocxStyleCascade.IsOn(autoHyphenation.Attribute(W + "val"));
         if (DocxStyleCascade.TwipsAttribute(settingsDocument?.Root?.Element(W + "defaultTabStop"), "val") is > 0 and var tabStop) DefaultTabStopTwips = tabStop;
         if (settingsDocument?.Root?.Element(W + "gutterAtTop") is { } gutterAtTop) IsGutterAtTop = DocxStyleCascade.IsOn(gutterAtTop.Attribute(W + "val"));
         XElement? compat = settingsDocument?.Root?.Element(W + "compat");

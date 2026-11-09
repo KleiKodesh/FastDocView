@@ -52,6 +52,16 @@ public static class DocBinaryPropertyModifiers
                 case 0x260A: formatting.NumberingLevel = grpprl[operandAt]; break;
                 case 0x460B: formatting.NumberingId = BitConverter.ToUInt16(grpprl, operandAt); break;
                 case 0x2640: formatting.OutlineLevel = grpprl[operandAt] is var level && level <= 8 ? level : -1; break;
+                // sprmPFNoAutoHyph / sprmPDcs / sprmPDxaFromText (LibreOffice sprmids.hxx 0x242A / 0x442C / 0x842F): ww8par6.cxx
+                // Read_Hyphenation (hyphenate = operand 0), IsDropCap (fdct = DCS & 7: 1 drop, 2 in margin), ww8par.cxx:4049 lines =
+                // DCS low byte >> 3, distance = sprmPDxaFromText.
+                case 0x242A: formatting.IsAutoHyphenationSuppressed = grpprl[operandAt] != 0; break;
+                case 0x442C:
+                    int dropCapType = grpprl[operandAt] & 7;
+                    formatting.DropCapLines = dropCapType is 1 or 2 ? Math.Max(1, grpprl[operandAt] >> 3) : 0;
+                    formatting.IsDropCapInMargin = dropCapType == 2;
+                    break;
+                case 0x842F: formatting.DropCapDistanceTwips = Math.Max((short)0, BitConverter.ToInt16(grpprl, operandAt)); break;
                 case 0x246D: formatting.IsContextualSpacing = grpprl[operandAt] != 0; break;                     // sprmPFContextualSpacing (sprmids.hxx)
                 case 0xC64D: formatting.ShadingHex = ShadingBackground(grpprl, operandAt + 4, operandLength); break;      // SHDOperand: cvFore then cvBack
                 case 0x442D: formatting.ShadingHex = Shading80Background(BitConverter.ToUInt16(grpprl, operandAt)); break;
@@ -100,6 +110,7 @@ public static class DocBinaryPropertyModifiers
                     formatting.IsEmphasisMarkBelow = grpprl[operandAt] == 4;
                     break;
                 case 0x2A48: formatting.IsSuperscript = grpprl[operandAt] == 1; formatting.IsSubscript = grpprl[operandAt] == 2; break;
+                case 0x486D: case 0x4873: formatting.Language = WordLanguageIds.TagOf(BitConverter.ToUInt16(grpprl, operandAt)) ?? formatting.Language; break;   // sprmCRgLid0_80 / sprmCRgLid0 (ww8par6.cxx Read_Language)
                 case 0x4A43: formatting.FontSizeHalfPoints = BitConverter.ToUInt16(grpprl, operandAt); break;
                 case 0x4A61: formatting.ComplexScriptFontSizeHalfPoints = BitConverter.ToUInt16(grpprl, operandAt); break;
                 case 0x2A42: formatting.ColorHex = grpprl[operandAt] < IcoPalette.Length ? IcoPalette[grpprl[operandAt]] : null; break;

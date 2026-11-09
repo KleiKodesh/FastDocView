@@ -130,6 +130,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         ListDefinitions = DocBinaryListDefinitions.Read(_tableStream, FileInformationBlock.ListFormats, FileInformationBlock.ListFormatOverrides);
         _renderer.Lists = ListDefinitions;
         _renderer.DefaultTabStopTwips = ReadDefaultTabStop(_tableStream, FileInformationBlock.DocumentProperties);
+        _renderer.IsAutoHyphenation = ReadAutoHyphenation(_tableStream, FileInformationBlock.DocumentProperties);
         Bookmarks = DocBinaryBookmarks.Read(_tableStream, FileInformationBlock);
         _renderer.Bookmarks = Bookmarks;
         // fields: the PlcFld tables (flags, open fields at a block start, counters), the property streams, FFData, bookmarks' text
@@ -281,6 +282,14 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         return value > 0 ? value : WordListLabelHtml.DefaultTabStopTwips;
     }
 
+    /// <summary>Dop fAutoHyphen: bit 0x10 of the Dop byte at offset 5 (LibreOffice ww8scan.cxx WW8Dop: "a8Bit = Get_Byte( pData ); // 5 0x05" ... "fAutoHyphen = 0 != ( a8Bit &amp; 0x10 )").</summary>
+    private static bool ReadAutoHyphenation(Stream tableStream, (uint offset, uint length) dop)
+    {
+        if (dop.length < 6 || dop.offset + 6 > tableStream.Length) return false;
+        tableStream.Position = dop.offset + 5;
+        return (tableStream.ReadByte() & 0x10) != 0;
+    }
+
     private bool DetectRightToLeft()
     {
         if (_styles.ResolveParagraphStyle(0).IsRightToLeft) return true;
@@ -429,9 +438,15 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
             if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex;
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
             _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
-            string html = kind == WordDocumentBlockKind.TableRow
-                ? _renderer.RenderRow(start, end)
-                : _renderer.Render(start, end, PreviousStyleKey(blockIndex), listLabel: _table.ListLabelOf(blockIndex));
+            string html;
+            if (kind == WordDocumentBlockKind.TableRow) html = _renderer.RenderRow(start, end);
+            else if (IsDropCapJoiningNext(blockIndex)) html = "";          // drawn at the start of the next paragraph
+            else
+            {
+                (int, int)? dropCap = IsDropCapJoiningNext(blockIndex - 1)
+                    ? (_table.BlockStartCp(blockIndex - 1), _table.BlockEndCp(blockIndex - 1)) : null;
+                html = _renderer.Render(start, end, PreviousStyleKey(blockIndex), listLabel: _table.ListLabelOf(blockIndex), dropCapParagraph: dropCap);
+            }
             result.Add(new WordDocumentBlockHtml(blockIndex, kind, html, RenderNotesIn(start, end)));
         }
         return result;
@@ -442,6 +457,18 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     {
         if (blockIndex == 0 || _table.BlockKindOf(blockIndex - 1) != WordDocumentBlockKind.Paragraph) return null;
         return _renderer.ResolveParagraph(_table.BlockStartCp(blockIndex - 1), _table.BlockEndCp(blockIndex - 1)).formatting.StyleKey;
+    }
+
+    /// <summary>
+    /// A drop-cap frame paragraph followed by an ordinary paragraph: Word keeps the initial in a paragraph of its own, drawn
+    /// inside the next one (LibreOffice ww8par.cxx m_bDropCap: the stored frame node is joined to the following paragraph).
+    /// </summary>
+    private bool IsDropCapJoiningNext(int blockIndex)
+    {
+        bool IsParagraph(int index) => index >= 0 && index < BlockCount && _table.BlockKindOf(index) == WordDocumentBlockKind.Paragraph;
+        return IsParagraph(blockIndex) && IsParagraph(blockIndex + 1)
+               && _renderer.IsDropCapFrame(_table.BlockStartCp(blockIndex), _table.BlockEndCp(blockIndex))
+               && !_renderer.IsDropCapFrame(_table.BlockStartCp(blockIndex + 1), _table.BlockEndCp(blockIndex + 1));
     }
 
     private IReadOnlyList<WordDocumentNoteHtml> RenderNotesIn(int cpStart, int cpEnd)

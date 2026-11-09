@@ -710,6 +710,9 @@ internal sealed class RtfParser
             case RtfWord.FootnoteStart: if (_readsHeaderTables && hasParameter) _tables.FootnoteStart = parameter; return;
             case RtfWord.EndnoteStart: if (_readsHeaderTables && hasParameter) _tables.EndnoteStart = parameter; return;
             case RtfWord.RightToLeftDocument: if (_readsHeaderTables) _tables.IsRightToLeftDocument = true; return;
+            // \hyphauto: LibreOffice rtfdocumentimpl.cxx:2359 (autoHyphenation = !bParam || nParam != 0, line 2163); \deflang: rtfdispatchvalue.cxx:909
+            case RtfWord.AutoHyphenation: if (_readsHeaderTables) _tables.IsAutoHyphenation = !hasParameter || parameter != 0; return;
+            case RtfWord.DefaultLanguage: if (_readsHeaderTables && hasParameter) _tables.DefaultLanguage = (ushort)parameter; return;
 
             // ── rendered destinations ──
             case RtfWord.Footnote:
@@ -933,6 +936,13 @@ internal sealed class RtfParser
             case RtfWord.RightToLeftParagraph: state.Set(RtfStateFlags.RightToLeftParagraph, true); state.RunType = RtfRunType.None; return;
             case RtfWord.LeftToRightParagraph: state.Set(RtfStateFlags.RightToLeftParagraph, false); state.RunType = RtfRunType.None; return;
             case RtfWord.InTable: state.Set(RtfStateFlags.InTable, true); return;
+            // \dropcapliN / \dropcaptN (RTF 1.9.1: lines dropped; 1 in text, 2 in margin). LibreOffice reads neither (rtfdocumentimpl.cxx:4236
+            // lists LN_CT_FramePr_dropCap in RTFFrame::getSprms but no keyword sets it), so Word is the reference.
+            case RtfWord.DropCapLines: state.DropCapLines = (byte)Math.Max(0, Math.Min(hasParameter ? parameter : 0, 255)); return;
+            case RtfWord.DropCapType: state.Set(RtfStateFlags.DropCapInMargin, hasParameter && parameter == 2); return;
+            case RtfWord.FrameHorizontalDistance: state.FrameHorizontalDistance = (short)Math.Max(0, Math.Min(hasParameter ? parameter : 0, short.MaxValue)); return;   // LibreOffice rtfdispatchvalue.cxx:1515-1525 -> FramePr hSpace
+            case RtfWord.ParagraphHyphenation: state.Set(RtfStateFlags.NoAutoHyphenation, hasParameter && parameter == 0); return;
+            case RtfWord.Language: if (hasParameter) state.Language = (ushort)parameter; return;   // LibreOffice rtfdispatchvalue.cxx:223
             case RtfWord.NestingLevel: state.NestingLevel = (byte)Math.Max(0, Math.Min(64, hasParameter ? parameter : 1)); return;   // default 1 (LibreOffice table)
             case RtfWord.PageBreakBefore: state.Set(RtfStateFlags.PageBreakBefore, isOn); return;
 

@@ -58,6 +58,27 @@ public sealed class WordParagraphFormatting
     public string? BorderEndCss;
     public WordRunFormatting RunFormatting = new();
 
+    /// <summary>
+    /// A drop cap: the number of lines the initial drops (0 = none). Word keeps the initial in a framed paragraph of its own
+    /// (.docx w:framePr dropCap / lines / hSpace, .doc sprmPDcs + sprmPDxaFromText, RTF \dropcapli / \dropcapt); the
+    /// renderers draw that paragraph at the start of the next one (<see cref="WordDropCapHtml"/>). ODT style:drop-cap is
+    /// on the text paragraph itself (its first <see cref="DropCapCharacterCount"/> characters).
+    /// </summary>
+    public int DropCapLines;
+    /// <summary>The initial sits in the margin, not in the text (.docx dropCap="margin", .doc fdct 2, RTF \dropcapt2).</summary>
+    public bool IsDropCapInMargin;
+    /// <summary>The gap between the initial and the text, twips (.docx hSpace, .doc sprmPDxaFromText, ODT style:distance).</summary>
+    public int DropCapDistanceTwips;
+    /// <summary>ODT only: how many characters of the paragraph the drop cap takes (style:length; 0 with lines = 1, "word" = -1).</summary>
+    public int DropCapCharacterCount;
+
+    /// <summary>Automatic hyphenation is off for this paragraph (.docx suppressAutoHyphens, .doc sprmPFNoAutoHyph, RTF \hyphpar0, ODT fo:hyphenate false).</summary>
+    public bool IsAutoHyphenationSuppressed;
+    /// <summary>ODT only: fo:hyphenate true on the paragraph's style (ODT has no document switch).</summary>
+    public bool IsAutoHyphenationRequested;
+    /// <summary>Resolved by the renderer: the document hyphenates automatically and this paragraph does not opt out → CSS hyphens:auto (with the paragraph's lang, which Chromium needs).</summary>
+    public bool IsHyphenated;
+
     /// <summary>The indent on the paragraph's start side, twips (a physical left indent is the end side of a bidi paragraph, see <see cref="ToCss"/>).</summary>
     public int StartIndentTwips
         => (IsLeftIndentPhysical && IsRightToLeft ? 0 : LeftIndentTwips) + (IsRightIndentPhysical && IsRightToLeft ? RightIndentTwips : 0);
@@ -119,6 +140,7 @@ public sealed class WordParagraphFormatting
             // at least: the single line height unless the stated minimum is larger
             else css.Append("line-height:max(").Append(SingleLineHeightEm.ToString("0.##", CultureInfo.InvariantCulture)).Append("em,").Append(TwipsToPt(LineSpacingTwipsOrAuto)).Append("pt);");
         }
+        if (IsHyphenated) css.Append("hyphens:auto;");
         css.Append(RunFormatting.ToCss(null, WordDecorationOutput.None));   // lines go on the runs: a child cannot remove a parent's line
         return css.ToString();
     }
@@ -133,6 +155,11 @@ public sealed class WordParagraphFormatting
            && BorderBetweenCss is null or "none"
             ? null
             : string.Join("|", BorderTopCss, BorderBottomCss, BorderStartCss, BorderEndCss, BorderBetweenCss, LeftIndentTwips, RightIndentTwips);
+
+    /// <summary>The lang attribute for a hyphenated paragraph (Chromium hyphenates only text whose language it knows); null otherwise.</summary>
+    public string? HyphenationLanguageAttribute
+        => IsHyphenated && RunFormatting.Language is { Length: > 0 } language && language.All(c => char.IsLetterOrDigit(c) || c == '-')
+            ? "lang=\"" + language + "\"" : null;
 
     public static string TwipsToPt(int twips) => (twips / 20.0).ToString("0.#", CultureInfo.InvariantCulture);
 }

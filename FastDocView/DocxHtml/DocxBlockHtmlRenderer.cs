@@ -85,8 +85,8 @@ public sealed class DocxBlockHtmlRenderer
     public string Render(XElement block, DocxListLabel? listLabel, string? previousStyleKey, DocxBlockNeighbours neighbours)
     {
         var html = new StringBuilder(1024);
-        if (block.Name == W + "p" && neighbours.Next is not null && HasDeletedParagraphMark(block))
-            return "";                                           // its text is drawn at the start of the next block (MergedBefore there)
+        if (block.Name == W + "p" && neighbours.Next is not null && (HasDeletedParagraphMark(block) || IsDropCapJoiningNext(block, neighbours.Next)))
+            return "";                                           // its text is drawn at the start of the next block (MergedBefore / drop cap there)
         _blockNeighbours = neighbours;
         _listLabel = listLabel;
         _previousStyleKey = previousStyleKey;
@@ -168,6 +168,7 @@ public sealed class DocxBlockHtmlRenderer
             XElement block = siblings[i];
             XElement? next = i + 1 < siblings.Count && siblings[i + 1].Name == W + "p" ? siblings[i + 1] : null;
             if (block.Name == W + "p" && next is not null && HasDeletedParagraphMark(block)) { merged.Add(block); continue; }
+            if (block.Name == W + "p" && next is not null && IsDropCapJoiningNext(block, next)) continue;   // drawn by the next paragraph
             DocxBlockNeighbours outer = _blockNeighbours;
             int firstOfGroup = i - merged.Count;                       // the group starts at the first joined paragraph
             XElement? before = firstOfGroup > 0 && siblings[firstOfGroup - 1].Name == W + "p" ? siblings[firstOfGroup - 1] : null;
@@ -235,6 +236,24 @@ public sealed class DocxBlockHtmlRenderer
         => paragraph.Element(W + "pPr")?.Element(W + "rPr") is { } markProperties
            && (markProperties.Element(W + "del") is not null || markProperties.Element(W + "moveFrom") is not null);
 
+    /// <summary>The drop-cap formatting of a framed initial paragraph (w:framePr dropCap, direct or from its style), or null.</summary>
+    private WordParagraphFormatting? DropCapOf(XElement? paragraph)
+    {
+        if (paragraph is null || paragraph.Name != W + "p") return null;
+        XElement? pPr = paragraph.Element(W + "pPr");
+        string? styleId = (string?)pPr?.Element(W + "pStyle")?.Attribute(W + "val");
+        if (pPr?.Element(W + "framePr") is null && !_styles.HasDropCapStyle(styleId)) return null;
+        WordParagraphFormatting formatting = _styles.ResolveParagraph(styleId, pPr, _tableStyleId, _tableConditions, null);
+        return formatting.DropCapLines > 0 ? formatting : null;
+    }
+
+    /// <summary>
+    /// A drop-cap frame paragraph followed by a text paragraph is drawn inside that paragraph (LibreOffice
+    /// DomainMapper_Impl.cxx finishParagraph: the saved DropCap goes onto the next, unframed paragraph). Two drop caps in a
+    /// row ("old _and_ new DropCap must not occur") keep the first as an ordinary paragraph.
+    /// </summary>
+    private bool IsDropCapJoiningNext(XElement paragraph, XElement next) => DropCapOf(paragraph) is not null && DropCapOf(next) is null;
+
     /// <summary>The border group key of a neighbouring paragraph (resolved in the same table context), or null.</summary>
     private string? BorderGroupKeyOf(XElement? paragraph)
     {
@@ -277,6 +296,8 @@ public sealed class DocxBlockHtmlRenderer
             formatting.IsBorderJoinedAbove = BorderGroupKeyOf(neighbours.Previous) == borderGroup;
             formatting.IsBorderJoinedBelow = BorderGroupKeyOf(neighbours.Next) == borderGroup;
         }
+        formatting.IsHyphenated = _styles.Compatibility.IsAutoHyphenation && !formatting.IsAutoHyphenationSuppressed;
+        XElement? dropCapParagraph = formatting.DropCapLines == 0 && DropCapOf(neighbours.Previous) is not null ? neighbours.Previous : null;
         int headingLevel = formatting.OutlineLevel is >= 0 and <= 8 ? formatting.OutlineLevel + 1 : _styles.HeadingLevelOf(styleId);
         string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
         string css = formatting.ToCss(_previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : "");
@@ -304,7 +325,7 @@ public sealed class DocxBlockHtmlRenderer
         _justifiedBreak = _leaderTab is null && _textBoxDepth == 0 && formatting.Alignment == WordParagraphAlignment.Justify
                           && !_styles.Compatibility.DoesNotExpandShiftReturn ? LastManualBreak(paragraph) : null;
 
-        WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
+        WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft, formatting.HyphenationLanguageAttribute);
         _isParagraphRightToLeft = formatting.IsRightToLeft;
         _baselineShift = 0;
         if (_leaderTab is not null) html.Append("<span class=\"tab-before\">");
@@ -317,6 +338,16 @@ public sealed class DocxBlockHtmlRenderer
             WordListLabelHtml.Append(html, label.Text, labelCss.Length > 0 ? labelCss : null, suffix, formatting, _styles.Compatibility.DefaultTabStopTwips, label.Alignment);
         }
         if (_listLabel is not null) _listLabel = null;              // only the block's first paragraph carries it
+        if (dropCapParagraph is not null)
+        {
+            // The initial's runs keep their font and color but not the size and raised position Word gives them to fill the
+            // frame: the drop-cap span sizes the initial (LibreOffice resets CharHeight / CharEscapement the same way).
+            WordDropCapHtml.Open(html, DropCapOf(dropCapParagraph)!);
+            _isInDropCap = true;
+            yield return new(RenderInlineChildren(dropCapParagraph, html, formatting.RunFormatting));
+            _isInDropCap = false;
+            WordDropCapHtml.Close(html);
+        }
         foreach (XElement joined in neighbours.MergedBefore ?? [])          // paragraphs whose deleted marks joined them to this one
             yield return new(RenderInlineChildren(joined, html, formatting.RunFormatting));
         yield return new(RenderInlineChildren(paragraph, html, formatting.RunFormatting));
@@ -395,12 +426,19 @@ public sealed class DocxBlockHtmlRenderer
         }
     }
 
+    private bool _isInDropCap;              // rendering a drop-cap frame paragraph's runs inside the next paragraph
     private bool _isParagraphRightToLeft;   // the paragraph being rendered: a right-to-left run in a left-to-right one is embedded
 
     private IEnumerable<RenderStep> RenderRun(XElement run, StringBuilder html, WordRunFormatting paragraphBase)
     {
         XElement? rPr = run.Element(W + "rPr");
         WordRunFormatting formatting = _styles.ResolveRun(paragraphBase, rPr);
+        if (_isInDropCap)
+        {
+            formatting.FontSizeHalfPoints = paragraphBase.FontSizeHalfPoints;
+            formatting.ComplexScriptFontSizeHalfPoints = paragraphBase.ComplexScriptFontSizeHalfPoints;
+            formatting.PositionHalfPoints = paragraphBase.PositionHalfPoints;
+        }
         // The underline is drawn on the text pieces inside the run (not under word-only spaces, not under the paragraph's
         // trailing spaces); the strikethrough stays on the run's span, so the two never have to share one style.
         string css = formatting.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft) + BaselineShiftCss;

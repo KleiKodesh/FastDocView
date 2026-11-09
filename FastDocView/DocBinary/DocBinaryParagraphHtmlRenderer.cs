@@ -43,6 +43,12 @@ public sealed class DocBinaryParagraphHtmlRenderer
 
     /// <summary>The default tab stop interval (Dop dxaTab), twips.</summary>
     public int DefaultTabStopTwips { get; set; } = WordListLabelHtml.DefaultTabStopTwips;
+
+    /// <summary>Dop fAutoHyphen: the document hyphenates automatically (LibreOffice ww8scan.cxx WW8Dop byte 5 bit 0x10; ww8par2.cxx sets it on the base style).</summary>
+    public bool IsAutoHyphenation { get; set; }
+
+    /// <summary>Whether the paragraph [cpStart, cpEnd) is a drop-cap frame (sprmPDcs fdct 1 or 2, LibreOffice ww8par6.cxx IsDropCap).</summary>
+    public bool IsDropCapFrame(int cpStart, int cpEnd) => ResolveParagraph(cpStart, cpEnd).formatting.DropCapLines > 0;
     /// <summary>Bookmarks: each one's start renders as an empty &lt;span class="bookmark" id&gt; (the target of in-document links).</summary>
     public DocBinaryBookmarks Bookmarks { get; set; } = DocBinaryBookmarks.Empty;
 
@@ -204,28 +210,33 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// <param name="previousStyleKey">The style of the paragraph before (contextual spacing).</param>
     /// <param name="noteLabel">Inside a note body: the label its auto-number mark shows.</param>
     /// <param name="listLabel">The paragraph's list label from the index (counted at index time), shown before the text.</param>
-    public string Render(int cpStart, int cpEnd, string? previousStyleKey = null, string? noteLabel = null, string? listLabel = null)
+    /// <param name="dropCapParagraph">The drop-cap frame paragraph before this one (Word keeps the initial in a paragraph of its own), drawn at its start.</param>
+    public string Render(int cpStart, int cpEnd, string? previousStyleKey = null, string? noteLabel = null, string? listLabel = null,
+                         (int cpStart, int cpEnd)? dropCapParagraph = null)
     {
         var html = new StringBuilder(512);
         DocBinaryFieldReader? outer = _fields;
         if (_textBoxDepth == 0) _fields = NewFieldReader(cpStart, restore: true);
-        AppendParagraph(html, cpStart, cpEnd, previousStyleKey, noteLabel, listLabel);
+        AppendParagraph(html, cpStart, cpEnd, previousStyleKey, noteLabel, listLabel, dropCapParagraph);
         if (_textBoxDepth == 0) _fields = outer;
         return html.ToString();
     }
 
-    private string? AppendParagraph(StringBuilder html, int cpStart, int cpEnd, string? previousStyleKey, string? noteLabel, string? listLabel = null)
+    private string? AppendParagraph(StringBuilder html, int cpStart, int cpEnd, string? previousStyleKey, string? noteLabel, string? listLabel = null,
+                                    (int cpStart, int cpEnd)? dropCapParagraph = null)
     {
         (WordParagraphFormatting formatting, int styleIndex) = ResolveParagraph(cpStart, cpEnd);
+        formatting.IsHyphenated = IsAutoHyphenation && !formatting.IsAutoHyphenationSuppressed;
         int headingLevel = _styles.HeadingLevelOf(styleIndex);
         string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
 
         bool outerRightToLeft = _isParagraphRightToLeft;
         WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : ""),
-                                   _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft);
+                                   _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft, formatting.HyphenationLanguageAttribute);
         _isParagraphRightToLeft = formatting.IsRightToLeft;
         if (listLabel is { Length: > 0 }) AppendListLabel(html, listLabel, formatting);
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
+        if (dropCapParagraph is { } dropCap) AppendDropCap(html, dropCap.cpStart, dropCap.cpEnd, formatting.RunFormatting, noteLabel);
         DocBinaryFieldReader fields = _fields ??= NewFieldReader(cpStart, restore: _textBoxDepth == 0);
         _baselineShift = 0;
         if (fields.ReopenLink() is { } openLink) html.Append(openLink);   // a link field that runs on from the paragraph before
@@ -480,6 +491,31 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 cp = runEndCp;
             }
         }
+    }
+
+    /// <summary>
+    /// The drop-cap frame paragraph's runs inside a drop-cap span at the start of the text paragraph (LibreOffice ww8par.cxx
+    /// m_bDropCap / m_xPreviousNode joins the two the same way). The runs keep font and color; the size and raised position
+    /// Word gives them to fill the frame are dropped (ww8par.cxx: "reset the font size and text position for the dropcap").
+    /// </summary>
+    private void AppendDropCap(StringBuilder html, int cpStart, int cpEnd, WordRunFormatting paragraphBase, string? noteLabel)
+    {
+        (WordParagraphFormatting dropCap, int styleIndex) = ResolveParagraph(cpStart, cpEnd);
+        WordDropCapHtml.Open(html, dropCap);
+        DocBinaryFieldReader? outer = _fields;
+        DocBinaryFieldReader fields = _fields = NewFieldReader(cpStart, restore: _textBoxDepth == 0);
+        WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
+        foreach ((WordRunFormatting runFormatting, string text, bool isSpecial, int runCp, uint? picture) in CharacterRuns(cpStart, cpEnd, dropCap.RunFormatting, styleBase))
+        {
+            runFormatting.FontSizeHalfPoints = paragraphBase.FontSizeHalfPoints;
+            runFormatting.ComplexScriptFontSizeHalfPoints = paragraphBase.ComplexScriptFontSizeHalfPoints;
+            runFormatting.PositionHalfPoints = paragraphBase.PositionHalfPoints;
+            AppendRunHtml(html, runFormatting, paragraphBase, text, isSpecial, runCp, fields, noteLabel, picture);
+        }
+        if (fields.CloseLinkAtParagraphEnd()) html.Append("</a>");
+        _fields = outer;
+        _baselineShift = 0;
+        WordDropCapHtml.Close(html);
     }
 
     private void AppendRunHtml(StringBuilder html, WordRunFormatting formatting, WordRunFormatting paragraphBase,

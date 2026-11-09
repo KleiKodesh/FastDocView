@@ -41,6 +41,8 @@ public static class WordDocumentHtmlStylesheet
             .word-document .word-picture-missing { display: inline-block; border: 1px dashed var(--fdv-rule, #bbb); color: var(--fdv-muted, #999); font-size: 9pt; text-align: center; overflow: hidden; }
             .word-document .unsupported { color: var(--fdv-muted, #999); font-style: italic; }
             .word-document .{{WordHtmlColor.DarkTextOnFillClass}} { color: light-dark(currentColor, #000); }
+            .word-document .drop-cap { float: inline-start; font-size: calc(var(--drop-cap-lines) * 1.15em); line-height: 1; margin-block-start: 0.05em; }
+            .word-document .drop-cap.drop-cap-in-margin { margin-inline-start: calc(-1 * var(--drop-cap-width, 0.8em) - var(--drop-cap-gap, 0pt)); }
             .word-document a.link { color: inherit; text-decoration: none; cursor: pointer; }
             """;
     }

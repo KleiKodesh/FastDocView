@@ -1955,3 +1955,23 @@ archives open on demand from 2 MB: the open returns in 5-7 ms, the first window 
   Stored section widths change, so the four index formats were bumped and old sidecars rebuild.
 - **RTF \posrelh3** handled. Harness: the failure count is atomic and every exit path returns non-zero on any FAIL (read the
   harness's own exit code, never a pipe's).
+
+## Drop caps and automatic hyphenation (all formats, 2026-11-09; RTF index format 12)
+
+- **Drop caps**: .docx w:framePr dropCap / lines / hSpace (LibreOffice DomainMapper.cxx:1022-1049, DomainMapper_Impl.cxx:2693-2730),
+  .doc sprmPDcs 0x442C (fdct = low 3 bits, lines = low byte >> 3) + sprmPDxaFromText 0x842F (ww8par6.cxx:2461-2487, ww8par.cxx:4040-4060),
+  RTF \dropcapli / \dropcapt (LibreOffice reads neither: rtfdocumentimpl.cxx:4236 lists the sprm but no keyword sets it; Word 16 is the reference),
+  ODT style:drop-cap lines / length / distance (xmloff txtdropi.cxx ProcessAttrs: lines below 2 = none). `WordDropCapHtml`: a span with
+  --drop-cap-lines, drawn as a float N line heights tall; "margin" pulls it into the margin. CSS initial-letter was measured live first:
+  Chromium computes it on the span but draws a normal-size letter (7.6 px wide, one line tall), so it is not used.
+  Word keeps the initial in a framed paragraph of its own: that block renders empty and the next paragraph draws it (the .docx neighbours,
+  the .doc block before, RTF PendingDropCap / IncomingDropCap with one extra block read before a window). The initial runs lose the size and
+  raised position Word gives them to fill the frame (LibreOffice resets CharHeight / CharEscapement the same way). ODT: only the first text
+  node of the paragraph is wrapped (a drop cap split across spans is not joined).
+- **Hyphenation**: .docx settings w:autoHyphenation + pPr w:suppressAutoHyphens (SettingsTable.cxx:422, DomainMapper.cxx:2034), .doc Dop byte 5
+  bit 0x10 fAutoHyphen + sprmPFNoAutoHyph 0x242A (ww8scan.cxx:7662, ww8par6.cxx:5393), RTF \hyphauto + \hyphpar0 (rtfdocumentimpl.cxx:2359-2368),
+  ODT fo:hyphenate on the paragraph text properties (txtprmap.cxx:345). Drawn as CSS hyphens:auto with lang from the paragraph language (.docx w:lang,
+  .doc sprmCRgLid0, RTF \lang / \deflang through `WordLanguageIds`, ODT fo:language + fo:country): Chromium hyphenates only text whose language it
+  knows. Hebrew has no hyphenation dictionary, so this matters for LTR text only.
+- Test: `DropCapsAndHyphenationFidelityTest` (`--fidelity`) over test-data/drop-caps-hyphenation/drop-caps-hyphenation-v1.docx / .doc / .rtf / .odt
+  (Word 16 via COM, make-drop-caps-hyphenation-fixtures.ps1).

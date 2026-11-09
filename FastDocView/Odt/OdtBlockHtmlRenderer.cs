@@ -144,6 +144,11 @@ public sealed partial class OdtBlockHtmlRenderer
             formatting.FirstLineIndentTwips = layout[1];
             if (layout[2] >= 0) formatting.TabStops = [new WordTabStop(layout[2], "left", "none")];
         }
+        if (formatting.RunFormatting.Hyphenate == true)
+        {
+            formatting = formatting.Clone();
+            formatting.IsHyphenated = true;                     // ODT has no document switch: fo:hyphenate on the paragraph style
+        }
         string css = formatting.ToCss(isTopLevel ? _previousStyleKey : null) + (_textBoxDepth > 0 ? "display:block;" : "");
         if (isTopLevel && _listLevel >= 0 && layout is null)
         {
@@ -151,8 +156,13 @@ public sealed partial class OdtBlockHtmlRenderer
             css += "margin-inline-start:" + ((formatting.LeftIndentTwips + 360 * (_listLevel + 1)) / 20.0).ToString("0.#", CultureInfo.InvariantCulture) + "pt;";
         }
         if (style.IsPageBreakBefore && isTopLevel && _textBoxDepth == 0) html.Append("<span class=\"page-break\"></span>");
-        WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : tag == "div" ? "word-paragraph-block" : null, formatting.IsRightToLeft);
+        WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : tag == "div" ? "word-paragraph-block" : null, formatting.IsRightToLeft,
+                                   formatting.HyphenationLanguageAttribute);
         bool outerIsRightToLeft = _isParagraphRightToLeft;
+        int outerDropCap = _dropCapRemaining;
+        WordParagraphFormatting? outerDropCapFormat = _dropCapFormat;
+        _dropCapRemaining = formatting.DropCapLines > 0 ? formatting.DropCapCharacterCount : 0;
+        _dropCapFormat = formatting;
         _isParagraphRightToLeft = formatting.IsRightToLeft;
         bool hasLabel = false;
         if (isTopLevel && _listLabel is { Length: > 0 } label)
@@ -164,8 +174,21 @@ public sealed partial class OdtBlockHtmlRenderer
             hasLabel = true;
         }
         RenderInline(paragraph, html, styleName, formatting.RunFormatting, formatting.RunFormatting, hasLabel);
+        _dropCapRemaining = outerDropCap;
+        _dropCapFormat = outerDropCapFormat;
         _isParagraphRightToLeft = outerIsRightToLeft;
         html.Append("</").Append(tag).Append('>');
+    }
+
+    private int _dropCapRemaining;                       // characters of the paragraph drop cap still to wrap (-1 = the first word)
+    private WordParagraphFormatting? _dropCapFormat;
+
+    /// <summary>style:length="word": the first word (up to the first white space; LibreOffice SwFormatDrop WholeWord).</summary>
+    private static int DropCapWordLength(string text)
+    {
+        int end = 0;
+        while (end < text.Length && !char.IsWhiteSpace(text[end])) end++;
+        return Math.Max(1, end);
     }
 
     /// <summary>"margin,indent,tab,follow" (OdtListStyle.Level.Layout), null when empty or damaged.</summary>
@@ -188,7 +211,23 @@ public sealed partial class OdtBlockHtmlRenderer
     {
         foreach (XNode node in nodes)
         {
-            if (node is XText text) { WordHtmlText.AppendScaled(html, WordHtmlText.Encode(text.Value), current.CharacterScalePercent); continue; }
+            if (node is XText text)
+            {
+                string value = text.Value;
+                if (_dropCapRemaining != 0 && value.Length > 0)
+                {
+                    // the paragraph drop cap: its first characters (or first word) in the drop-cap span, taken from the first text
+                    int take = _dropCapRemaining < 0 ? DropCapWordLength(value) : Math.Min(_dropCapRemaining, value.Length);
+                    if (take < value.Length && char.IsLowSurrogate(value[take])) take++;
+                    _dropCapRemaining = 0;
+                    WordDropCapHtml.Open(html, _dropCapFormat!);
+                    WordHtmlText.AppendScaled(html, WordHtmlText.Encode(value.Substring(0, take)), current.CharacterScalePercent);
+                    WordDropCapHtml.Close(html);
+                    value = value.Substring(take);
+                }
+                WordHtmlText.AppendScaled(html, WordHtmlText.Encode(value), current.CharacterScalePercent);
+                continue;
+            }
             if (node is not XElement element) continue;
             XName name = element.Name;
             if (name.Namespace == TextNs)
@@ -215,7 +254,14 @@ public sealed partial class OdtBlockHtmlRenderer
                     }
                     case "tab": html.Append('\t'); continue;
                     case "line-break": html.Append("<br>"); continue;
-                    case "note": AppendNote(element, html); continue;
+                    case "note":
+                    {
+                        int dropCap = _dropCapRemaining;                       // a citation is not the paragraph's initial
+                        _dropCapRemaining = 0;
+                        AppendNote(element, html);
+                        _dropCapRemaining = dropCap;
+                        continue;
+                    }
                     case "number": if (!hasLabel) html.Append(WordHtmlText.Encode(element.Value)).Append(' '); continue;
                     case "bookmark": case "bookmark-start": case "reference-mark": case "reference-mark-start":
                         // the jump target of in-document links (ODF 1.3 part 3 6.2.1 / 6.2.2, text:name)
