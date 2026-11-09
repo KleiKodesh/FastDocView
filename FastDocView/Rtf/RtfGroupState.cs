@@ -95,6 +95,7 @@ internal struct RtfGroupState
     public byte Highlight;                 // spec palette 1..16
     public short Position;                 // \up (+) / \dn (-) half-points
     public short CharacterSpacing;         // \expndtw twips
+    public short CharacterScale;           // \charscalex percent; 0 = 100
     public short Style;                    // \s
     public short ListOverride;             // \ls (0 = none)
     public int LeftIndent, RightIndent, StartIndent, EndIndent, FirstLineIndent, SpaceBefore, SpaceAfter, LineSpacing;
@@ -119,7 +120,7 @@ internal struct RtfGroupState
         Font = defaultFont; ComplexFont = defaultFont;
         FontSize = 24; ComplexFontSize = 24;     // \fs default 24 (RTF 1.5 spec, LibreOffice table)
         ForegroundColor = 0; BackgroundColor = 0; ShadingColor = 0; Highlight = 0;
-        Position = 0; CharacterSpacing = 0;
+        Position = 0; CharacterSpacing = 0; CharacterScale = 0;
         CodePage = defaultCodePage;
     }
 

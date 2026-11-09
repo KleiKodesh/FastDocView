@@ -490,8 +490,9 @@ public sealed class DocBinaryParagraphHtmlRenderer
         void Flush()
         {
             if (visible.Length == 0) return;
-            if (css.Length > 0) html.Append("<span style=\"").Append(css).Append("\">").Append(visible).Append("</span>");
-            else html.Append(visible);
+            if (css.Length > 0) html.Append("<span style=\"").Append(css).Append("\">");
+            WordHtmlText.AppendScaled(html, visible.ToString(), formatting.CharacterScalePercent);
+            if (css.Length > 0) html.Append("</span>");
             visible.Clear();
         }
         int nextBookmark = Bookmarks.FirstAtOrAfter(runCp);

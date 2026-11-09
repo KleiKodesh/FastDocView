@@ -146,7 +146,7 @@ if (rereadPaths.Count > 0) { RereadCostTest.Run(rereadPaths.Where(File.Exists));
 if (docReadPaths.Count > 0) { DocBinaryReadCountTest.Run(docReadPaths.Where(File.Exists)); skipSynthetic = true; }
 if (compactReportPaths.Count > 0) { CompactIndexReport.Run(compactReportPaths.Where(File.Exists)); skipSynthetic = true; }
 if (searchOnly) { DocumentSearchTest.Run(searchPaths); skipSynthetic = true; }
-if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocxThemeAndUnderlineTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); PagePlacementFidelityTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); DocBinaryFloatingPicturesTest.Run(); OdtShapesFidelityTest.Run(); OdtDrawingFidelityTest.Run(); RtfShapesFidelityTest.Run(); WrapSidesAndContourFidelityTest.Run(); WordOfficeArtGeometryTest.Run(); DocBinaryShapesFidelityTest.Run(); OdtFirstOpenTiming.RunSynthetic(); OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); OdtMeasureCaptionTest.Run(); OdtExtrusionTest.Run(); OdtShapeTextFidelityTest.Run(); skipSynthetic = true; }
+if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocxThemeAndUnderlineTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); PagePlacementFidelityTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); DocBinaryFloatingPicturesTest.Run(); OdtShapesFidelityTest.Run(); OdtDrawingFidelityTest.Run(); RtfShapesFidelityTest.Run(); WrapSidesAndContourFidelityTest.Run(); WordOfficeArtGeometryTest.Run(); DocBinaryShapesFidelityTest.Run(); OdtFirstOpenTiming.RunSynthetic(); OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); OdtMeasureCaptionTest.Run(); OdtExtrusionTest.Run(); OdtShapeTextFidelityTest.Run(); TextEffectsFidelityTest.Run(); skipSynthetic = true; }
 if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
 if (!skipSynthetic)
 {
@@ -154,6 +154,7 @@ if (!skipSynthetic)
     WordDocumentIndexCacheTest.Run();
     DocxThemeAndUnderlineTest.Run();
     DocxFidelityTest.Run();
+    TextEffectsFidelityTest.Run();
     DocumentSearchTest.Run([]);
     PageWidthTest.Run([]);
     DocBinaryBidiTest.Run();

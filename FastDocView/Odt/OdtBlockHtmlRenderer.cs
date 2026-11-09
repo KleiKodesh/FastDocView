@@ -188,7 +188,7 @@ public sealed partial class OdtBlockHtmlRenderer
     {
         foreach (XNode node in nodes)
         {
-            if (node is XText text) { html.Append(WordHtmlText.Encode(text.Value)); continue; }
+            if (node is XText text) { WordHtmlText.AppendScaled(html, WordHtmlText.Encode(text.Value), current.CharacterScalePercent); continue; }
             if (node is not XElement element) continue;
             XName name = element.Name;
             if (name.Namespace == TextNs)

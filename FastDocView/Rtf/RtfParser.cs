@@ -1006,6 +1006,8 @@ internal sealed class RtfParser
             case RtfWord.Shadow: state.Set(RtfStateFlags.Shadow, isOn); return;
             case RtfWord.Emboss: state.Set(RtfStateFlags.Emboss, isOn); return;
             case RtfWord.Imprint: state.Set(RtfStateFlags.Imprint, isOn); return;
+            // \charscalex N: character scale in percent, 1..600 (LibreOffice rtfdispatchvalue.cxx:195 maps it to w:w, DomainMapper.cxx:2495 limits it)
+            case RtfWord.CharacterScale: state.CharacterScale = (short)(parameter is >= 1 and <= 600 ? parameter : 100); return;
             case RtfWord.CharacterSpacing: state.CharacterSpacing = (short)Math.Max(short.MinValue, Math.Min(short.MaxValue, parameter)); return;
             case RtfWord.RightToLeftCharacters:
                 state.RunType = state.RunType == RtfRunType.LeftToRightFirst ? RtfRunType.LeftToRightThenRightToLeft : RtfRunType.RightToLeftFirst;

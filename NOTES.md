@@ -532,6 +532,17 @@ overloads. Every rule below was read from the source named, not from memory:
   LibreOffice maps the same four (DomainMapper::getEmphasisValue).
 - Test: `DocxThemeAndUnderlineTest` over `SyntheticDocxGenerator.Write(..., withThemeSamples: true)`
   (paragraphs 45–49); the audit's handled run properties now include `em`.
+- **Character scale + Word 2010 text effects (2026-11-09)** - character scale (.docx `w:w`, .doc sprmCCharScale 0x4852,
+  RTF `\charscalex`, ODT `style:text-scale`; 1..600 else 100 as LibreOffice) is drawn per word by
+  `WordHtmlText.AppendScaled`: an inline-flex box `width:calc-size(max-content, size * f)` with the word inside,
+  `flex:none` + `transform:scaleX(f)`, centred (works the same in RTL and LTR). Lines still wrap between words; spaces
+  stay unscaled; font-stretch was rejected (Hebrew fonts have no width axis). Live: every box = f x natural width in the
+  app page, including under its CSS zoom. `w14:textFill`: solid (scheme colours + transforms) is the colour, with alpha an
+  rgba; gradFill = CSS linear (ang + 90deg) / radial (fillToRect centre) gradient with `background-clip:text` (a
+  highlight on such a run is clipped too). `w14:glow` = two blurred text-shadows (rad/2, rad); `w14:shadow` = one
+  text-shadow from dist/dir/blurRad; sx/sy/kx/ky are not drawn. **w14:alpha is transparency**, the opposite of a:alpha
+  (LibreOffice DomainMapper.cxx:3733-3737, docxattributeoutput.cxx:3825-3828). Test: `TextEffectsFidelityTest`
+  (+ test-data/word-text-effects, Word 16 COM), live: `vue-demo/playwright/textEffectsCheck.mjs`.
 
 
 ## OpenDocument text (Odt/, 2026-10-28)

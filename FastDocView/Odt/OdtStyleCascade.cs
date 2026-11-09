@@ -32,7 +32,7 @@ public sealed class OdtStyleCascade
         "style:text-line-through-style", "style:text-line-through-type", "fo:font-size", "style:font-size-complex",
         "style:font-name", "style:font-name-complex", "fo:font-family", "style:font-family-complex", "fo:color", "fo:background-color",
         "style:text-position", "fo:text-transform", "fo:font-variant", "fo:letter-spacing", "text:display", "style:text-outline",
-        "fo:text-shadow", "style:font-relief", "fo:border",
+        "fo:text-shadow", "style:font-relief", "fo:border", "style:text-scale",
     ];
 
     /// <summary>Attributes of style:paragraph-properties this cascade maps.</summary>
@@ -409,6 +409,9 @@ public sealed class OdtStyleCascade
         if ((string?)properties.Attribute(Fo + "text-transform") is { } transform) run.IsAllCaps = transform == "uppercase";
         if ((string?)properties.Attribute(Fo + "font-variant") is { } variant) run.IsSmallCaps = variant == "small-caps";
         if ((string?)properties.Attribute(Fo + "letter-spacing") is { } spacing) run.CharacterSpacingTwips = spacing == "normal" ? 0 : Twips(spacing) ?? 0;
+        // style:text-scale (ODF 1.3 20.393, a percent): LibreOffice maps it to CharScaleWidth (xmloff txtprmap.cxx:254)
+        if ((string?)properties.Attribute(Style + "text-scale") is { } textScale)
+            run.CharacterScalePercent = int.TryParse(textScale.TrimEnd('%'), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int scalePercent) ? scalePercent : 100;
         if ((string?)properties.Attribute(Text + "display") is { } display) run.IsHidden = display == "none";
         if ((string?)properties.Attribute(Style + "text-outline") is { } outline) run.IsOutline = outline == "true";
         if ((string?)properties.Attribute(Fo + "text-shadow") is { } shadow) run.IsShadow = shadow != "none";

@@ -402,16 +402,25 @@ public sealed class DocxStyleCascade
                 case "smallCaps": formatting.Toggles.Set(layer, WordToggleProperty.SmallCaps, IsOn(property.Attribute(W + "val"))); break;
                 case "position": formatting.PositionHalfPoints = TwipsAttribute(property, "val") ?? formatting.PositionHalfPoints; break;
                 case "outline": formatting.Toggles.Set(layer, WordToggleProperty.Outline, property.Name.Namespace != W || IsOn(property.Attribute(W + "val"))); break;
-                case "shadow": formatting.Toggles.Set(layer, WordToggleProperty.Shadow, property.Name.Namespace != W || IsOn(property.Attribute(W + "val"))); break;   // w14:shadow / w14:textOutline effects: drawn
+                case "shadow" when property.Name.Namespace == W:
+                    formatting.Toggles.Set(layer, WordToggleProperty.Shadow, IsOn(property.Attribute(W + "val")));
+                    if (!IsOn(property.Attribute(W + "val"))) formatting.TextEffectShadowCss = null;
+                    break;
+                // Word 2010 w14:shadow / w14:glow ([MS-DOCX] CT_Shadow, CT_Glow): drawn as text-shadow layers. LibreOffice keeps
+                // both only in the character grab bag and draws neither (DomainMapper.cxx:3747-3748, TextEffectsHandler); Word is the reference.
+                case "shadow": case "glow":
+                    formatting.TextEffectShadowCss = TextEffectShadowCss(rPr, theme);
+                    break;
+                case "w" when property.Name.Namespace == W:
+                    // w:w ST_TextScale (17.3.2.43): percent, 1..600; outside that LibreOffice reads 100 (DomainMapper.cxx:2495-2506)
+                    string? scale = ((string?)property.Attribute(W + "val"))?.TrimEnd('%');
+                    formatting.CharacterScalePercent = int.TryParse(scale, NumberStyles.Integer, CultureInfo.InvariantCulture, out int percent) && percent is >= 1 and <= 600 ? percent : 100;
+                    break;
                 case "emboss": formatting.Toggles.Set(layer, WordToggleProperty.Emboss, IsOn(property.Attribute(W + "val"))); break;
                 case "imprint": formatting.Toggles.Set(layer, WordToggleProperty.Imprint, IsOn(property.Attribute(W + "val"))); break;
                 case "bdr": formatting.BorderCss = DocxTableFormatting.BorderCss(property, theme); break;
                 case "textFill":
-                    // Word 2010 text fill (w14): a solid fill is just a color; gradients fall back to their first stop.
-                    string? fillColor = property.Descendants().FirstOrDefault(e => e.Name.LocalName == "srgbClr")?.Attributes()
-                        .FirstOrDefault(a => a.Name.LocalName == "val")?.Value;
-                    if (fillColor is { Length: 6 }) formatting.ColorHex = fillColor;
-                    formatting.IsTextFillNone = property.Elements().Any(e => e.Name.LocalName == "noFill");
+                    ApplyTextFill(formatting, property, theme);
                     break;
                 case "textOutline":
                     // Word 2010 text outline ([MS-DOCX] 2.5.26): w14:w = ST_LineWidth in EMU (12700 per pt; absent = no width);
@@ -436,6 +445,7 @@ public sealed class DocxStyleCascade
                 case "color":
                     // themeColor (+ tint / shade) supersedes val when the theme resolves it (§17.3.2.6); val is Word's precomputed fallback.
                     formatting.ColorHex = DocxTheme.ResolveColorHex(property, "val", theme);
+                    formatting.TextFillCss = null;   // a later layer's colour replaces an inherited w14 fill
                     break;
                 case "highlight": formatting.HighlightCssColor = WordHtmlText.HighlightCss((string?)property.Attribute(W + "val")); break;
                 case "shd":
@@ -533,6 +543,115 @@ public sealed class DocxStyleCascade
             ? fill.Descendants().FirstOrDefault(e => e.Name.LocalName == "gs")
             : fill;
         return colorParent is null ? null : DocxDrawingColor.Hex(WithoutAttributeNamespaces(colorParent), theme);
+    }
+
+    /// <summary>
+    /// Word 2010 text fill ([MS-DOCX] CT_FillTextEffect: noFill / solidFill / gradFill, DrawingML colours with
+    /// w14-namespaced attributes). An opaque solid fill is the run colour; a translucent one an rgba colour (LibreOffice
+    /// imports the solid colour and its alpha as character transparency: DomainMapper.cxx:3716-3741, TextEffectsHandler.cxx:860-946);
+    /// a gradient (which LibreOffice keeps only in the grab bag) is drawn as a CSS gradient clipped to the glyphs.
+    /// </summary>
+    private static void ApplyTextFill(WordRunFormatting formatting, XElement textFill, DocxTheme? theme)
+    {
+        XElement? fill = textFill.Elements().FirstOrDefault(e => e.Name.LocalName is "noFill" or "solidFill" or "gradFill");
+        formatting.IsTextFillNone = fill?.Name.LocalName == "noFill";
+        formatting.TextFillCss = null;
+        if (fill is null || formatting.IsTextFillNone) return;
+        XElement plain = W14AsDrawingML(fill);
+        if (plain.Name.LocalName == "solidFill")
+        {
+            if (DocxDrawingColor.Resolve(plain, theme) is not { } color) return;
+            formatting.ColorHex = color.Css.Substring(1);
+            if (color.Opacity < 1) formatting.TextFillCss = "color:" + Rgba(color) + ";";
+            return;
+        }
+        var stops = new List<(double position, DocxResolvedColor color)>();
+        foreach (XElement stop in plain.Element("gsLst")?.Elements("gs") ?? [])
+            if (DocxDrawingColor.Resolve(stop, theme) is { } stopColor)
+                stops.Add((Math.Max(0, Math.Min(1, (LongAttribute(stop, "pos") ?? 0) / 100000.0)), stopColor));
+        if (stops.Count == 0) return;
+        stops.Sort((a, b) => a.position.CompareTo(b.position));
+        formatting.ColorHex = stops[0].color.Css.Substring(1);   // what shows where background-clip:text is not drawn
+        string stopList = string.Join(",", stops.Select(s => Rgba(s.color) + " " + (s.position * 100).ToString("0.##", CultureInfo.InvariantCulture) + "%"));
+        string gradient;
+        if (plain.Element("path") is { } path)
+        {
+            // a path gradient: stop 0 at the centre of fillToRect (as for shapes: DocxShapeReader, oox fillproperties.cxx:530-536)
+            XElement? rect = path.Element("fillToRect");
+            double centerX = Math.Max(0, Math.Min(100, (100000.0 + (LongAttribute(rect, "l") ?? 0) - (LongAttribute(rect, "r") ?? 0)) / 2 / 1000));
+            double centerY = Math.Max(0, Math.Min(100, (100000.0 + (LongAttribute(rect, "t") ?? 0) - (LongAttribute(rect, "b") ?? 0)) / 2 / 1000));
+            string shape = (string?)path.Attribute("path") == "circle" ? "circle" : "ellipse";
+            gradient = "radial-gradient(" + shape + " farthest-corner at " + centerX.ToString("0.##", CultureInfo.InvariantCulture) + "% "
+                       + centerY.ToString("0.##", CultureInfo.InvariantCulture) + "%," + stopList + ")";
+        }
+        else
+        {
+            // a:lin ang: 60000ths of a degree clockwise from left-to-right; CSS 0deg points up, 90deg left-to-right
+            double angle = (LongAttribute(plain.Element("lin"), "ang") ?? 0) / 60000.0 + 90;
+            gradient = "linear-gradient(" + angle.ToString("0.##", CultureInfo.InvariantCulture) + "deg," + stopList + ")";
+        }
+        formatting.TextFillCss = "background-image:" + gradient + ";-webkit-background-clip:text;background-clip:text;color:transparent;";
+    }
+
+    /// <summary>
+    /// w14:shadow and w14:glow of <paramref name="rPr"/> as CSS text-shadow layers ([MS-DOCX] CT_Shadow: blurRad, dist in EMU,
+    /// dir in 60000ths of a degree clockwise from the x axis, a DrawingML colour with its alpha; CT_Glow: rad + colour). The
+    /// glow is listed first (drawn on top of the shadow). The shadow's sx / sy / kx / ky (scale and skew) have no text-shadow
+    /// form and are not drawn. Null when neither is set.
+    /// </summary>
+    private static string? TextEffectShadowCss(XElement rPr, DocxTheme? theme)
+    {
+        var glow = new List<string>();
+        var shadow = new List<string>();
+        foreach (XElement effect in rPr.Elements())
+        {
+            if (effect.Name.Namespace == W || effect.Name.LocalName is not ("shadow" or "glow")) continue;
+            XElement plain = W14AsDrawingML(effect);
+            string colorCss = DocxDrawingColor.Resolve(plain, theme) is { } color ? Rgba(color) : "rgba(0,0,0,0.4)";
+            if (effect.Name.LocalName == "glow")
+            {
+                double radius = (LongAttribute(plain, "rad") ?? 0) / 12700.0;
+                if (radius <= 0) continue;
+                // a glow is solid near the glyph and fades out to rad: two blurred copies, the narrow one for the solid part
+                glow.Add("0 0 " + Points(radius / 2) + " " + colorCss);
+                glow.Add("0 0 " + Points(radius) + " " + colorCss);
+            }
+            else
+            {
+                double distance = (LongAttribute(plain, "dist") ?? 0) / 12700.0, blurRadius = (LongAttribute(plain, "blurRad") ?? 0) / 12700.0;
+                double radians = (LongAttribute(plain, "dir") ?? 0) / 60000.0 * Math.PI / 180;
+                shadow.Add(Points(distance * Math.Cos(radians)) + " " + Points(distance * Math.Sin(radians)) + " " + Points(blurRadius) + " " + colorCss);
+            }
+        }
+        glow.AddRange(shadow);
+        return glow.Count == 0 ? null : string.Join(",", glow);
+    }
+
+    private static string Points(double value) => Math.Abs(value) < 0.005 ? "0" : value.ToString("0.##", CultureInfo.InvariantCulture) + "pt";
+
+    private static string Rgba(DocxResolvedColor color)
+    {
+        if (color.Opacity >= 1) return color.Css;
+        int rgb = HexToRgb(color.Css.Substring(1));
+        return "rgba(" + (rgb >> 16) + "," + ((rgb >> 8) & 0xFF) + "," + (rgb & 0xFF) + "," + Math.Max(0, color.Opacity).ToString("0.###", CultureInfo.InvariantCulture) + ")";
+    }
+
+    private static long? LongAttribute(XElement? element, string name)
+        => long.TryParse((string?)element?.Attribute(name), NumberStyles.Integer, CultureInfo.InvariantCulture, out long value) ? value : null;
+
+    /// <summary>
+    /// A w14 effect element re-read as plain DrawingML: namespace-free attributes, and w14:alpha turned into DrawingML's
+    /// a:alpha. w14:alpha is the TRANSPARENCY (Word's "Transparency 60%" writes 60000), the opposite of a:alpha's opacity:
+    /// LibreOffice imports it as character transparency (DomainMapper.cxx:3733-3737, TextEffectsHandler.cxx:943-946) and
+    /// writes CharTransparence back as w14:alpha (docxattributeoutput.cxx:3825-3828).
+    /// </summary>
+    private static XElement W14AsDrawingML(XElement element)
+    {
+        XElement plain = WithoutAttributeNamespaces(element);
+        foreach (XElement alpha in plain.DescendantsAndSelf("alpha"))
+            if (long.TryParse((string?)alpha.Attribute("val"), NumberStyles.Integer, CultureInfo.InvariantCulture, out long transparency))
+                alpha.SetAttributeValue("val", (100000 - Math.Max(0, Math.Min(100000, transparency))).ToString(CultureInfo.InvariantCulture));
+        return plain;
     }
 
     private static XElement WithoutAttributeNamespaces(XElement element) =>

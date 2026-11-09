@@ -110,6 +110,7 @@ public static class DocBinaryPropertyModifiers
                 case 0x4866: formatting.HighlightCssColor = Shading80Background(BitConverter.ToUInt16(grpprl, operandAt)) is { } back80 ? "#" + back80 : formatting.HighlightCssColor; break;
                 case 0x083A: formatting.IsSmallCaps = Toggle(grpprl[operandAt], formatting.IsSmallCaps, styleBaseline?.IsSmallCaps); break;
                 case 0x083B: formatting.IsAllCaps = Toggle(grpprl[operandAt], formatting.IsAllCaps, styleBaseline?.IsAllCaps); break;
+                case 0x4852: formatting.CharacterScalePercent = BitConverter.ToUInt16(grpprl, operandAt); break;              // sprmCCharScale (sprmids.hxx:335; ww8par6.cxx:5004 Read_ScaleWidth)
                 case 0x8840: formatting.CharacterSpacingTwips = BitConverter.ToInt16(grpprl, operandAt); break;
                 case 0x4845: formatting.PositionHalfPoints = BitConverter.ToInt16(grpprl, operandAt); break;                            // sprmCHpsPos (LibreOffice sprmids.hxx)
                 case 0x0811: formatting.IsHidden = Toggle(grpprl[operandAt], formatting.IsHidden, styleBaseline?.IsHidden); break;     // sprmCFWebHidden (sprmids.hxx; 0x0868 is CFUsePgsuSettings)

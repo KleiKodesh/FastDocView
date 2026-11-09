@@ -38,12 +38,20 @@ public sealed class WordRunFormatting
     public bool IsSmallCaps;
     public bool IsAllCaps;
     public int CharacterSpacingTwips;
+    /// <summary>Character scale in percent (narrowed / widened letters): .docx w:w, .doc sprmCCharScale, RTF \charscalex,
+    /// ODT style:text-scale; 0 = 100. Drawn per word by <see cref="WordHtmlText.AppendScaled"/>, not by <see cref="ToCss(WordRunFormatting?, WordDecorationOutput)"/>.</summary>
+    public int CharacterScalePercent;
     public int PositionHalfPoints;          // raised (+) / lowered (−) text, w:position / sprmCHpsPos
     public bool IsOutline;
     public double TextOutlineWidthPt;       // Word 2010 text outline (w14:textOutline): stroke width in pt, 0 = none
     public string? TextOutlineColorHex;     // its colour "RRGGBB"
     public bool IsTextFillNone;             // w14:textFill/w14:noFill: hollow letters (only the outline shows)
     public bool IsShadow;
+    /// <summary>Word 2010 text fill (w14:textFill) when it is more than a plain colour: a CSS declaration set (an rgba colour,
+    /// or a gradient clipped to the glyphs); null = none. A plain solid fill goes to <see cref="ColorHex"/> instead.</summary>
+    public string? TextFillCss;
+    /// <summary>Word 2010 w14:shadow and w14:glow as CSS text-shadow layers (comma-separated); null = none.</summary>
+    public string? TextEffectShadowCss;
     public bool IsEmboss;
     public bool IsImprint;
     public string? BorderCss;               // a border around the run (w:bdr / sprmCBrc)
@@ -77,7 +85,8 @@ public sealed class WordRunFormatting
 
     /// <summary>Shadow / emboss / imprint as CSS text-shadow (Word draws them as offset copies of the glyphs).</summary>
     private string TextShadowCss()
-        => IsShadow ? "1px 1px 1px rgba(0,0,0,.45)"
+        => TextEffectShadowCss is not null ? TextEffectShadowCss
+         : IsShadow ? "1px 1px 1px rgba(0,0,0,.45)"
          : IsEmboss ? "-1px -1px 0 rgba(255,255,255,.8), 1px 1px 0 rgba(0,0,0,.35)"
          : IsImprint ? "1px 1px 0 rgba(255,255,255,.8), -1px -1px 0 rgba(0,0,0,.35)"
          : "";
@@ -192,6 +201,12 @@ public sealed class WordRunFormatting
         else if (ColorHex is null && baseline?.ColorHex is not null) css.Append("color:inherit;");
         string? background = BackgroundCss, baselineBackground = baseline?.BackgroundCss;
         if (background is not null && background != baselineBackground) css.Append("background-color:").Append(WordHtmlColor.Css(background)).Append(';');
+
+        // after the colour: a gradient fill makes the glyphs transparent over its clipped background
+        if (TextFillCss is not null && (baseline is null || TextFillCss != baseline.TextFillCss)) css.Append(TextFillCss);
+        else if (TextFillCss is null && baseline?.TextFillCss is not null)
+            // undo the outer element's fill: background-clip is not inherited but its transparent colour is
+            css.Append("background-image:none;color:").Append(ColorHex is null ? "initial" : WordHtmlColor.Css(ColorHex)).Append(';');
 
         string? font = EffectiveFontName;
         if (font is not null && (baseline is null || font != baseline.EffectiveFontName)) css.Append("font-family:'").Append(WordHtmlText.CssFontName(font)).Append("';");

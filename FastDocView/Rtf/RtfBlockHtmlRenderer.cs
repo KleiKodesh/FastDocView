@@ -123,7 +123,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
            && a.Underline == b.Underline && a.Font == b.Font && a.ComplexFont == b.ComplexFont
            && a.FontSize == b.FontSize && a.ComplexFontSize == b.ComplexFontSize
            && a.ForegroundColor == b.ForegroundColor && a.BackgroundColor == b.BackgroundColor && a.ShadingColor == b.ShadingColor
-           && a.Highlight == b.Highlight && a.Position == b.Position && a.CharacterSpacing == b.CharacterSpacing;
+           && a.Highlight == b.Highlight && a.Position == b.Position && a.CharacterSpacing == b.CharacterSpacing && a.CharacterScale == b.CharacterScale;
 
     private void FlushRun()
     {
@@ -136,8 +136,10 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         string css = RunFormatting(_runState, IsComplexScript(text)).ToCss(_documentRun) + BaselineShiftCss
                      + WordHtmlText.RunDirectionCss(isRunRightToLeft, _runState.Has(RtfStateFlags.RightToLeftParagraph));
         string encoded = WordHtmlText.Encode(text);
-        if (css.Length == 0) { target.Append(encoded); return; }
-        target.Append("<span style=\"").Append(css).Append("\">").Append(encoded).Append("</span>");
+        if (css.Length == 0) { WordHtmlText.AppendScaled(target, encoded, _runState.CharacterScale); return; }
+        target.Append("<span style=\"").Append(css).Append("\">");
+        WordHtmlText.AppendScaled(target, encoded, _runState.CharacterScale);
+        target.Append("</span>");
     }
 
     /// <summary>Hebrew / Arabic text takes the complex-script slot (Word picks the slot by the characters' script).</summary>
@@ -170,6 +172,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             IsImprint = state.Has(RtfStateFlags.Imprint),
             PositionHalfPoints = state.Position,
             CharacterSpacingTwips = state.CharacterSpacing,
+            CharacterScalePercent = state.CharacterScale,
             ColorHex = _tables.ColorHex(state.ForegroundColor),
             HighlightCssColor = HighlightCss(state.Highlight) ?? HexCss(_tables.ColorHex(state.ShadingColor)) ?? HexCss(_tables.ColorHex(state.BackgroundColor)),
         };

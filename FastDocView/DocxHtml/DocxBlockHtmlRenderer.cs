@@ -764,17 +764,19 @@ public sealed class DocxBlockHtmlRenderer
     private static void AppendScriptText(StringBuilder html, string text, WordRunFormatting formatting)
     {
         string? eastAsianFont = formatting.EastAsianFontSwitch;
-        if (eastAsianFont is null) { html.Append(WordHtmlText.Encode(text)); return; }
+        if (eastAsianFont is null) { WordHtmlText.AppendScaled(html, WordHtmlText.Encode(text), formatting.CharacterScalePercent); return; }
+        var pieces = new StringBuilder();
         for (int start = 0; start < text.Length;)
         {
             bool isEastAsian = WordRunFormatting.IsEastAsianCharacter(text[start]);
             int end = start + 1;
             while (end < text.Length && WordRunFormatting.IsEastAsianCharacter(text[end]) == isEastAsian) end++;
             string piece = WordHtmlText.Encode(text.Substring(start, end - start));
-            if (isEastAsian) html.Append("<span style=\"font-family:'").Append(WordHtmlText.CssFontName(eastAsianFont)).Append("'\">").Append(piece).Append("</span>");
-            else html.Append(piece);
+            if (isEastAsian) pieces.Append("<span style=\"font-family:'").Append(WordHtmlText.CssFontName(eastAsianFont)).Append("'\">").Append(piece).Append("</span>");
+            else pieces.Append(piece);
             start = end;
         }
+        WordHtmlText.AppendScaled(html, pieces.ToString(), formatting.CharacterScalePercent);
     }
 
     private IEnumerable<RenderStep> RenderRunChildren(XElement run, StringBuilder html, WordRunFormatting formatting)
