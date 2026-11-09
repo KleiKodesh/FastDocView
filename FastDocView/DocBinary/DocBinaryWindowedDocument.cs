@@ -157,7 +157,10 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
                                               FileInformationBlock.DocumentProperties);
         IsRightToLeft = DetectRightToLeft();
         if (_renderer.FieldContext is { } fieldContext) fieldContext.IsRightToLeftText = IsRightToLeft;
-        Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(0).RunFormatting, IsRightToLeft);
+        // the document default in the set its (mostly right-to-left) text draws in: sprmPFBiDi no longer makes runs complex
+        WordRunFormatting defaultRun = _styles.ResolveParagraphStyle(0).RunFormatting;
+        if (IsRightToLeft && !defaultRun.IsRightToLeft) { defaultRun = defaultRun.Clone(); defaultRun.IsRightToLeft = true; }
+        Stylesheet = WordDocumentHtmlStylesheet.Build(defaultRun, IsRightToLeft);
     }
 
     private Fields.WordFieldContext FieldContext(string path)

@@ -2070,6 +2070,30 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   drawn in the text font; Wingdings keeps its code and font.
 - Test: `ListBulletsFidelityTest` now runs every check on .doc and .rtf too (the skip is gone), plus the picture bullet's label size
   (11 / 24 pt) and the symbol bullets' 11 pt in all four formats; the numbered label is checked red, complex size, not bold.
-- Not done: Latin text runs in a right-to-left .doc / ODT paragraph still draw in the complex-script set (the label rule is not
-  applied to body runs); RTF labels counted at index time (no \listtext) do not take the level's \leveltext character formatting;
+- Not done (body runs: fixed, see the next section): RTF labels counted at index time (no \listtext) do not take the level's \leveltext character formatting;
   legacy numbering (w:legacy, .doc fPrev / fPrevSpace) is not drawn; a .doc bullet whose Wingdings font is set only by sprmCFtcBi.
+
+## Body text: Latin or complex-script set per run (2026-11-09; index format .docx 21)
+
+- **Measured in Word 16** (PDF export of test-data/word-script/body-script-v1.*, make-body-script-fixture.ps1; right-to-left
+  paragraph, sz 11 / szCs 16, Courier New / cs Arial): the Hebrew words and the digits draw in Arial 16, "English" in Courier New 11.
+  Word wrote w:rtl / sprmCFBiDi / \rtlch on the Hebrew runs (digits inside them) and nothing on "English": the set is the run's own.
+- .doc: sprmPFBiDi no longer sets the paragraph's run formatting right-to-left (it did since the first commit); a run is complex
+  only by its own sprmCFBiDi, as .docx w:rtl (LEARNINGS 2026-10-28/29). The samples render the same (Hebrew runs carry sprmCFBiDi).
+- ODT has no per-run flag: LibreOffice splits each paragraph by script (i18nutil/source/utility/scriptchangescanner.cxx:233-305:
+  right-to-left text and weak text in an embedded run without a strong LTR character -> CTL, #i16354# / #i89825#; porlay.cxx:1466-1490
+  SwScriptInfo::InitScriptInfo uses it). `WordTextScript` does that per text piece (an LTR run in an RTL paragraph = from a strong
+  LTR character to the last one before the next RTL letter, with the digits after it; the mirror in an LTR paragraph);
+  OdtBlockHtmlRenderer wraps a piece in the other set. ODT text styles now keep the western and complex weight / posture apart
+  (`HasComplexScriptBoldItalic`); while no complex weight / posture is set the complex text keeps the western one, as before.
+  Limit: the split is per text node - an LTR run broken by a span is judged in pieces.
+- .docx and RTF already drew by the run's flag (w:rtl, 
+tlch); checked by the same test.
+- A bullet whose symbol font is set only for complex script (w:rFonts w:cs / sprmCFtcBi / ListLevel.Font.NameBi = Wingdings):
+  the label is Latin (its U+F0xx code is strong LTR, WordListLabelScript), so Word looks the code up in the Latin font; Word 16's PDF
+  shows no glyph at all (Courier New has none). LibreOffice also takes the bullet font from the Latin CharFontName only
+  (writerfilter dmapper/NumberingManager.cxx:271-273). All formats draw a plain U+2022 in the text font (the WordSymbolFontBullet rule
+  for a symbol code in a non-symbol font); .docx no longer falls back to w:cs for the bullet font (index 21: labels are stored).
+- Test: `BodyScriptFidelityTest` (`--body-script`, in `--fidelity`) over body-script-v1.docx / .doc / .rtf / .odt.
+- Not done: RTF labels counted at index time (no \listtext) do not take the \listlevel group's character formatting; legacy
+  numbering (w:legacy / w:legacySpace / w:legacyIndent, .doc fPrev / fPrevSpace) is not drawn.

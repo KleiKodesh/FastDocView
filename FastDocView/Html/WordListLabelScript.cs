@@ -24,13 +24,9 @@ public static class WordListLabelScript
         return isParagraphRightToLeft && !hasStrongLeftToRight;
     }
 
-    /// <summary>Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan..., their presentation forms (i18n ScriptType COMPLEX for the RTL scripts).</summary>
-    private static bool IsComplexScript(char c)
-        => c is (>= '֐' and <= 'ࣿ') or (>= 'יִ' and <= '﷿') or (>= 'ﹰ' and <= '﻿');
+    private static bool IsComplexScript(char c) => WordTextScript.IsComplexScript(c);
 
-    /// <summary>u_charDirection == U_LEFT_TO_RIGHT: letters of the LTR scripts and the private-use area (symbol-font codes).</summary>
-    private static bool IsStrongLeftToRight(char c)
-        => c is >= '' and <= '' || (char.IsLetter(c) && !IsComplexScript(c));
+    private static bool IsStrongLeftToRight(char c) => WordTextScript.IsStrongLeftToRight(c);
 
     /// <summary>The label's formatting with the property set it draws in chosen (a clone when it changes).</summary>
     public static WordRunFormatting WithScript(WordRunFormatting formatting, bool usesComplexScript)

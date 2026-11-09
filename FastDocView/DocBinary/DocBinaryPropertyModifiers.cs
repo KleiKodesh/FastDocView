@@ -35,7 +35,10 @@ public static class DocBinaryPropertyModifiers
                     };
                     formatting.IsAlignmentPhysical = opcode == 0x2403;   // sprmPJc80 is physical, sprmPJc logical ([MS-DOC] 2.6.2)
                     break;
-                case 0x2441: formatting.IsRightToLeft = grpprl[operandAt] != 0; formatting.RunFormatting.IsRightToLeft = formatting.IsRightToLeft; break;
+                // sprmPFBiDi sets only the paragraph's direction: Word picks each run's Latin or complex-script set by the run's own
+                // sprmCFBiDi (Word 16 PDF of test-data/word-script/body-script-v1.doc: "English" in a right-to-left paragraph draws in
+                // the Latin font and size; LEARNINGS 2026-10-28/29 for .docx w:rtl)
+                case 0x2441: formatting.IsRightToLeft = grpprl[operandAt] != 0; break;
                 // sprmPDxaLeft80 / sprmPDxaRight80 are physical left / right, sprmPDxaLeft / sprmPDxaRight logical ([MS-DOC] 2.6.2)
                 case 0x840F: case 0x845E: formatting.LeftIndentTwips = BitConverter.ToInt16(grpprl, operandAt); formatting.IsLeftIndentPhysical = opcode == 0x840F; break;
                 case 0x840E: case 0x845D: formatting.RightIndentTwips = BitConverter.ToInt16(grpprl, operandAt); formatting.IsRightIndentPhysical = opcode == 0x840E; break;

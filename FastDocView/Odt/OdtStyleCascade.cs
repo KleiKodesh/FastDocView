@@ -387,21 +387,28 @@ public sealed class OdtStyleCascade
     // ── text properties ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// style:text-properties onto a run. Western and complex-script variants: the complex one
-    /// (style:*-complex) wins in a right-to-left paragraph, the western one otherwise — the
-    /// renderer has no per-character script detection. <paramref name="isComplexStrict"/>: a list label whose script is known
-    /// (WordListLabelScript) takes only the complex-script variants, as LibreOffice draws a CTL portion.
+    /// style:text-properties onto a run. Western and complex-script variants are kept apart (size, font, weight, posture):
+    /// the renderer draws each piece of text in the set LibreOffice picks for it (WordTextScript). While no complex weight /
+    /// posture is set anywhere in the chain the complex-script text uses the western one, as before. <paramref name="isComplexStrict"/>:
+    /// a list label whose script is known (WordListLabelScript) takes only the complex-script variants, as LibreOffice draws a CTL portion.
     /// </summary>
     public void ApplyTextProperties(WordRunFormatting run, XElement? properties, bool isRightToLeft, bool isComplexStrict = false)
     {
         if (properties is null) return;
-        string? Pick(XName western, XName complex)
-            => isRightToLeft ? (string?)properties.Attribute(complex) ?? (isComplexStrict ? null : (string?)properties.Attribute(western))
-                             : (string?)properties.Attribute(western);
-
-        if (Pick(Fo + "font-weight", Style + "font-weight-complex") is { } weight)
-            run.IsBold = weight == "bold" || (int.TryParse(weight, out int numeric) && numeric >= 600);
-        if (Pick(Fo + "font-style", Style + "font-style-complex") is { } posture) run.IsItalic = posture is "italic" or "oblique";
+        static bool IsBoldWeight(string weight) => weight == "bold" || (int.TryParse(weight, out int numeric) && numeric >= 600);
+        // a western value set after the complex one (or in a strict label) must not reach the complex-script text
+        void KeepComplexApart()
+        {
+            if (run.HasComplexScriptBoldItalic) return;
+            run.HasComplexScriptBoldItalic = true;
+            run.IsBoldComplexScript = run.IsBold;
+            run.IsItalicComplexScript = run.IsItalic;
+        }
+        if (isComplexStrict && (properties.Attribute(Fo + "font-weight") is not null || properties.Attribute(Fo + "font-style") is not null)) KeepComplexApart();
+        if ((string?)properties.Attribute(Fo + "font-weight") is { } weight) run.IsBold = IsBoldWeight(weight);
+        if ((string?)properties.Attribute(Fo + "font-style") is { } posture) run.IsItalic = posture is "italic" or "oblique";
+        if ((string?)properties.Attribute(Style + "font-weight-complex") is { } complexWeight) { KeepComplexApart(); run.IsBoldComplexScript = IsBoldWeight(complexWeight); }
+        if ((string?)properties.Attribute(Style + "font-style-complex") is { } complexPosture) { KeepComplexApart(); run.IsItalicComplexScript = complexPosture is "italic" or "oblique"; }
 
         if ((string?)properties.Attribute(Style + "text-underline-style") is { } underline)
         {

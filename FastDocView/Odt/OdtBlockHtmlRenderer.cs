@@ -229,6 +229,31 @@ public sealed partial class OdtBlockHtmlRenderer
         return values;
     }
 
+    /// <summary>
+    /// Text in the set LibreOffice draws each piece with (WordTextScript): in a right-to-left paragraph the run's formatting is
+    /// the complex-script set, so an English piece switches to the western font / size / weight; in a left-to-right paragraph a
+    /// Hebrew piece switches to the complex-script set.
+    /// </summary>
+    private void AppendScriptPieces(StringBuilder html, string value, WordRunFormatting current)
+    {
+        if (value.Length == 0) return;
+        if (WordTextScript.PieceEnd(value, 0, _isParagraphRightToLeft, out bool firstIsComplex) == value.Length && firstIsComplex == current.UsesComplexScriptProperties)
+        {
+            WordHtmlText.AppendScaled(html, WordHtmlText.Encode(value), current.CharacterScalePercent);
+            return;
+        }
+        for (int start = 0; start < value.Length;)
+        {
+            int end = WordTextScript.PieceEnd(value, start, _isParagraphRightToLeft, out bool isComplex);
+            string piece = WordHtmlText.Encode(value.Substring(start, end - start));
+            string css = isComplex == current.UsesComplexScriptProperties ? "" : WordListLabelScript.WithScript(current, isComplex).ToCss(current);
+            if (css.Length > 0) html.Append("<span style=\"").Append(css).Append("\">");
+            WordHtmlText.AppendScaled(html, piece, current.CharacterScalePercent);
+            if (css.Length > 0) html.Append("</span>");
+            start = end;
+        }
+    }
+
     private void RenderInline(XElement container, StringBuilder html, string? paragraphStyle, WordRunFormatting paragraphBase,
                               WordRunFormatting current, bool hasLabel)
         => RenderInline(container.Nodes(), html, paragraphStyle, paragraphBase, current, hasLabel);
@@ -252,7 +277,7 @@ public sealed partial class OdtBlockHtmlRenderer
                     WordDropCapHtml.Close(html);
                     value = value.Substring(take);
                 }
-                WordHtmlText.AppendScaled(html, WordHtmlText.Encode(value), current.CharacterScalePercent);
+                AppendScriptPieces(html, value, current);
                 continue;
             }
             if (node is not XElement element) continue;

@@ -327,7 +327,7 @@ public sealed class DocxNumberingDefinitions
     public static string? FontOf(XElement? runProperties)
     {
         XElement? fonts = runProperties?.Element(W + "rFonts");
-        return (string?)fonts?.Attribute(W + "ascii") ?? (string?)fonts?.Attribute(W + "hAnsi") ?? (string?)fonts?.Attribute(W + "cs");
+        return (string?)fonts?.Attribute(W + "ascii") ?? (string?)fonts?.Attribute(W + "hAnsi");
     }
 
     /// <summary>
