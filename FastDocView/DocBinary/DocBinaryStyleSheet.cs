@@ -25,8 +25,23 @@ public sealed class DocBinaryStyleSheet
     private const int MinimumStdfBaseLength = 6;     // the three words ParseStyle reads: sti, stk + istdBase, cupx
     private readonly Dictionary<int, WordParagraphFormatting> _resolved = new();
 
-    /// <summary>Set once after construction; character sprms in style UPXs name fonts by index.</summary>
-    public DocBinaryFontTable Fonts { get; set; } = DocBinaryFontTable.Empty;
+    /// <summary>
+    /// Set once after construction; character sprms in style UPXs name fonts by index. Setting it also names the document's
+    /// default fonts: the STSHI's ftcAsci (Latin) and ftcBi (complex script; ftcOther when the STSHI is shorter), which every
+    /// style without a font of its own uses (LibreOffice ww8scan.cxx:6918-6930 reads them, ww8par2.cxx:3714-3726 Set1StyleDefaults).
+    /// </summary>
+    public DocBinaryFontTable Fonts
+    {
+        get => _fonts;
+        set
+        {
+            _fonts = value;
+            if (_defaultLatinFont >= 0 && value.NameOf(_defaultLatinFont) is { } latin) DocumentDefaults.RunFormatting.FontName = latin;
+            if (_defaultComplexScriptFont >= 0 && value.NameOf(_defaultComplexScriptFont) is { } complex) DocumentDefaults.RunFormatting.ComplexScriptFontName = complex;
+        }
+    }
+    private DocBinaryFontTable _fonts = DocBinaryFontTable.Empty;
+    private int _defaultLatinFont = -1, _defaultComplexScriptFont = -1;
 
     public WordParagraphFormatting DocumentDefaults { get; } = new()
     {
@@ -39,6 +54,10 @@ public sealed class DocBinaryStyleSheet
         if (bytes is null) { _styles = []; return; }       // no style sheet, or one outside the table stream: document defaults only
 
         int stshiLength = BitConverter.ToUInt16(bytes, 0);
+        // Stshif ([MS-DOC] 2.9.271): rgftcStandardChpStsh = ftcAsci, ftcFE, ftcOther at 12..17, then the STSHI's ftcBi at 18
+        if (stshiLength >= 14 && bytes.Length >= 2 + 14) _defaultLatinFont = BitConverter.ToUInt16(bytes, 2 + 12);
+        if (stshiLength >= 18 && bytes.Length >= 2 + 18) _defaultComplexScriptFont = BitConverter.ToUInt16(bytes, 2 + 16);
+        if (stshiLength >= 20 && bytes.Length >= 2 + 20) _defaultComplexScriptFont = BitConverter.ToUInt16(bytes, 2 + 18);
         int styleCount = BitConverter.ToUInt16(bytes, 2);
         int stdBaseLength = BitConverter.ToUInt16(bytes, 4);
         _styles = new StyleDefinition?[styleCount];

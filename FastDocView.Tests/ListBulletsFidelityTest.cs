@@ -37,20 +37,38 @@ public static class ListBulletsFidelityTest
             TestReport.Check(image.Success && image.Value.Contains("height:max(calc(1em - 2pt),1px);") && Regex.IsMatch(image.Value, @"aspect-ratio:(\d+(\.\d+)?)/(\d+(\.\d+)?)")
                              && Math.Abs(Ratio(image.Value) - 2) < 0.05,
                              $"{format}: picture bullet ({size} pt) drawn as a 2:1 picture 2 pt less high than its font (got [{Shorten(picture)}])");
+            Match pictureMarker = Regex.Match(picture, "<span class=\"list-marker\"[^>]*>");
+            TestReport.Check(pictureMarker.Success && pictureMarker.Value.Contains("font-size:" + size + "pt"),
+                             $"{format}: picture bullet label sized by the label's own font ({size} pt), not the paragraph's (got [{Shorten(pictureMarker.Value)}])");
             WordDocumentPicture? bytes = image.Success ? document.ReadPicture(System.Net.WebUtility.HtmlDecode(image.Groups[1].Value)) : null;
             TestReport.Check(bytes is not null && bytes.ContentType == "image/png", $"{format}: picture bullet ({size} pt) resolves to its PNG");
         }
-        // .doc / .rtf: picture bullets only here (their symbol bullets and label styles are checked by ListNumberFormatsFidelityTest / DocxFidelityTest)
-        if (format is ".doc" or ".rtf") return;
         string symbol = Block("symbol Symbol");
         TestReport.Check(symbol.Contains("\u2022") && !symbol.Contains("\uF0B7") && !symbol.Contains("font-family:'Symbol'"),
                          $"{format}: Symbol bullet recoded to U+2022 (got [{Shorten(symbol)}])");
         string wingdings = Block("symbol Wingdings");
         TestReport.Check(wingdings.Contains("\uF0A7") && wingdings.Contains("Wingdings"), $"{format}: Wingdings bullet keeps its code and font (got [{Shorten(wingdings)}])");
+        // symbol bullets draw in the Latin set: the mark's 11 pt, not the complex-script 12 pt (Word 16 PDF: SymbolMT / Wingdings 11)
+        TestReport.Check(Label(symbol).Contains("font-size:11pt") && Label(wingdings).Contains("font-size:11pt"),
+                         $"{format}: symbol bullets sized by the mark's Latin size (got [{Shorten(Label(symbol))}] [{Shorten(Label(wingdings))}])");
+        // "1." in a right-to-left paragraph draws in the complex-script set (WordListLabelScript): Word 16 PDF shows it in
+        // Arial 12, red, NOT bold - the level set only the Latin bold (b / sprmCFBold / ), not bCs / sprmCFBoldBi / b
         string styled = Block("styled label");
-        Match marker = Regex.Match(styled, "<span class=\"list-marker\"[^>]*>");
-        TestReport.Check(marker.Success && marker.Value.Contains("font-weight:bold") && marker.Value.Contains("#FF0000"),
-                         $"{format}: the numbered label is bold red (got [{Shorten(styled)}])");
+        string label = Label(styled);
+        TestReport.Check(label.Contains("#FF0000") && !label.Contains("font-weight:bold") && !label.Contains("font-size:11pt"),
+                         $"{format}: the numbered label is red, complex-script size and not bold, as Word draws it (got [{Shorten(label)}])");
+        if (format is ".doc" or ".rtf")
+            TestReport.Check(label.Contains("font-family:'Arial'") || (format == ".doc" && Regex.IsMatch(styled, "<p [^>]*font-family:'Arial'")),
+                             $"{format}: the numbered label draws in the complex-script font Arial (got [{Shorten(styled)}])");
+    }
+
+    /// <summary>The list-marker span and what it holds, up to the paragraph text.</summary>
+    private static string Label(string html)
+    {
+        int start = html.IndexOf("<span class=\"list-marker\"", StringComparison.Ordinal);
+        if (start < 0) return "";
+        int end = html.IndexOf("</span></span>", start, StringComparison.Ordinal);
+        return end < 0 ? html.Substring(start) : html.Substring(start, end - start);
     }
 
     private static double Ratio(string image)

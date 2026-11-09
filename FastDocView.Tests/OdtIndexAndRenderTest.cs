@@ -77,7 +77,8 @@ public static class OdtIndexAndRenderTest
         TestReport.Check(document.EstimatedTextLength(1) < 60, $"{what}: note bodies excluded from text length ({document.EstimatedTextLength(1)})");
         TestReport.Check(withNotes.Html.Contains("<span style=\"") && withNotes.Html.Contains("font-style:italic") && withNotes.Html.Contains("  "), $"{what}: span style (italic via parent text style) and text:s spaces");
         TestReport.Check(prefix[0].Html.StartsWith("<h1", StringComparison.Ordinal) && prefix[0].Html.Contains("dir=\"rtl\"") && prefix[0].Html.Contains("font-weight:bold"), $"{what}: heading renders <h1 dir=rtl> bold");
-        TestReport.Check(prefix[4].Html.Contains("list-marker\">2.a)"), $"{what}: nested list item renders its label");
+        // a Latin label ("a" is strong LTR) in a right-to-left paragraph carries its Latin-set style (WordListLabelScript)
+        TestReport.Check(System.Text.RegularExpressions.Regex.IsMatch(prefix[4].Html, "list-marker\"( style=\"[^\"]*\")?>2\\.a\\)"), $"{what}: nested list item renders its label");
         string table = prefix[11].Html;
         TestReport.Check(table.Contains("colspan=\"2\"") && table.Contains("width:144pt") && table.Contains("background-color:light-dark(#EEEEEE,") && table.Contains("vertical-align:middle")
                          && System.Text.RegularExpressions.Regex.Matches(table, "<td").Count == 5 && prefix[11].Notes.Count == 1,

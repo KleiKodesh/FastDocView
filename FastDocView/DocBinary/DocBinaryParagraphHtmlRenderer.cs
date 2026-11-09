@@ -262,6 +262,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
             labelFormatting = markFormatting.Clone();
             DocBinaryPropertyModifiers.ApplyCharacterSprms(labelFormatting, level.CharacterGrpprl, 0, level.CharacterGrpprl.Length, fonts: _styles.Fonts);
         }
+        // Latin or complex-script set by the label's own characters and the paragraph's direction (WordListLabelScript)
+        labelFormatting = WordListLabelScript.WithScript(labelFormatting, WordListLabelScript.UsesComplexScript(label, formatting.IsRightToLeft));
         if (level is { CharacterGrpprl.Length: > 0 } && DocBinaryPropertyModifiers.PictureBulletIndexIn(level.CharacterGrpprl, 0, level.CharacterGrpprl.Length) is { } pictureIndex
             && PictureBulletLocation(pictureIndex) is { } location && Pictures.Locate(location) is { } picture)
             label = WordListLabelHtml.PictureLabel(location.ToString(System.Globalization.CultureInfo.InvariantCulture), picture.widthPt, picture.heightPt);
@@ -270,7 +272,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
             (label, bool keepsFont) = WordSymbolFontBullet.Resolve(label, labelFormatting.FontName);
             if (!keepsFont)
             {
-                if (ReferenceEquals(labelFormatting, formatting.RunFormatting)) labelFormatting = labelFormatting.Clone();
+                if (ReferenceEquals(labelFormatting, formatting.RunFormatting) || ReferenceEquals(labelFormatting, markFormatting)) labelFormatting = labelFormatting.Clone();
                 labelFormatting.FontName = formatting.RunFormatting.FontName;                 // the recoded bullet draws in the text's font
                 labelFormatting.ComplexScriptFontName = formatting.RunFormatting.ComplexScriptFontName;
             }

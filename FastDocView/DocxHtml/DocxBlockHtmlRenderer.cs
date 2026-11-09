@@ -333,7 +333,16 @@ public sealed class DocxBlockHtmlRenderer
         if (_listLabel is { Text.Length: > 0 } label)
         {
             // Word draws the number with the mark's formatting plus the level's rPr (§17.9.6), then the level's suffix (§17.9.28).
-            string labelCss = mark!.ToCss(formatting.RunFormatting) + label.LevelCss;
+            // the Latin or complex-script set by the label's characters and the paragraph's direction (WordListLabelScript;
+            // a recoded symbol bullet is judged by its symbol code, strong left-to-right)
+            bool usesComplexScript = !DocxStyleCascade.IsLatinLabel(label.LevelCss) && WordListLabelScript.UsesComplexScript(label.Text, formatting.IsRightToLeft);
+            WordRunFormatting labelMark = mark!;
+            if (labelMark.UsesComplexScriptProperties != usesComplexScript)
+            {
+                labelMark = WordListLabelScript.WithScript(labelMark, usesComplexScript);
+                DocxStyleCascade.ResolveToggles(labelMark);
+            }
+            string labelCss = labelMark.ToCss(formatting.RunFormatting) + DocxStyleCascade.LevelCssFor(label.LevelCss, usesComplexScript);
             WordListLabelSuffix suffix = label.Suffix switch { DocxListLabelSuffix.Space => WordListLabelSuffix.Space, DocxListLabelSuffix.Nothing => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab };
             WordListLabelHtml.Append(html, label.Text, labelCss.Length > 0 ? labelCss : null, suffix, formatting, _styles.Compatibility.DefaultTabStopTwips, label.Alignment);
         }

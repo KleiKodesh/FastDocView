@@ -253,11 +253,11 @@ public sealed class OdtStyleCascade
     }
 
     /// <summary>A text style's chain applied over <paramref name="outer"/> (a copy is returned).</summary>
-    public WordRunFormatting ApplySpan(WordRunFormatting outer, string textStyleName)
+    public WordRunFormatting ApplySpan(WordRunFormatting outer, string textStyleName, bool isComplexStrict = false)
     {
         WordRunFormatting run = outer.Clone();
         foreach (XElement style in Chain("text", textStyleName, includeDefault: false))
-            ApplyTextProperties(run, style.Element(Style + "text-properties"), outer.IsRightToLeft);
+            ApplyTextProperties(run, style.Element(Style + "text-properties"), outer.IsRightToLeft, isComplexStrict);
         return run;
     }
 
@@ -389,13 +389,14 @@ public sealed class OdtStyleCascade
     /// <summary>
     /// style:text-properties onto a run. Western and complex-script variants: the complex one
     /// (style:*-complex) wins in a right-to-left paragraph, the western one otherwise — the
-    /// renderer has no per-character script detection.
+    /// renderer has no per-character script detection. <paramref name="isComplexStrict"/>: a list label whose script is known
+    /// (WordListLabelScript) takes only the complex-script variants, as LibreOffice draws a CTL portion.
     /// </summary>
-    public void ApplyTextProperties(WordRunFormatting run, XElement? properties, bool isRightToLeft)
+    public void ApplyTextProperties(WordRunFormatting run, XElement? properties, bool isRightToLeft, bool isComplexStrict = false)
     {
         if (properties is null) return;
         string? Pick(XName western, XName complex)
-            => isRightToLeft ? (string?)properties.Attribute(complex) ?? (string?)properties.Attribute(western)
+            => isRightToLeft ? (string?)properties.Attribute(complex) ?? (isComplexStrict ? null : (string?)properties.Attribute(western))
                              : (string?)properties.Attribute(western);
 
         if (Pick(Fo + "font-weight", Style + "font-weight-complex") is { } weight)

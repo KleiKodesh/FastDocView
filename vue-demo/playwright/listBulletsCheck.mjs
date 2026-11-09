@@ -29,6 +29,7 @@ for (const path of process.argv.slice(2)) {
     return { loaded: i.naturalWidth, ratio: box.width / box.height, heightPx: box.height / zoom, font }
   }))
   for (const [n, b] of bullets.entries()) {
+    check(Math.abs(b.font * 0.75 - (n === 0 ? 11 : 24)) < 0.1, `${path}: bullet ${n} label in its own font size (${(b.font * 0.75).toFixed(2)} pt)`)
     check(b.loaded > 0, `${path}: bullet ${n} picture loaded (${b.loaded} px wide)`)
     check(Math.abs(b.ratio - 2) < 0.1, `${path}: bullet ${n} ratio 2:1 (${b.ratio.toFixed(2)})`)
     check(Math.abs(b.heightPx - (b.font - 8 / 3)) < 0.5, `${path}: bullet ${n} font size less 2 pt high (${b.heightPx.toFixed(2)} px at ${b.font.toFixed(2)} px)`)

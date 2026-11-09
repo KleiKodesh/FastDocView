@@ -371,6 +371,7 @@ public sealed class OdtListStyle
         int index = Math.Max(1, Math.Min(MaxLevels, levelNumber)) - 1;
         var level = new Level { Prefix = attribute("num-prefix", true) ?? "", Suffix = attribute("num-suffix", true) ?? "" };
         string? bulletFont = null;
+        bool isLatinBullet = false;     // the stored bullet had a strong left-to-right (symbol-font) code before recoding
         if (isTextNamespace && localName == "list-level-style-number")
         {
             level.NumberFormat = attribute("num-format", true) ?? "1";
@@ -387,6 +388,7 @@ public sealed class OdtListStyle
             (string resolved, bool keepsFont) = bullet.Length == 0 ? ("\u2022", false) : WordSymbolFontBullet.Resolve(bullet, font);
             level.BulletCharacter = resolved;
             if (keepsFont) bulletFont = font;
+            isLatinBullet = bullet.Length > 0 && resolved != bullet && !WordListLabelScript.UsesComplexScript(bullet, isParagraphRightToLeft: true);
         }
         else
         {
@@ -398,8 +400,9 @@ public sealed class OdtListStyle
             level.BulletCharacter = WordListLabelHtml.PictureLabel(href is not null && WordPictureHtml.ContentTypeOf(href) is not null ? OdtBlockHtmlRenderer.PackagePicturePrefix + href : null,
                                                                    width, height);
         }
-        level.Layout = extras.StyleName is null && bulletFont is null ? layout
-            : layout + LayoutLabelLookSeparator + (extras.StyleName ?? "") + LayoutLabelLookSeparator + (bulletFont ?? "");
+        level.Layout = extras.StyleName is null && bulletFont is null && !isLatinBullet ? layout
+            : layout + LayoutLabelLookSeparator + (extras.StyleName ?? "") + LayoutLabelLookSeparator + (bulletFont ?? "")
+              + (isLatinBullet ? LayoutLabelLookSeparator + "L" : "");
         return (index, level);
     }
 

@@ -244,7 +244,30 @@ public sealed class DocxStyleCascade
         ApplyRunProperties(formatting, levelRunProperties, _theme, WordStyleLayer.Direct);
         ResolveToggles(formatting);
         if (isBulletMapped) { formatting.FontName = null; formatting.ComplexScriptFontName = null; formatting.EastAsianFontName = null; }
-        return formatting.ToCss(empty);
+        string latin = formatting.ToCss(empty);
+        // the complex-script set (bCs / iCs / szCs / the cs font), used by a label drawn in it (WordListLabelScript)
+        WordRunFormatting complex = formatting.Clone();
+        complex.IsRightToLeft = true;
+        ResolveToggles(complex);
+        string complexCss = complex.ToCss(new WordRunFormatting { IsRightToLeft = true });
+        string css = complexCss == latin ? latin : latin + LevelCssComplexSeparator + complexCss;
+        return isBulletMapped ? LevelCssLatinLabel + css : css;    // a recoded symbol bullet stays Latin (its symbol code is strong LTR)
+    }
+
+    /// <summary>Starts the level CSS of a recoded symbol bullet: the label draws in the Latin set whatever the direction.</summary>
+    public const char LevelCssLatinLabel = '\u0003';
+
+    public static bool IsLatinLabel(string levelCss) => levelCss.Length > 0 && levelCss[0] == LevelCssLatinLabel;
+
+    /// <summary>Between the Latin and the complex-script CSS of <see cref="LevelRunCss"/> (only when they differ).</summary>
+    public const char LevelCssComplexSeparator = '\u0002';
+
+    /// <summary>The level CSS for the set the label draws in.</summary>
+    public static string LevelCssFor(string levelCss, bool usesComplexScript)
+    {
+        if (IsLatinLabel(levelCss)) levelCss = levelCss.Substring(1);
+        int separator = levelCss.IndexOf(LevelCssComplexSeparator);
+        return separator < 0 ? levelCss : usesComplexScript ? levelCss.Substring(separator + 1) : levelCss.Substring(0, separator);
     }
 
     /// <summary>Heading level 1-9 for a style id, or 0 when the style is not a heading.</summary>

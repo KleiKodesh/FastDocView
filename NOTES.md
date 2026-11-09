@@ -2046,3 +2046,30 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   (the label is stored beside the \listtext for picture bullets only).
 - Test: `ListBulletsFidelityTest` (`--list-bullets`, in `--fidelity`) over test-data/word-lists/list-bullets-v1.docx / .odt (all checks) and .doc / .rtf (picture bullets) (make-list-bullets-fixture.ps1:
   Word 16's ListLevel.ApplyPictureBullet does nothing through COM, so add-picture-bullet.py writes Word's numPicBullet markup and Word re-saves the file).
+
+## List labels: Latin or complex-script set, mark formatting (2026-11-09; index formats .docx 20, ODT 15)
+
+- **Measured in Word 16** (PDF export of list-bullets-v1.doc / .docx, PyMuPDF; right-to-left paragraphs, mark sz 11 / szCs 12, level b + red):
+  the number "1." draws in the complex-script set (Arial 12, red, **not bold** - the level set only b / sprmCFBold / \b, not
+  bCs / sprmCFBoldBi / \ab); Symbol / Wingdings bullets draw at 11 pt and picture bullets at 11 / 24 less 2 pt (the Latin size).
+  Rule (`WordListLabelScript`, all four formats) = LibreOffice's number portion (sw/source/core/text/porfld.cxx:222-316
+  SwFieldPortion::CheckScript): complex-script characters -> complex set; else in a right-to-left paragraph a label with no strong
+  left-to-right character (digits, punctuation, U+2022) -> complex set; else Latin. A symbol-font code (U+F0xx, private use) is strong
+  LTR, so a recoded Symbol bullet stays Latin (.docx: level CSS flag; ODT: Layout flag "L"); pictures are Latin.
+- Cause of the 12 pt labels: .doc and ODT runs in a right-to-left paragraph take the complex-script set (sprmPFBiDi / the ODT
+  cascade set the run's direction), so the label got szCs. The label now picks its own set.
+- .docx: the level CSS is stored for both sets (index 20); the mark's toggles are resolved again for the label's set.
+- ODT: loext:marker-style-name (the paragraph mark's automatic style, LibreOffice ListAutoFormat: xmloff txtparai.cxx:1650-1652,
+  :1765-1771) now formats the label under the level's text:style-name, which wins item by item (sw txtfld.cxx:334-383
+  checkApplyParagraphMarkFormatToNumbering). The ApplyParagraphMarkFormatToNumbering setting is not read (LibreOffice writes the
+  attribute only for Word imports). A label takes only the complex variants (style:*-complex) when it is complex - no fallback to fo:*.
+- .doc: the document's default fonts come from the STSHI (ftcAsci at Stshif 12, ftcBi at 18, else ftcOther; LibreOffice
+  ww8scan.cxx:6918-6930, ww8par2.cxx:3714-3726) instead of a fixed Times New Roman: the label's complex-script font is Arial, as Word draws it.
+- RTF: Word's flat {\listtext} / {\pntext} label picks its set the same way; the group starts with \plain, so its complex-script
+  font / size / bold are the reset ones unless \af / \afs / \ab set them. A Symbol bullet there is recoded (`WordSymbolFontBullet`) and
+  drawn in the text font; Wingdings keeps its code and font.
+- Test: `ListBulletsFidelityTest` now runs every check on .doc and .rtf too (the skip is gone), plus the picture bullet's label size
+  (11 / 24 pt) and the symbol bullets' 11 pt in all four formats; the numbered label is checked red, complex size, not bold.
+- Not done: Latin text runs in a right-to-left .doc / ODT paragraph still draw in the complex-script set (the label rule is not
+  applied to body runs); RTF labels counted at index time (no \listtext) do not take the level's \leveltext character formatting;
+  legacy numbering (w:legacy, .doc fPrev / fPrevSpace) is not drawn; a .doc bullet whose Wingdings font is set only by sprmCFtcBi.

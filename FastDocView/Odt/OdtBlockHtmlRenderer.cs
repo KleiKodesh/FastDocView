@@ -19,6 +19,7 @@ public sealed partial class OdtBlockHtmlRenderer
     private static readonly XNamespace TableNs = OdtStyleCascade.Table;
     private static readonly XNamespace DrawNs = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
     private static readonly XNamespace XLinkNs = "http://www.w3.org/1999/xlink";
+    private static readonly XNamespace LibreOfficeNs = "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0";
 
     /// <summary>Inline elements the renderer handles; anything else renders its text content (fields) — the audit counts the rest.</summary>
     public static readonly HashSet<string> HandledInlineElements =
@@ -167,7 +168,7 @@ public sealed partial class OdtBlockHtmlRenderer
         bool hasLabel = false;
         if (isTopLevel && _listLabel is { Length: > 0 } label)
         {
-            string? labelCss = LabelCss(formatting.RunFormatting);
+            string? labelCss = LabelCss(formatting.RunFormatting, (string?)paragraph.Attribute(LibreOfficeNs + "marker-style-name"), label, formatting.IsRightToLeft);
             if (layout is not null)
                 WordListLabelHtml.Append(html, label, labelCss, layout[3] switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab },
                                          formatting, WordListLabelHtml.DefaultTabStopTwips);
@@ -195,13 +196,23 @@ public sealed partial class OdtBlockHtmlRenderer
     /// <summary>
     /// The label's own look after the paragraph's: the level's text:style-name character style (LibreOffice draws the number
     /// portion with it: xmlnumi.cxx:276-278 CharStyleName) and a kept symbol bullet font (OdtListStyle.Level.Layout's tail).
+    /// Under the character style: the paragraph mark's automatic text style, loext:marker-style-name (txtparai.cxx:1650-1652,
+    /// :1765-1771 -> ListAutoFormat; LibreOffice draws it under the level's character style, which wins item by item:
+    /// sw/source/core/text/txtfld.cxx:334-383 checkApplyParagraphMarkFormatToNumbering. The ApplyParagraphMarkFormatToNumbering
+    /// setting that gates it there is not read: LibreOffice writes the attribute only for the Word imports that set it).
+    /// The Latin or complex-script set follows the label's characters and the paragraph's direction (WordListLabelScript;
+    /// a recoded symbol bullet counts as its symbol code, strong left-to-right).
     /// </summary>
-    private string? LabelCss(WordRunFormatting paragraphRun)
+    private string? LabelCss(WordRunFormatting paragraphRun, string? markerStyle, string label, bool isParagraphRightToLeft)
     {
         int look = _listLayout.IndexOf(OdtListStyle.LayoutLabelLookSeparator);
-        if (look < 0) return null;
-        string[] parts = _listLayout.Substring(look + 1).Split(OdtListStyle.LayoutLabelLookSeparator);
-        string css = parts[0].Length > 0 ? _styles.ApplySpan(paragraphRun, parts[0]).ToCss(paragraphRun) : "";
+        string[] parts = look < 0 ? [] : _listLayout.Substring(look + 1).Split(OdtListStyle.LayoutLabelLookSeparator);
+        // the script first: the text styles pick fo:font-weight or style:font-weight-complex (and size, font) by it
+        bool isLatinBullet = parts.Length > 2 && parts[2] == "L";
+        WordRunFormatting labelRun = WordListLabelScript.WithScript(paragraphRun, !isLatinBullet && WordListLabelScript.UsesComplexScript(label, isParagraphRightToLeft));
+        if (markerStyle is { Length: > 0 }) labelRun = _styles.ApplySpan(labelRun, markerStyle, isComplexStrict: true);
+        if (parts.Length > 0 && parts[0].Length > 0) labelRun = _styles.ApplySpan(labelRun, parts[0], isComplexStrict: true);
+        string css = ReferenceEquals(labelRun, paragraphRun) ? "" : labelRun.ToCss(paragraphRun);
         if (parts.Length > 1 && parts[1].Length > 0) css += "font-family:'" + WordHtmlText.Encode(parts[1].Replace("'", "")) + "';";
         return css.Length > 0 ? css : null;
     }

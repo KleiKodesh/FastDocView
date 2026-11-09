@@ -142,7 +142,23 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         StringBuilder target = _listTextTarget ?? _flow.Inline;
         // \rtlch marks a right-to-left run (RTF 1.5 spec); inside an \ltrpar paragraph it is an RTL embedding, as w:rtl is
         bool isRunRightToLeft = _runState.RunType is RtfRunType.RightToLeftFirst or RtfRunType.LeftToRightThenRightToLeft;
-        WordRunFormatting runFormatting = RunFormatting(_runState, IsComplexScript(text));
+        WordRunFormatting runFormatting;
+        if (_listTextTarget is null) runFormatting = RunFormatting(_runState, IsComplexScript(text));
+        else
+        {
+            // Word's flat label ({\listtext} / {\pntext}): drawn in the Latin or complex-script set as a list number is
+            // (WordListLabelScript); the group starts with \plain, so its complex-script slots are the reset ones unless set.
+            string labelText = text.Replace("\t", "");
+            bool isComplexLabel = WordListLabelScript.UsesComplexScript(labelText, _runState.Has(RtfStateFlags.RightToLeftParagraph));
+            runFormatting = RunFormatting(_runState, isComplexLabel, complexSlotsAreOwn: true);
+            // a symbol-font bullet: Symbol recoded to Unicode in the text's font, Wingdings keeps its code (WordSymbolFontBullet)
+            (string resolved, bool keepsFont) = WordSymbolFontBullet.Resolve(labelText, runFormatting.FontName);
+            if (labelText.Length > 0 && resolved != labelText)
+            {
+                text = text.Replace(labelText, resolved);
+                if (!keepsFont) runFormatting.FontName = _documentRun.FontName;
+            }
+        }
         if (_runState.DropCapLines > 0)
         {
             // the size and raised position Word gives the initial to fill its frame: the drop-cap span sizes it instead
@@ -166,14 +182,16 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         return false;
     }
 
-    private WordRunFormatting RunFormatting(in RtfGroupState state, bool isComplex)
+    /// <param name="complexSlotsAreOwn">The complex-script slots hold their own values even when not set in the group (a label group
+    /// that starts with \plain: \fs alone does not size its complex-script text - Word 16, list-bullets-v1.rtf "1." draws at \afs 24).</param>
+    private WordRunFormatting RunFormatting(in RtfGroupState state, bool isComplex, bool complexSlotsAreOwn = false)
     {
-        bool complexFont = isComplex && state.Has(RtfStateFlags.ComplexFontSet);
-        bool complexSize = isComplex && state.Has(RtfStateFlags.ComplexSizeSet);
+        bool complexFont = isComplex && (complexSlotsAreOwn || state.Has(RtfStateFlags.ComplexFontSet));
+        bool complexSize = isComplex && (complexSlotsAreOwn || state.Has(RtfStateFlags.ComplexSizeSet));
         var run = new WordRunFormatting
         {
-            IsBold = isComplex && state.Has(RtfStateFlags.ComplexBoldSet) ? state.Has(RtfStateFlags.ComplexBold) : state.Has(RtfStateFlags.Bold),
-            IsItalic = isComplex && state.Has(RtfStateFlags.ComplexItalicSet) ? state.Has(RtfStateFlags.ComplexItalic) : state.Has(RtfStateFlags.Italic),
+            IsBold = isComplex && (complexSlotsAreOwn || state.Has(RtfStateFlags.ComplexBoldSet)) ? state.Has(RtfStateFlags.ComplexBold) : state.Has(RtfStateFlags.Bold),
+            IsItalic = isComplex && (complexSlotsAreOwn || state.Has(RtfStateFlags.ComplexItalicSet)) ? state.Has(RtfStateFlags.ComplexItalic) : state.Has(RtfStateFlags.Italic),
             FontName = _tables.FontName(complexFont ? state.ComplexFont : state.Font),
             FontSizeHalfPoints = complexSize ? state.ComplexFontSize : state.FontSize,
             IsStrikethrough = state.Has(RtfStateFlags.Strike),
