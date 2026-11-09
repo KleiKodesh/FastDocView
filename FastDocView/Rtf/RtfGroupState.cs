@@ -71,6 +71,20 @@ internal enum RtfUnderline : byte { None, Single, Double, Dotted, Dashed, Wave, 
 
 internal enum RtfAlignment : byte { Unset, Left, Right, Center, Justify }
 
+/// <summary>Where the \brdr* modifiers that follow go (LibreOffice RTFBorderState, rtfdocumentimpl.cxx:169-203 putBorderProperty).</summary>
+internal enum RtfBorderTarget : byte { None, Character, Top, Left, Bottom, Right, Box, Other }
+
+internal enum RtfBorderStyle : byte { Absent, Single, Double, Dotted, Dashed, None }
+
+/// <summary>One border: its line (Absent = not set), width in twips (\brdrwN, 0 = not given) and colour (\brdrcfN).</summary>
+[StructLayout(LayoutKind.Sequential, Pack = 1)]
+internal struct RtfBorder
+{
+    public RtfBorderStyle Style;
+    public short Width;
+    public short Color;
+}
+
 /// <summary>
 /// The state of one RTF group (RTF 1.5 spec "Conventions of an RTF reader": destination, character, paragraph
 /// properties live in the group state; '{' saves it, '}' restores it). Plain unmanaged data so the index can
@@ -98,6 +112,15 @@ internal struct RtfGroupState
     public short Style;                    // \s
     public short ListOverride;             // \ls (0 = none)
     public int LeftIndent, RightIndent, StartIndent, EndIndent, FirstLineIndent, SpaceBefore, SpaceAfter, LineSpacing;
+    public short UnderlineColor;           // \ulc, color table index (0 = the text colour)
+    public byte EmphasisMark;              // \acc*: 0 none, 1 dot, 2 comma, 3 circle, 4 under dot
+    public RtfBorderTarget BorderTarget;
+    public short CharacterPatternColor;    // \chcfpat
+    public short CharacterShading;         // \chshdng, hundredths of a percent (a \chbg* pattern = 3333)
+    public RtfBorder CharacterBorder;      // \chbrdr
+    public RtfBorder BorderTop, BorderLeft, BorderBottom, BorderRight;   // \brdrt / \brdrl / \brdrb / \brdrr / \box (physical sides)
+    public short ParagraphBackgroundColor, ParagraphPatternColor;       // \cbpat (the fill), \cfpat (the pattern colour)
+    public short ParagraphShading;         // \shading, hundredths of a percent (a \bg* pattern = 3333)
 
     public static int Size => System.Runtime.CompilerServices.Unsafe.SizeOf<RtfGroupState>();
 
@@ -120,6 +143,8 @@ internal struct RtfGroupState
         FontSize = 24; ComplexFontSize = 24;     // \fs default 24 (RTF 1.5 spec, LibreOffice table)
         ForegroundColor = 0; BackgroundColor = 0; ShadingColor = 0; Highlight = 0;
         Position = 0; CharacterSpacing = 0;
+        UnderlineColor = 0; EmphasisMark = 0; CharacterPatternColor = 0; CharacterShading = 0; CharacterBorder = default;
+        if (BorderTarget == RtfBorderTarget.Character) BorderTarget = RtfBorderTarget.None;
         CodePage = defaultCodePage;
     }
 
@@ -130,6 +155,9 @@ internal struct RtfGroupState
         Alignment = RtfAlignment.Unset;
         ListLevel = 0; ListOverride = 0; OutlineLevel = -1; NestingLevel = 0; Style = 0;
         LeftIndent = RightIndent = StartIndent = EndIndent = FirstLineIndent = SpaceBefore = SpaceAfter = LineSpacing = 0;
+        BorderTop = BorderLeft = BorderBottom = BorderRight = default;
+        ParagraphBackgroundColor = ParagraphPatternColor = ParagraphShading = 0;
+        if (BorderTarget != RtfBorderTarget.Character) BorderTarget = RtfBorderTarget.None;
     }
 
     public static RtfGroupState Initial(short defaultFont, ushort defaultCodePage)

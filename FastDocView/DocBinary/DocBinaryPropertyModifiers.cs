@@ -93,6 +93,12 @@ public static class DocBinaryPropertyModifiers
                     // sprmCCvUl: underline COLORREF (red, green, blue, fAuto) - LibreOffice ww8par6.cxx:3737 Read_UnderlineColor
                     formatting.UnderlineColorHex = grpprl[operandAt + 3] != 0 ? null : $"{grpprl[operandAt]:X2}{grpprl[operandAt + 1]:X2}{grpprl[operandAt + 2]:X2}";
                     break;
+                // sprmCKcd (sprmids.hxx:314 0x2A34): the emphasis mark, [MS-DOC] kcd 0 none, 1 dot, 2 comma, 3 circle, 4 under dot.
+                // LibreOffice ww8par6.cxx:4942-4997 Read_Emphasis varies 1 / 2 by language; we draw them as Word and the .docx w:em path do.
+                case 0x2A34:
+                    formatting.EmphasisMarkCss = grpprl[operandAt] switch { 1 or 4 => "filled dot", 2 => "filled sesame", 3 => "open circle", _ => null };
+                    formatting.IsEmphasisMarkBelow = grpprl[operandAt] == 4;
+                    break;
                 case 0x2A48: formatting.IsSuperscript = grpprl[operandAt] == 1; formatting.IsSubscript = grpprl[operandAt] == 2; break;
                 case 0x4A43: formatting.FontSizeHalfPoints = BitConverter.ToUInt16(grpprl, operandAt); break;
                 case 0x4A61: formatting.ComplexScriptFontSizeHalfPoints = BitConverter.ToUInt16(grpprl, operandAt); break;

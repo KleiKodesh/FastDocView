@@ -59,14 +59,8 @@ public static class RtfFormattingAudit
             "yts", "ilfomacatclnup", "nestinglevel"]),
         ("tab stops (CSS has no positioned tabs; the default tab-size is used)", [
             "tx", "tb", "tqr", "tqc", "tqdec", "tldot", "tlhyph", "tlul", "tlth", "tleq", "tlmdot", "jclisttab"]),
-        ("borders and shading details (paragraph borders not rendered yet)", [
-            "brdrt", "brdrb", "brdrl", "brdrr", "brdrbtw", "brdrbar", "box", "brdrs", "brdrth", "brdrsh", "brdrdb", "brdrdot", "brdrdash", "brdrhair", "brdrw",
-            "brdrcf", "brsp", "brdrnone", "brdrnil", "brdrtbl", "brdrinset", "brdroutset", "brdrtriple", "brdrdashsm", "brdrdashd", "brdrdashdd", "brdrthtnsg",
-            "brdrtnthsg", "brdrtnthtnsg", "brdrwavy", "brdrwavydb", "brdrengrave", "brdremboss", "brdrframe", "brdrsh", "shading", "cfpat", "cbpat", "bgbdiag",
-            "bgcross", "bgdcross", "bgdkbdiag", "bgdkcross", "bgdkdcross", "bgdkfdiag", "bgdkhoriz", "bgdkvert", "bgfdiag", "bghoriz", "bgvert", "chshdng",
-            "chcfpat", "chbrdr", "chbgbdiag", "chbgcross", "chbgdcross", "chbgdkbdiag", "chbgdkcross", "chbgdkdcross", "chbgdkfdiag", "chbgdkhoriz", "chbgdkvert",
-            "chbgfdiag", "chbghoriz", "chbgvert", "brdrdashdotstr", "brdrthtnlg", "brdrtnthlg", "brdrtnthtnlg", "brdrthtnmg", "brdrtnthmg", "brdrtnthtnmg",
-            "brdrdashdot", "brdrdashdotdot", "brdrart"]),
+        ("border details not drawn: spacing to the text, shadow, table-only and art borders, the dash-dot lines LibreOffice does not read either", [
+            "brsp", "brdrsh", "brdrtbl", "brdrdashdot", "brdrdashdotdot", "brdrart"]),
         ("table geometry beyond cell widths (gaps, heights, merges, cell borders, autofit, banding, preferred widths)", [
             "trgaph", "trrh", "trhdr", "trkeep", "trkeepfollow", "trbrdrt", "trbrdrb", "trbrdrl", "trbrdrr", "trbrdrh", "trbrdrv",
             "trautofit", "trftsWidth", "trwWidth", "trftsWidthB", "trwWidthB", "trftsWidthA", "trwWidthA", "trpaddl", "trpaddr", "trpaddt", "trpaddb",
@@ -84,8 +78,8 @@ public static class RtfFormattingAudit
             "lang", "langfe", "langnp", "langfenp", "alang", "noproof", "kerning", "charscalex", "fcs", "loch", "hich", "dbch", "cgrid", "insrsid", "charrsid",
             "delrsid", "pararsid", "sectrsid", "tblrsid", "rsid", "styrsid", "oldlinewrap", "ltrmark", "rtlmark", "cchs", "afs", "expnd", "webhidden", "specvanish",
             "spv", "ab", "ai", "acaps", "adn", "aexpnd", "aoutl", "ascaps", "ashad", "astrike", "aul", "auld", "auldb", "aulnone", "aulw", "aup", "aspalpha",
-            "itap", "accnone", "accdot", "acccomma", "acccircle", "accunderdot", "dn", "up", "ulc", "deleted", "revised", "revauth", "revauthdel", "revdttm",
-            "revdttmdel", "crauth", "crdate", "mhtmltag", "pnhang", "nosectexpand", "g", "gcw", "gridtbl", "chshdng", "faauto", "f", "pnf", "pnfs", "pnindent",
+            "itap", "dn", "up", "deleted", "revised", "revauth", "revauthdel", "revdttm",
+            "revdttmdel", "crauth", "crdate", "mhtmltag", "pnhang", "nosectexpand", "g", "gcw", "gridtbl", "faauto", "f", "pnf", "pnfs", "pnindent",
             "pnstart", "pnlvlbody", "pnlvlblt", "pnlvlcont", "pnlvl", "pndec", "pnord", "pnordt", "pncard", "pnlcltr", "pnlcrm", "pnucltr", "pnucrm", "pnb",
             "pni", "pnul", "pnuld", "pnuldb", "pnulnone", "pnulw", "pncf", "pnqc", "pnql", "pnqr", "pnsp", "pnprev", "pnnumonce", "pnacross", "pnaiu",
             "pnaiud", "pnbidia", "pnbidib", "pnchosung", "pncnum", "pndbnum", "pndbnumd", "pndbnumk", "pndbnuml", "pndbnumt", "pndecd", "pnganada", "pngbnum",
