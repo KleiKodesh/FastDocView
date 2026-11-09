@@ -35,7 +35,7 @@ public static class SyntheticMarkupGenerator
         $"<p onclick=\"x()\">{Paragraph}</p>",                  // 10
     ];
 
-    public const int PrefixBlockCount = 11;
+    public const int PrefixBlockCount = 10;   // the empty line (line 5) is no block
 
     public static string FillerLine(int i) => i % 1000 == 0 ? $"<h3>{Title} {i}</h3>" : $"{Line} {i} <i>{Paragraph}</i> {i}";
 

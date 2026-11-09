@@ -17,12 +17,20 @@ public static class MarkupBlockRenderer
     private static readonly HashSet<string> VoidElements = new(StringComparer.Ordinal)
         { "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr" };
 
+    /// <summary>Plain text only: headings are bold in the Torat Emet size steps (the shared stylesheet resets them to inherit); no extra line after them (the page's zero-width-space ::after after a block-level heading).</summary>
+    public const string PlainTextHeadingStylesheet =
+        "\n.word-document .text-line > h1, .word-document .text-line > h2, .word-document .text-line > h3, .word-document .text-line > h4, .word-document .text-line > h5, .word-document .text-line > h6 { margin: .4em 0 .1em; border: 0; padding: 0; font-weight: 700; font-size: 1em; }"
+        + "\n.word-document .text-line:has(> h1, > h2, > h3, > h4, > h5, > h6)::after { content: none !important; }"
+        + "\n.word-document .text-line > h1 { font-size: 1.6em; }"
+        + "\n.word-document .text-line > h2 { font-size: 1.35em; }"
+        + "\n.word-document .text-line > h3 { font-size: 1.15em; }\n";
+
     public const string ImagePlaceholder = "<span class=\"image-placeholder\">[image]</span>";
 
     public static string RenderLine(string openTags, string line)
     {
         int end = line.Length;
-        while (end > 0 && (line[end - 1] == '\n' || line[end - 1] == '\r')) end--;
+        while (end > 0 && (line[end - 1] is '\n' or '\r' or ' ' or '\t' or '\u00A0' or '\u200B')) end--;   // blank lines folded into this block, trailing white space
         string body = Render(openTags, line.Substring(0, end));
         return "<div class=\"text-line\">" + (IsVisiblyEmpty(body) ? "<br>" : body) + "</div>";
     }

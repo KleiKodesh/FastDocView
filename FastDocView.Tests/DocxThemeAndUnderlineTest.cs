@@ -34,6 +34,17 @@ public static class DocxThemeAndUnderlineTest
         TestReport.Check(allow.Contains("data-x=\"#abcdef\"") && allow.Contains("title=\"#fff red\"") && allow.Contains("alt=\"#000\"")
                          && allow.Contains("bgcolor=\"light-dark(#ffffff,") && allow.Contains(".a { color: light-dark(#000,") && allow.Contains("solid light-dark(#ff0000,"),
                          "ThemeAwareMarkup: only allowlisted attributes / colour properties, <style> sheets too");
+        string functional = WordHtmlColor.ThemeAwareMarkup("<span style=\"color:rgb(255, 0, 0);background:rgba(0 0 0 / 50%);border-color:hsl(240deg 100% 50%)\">x</span>");
+        TestReport.Check(functional.Contains("color:light-dark(rgb(255, 0, 0),#") && functional.Contains("background:light-dark(rgba(0 0 0 / 50%),rgba(255,255,255,0.5))")
+                         && functional.Contains("border-color:light-dark(hsl(240deg 100% 50%),#"), "ThemeAwareMarkup: rgb() / rgba() / hsl() get the light-dark pair: " + functional);
+        string nestedParentheses = "<span style=\"color:light-dark(rgb(1,2,3),rgb(4,5,6));background:url(a(b).png) red\">x</span>";
+        string nestedParenthesesOut = WordHtmlColor.ThemeAwareMarkup(nestedParentheses);
+        TestReport.Check(nestedParenthesesOut.StartsWith("<span style=\"color:light-dark(rgb(1,2,3),rgb(4,5,6));background:url(a(b).png) light-dark(#ff0000,", StringComparison.Ordinal),
+                         "ThemeAwareMarkup: light-dark(...) and url(...) skipped to their matching parenthesis: " + nestedParenthesesOut);
+        TestReport.Check(WordHtmlColor.ThemeAwareMarkup("<span style=\"color:rgb(var(--x))\">x</span>") == "<span style=\"color:rgb(var(--x))\">x</span>", "ThemeAwareMarkup: rgb(var()) left as written");
+        TestReport.Check(WordHtmlColor.ThemeAwareMarkup("<span style=\"background:url(it's.png) red\">x</span>").Contains("url(it's.png) light-dark(#ff0000,")
+                         && WordHtmlColor.ThemeAwareMarkup("<span style=\"color:rgb(NaN,0,0)\">x</span>") == "<span style=\"color:rgb(NaN,0,0)\">x</span>",
+                         "ThemeAwareMarkup: an unquoted url() with a quote ends at its ')'; rgb(NaN) left as written");
         string onRed = WordHtmlColor.ThemeAwareMarkup("<span class=\"word-shape\"><svg><path fill=\"#FF0000\"/></svg><span class=\"text-box word-shape-text\">x</span></span>");
         string onWhite = WordHtmlColor.ThemeAwareMarkup("<span class=\"text-box\" style=\"background:#FFFFFF\">x</span>");
         TestReport.Check(onRed.StartsWith("<span class=\"word-shape " + WordHtmlColor.DarkTextOnFillClass + "\">", StringComparison.Ordinal)

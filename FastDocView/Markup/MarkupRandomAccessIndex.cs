@@ -28,7 +28,7 @@ public sealed record MarkupSpanAnchor(MarkupScanState? State, long ScanPosition,
 public sealed class MarkupRandomAccessIndex
 {
     private const string Magic = "KHMKPIDX";
-    private const int FormatVersion = 6; // 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
+    private const int FormatVersion = 15; // 15: plain .txt drops blank and whitespace-only lines; 14: Torat Emet note lines (hidden from the text, carried with the head); 13: a blank line right after a Torat Emet heading is dropped in every book (anchors carry it); 12: the first title heading keeps its own text (no ForcedBookName root); 11: blank lines dropped unless PutNewLinesAsIs=1, tilde headings return when the contents would be empty; 10: (also covers 8, the path rule: an empty head, no head block) PutNewLinesAsIs=0 books drop blank lines, LastLevelIndex 0 hides tilde headings; 9: heading levels 1-4 (dollar = 1), label lines merge with the next line; 8: Torat Emet without line-1 metadata (empty head) and without a title line; 7: Torat Emet head (metadata + where it ends; heading levels from line marks); 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
     public const int AnchorSpanBytes = 64 * 1024;
     /// <summary>
     /// MHTML anchors are 4x denser: decoding plus tag-heavy HTML rescans at ~25 MB/s, so a 64 KB span cost a random block
@@ -56,6 +56,9 @@ public sealed class MarkupRandomAccessIndex
     public int[] TextLengthGroupTotals { get; }
     public List<string> Stacks { get; }
     public WordDocumentHeading[] Headings { get; }
+    /// <summary>.txt in the Torat Emet book format: its metadata head (one hidden block, block 0) and the keys; null for every other text.</summary>
+    public ToratEmetHead? ToratEmet { get; }
+    /// <summary>Where the Torat Emet head ends (text coordinates), -1 for any other text: what a scanner of this index is told.</summary>
     /// <summary>
     /// The index of the blocks known so far while an on-demand first open is still scanning (never saved): its last span
     /// ends at <see cref="TextEnd"/>, where the pass had read to, past the start of the block still being read.
@@ -81,8 +84,9 @@ public sealed class MarkupRandomAccessIndex
     public MarkupRandomAccessIndex(MarkupSourceKind kind, long sourceFileLength, long sourceLastWriteTicksUtc, int codePage, string encodingReason,
                                    MimeTransferEncoding transferEncoding, long textEnd, long encodedEnd, bool isRightToLeft, string documentCss,
                                    long textStart, long firstFeedEnd, int blockCount, MarkupSpanAnchor[] anchors, int[] textLengthGroupTotals,
-                                   List<string> stacks, WordDocumentHeading[] headings)
+                                   List<string> stacks, WordDocumentHeading[] headings, ToratEmetHead? toratEmet = null)
     {
+        ToratEmet = toratEmet;
         Kind = kind; SourceFileLength = sourceFileLength; SourceLastWriteTicksUtc = sourceLastWriteTicksUtc; CodePage = codePage;
         EncodingReason = encodingReason; TransferEncoding = transferEncoding; TextEnd = textEnd; EncodedEnd = encodedEnd;
         IsRightToLeft = isRightToLeft; DocumentCss = documentCss; TextStart = textStart; FirstFeedEnd = firstFeedEnd;
@@ -159,7 +163,7 @@ public sealed class MarkupRandomAccessIndex
             IndexBinaryArrays.AppendVarint(raw, ZigZag(anchor.ScanResume - (previous?.ScanResume ?? 0)));
             IndexBinaryArrays.AppendVarint(raw, ZigZag(anchor.ScanResume - anchor.BlockResume));
             MarkupScanState? state = anchor.State;
-            raw.Add((byte)(state is null ? 0 : 1 | (state.BlockHasContent ? 2 : 0) | (state.IsDoubleByteTrailNext ? 4 : 0)));
+            raw.Add((byte)(state is null ? 0 : 1 | (state.BlockHasContent ? 2 : 0) | (state.IsDoubleByteTrailNext ? 4 : 0) | (state.IsAfterHeading ? 8 : 0) | (state.IsHeadingLine ? 16 : 0)));
             if (state is not null)
             {
                 IndexBinaryArrays.AppendVarint(raw, (uint)(state.Block - (previous?.FirstBlock ?? 0)));
@@ -187,6 +191,24 @@ public sealed class MarkupRandomAccessIndex
         WordIndexDeflatedBlob.Write(writer, Headings.Select(h => (byte)h.Level).ToArray());
         WriteStrings(writer, Headings.Select(h => h.Text).ToArray());
         Section($"headings ({Headings.Length})");
+        var head = new List<string>();
+        if (ToratEmet is { } toratEmet)
+        {
+            head.Add(toratEmet.HeadEndOffset.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            foreach (KeyValuePair<string, string> pair in toratEmet.Metadata) { head.Add(pair.Key); head.Add(pair.Value); }
+        }
+        WriteStrings(writer, head);
+        Section($"Torat Emet head ({head.Count / 2} keys)");
+        var notes = new List<string>();
+        if (ToratEmet is { } withNotes)
+            foreach (ToratEmetNote note in withNotes.Notes)
+            {
+                notes.Add(note.Start.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                notes.Add(note.End.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                notes.Add(note.Text);
+            }
+        WriteStrings(writer, notes);
+        Section($"Torat Emet notes ({notes.Count / 3})");
         writer.Flush();
     }
 
@@ -237,7 +259,7 @@ public sealed class MarkupRandomAccessIndex
                 int unpushed = (int)IndexBinaryArrays.ReadVarint(raw, ref at);
                 int tableDepth = (int)IndexBinaryArrays.ReadVarint(raw, ref at);
                 state = new MarkupScanState(block, blockStart, blockStackId, textLength, liveStackId, tagLengths, unpushed, tableDepth,
-                                            (flags & 2) != 0, (flags & 4) != 0);
+                                            (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0, (flags & 16) != 0);
             }
             var anchor = new MarkupSpanAnchor(state, position, scanResume, blockResume);
             if ((i == 0) != (state is null) || anchor.FirstBlock >= blockCount || (i > 0 && anchor.FirstBlock <= previous!.FirstBlock)
@@ -267,8 +289,35 @@ public sealed class MarkupRandomAccessIndex
             if ((uint)headingBlocks[i] >= (uint)blockCount) throw new InvalidDataException("Text / web archive index: heading past the blocks.");
             headings[i] = new WordDocumentHeading(headingBlocks[i], levels[i], headingTexts[i]);
         }
+        string[] head = ReadStrings(reader);
+        ToratEmetHead? toratEmet = null;
+        if (head.Length > 0)
+        {
+            if (head.Length % 2 == 0 || !long.TryParse(head[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long headEnd) || headEnd >= textEnd)
+                throw new InvalidDataException("Text / web archive index: Torat Emet head damaged.");
+            var pairs = new List<KeyValuePair<string, string>>((head.Length - 1) / 2);
+            for (int i = 1; i < head.Length; i += 2) pairs.Add(new(head[i], head[i + 1]));
+            toratEmet = new ToratEmetHead(headEnd, pairs);
+        }
+        string[] noteStrings = ReadStrings(reader);
+        if (noteStrings.Length > 0)
+        {
+            if (toratEmet is null || noteStrings.Length % 3 != 0) throw new InvalidDataException("Text / web archive index: Torat Emet notes damaged.");
+            var notes = new List<ToratEmetNote>(noteStrings.Length / 3);
+            long previousEnd = toratEmet.HeadEndOffset;
+            for (int i = 0; i < noteStrings.Length; i += 3)
+            {
+                if (!long.TryParse(noteStrings[i], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long start)
+                    || !long.TryParse(noteStrings[i + 1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long end)
+                    || start < previousEnd || end <= start || end > textEnd)
+                    throw new InvalidDataException("Text / web archive index: Torat Emet notes damaged.");
+                notes.Add(new ToratEmetNote(start, end, noteStrings[i + 2]));
+                previousEnd = end;
+            }
+            toratEmet = new ToratEmetHead(toratEmet.HeadEndOffset, toratEmet.Metadata, notes);
+        }
         return new MarkupRandomAccessIndex(kind, length, ticks, codePage, reason, transfer, textEnd, encodedEnd, rtl, css, textStart, firstFeedEnd,
-                                           blockCount, anchors, groupTotals, stacks, headings);
+                                           blockCount, anchors, groupTotals, stacks, headings, toratEmet);
     }
 
     /// <summary>Strings as varint UTF-8 lengths + bytes, deflated together (any character allowed).</summary>

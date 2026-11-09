@@ -289,7 +289,8 @@ public static class WordHtmlColor
     }
 
     /// <summary>
-    /// A colour value with each colour token (#rgb, #rrggbb, a named colour) through <see cref="Css"/>; url(...),
+    /// A colour value with each colour token (#rgb, #rrggbb, a named colour, rgb() / rgba() / hsl() / hsla()) through the same
+    /// light-dark rule as <see cref="Css"/>; url(...),
     /// light-dark(...), quoted strings and character references (&amp;#160;) are copied.
     /// <paramref name="first"/>: the first colour, for a shape's fill.
     /// </summary>
@@ -304,8 +305,33 @@ public static class WordHtmlColor
             if (c is '"' or '\'') { int q = value.IndexOf(c, i + 1); i = q < 0 ? value.Length : q; continue; }
             if (c is 'u' or 'U' or 'l' or 'L' && (StartsWithAt(value, i, "url(") || StartsWithAt(value, i, "light-dark(")))
             {
-                int closeParenthesis = value.IndexOf(')', i);
+                // to the matching ')': light-dark(rgb(...), ...) and url(a(b).png) hold nested parentheses
+                int openParenthesis = value.IndexOf('(', i);
+                // an unquoted url(...) may hold a quote character and ends at its first ')' (CSS Syntax 3, 4.3.6)
+                bool isUnquotedUrl = c is 'u' or 'U' && value.Substring(openParenthesis + 1).TrimStart() is { Length: > 0 } rest && rest[0] is not ('"' or '\'');
+                int closeParenthesis = isUnquotedUrl ? value.IndexOf(')', openParenthesis) : MatchingParenthesis(value, openParenthesis);
                 i = closeParenthesis < 0 ? value.Length : closeParenthesis;
+                continue;
+            }
+            if (c is 'r' or 'R' or 'h' or 'H' && (i == 0 || !(char.IsLetterOrDigit(value[i - 1]) || value[i - 1] is '-' or '_'))
+                && (StartsWithAt(value, i, "rgb(") || StartsWithAt(value, i, "rgba(") || StartsWithAt(value, i, "hsl(") || StartsWithAt(value, i, "hsla(")))
+            {
+                // a functional colour (MHTML writes them): the same light-dark pair, the alpha kept on the dark side
+                int open = value.IndexOf('(', i);
+                int closeParenthesis = MatchingParenthesis(value, open);
+                if (closeParenthesis < 0) { i = value.Length; continue; }
+                string function = value.Substring(i, closeParenthesis + 1 - i);
+                if (TryParseFunction(value.Substring(i, open - i), value.Substring(open + 1, closeParenthesis - open - 1), out int fRed, out int fGreen, out int fBlue, out string? alpha))
+                {
+                    first ??= (fRed, fGreen, fBlue);
+                    (int darkRed, int darkGreen, int darkBlue) = DarkVariant(fRed, fGreen, fBlue);
+                    string dark = alpha is null ? Hex(darkRed, darkGreen, darkBlue)
+                        : "rgba(" + darkRed + "," + darkGreen + "," + darkBlue + "," + alpha + ")";
+                    output ??= new System.Text.StringBuilder(value.Length + 32);
+                    output.Append(value, copied, i - copied).Append("light-dark(").Append(function).Append(',').Append(dark).Append(')');
+                    copied = closeParenthesis + 1;
+                }
+                i = closeParenthesis;
                 continue;
             }
             int end;
@@ -335,6 +361,77 @@ public static class WordHtmlColor
         }
         return output is null ? value : output.Append(value, copied, value.Length - copied).ToString();
     }
+
+    /// <summary>The ')' matching the '(' at <paramref name="open"/> (quotes skipped); -1 when unbalanced.</summary>
+    private static int MatchingParenthesis(string value, int open)
+    {
+        if (open < 0) return -1;
+        int depth = 0;
+        char quote = '\0';
+        for (int i = open; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (quote != '\0') { if (c == quote) quote = '\0'; continue; }
+            if (c is '"' or '\'') quote = c;
+            else if (c == '(') depth++;
+            else if (c == ')' && --depth == 0) return i;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// rgb() / rgba() / hsl() / hsla() arguments (CSS Color 4: commas or spaces, "/ alpha", channels as numbers or percentages,
+    /// hue in degrees); false for anything else (var(), calc(), none) - such a value is left as written.
+    /// </summary>
+    private static bool TryParseFunction(string name, string arguments, out int red, out int green, out int blue, out string? alpha)
+    {
+        red = green = blue = 0;
+        alpha = null;
+        string[] parts = arguments.Replace("/", " / ").Replace(',', ' ').Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var channels = new List<string>(4);
+        foreach (string part in parts) if (part != "/") channels.Add(part);
+        if (channels.Count is not (3 or 4)) return false;
+        if (channels.Count == 4)
+        {
+            if (!TryNumber(channels[3], 1, out double a)) return false;
+            alpha = Math.Max(0, Math.Min(1, a)).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+        }
+        bool isHsl = name.StartsWith("hsl", StringComparison.OrdinalIgnoreCase);
+        if (!isHsl)
+        {
+            if (!TryNumber(channels[0], 255, out double r) || !TryNumber(channels[1], 255, out double g) || !TryNumber(channels[2], 255, out double b)) return false;
+            red = Channel(r); green = Channel(g); blue = Channel(b);
+            return true;
+        }
+        string hueText = channels[0].EndsWith("deg", StringComparison.OrdinalIgnoreCase) ? channels[0].Substring(0, channels[0].Length - 3) : channels[0];
+        if (!double.TryParse(hueText, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double hue)
+            || double.IsNaN(hue) || double.IsInfinity(hue)
+            || !channels[1].EndsWith("%", StringComparison.Ordinal) || !channels[2].EndsWith("%", StringComparison.Ordinal)
+            || !TryNumber(channels[1], 1, out double saturation) || !TryNumber(channels[2], 1, out double lightness)) return false;
+        saturation = Math.Max(0, Math.Min(1, saturation));
+        lightness = Math.Max(0, Math.Min(1, lightness));
+        // CSS Color 4, 7.1 "Converting HSL Colors to sRGB"
+        hue = ((hue % 360) + 360) % 360;
+        double F(int n)
+        {
+            double k = (n + hue / 30) % 12;
+            return lightness - saturation * Math.Min(lightness, 1 - lightness) * Math.Max(-1, Math.Min(Math.Min(k - 3, 9 - k), 1));
+        }
+        red = Channel(F(0) * 255); green = Channel(F(8) * 255); blue = Channel(F(4) * 255);
+        return true;
+    }
+
+    /// <summary>A number, or a percentage of <paramref name="full"/>.</summary>
+    private static bool TryNumber(string text, double full, out double number)
+    {
+        bool percent = text.EndsWith("%", StringComparison.Ordinal);
+        bool ok = double.TryParse(percent ? text.Substring(0, text.Length - 1) : text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out number);
+        if (!ok || double.IsNaN(number) || double.IsInfinity(number)) return false;
+        if (percent) number = number / 100 * full;
+        return true;
+    }
+
+    private static int Channel(double value) => (int)Math.Round(Math.Max(0, Math.Min(255, value)));
 
     private static bool StartsWithAt(string text, int index, string prefix)
         => index + prefix.Length <= text.Length && string.Compare(text, index, prefix, 0, prefix.Length, StringComparison.OrdinalIgnoreCase) == 0;

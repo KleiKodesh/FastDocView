@@ -119,7 +119,8 @@ app.MapPost("/api/documents", (OpenRequest request) =>
         return Results.Ok(new DocumentSummary(id, Path.GetFileName(request.Path), request.Path, document.BlockCount, document.IsRightToLeft, document.Stylesheet,
                                               openMilliseconds, decision.Mode.ToString(), decision.HasCachedIndex, decision.Reason,
                                               document.GetType().Name, document.Headings.Count, footnotes, endnotes,
-                                              document.KnownBlockCount, document.IsIndexComplete));
+                                              document.KnownBlockCount, document.IsIndexComplete,
+                                              (document as FastDocView.Markup.MarkupWindowedDocument)?.DocumentTitle));
     });
 });
 
@@ -218,7 +219,7 @@ record BookmarkBody(int? BlockIndex);
 record SearchBody(int[] HitBlocks, int[] HitCounts, int NextBlock, bool ReachedEnd);
 record DocumentSummary(string Id, string FileName, string Path, int BlockCount, bool IsRightToLeft, string Stylesheet,
                        double OpenMilliseconds, string Mode, bool HasCachedIndex, string Reason, string ReaderType,
-                       int HeadingCount, int FootnoteCount, int EndnoteCount, int KnownBlockCount, bool IsIndexComplete);
+                       int HeadingCount, int FootnoteCount, int EndnoteCount, int KnownBlockCount, bool IsIndexComplete, string? Title);
 record NoteBody(string Kind, int Number, string Label, string Html);
 record NoteReferenceBody(string Kind, int Number, int BlockIndex);
 record ScanBody(int KnownBlockCount, bool IsIndexComplete, int FootnoteCount, int EndnoteCount);

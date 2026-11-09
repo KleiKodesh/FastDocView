@@ -993,7 +993,44 @@ internal sealed class RtfParser
             case RtfWord.Strike: case RtfWord.StrikeDouble: state.Set(RtfStateFlags.Strike, isOn); return;
             case RtfWord.ForegroundColor: state.ForegroundColor = (short)parameter; return;
             case RtfWord.BackgroundColor: state.BackgroundColor = (short)parameter; return;
+            // \chcbpat = the shading fill (LibreOffice rtfdispatchvalue.cxx:920-925 CHCBPAT -> w:shd fill); \chcfpat / \chshdng /
+            // \chbg* (RTF 1.5 spec "Character Borders and Shading") are not read by LibreOffice: Word is the reference, mixed as w:shd.
             case RtfWord.CharacterShading: state.ShadingColor = (short)parameter; return;
+            case RtfWord.CharacterPatternColor: state.CharacterPatternColor = ColorIndex(parameter); return;
+            case RtfWord.CharacterShadingPercent: state.CharacterShading = (short)Math.Max(0, Math.Min(10000, parameter)); return;
+            case RtfWord.CharacterShadingPattern: state.CharacterShading = 3333; return;
+            case RtfWord.UnderlineColor: state.UnderlineColor = ColorIndex(parameter); return;      // rtfdispatchvalue.cxx:943-948 ULC -> sprmCCvUl
+            // rtfdocumentimpl.cxx:2174-2200 ACCNONE / ACCDOT / ACCCOMMA / ACCCIRCLE / ACCUNDERDOT -> w:em; \accdot0 = none
+            case RtfWord.EmphasisNone: state.EmphasisMark = 0; return;
+            case RtfWord.EmphasisDot: state.EmphasisMark = (byte)(isOn ? 1 : 0); return;
+            case RtfWord.EmphasisComma: state.EmphasisMark = (byte)(isOn ? 2 : 0); return;
+            case RtfWord.EmphasisCircle: state.EmphasisMark = (byte)(isOn ? 3 : 0); return;
+            case RtfWord.EmphasisUnderDot: state.EmphasisMark = (byte)(isOn ? 4 : 0); return;
+
+            // ── borders (rtfdispatchflag.cxx:643-650 BOX, :762-795 BRDRT / L / B / R, :796-802 CHBRDR; modifiers go to the last
+            // border named, rtfdocumentimpl.cxx:169-203 putBorderProperty) and paragraph shading (rtfdispatchvalue.cxx:935-941 CBPAT
+            // -> w:shd fill; \cfpat / \shading / \bg* are not read by LibreOffice, Word and the RTF 1.5 spec are the reference) ──
+            case RtfWord.CharacterBorder: state.CharacterBorder = new RtfBorder { Style = RtfBorderStyle.Single }; state.BorderTarget = RtfBorderTarget.Character; return;
+            case RtfWord.ParagraphBorderTop: state.BorderTop = new RtfBorder { Style = RtfBorderStyle.Single }; state.BorderTarget = RtfBorderTarget.Top; return;
+            case RtfWord.ParagraphBorderLeft: state.BorderLeft = new RtfBorder { Style = RtfBorderStyle.Single }; state.BorderTarget = RtfBorderTarget.Left; return;
+            case RtfWord.ParagraphBorderBottom: state.BorderBottom = new RtfBorder { Style = RtfBorderStyle.Single }; state.BorderTarget = RtfBorderTarget.Bottom; return;
+            case RtfWord.ParagraphBorderRight: state.BorderRight = new RtfBorder { Style = RtfBorderStyle.Single }; state.BorderTarget = RtfBorderTarget.Right; return;
+            case RtfWord.ParagraphBorderBox:
+                state.BorderTop = state.BorderLeft = state.BorderBottom = state.BorderRight = new RtfBorder { Style = RtfBorderStyle.Single };
+                state.BorderTarget = RtfBorderTarget.Box;
+                return;
+            case RtfWord.OtherBorder: state.BorderTarget = RtfBorderTarget.Other; return;
+            case RtfWord.BorderWidth: ModifyBorder(ref state, (ref RtfBorder border, int value) => border.Width = (short)Math.Max(0, Math.Min(short.MaxValue, value)), parameter); return;
+            case RtfWord.BorderColor: ModifyBorder(ref state, (ref RtfBorder border, int value) => border.Color = ColorIndex(value), parameter); return;
+            case RtfWord.BorderSingle: ModifyBorder(ref state, (ref RtfBorder border, int _) => border.Style = RtfBorderStyle.Single, 0); return;
+            case RtfWord.BorderDouble: ModifyBorder(ref state, (ref RtfBorder border, int _) => border.Style = RtfBorderStyle.Double, 0); return;
+            case RtfWord.BorderDotted: ModifyBorder(ref state, (ref RtfBorder border, int _) => border.Style = RtfBorderStyle.Dotted, 0); return;
+            case RtfWord.BorderDashed: ModifyBorder(ref state, (ref RtfBorder border, int _) => border.Style = RtfBorderStyle.Dashed, 0); return;
+            case RtfWord.BorderNone: ModifyBorder(ref state, (ref RtfBorder border, int _) => border.Style = RtfBorderStyle.None, 0); return;
+            case RtfWord.ParagraphBackgroundColor: state.ParagraphBackgroundColor = ColorIndex(parameter); return;
+            case RtfWord.ParagraphPatternColor: state.ParagraphPatternColor = ColorIndex(parameter); return;
+            case RtfWord.ParagraphShadingPercent: state.ParagraphShading = (short)Math.Max(0, Math.Min(10000, parameter)); return;
+            case RtfWord.ParagraphShadingPattern: state.ParagraphShading = 3333; return;
             case RtfWord.Highlight: state.Highlight = (byte)Math.Max(0, Math.Min(255, parameter)); return;
             case RtfWord.Superscript: state.Set(RtfStateFlags.Superscript, isOn); if (isOn) state.Set(RtfStateFlags.Subscript, false); return;
             case RtfWord.Subscript: state.Set(RtfStateFlags.Subscript, isOn); if (isOn) state.Set(RtfStateFlags.Superscript, false); return;
@@ -1007,6 +1044,8 @@ internal sealed class RtfParser
             case RtfWord.Shadow: state.Set(RtfStateFlags.Shadow, isOn); return;
             case RtfWord.Emboss: state.Set(RtfStateFlags.Emboss, isOn); return;
             case RtfWord.Imprint: state.Set(RtfStateFlags.Imprint, isOn); return;
+            // \charscalex N: character scale in percent, 1..600 (LibreOffice rtfdispatchvalue.cxx:195 maps it to w:w, DomainMapper.cxx:2495 limits it)
+            case RtfWord.CharacterScale: state.CharacterScale = (short)(parameter is >= 1 and <= 600 ? parameter : 100); return;
             case RtfWord.CharacterSpacing: state.CharacterSpacing = (short)Math.Max(short.MinValue, Math.Min(short.MaxValue, parameter)); return;
             case RtfWord.RightToLeftCharacters:
                 state.RunType = state.RunType == RtfRunType.LeftToRightFirst ? RtfRunType.LeftToRightThenRightToLeft : RtfRunType.RightToLeftFirst;
@@ -1015,6 +1054,28 @@ internal sealed class RtfParser
             case RtfWord.LeftToRightCharacters:
                 state.RunType = state.RunType == RtfRunType.RightToLeftFirst ? RtfRunType.RightToLeftThenLeftToRight : RtfRunType.LeftToRightFirst;
                 return;
+        }
+    }
+
+    /// <summary>A colour-table index; out-of-range values are no colour (not wrapped onto a real entry).</summary>
+    private static short ColorIndex(int value) => value is > 0 and <= short.MaxValue ? (short)value : (short)0;
+
+    private delegate void BorderModifier(ref RtfBorder border, int value);
+
+    /// <summary>A \brdr* modifier on the border(s) named last: all four after \box (rtfdocumentimpl.cxx:169-203 putBorderProperty).</summary>
+    private static void ModifyBorder(ref RtfGroupState state, BorderModifier modify, int value)
+    {
+        switch (state.BorderTarget)
+        {
+            case RtfBorderTarget.Character: modify(ref state.CharacterBorder, value); break;
+            case RtfBorderTarget.Top: modify(ref state.BorderTop, value); break;
+            case RtfBorderTarget.Left: modify(ref state.BorderLeft, value); break;
+            case RtfBorderTarget.Bottom: modify(ref state.BorderBottom, value); break;
+            case RtfBorderTarget.Right: modify(ref state.BorderRight, value); break;
+            case RtfBorderTarget.Box:
+                modify(ref state.BorderTop, value); modify(ref state.BorderLeft, value);
+                modify(ref state.BorderBottom, value); modify(ref state.BorderRight, value);
+                break;
         }
     }
 

@@ -38,9 +38,20 @@ public sealed class WordRunFormatting
     public bool IsSmallCaps;
     public bool IsAllCaps;
     public int CharacterSpacingTwips;
+    /// <summary>Character scale in percent (narrowed / widened letters): .docx w:w, .doc sprmCCharScale, RTF \charscalex,
+    /// ODT style:text-scale; 0 = 100. Drawn per word by <see cref="WordHtmlText.AppendScaled"/>, not by <see cref="ToCss(WordRunFormatting?, WordDecorationOutput)"/>.</summary>
+    public int CharacterScalePercent;
     public int PositionHalfPoints;          // raised (+) / lowered (−) text, w:position / sprmCHpsPos
     public bool IsOutline;
+    public double TextOutlineWidthPt;       // Word 2010 text outline (w14:textOutline): stroke width in pt, 0 = none
+    public string? TextOutlineColorHex;     // its colour "RRGGBB"
+    public bool IsTextFillNone;             // w14:textFill/w14:noFill: hollow letters (only the outline shows)
     public bool IsShadow;
+    /// <summary>Word 2010 text fill (w14:textFill) when it is more than a plain colour: a CSS declaration set (an rgba colour,
+    /// or a gradient clipped to the glyphs); null = none. A plain solid fill goes to <see cref="ColorHex"/> instead.</summary>
+    public string? TextFillCss;
+    /// <summary>Word 2010 w14:shadow and w14:glow as CSS text-shadow layers (comma-separated); null = none.</summary>
+    public string? TextEffectShadowCss;
     public bool IsEmboss;
     public bool IsImprint;
     public string? BorderCss;               // a border around the run (w:bdr / sprmCBrc)
@@ -60,9 +71,22 @@ public sealed class WordRunFormatting
 
     public WordRunFormatting Clone() => (WordRunFormatting)MemberwiseClone();
 
+    /// <summary>Word 2010 text outline ([MS-DOCX] 2.5.26 CT_TextOutlineEffect): a stroke of its own width and colour,
+    /// centred on the glyph edge (algn default "ctr"), over the normal fill; w14:textFill/noFill leaves only the outline.
+    /// LibreOffice keeps w14:textOutline only in a grab bag and does not draw it (sw/source/writerfilter/dmapper/DomainMapper.cxx:3750).</summary>
+    private string? TextOutlineCss()
+    {
+        if (TextOutlineWidthPt <= 0) return IsTextFillNone ? "color:transparent;" : null;
+        // an unresolvable outline colour (a theme colour with no theme part) falls back to the text colour, then black - never invisible text
+        string colorHex = TextOutlineColorHex ?? ColorHex ?? "000000";
+        string css = "-webkit-text-stroke:" + TextOutlineWidthPt.ToString("0.##", CultureInfo.InvariantCulture) + "pt " + WordHtmlColor.Css(colorHex) + ";";
+        return IsTextFillNone ? css + "color:transparent;" : css;
+    }
+
     /// <summary>Shadow / emboss / imprint as CSS text-shadow (Word draws them as offset copies of the glyphs).</summary>
     private string TextShadowCss()
-        => IsShadow ? "1px 1px 1px rgba(0,0,0,.45)"
+        => TextEffectShadowCss is not null ? TextEffectShadowCss
+         : IsShadow ? "1px 1px 1px rgba(0,0,0,.45)"
          : IsEmboss ? "-1px -1px 0 rgba(255,255,255,.8), 1px 1px 0 rgba(0,0,0,.35)"
          : IsImprint ? "1px 1px 0 rgba(255,255,255,.8), -1px -1px 0 rgba(0,0,0,.35)"
          : "";
@@ -93,10 +117,16 @@ public sealed class WordRunFormatting
         string strike = StrikeCss();
         if (output == WordDecorationOutput.StrikeOnly || !IsUnderlined) { css.Append(strike); return; }
         if (strike.Length == 0) { css.Append(UnderlineCss()); return; }
-        // Both lines on one element share one style / thickness / color: the underline's (a renderer that can nest
-        // elements asks for StrikeOnly and draws the underline on an inner element instead).
-        css.Append(UnderlineCss().Replace("text-decoration:underline;", "text-decoration:underline line-through;"));
+        // Both on one element: text-decoration has one style for all its lines, so the underline keeps it (its own
+        // style / thickness / colour) and the strike is drawn as background lines in the text colour - single or
+        // double - over any highlight. (A renderer that can nest asks for StrikeOnly and puts the underline inside.)
+        css.Append(UnderlineCss()).Append("background-image:").Append(StrikeBackgroundImage()).Append(';');
     }
+
+    /// <summary>The strike line(s) as a background gradient: one 0.06em line at mid-height, or two for a double strike.</summary>
+    private string StrikeBackgroundImage() => IsDoubleStrikethrough
+        ? "linear-gradient(transparent calc(50% - 0.12em),currentColor 0 calc(50% - 0.06em),transparent 0 calc(50% + 0.06em),currentColor 0 calc(50% + 0.12em),transparent 0)"
+        : "linear-gradient(transparent calc(50% - 0.03em),currentColor 0 calc(50% + 0.03em),transparent 0)";
 
     /// <summary>w:em as CSS text-emphasis (+ position for marks drawn below the glyphs); empty when none.</summary>
     private string EmphasisCss()
@@ -157,6 +187,8 @@ public sealed class WordRunFormatting
         string effects = TextShadowCss();
         if (effects.Length > 0 && (baseline is null || effects != baseline.TextShadowCss())) css.Append("text-shadow:").Append(effects).Append(';');
         if (IsOutline && (baseline is null || !baseline.IsOutline)) css.Append("-webkit-text-stroke:0.6px currentColor;color:transparent;");
+        string? textOutline = TextOutlineCss();
+        if (textOutline is not null && (baseline is null || textOutline != baseline.TextOutlineCss())) css.Append(textOutline);
         if (BorderCss is not null && BorderCss != "none" && (baseline is null || BorderCss != baseline.BorderCss)) css.Append("border:").Append(BorderCss).Append(';');
         if (CharacterSpacingTwips != 0 && (baseline is null || CharacterSpacingTwips != baseline.CharacterSpacingTwips))
             css.Append("letter-spacing:").Append((CharacterSpacingTwips / 20.0).ToString("0.##", CultureInfo.InvariantCulture)).Append("pt;");
@@ -169,6 +201,12 @@ public sealed class WordRunFormatting
         else if (ColorHex is null && baseline?.ColorHex is not null) css.Append("color:inherit;");
         string? background = BackgroundCss, baselineBackground = baseline?.BackgroundCss;
         if (background is not null && background != baselineBackground) css.Append("background-color:").Append(WordHtmlColor.Css(background)).Append(';');
+
+        // after the colour: a gradient fill makes the glyphs transparent over its clipped background
+        if (TextFillCss is not null && (baseline is null || TextFillCss != baseline.TextFillCss)) css.Append(TextFillCss);
+        else if (TextFillCss is null && baseline?.TextFillCss is not null)
+            // undo the outer element's fill: background-clip is not inherited but its transparent colour is
+            css.Append("background-image:none;color:").Append(ColorHex is null ? "initial" : WordHtmlColor.Css(ColorHex)).Append(';');
 
         string? font = EffectiveFontName;
         if (font is not null && (baseline is null || font != baseline.EffectiveFontName)) css.Append("font-family:'").Append(WordHtmlText.CssFontName(font)).Append("';");

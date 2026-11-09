@@ -31,6 +31,7 @@ internal sealed class MarkupIncrementalIndexBuilder
     private readonly byte[]? _chunk;
     private readonly int _bomLength, _sampleLength;
     private readonly bool _isPlainTextRightToLeft;
+    private readonly ToratEmetHead? _toratEmet;             // a Torat Emet book: its metadata head
     private long _done;
 
     // MHTML
@@ -58,7 +59,7 @@ internal sealed class MarkupIncrementalIndexBuilder
     private int CurrentBlock => _scanner.BlockIndexBase + _scanner.BlockStartOffsets.Count - 1;
 
     public MarkupIncrementalIndexBuilder(MarkupSourceKind kind, Stream file, long sourceLength, long sourceTicks,
-                                         IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
+                                         IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation, bool isToratEmetByPath = false)
     {
         _kind = kind; _file = file; _sourceLength = sourceLength; _sourceTicks = sourceTicks; _progress = progress; _cancellation = cancellation;
         if (kind == MarkupSourceKind.PlainText)
@@ -71,7 +72,9 @@ internal sealed class MarkupIncrementalIndexBuilder
             (_, _unitSize, _encoding) = MarkupRandomAccessIndexBuilder.PlainTextEncoding(_codePage);
             int sampleText = Math.Min(_sampleLength - _bomLength, RightToLeftSampleBytes) & ~(_unitSize - 1);
             _isPlainTextRightToLeft = MarkupTextEncoding.ContainsHebrew(_encoding.GetString(_chunk, _bomLength, Math.Max(0, sampleText)));
-            _scanner = new MarkupBlockScanner(MarkupBlockMode.Lines, _unitSize, _codePage == MarkupTextEncoding.Utf16BigEndian, _encoding);
+            _toratEmet = isToratEmetByPath ? ToratEmetPathRule.ReadHead(_chunk.AsSpan(0, _sampleLength), _bomLength, _encoding)   // the path rule: no detection
+                                           : ToratEmetFormat.TryReadHead(_chunk.AsSpan(0, _sampleLength), _bomLength, _encoding);
+            _scanner = new MarkupBlockScanner(MarkupBlockMode.Lines, _unitSize, _codePage == MarkupTextEncoding.Utf16BigEndian, _encoding, _toratEmet);
             _anchors = [new(null, _bomLength, 0, 0)];
             _scanner.Begin(_bomLength);
             _scanner.Feed(_chunk, _bomLength, _sampleLength - _bomLength, _bomLength);
@@ -170,7 +173,7 @@ internal sealed class MarkupIncrementalIndexBuilder
         if (_kind == MarkupSourceKind.PlainText)
             return new MarkupRandomAccessIndex(MarkupSourceKind.PlainText, _sourceLength, _sourceTicks, _codePage, _reason, MimeTransferEncoding.Identity,
                                                _done, _done, _isPlainTextRightToLeft, "", _bomLength, _sampleLength, known, FinishAnchors(_anchors, known),
-                                               FinishGroups(groups, known), stacks, headings) { IsPartial = true };
+                                               FinishGroups(groups, known), stacks, headings, _toratEmet) { IsPartial = true };
         return new MarkupRandomAccessIndex(MarkupSourceKind.WebArchive, _sourceLength, _sourceTicks, _codePage, _reason, _part!.TransferEncoding,
                                            _decodedTotal, _file.Length, WebArchiveRightToLeft(), WebArchiveStylesheet.Scope(_scanner.StyleText), _startResume, 0,
                                            known, FinishAnchors(_anchors, known), FinishGroups(groups, known), stacks, headings) { IsPartial = true };
@@ -205,7 +208,7 @@ internal sealed class MarkupIncrementalIndexBuilder
         AddToGroups(_groupTotals, _scanner.BlockTextLengths.Count);
         return new MarkupRandomAccessIndex(MarkupSourceKind.PlainText, _sourceLength, _sourceTicks, _codePage, _reason, MimeTransferEncoding.Identity,
                                            _done, _done, _isPlainTextRightToLeft, "", _bomLength, _sampleLength, blockCount, FinishAnchors(_anchors, blockCount),
-                                           FinishGroups(_groupTotals, blockCount), _scanner.Stacks, _scanner.Headings.ToArray());
+                                           FinishGroups(_groupTotals, blockCount), _scanner.Stacks, _scanner.Headings.ToArray(), _toratEmet);
     }
 
     // -- web archive ----------------------------------------------------------------------

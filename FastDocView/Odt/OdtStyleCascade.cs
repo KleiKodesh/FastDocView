@@ -32,7 +32,7 @@ public sealed class OdtStyleCascade
         "style:text-line-through-style", "style:text-line-through-type", "fo:font-size", "style:font-size-complex",
         "style:font-name", "style:font-name-complex", "fo:font-family", "style:font-family-complex", "fo:color", "fo:background-color",
         "style:text-position", "fo:text-transform", "fo:font-variant", "fo:letter-spacing", "text:display", "style:text-outline",
-        "fo:text-shadow", "style:font-relief", "fo:border",
+        "fo:text-shadow", "style:font-relief", "fo:border", "style:text-emphasize", "style:text-scale",
     ];
 
     /// <summary>Attributes of style:paragraph-properties this cascade maps.</summary>
@@ -409,11 +409,35 @@ public sealed class OdtStyleCascade
         if ((string?)properties.Attribute(Fo + "text-transform") is { } transform) run.IsAllCaps = transform == "uppercase";
         if ((string?)properties.Attribute(Fo + "font-variant") is { } variant) run.IsSmallCaps = variant == "small-caps";
         if ((string?)properties.Attribute(Fo + "letter-spacing") is { } spacing) run.CharacterSpacingTwips = spacing == "normal" ? 0 : Twips(spacing) ?? 0;
+        // style:text-scale (ODF 1.3 20.393, a percent): LibreOffice maps it to CharScaleWidth (xmloff txtprmap.cxx:254)
+        if ((string?)properties.Attribute(Style + "text-scale") is { } textScale)
+            run.CharacterScalePercent = int.TryParse(textScale.TrimEnd('%'), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int scalePercent) ? scalePercent : 100;
         if ((string?)properties.Attribute(Text + "display") is { } display) run.IsHidden = display == "none";
         if ((string?)properties.Attribute(Style + "text-outline") is { } outline) run.IsOutline = outline == "true";
         if ((string?)properties.Attribute(Fo + "text-shadow") is { } shadow) run.IsShadow = shadow != "none";
         if ((string?)properties.Attribute(Style + "font-relief") is { } relief) { run.IsEmboss = relief == "embossed"; run.IsImprint = relief == "engraved"; }
         if (BorderCss(properties.Attribute(Fo + "border")) is { } border) run.BorderCss = border;
+        if ((string?)properties.Attribute(Style + "text-emphasize") is { } emphasis) ApplyTextEmphasis(run, emphasis);
+    }
+
+    /// <summary>
+    /// style:text-emphasize (ODF 1.3 part 3 20.381): "none" or a mark (dot / circle / disc / accent) plus "above" / "below",
+    /// read as LibreOffice's XMLTextEmphasizePropHdl_Impl::importXML (xmloff/source/text/txtprhdl.cxx:907-950). The CSS
+    /// marks follow the .docx w:em mapping: dot / disc = filled dot, circle = open circle, accent = filled sesame (the comma mark).
+    /// </summary>
+    private static void ApplyTextEmphasis(WordRunFormatting run, string value)
+    {
+        string[] tokens = value.Split([' '], StringSplitOptions.RemoveEmptyEntries);
+        run.EmphasisMarkCss = null;
+        run.IsEmphasisMarkBelow = false;
+        foreach (string token in tokens)
+        {
+            if (token == "below") run.IsEmphasisMarkBelow = true;
+            else if (token is "dot" or "disc") run.EmphasisMarkCss = "filled dot";
+            else if (token == "circle") run.EmphasisMarkCss = "open circle";
+            else if (token == "accent") run.EmphasisMarkCss = "filled sesame";
+        }
+        if (run.EmphasisMarkCss is null) run.IsEmphasisMarkBelow = false;
     }
 
     /// <summary>"super 58%", "sub 58%", "33% 58%", "-33% 100%", "0% 100%" (ODF 1.3 part 3 §20.374).</summary>

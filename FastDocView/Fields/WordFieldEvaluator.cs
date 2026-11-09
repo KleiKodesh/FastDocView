@@ -211,9 +211,27 @@ public static class WordFieldEvaluator
                 // { bookmark } is REF bookmark (17.16.5.47: "the REF field instruction may be omitted")
                 if (instruction.Arguments.Count == 0 && context.BookmarkText?.Invoke(instruction.Code.Trim().Split(' ')[0]) is { } bookmarkText)
                     return WordFieldValue.OfText(bookmarkText);
+                // the bookmark may come later (a field keyword is not a bookmark name)
+                if (instruction.Arguments.Count == 0 && context.BookmarkText is not null && !IsFieldKeyword(instruction.Name))
+                    context.ReadsCompleteIndex();
                 return null;
         }
     }
+
+    /// <summary>Field keywords (ECMA-376 Part 1 17.16.5) that a "{ bookmark }" code cannot be.</summary>
+    private static readonly HashSet<string> FieldKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ADDRESSBLOCK", "ADVANCE", "ASK", "AUTHOR", "AUTONUM", "AUTONUMLGL", "AUTONUMOUT", "AUTOTEXT", "AUTOTEXTLIST", "BARCODE", "BIBLIOGRAPHY",
+        "CITATION", "COMMENTS", "COMPARE", "CREATEDATE", "DATABASE", "DATE", "DOCPROPERTY", "DOCVARIABLE", "EDITTIME", "EQ", "FILENAME", "FILESIZE",
+        "FILLIN", "FORMCHECKBOX", "FORMDROPDOWN", "FORMTEXT", "GOTOBUTTON", "GREETINGLINE", "HYPERLINK", "IF", "INCLUDEPICTURE", "INCLUDETEXT",
+        "INDEX", "INFO", "KEYWORDS", "LASTSAVEDBY", "LINK", "LISTNUM", "MACROBUTTON", "MERGEFIELD", "MERGEREC", "MERGESEQ", "NEXT", "NEXTIF",
+        "NOTEREF", "NUMCHARS", "NUMPAGES", "NUMWORDS", "PAGE", "PAGEREF", "PRINT", "PRINTDATE", "PRIVATE", "QUOTE", "RD", "REF", "REVNUM",
+        "SAVEDATE", "SECTION", "SECTIONPAGES", "SEQ", "SET", "SKIPIF", "STYLEREF", "SUBJECT", "SYMBOL", "TA", "TC", "TEMPLATE", "TIME", "TITLE",
+        "TOA", "TOC", "USERADDRESS", "USERINITIALS", "USERNAME", "XE", "SHAPE", "EMBED", "ADDIN", "BIDIOUTLINE", "CONTROL", "DDE", "DDEAUTO",
+        "FORMULA", "GLOSSARY", "IMPORT", "OCX", "HTMLCONTROL",
+    };
+
+    private static bool IsFieldKeyword(string name) => FieldKeywords.Contains(name);
 
     /// <summary>Word 16's STYLEREF text when no paragraph has the style (Hebrew UI, as written on the dev machine).</summary>
     public static string StyleNotFound(string style) => "שגיאה! השתמש בכרטיסיה בית כדי להחיל " + style + " על הטקסט שברצונך שיופיע כאן.";
@@ -228,13 +246,12 @@ public static class WordFieldEvaluator
     {
         bool number = instruction.Has("\\n") || instruction.Has("\\r") || instruction.Has("\\w");
         bool position = instruction.Has("\\p");
-        bool isListComplete = context.IsBookmarkListComplete?.Invoke() ?? true;
         if (!number && !position)
         {
             if (context.BookmarkText is null) return null;
-            return context.BookmarkText(bookmark) is { } text ? WordFieldValue.OfText(text) : isListComplete ? WordFieldValue.OfText(ReferenceNotFound) : null;
+            return context.BookmarkText(bookmark) is { } text ? WordFieldValue.OfText(text) : context.ReadsCompleteIndex() ? WordFieldValue.OfText(ReferenceNotFound) : null;
         }
-        if (context.BookmarkBlock?.Invoke(bookmark) is not { } block) return context.BookmarkBlock is null || !isListComplete ? null : WordFieldValue.OfText(ReferenceNotFound);
+        if (context.BookmarkBlock?.Invoke(bookmark) is not { } block) return context.BookmarkBlock is null || !context.ReadsCompleteIndex() ? null : WordFieldValue.OfText(ReferenceNotFound);
         var parts = new List<string>();
         if (number && ParagraphNumber(block, NumberContext(instruction), context) is { Length: > 0 } label) parts.Add(label);
         if (position && Position(block, context) is { } where) parts.Add(where);
@@ -279,7 +296,7 @@ public static class WordFieldEvaluator
     private static WordFieldOutput NoteReference(WordFieldInstruction instruction, WordFieldContext context)
     {
         if (instruction.Arguments.Count == 0 || context.NoteMarkOfBookmark?.Invoke(instruction.Arguments[0]) is not { } mark)
-            return context.NoteMarkOfBookmark is null || instruction.Arguments.Count == 0 || !(context.IsBookmarkListComplete?.Invoke() ?? true)
+            return context.NoteMarkOfBookmark is null || instruction.Arguments.Count == 0 || !context.ReadsCompleteIndex()
                 ? WordFieldOutput.None : new(ReferenceNotFound, null, true);
         string text = mark;
         if (instruction.Has("\\p") && context.BookmarkBlock?.Invoke(instruction.Arguments[0]) is { } block && Position(block, context) is { } where) text += " " + where;
@@ -298,8 +315,10 @@ public static class WordFieldEvaluator
         if (instruction.Arguments.Count == 0 || context.StyledParagraph is null || context.CurrentBlock is not { } here) return null;
         string style = instruction.Arguments[0];
         if (int.TryParse(style, NumberStyles.Integer, CultureInfo.InvariantCulture, out int level) && level is >= 1 and <= 9) style = "heading " + level;
-        (int block, string text)? found = context.StyledParagraph(style, here, false) ?? context.StyledParagraph(style, here, true);
-        if (found is not { } paragraph) return WordFieldValue.OfText(StyleNotFound(instruction.Arguments[0]));
+        (int block, string text)? found = context.StyledParagraph(style, here, false);
+        // the forward search reads blocks the index may not know yet
+        if (found is null) { found = context.StyledParagraph(style, here, true); context.ReadsCompleteIndex(); }
+        if (found is not { } paragraph) return context.ReadsCompleteIndex() ? WordFieldValue.OfText(StyleNotFound(instruction.Arguments[0])) : null;
         bool number = instruction.Has("\\n") || instruction.Has("\\r") || instruction.Has("\\w");
         if (!number && !instruction.Has("\\p")) return WordFieldValue.OfText(paragraph.text);
         var parts = new List<string>();
@@ -315,6 +334,7 @@ public static class WordFieldEvaluator
     /// </summary>
     private static WordFieldOutput TableOfContents(WordFieldInstruction instruction, WordFieldContext context)
     {
+        context.ReadsCompleteIndex();      // built from the entries known now
         if (context.Headings?.Invoke() is not { Count: > 0 } headings) return WordFieldOutput.None;
         (int from, int to) Levels(string? range, (int, int) fallback)
         {
@@ -352,6 +372,7 @@ public static class WordFieldEvaluator
     /// </summary>
     private static WordFieldOutput BuiltIndex(WordFieldInstruction instruction, WordFieldContext context)
     {
+        context.ReadsCompleteIndex();      // built from the entries known now
         if (context.IndexEntries?.Invoke() is not { Count: > 0 } entries) return WordFieldOutput.None;
         string separator = instruction.SwitchArgument("\\e") is { Length: > 0 } e ? e : ", ";
         string? type = instruction.SwitchArgument("\\f");
@@ -392,6 +413,7 @@ public static class WordFieldEvaluator
     /// </summary>
     private static WordFieldOutput TableOfAuthorities(WordFieldInstruction instruction, WordFieldContext context)
     {
+        context.ReadsCompleteIndex();      // built from the entries known now
         if (context.IndexEntries?.Invoke() is not { Count: > 0 } entries) return WordFieldOutput.None;
         string? category = instruction.SwitchArgument("\\c");
         var citations = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);

@@ -15,6 +15,7 @@
 //   dotnet run -c Release -- --odt [N]             synthetic .odt/.fodt (N repeating blocks, default 20000); with LibreOffice installed,
 //                                                  every --real .docx is also converted to .odt (TestOutput) and smoke-tested + audited
 //   dotnet run -c Release -- --text [N] / --mhtml [N]   synthetic .txt (every encoding / line ending) and MHTML (qp + base64), N filler blocks; --mhtml also runs the .html checks
+//   dotnet run -c Release -- --torat-emet <folder> [--torat-emet-sample N | --torat-emet-stats]   Torat Emet books: sample (fixed seed, 300) or statistics pass
 //   dotnet run -c Release -- --text-corpus <list> [--text-largest 200 --text-random 300]   .txt corpus sample: encoding mix, 0 crashes
 //   dotnet run -c Release -- --mime-scan <word-list>   Word files that start with 'MIME' (web archives): count, open + render each
 //   dotnet run -c Release -- --profile-markup <path>...  cold / reopen / window ms of .txt / .mht files
@@ -42,6 +43,7 @@ int odtIncrementalBlocks = 0;
 int streamingIncrementalBlocks = 0;
 int odtBlocks = 0, rtfBlocks = 0, textBlocks = 0, mhtmlBlocks = 0, textLargest = 200, textRandom = 300;
 string? textCorpus = null, mimeScan = null;
+string? toratEmetFolder = null; int toratEmetSample = 300; bool toratEmetFull = false;
 var markupProfilePaths = new List<string>();
 var rtfAuditPaths = new List<string>();
 var rtfProfilePaths = new List<string>();
@@ -98,6 +100,9 @@ for (int i = 0; i < args.Length; i++)
             mhtmlBlocks = 20_000;
             if (i + 1 < args.Length && int.TryParse(args[i + 1], out int mhtmlCount)) { mhtmlBlocks = mhtmlCount; i++; }
             break;
+        case "--torat-emet": toratEmetFolder = args[++i]; skipSynthetic = true; break;
+        case "--torat-emet-sample": toratEmetSample = int.Parse(args[++i]); break;
+        case "--torat-emet-stats": toratEmetFull = true; break;
         case "--text-corpus": textCorpus = args[++i]; break;
         case "--text-largest": textLargest = int.Parse(args[++i]); break;
         case "--text-random": textRandom = int.Parse(args[++i]); break;
@@ -141,7 +146,7 @@ if (rereadPaths.Count > 0) { RereadCostTest.Run(rereadPaths.Where(File.Exists));
 if (docReadPaths.Count > 0) { DocBinaryReadCountTest.Run(docReadPaths.Where(File.Exists)); skipSynthetic = true; }
 if (compactReportPaths.Count > 0) { CompactIndexReport.Run(compactReportPaths.Where(File.Exists)); skipSynthetic = true; }
 if (searchOnly) { DocumentSearchTest.Run(searchPaths); skipSynthetic = true; }
-if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); PagePlacementFidelityTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); DocBinaryFloatingPicturesTest.Run(); OdtShapesFidelityTest.Run(); OdtDrawingFidelityTest.Run(); RtfShapesFidelityTest.Run(); WrapSidesAndContourFidelityTest.Run(); WordOfficeArtGeometryTest.Run(); DocBinaryShapesFidelityTest.Run(); OdtFirstOpenTiming.RunSynthetic(); OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); OdtMeasureCaptionTest.Run(); OdtExtrusionTest.Run(); OdtShapeTextFidelityTest.Run(); skipSynthetic = true; }
+if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocxThemeAndUnderlineTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); PagePlacementFidelityTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); FormattingMarksFidelityTest.Run(); DocBinaryFloatingPicturesTest.Run(); OdtShapesFidelityTest.Run(); OdtDrawingFidelityTest.Run(); RtfShapesFidelityTest.Run(); WrapSidesAndContourFidelityTest.Run(); WordOfficeArtGeometryTest.Run(); DocBinaryShapesFidelityTest.Run(); OdtFirstOpenTiming.RunSynthetic(); OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); OdtMeasureCaptionTest.Run(); OdtExtrusionTest.Run(); OdtShapeTextFidelityTest.Run(); TextEffectsFidelityTest.Run(); skipSynthetic = true; }
 if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
 if (!skipSynthetic)
 {
@@ -149,6 +154,7 @@ if (!skipSynthetic)
     WordDocumentIndexCacheTest.Run();
     DocxThemeAndUnderlineTest.Run();
     DocxFidelityTest.Run();
+    TextEffectsFidelityTest.Run();
     DocumentSearchTest.Run([]);
     PageWidthTest.Run([]);
     DocBinaryBidiTest.Run();
@@ -198,13 +204,14 @@ if (odtBlocks > 0)
     }
 }
 
-if (textBlocks > 0) { MarkupIndexAndRenderTest.RunEdgeCases(); MarkupIndexAndRenderTest.RunDoubleByteSplit(); MarkupIndexAndRenderTest.RunText(textBlocks); }
+if (textBlocks > 0) { MarkupIndexAndRenderTest.RunEdgeCases(); MarkupIndexAndRenderTest.RunDoubleByteSplit(); MarkupIndexAndRenderTest.RunText(textBlocks); ToratEmetTest.Run(); ToratEmetPathRuleTest.Run(); PlainTextNormaliseTest.Run(); }
 if (mhtmlBlocks > 0) { MarkupIndexAndRenderTest.RunNestedMultipart(); MarkupIndexAndRenderTest.RunMhtml(mhtmlBlocks); }
 if (markupProfilePaths.Count > 0)
 {
     TestReport.Step("Markup open timings");
     foreach (string path in markupProfilePaths.Where(File.Exists)) MarkupIndexAndRenderTest.Profile(path);
 }
+if (toratEmetFolder is not null) ToratEmetTest.RunReal(toratEmetFolder, toratEmetSample, toratEmetFull);
 if (textCorpus is not null) MarkupCorpusTest.RunText(textCorpus, textLargest, textRandom);
 if (mimeScan is not null) MarkupCorpusTest.RunMimeScan(mimeScan);
 

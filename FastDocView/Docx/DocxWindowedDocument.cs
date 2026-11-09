@@ -227,6 +227,9 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         DocxRandomAccessIndex index = builder.Complete();
         // Swap the scan's live tables for the compact table over the finished index (same offsets, recovered per span), and free the scanner.
         _index = index;
+        // notes rendered over the partial index may hold fields that read it (REF / NOTEREF): render them again
+        _noteHtmlCache.Clear();
+        _noteHtmlCacheCharacters = 0;
         _blockReader.CompleteWith(index, _parts);
         _blocks = _blockReader.Table;
         Stream package = _blockReader.Package!;
@@ -301,11 +304,12 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                 ? Enumerable.Range(groupStart, blockIndex - groupStart).Select(index => elements[index]).ToArray() : null;
             var neighbours = new DocxBlockNeighbours(ParagraphAt(groupStart - 1), ParagraphAt(blockIndex + 1), mergedBefore, IsFirstInContainer: groupStart == 0);
             string? previousStyleKey = blockIndex > 0 ? _blocks.StyleIdOf(blockIndex - 1) ?? "" : null;
-            if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex;
+            if (_renderer.FieldContext is { } fieldContext) { fieldContext.CurrentBlock = blockIndex; fieldContext.UsedIncompleteIndex = false; }
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
             _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             string html = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), previousStyleKey, neighbours with { OpenFields = _blocks.OpenFieldsAt(groupStart) });
-            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, RenderNotesOf(blockIndex)));
+            IReadOnlyList<WordDocumentNoteHtml> notes = RenderNotesOf(blockIndex);
+            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes, _renderer.FieldContext?.UsedIncompleteIndex == true));
         }
         return result;
     }

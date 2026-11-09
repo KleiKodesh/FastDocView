@@ -107,6 +107,11 @@ view over SQLite.
   opcode already cost us silently dropped raised/lowered text (0x4840 vs 0x4845). Research
   reports must say which facts were read from source and which came from memory; the
   from-memory ones are checked before use.
+- **Check LibreOffice's source for EVERY format feature — always, even a small one** (user,
+  2026-11-09). Besides the spec, read how LibreOffice imports and draws it before coding
+  (`curl -sf https://raw.githubusercontent.com/LibreOffice/core/master/<path>`; .docx import:
+  `sw/source/writerfilter/dmapper/`), and cite file:line in the commit. If LibreOffice
+  doesn't support it, say so and treat Word as the reference.
 
 - Every new format feature needs a harness check (synthetic or real file) and a NOTES.md update.
 - Long runs report progress per step (`IProgress<WordDocumentIndexProgress>`, every 100 files in

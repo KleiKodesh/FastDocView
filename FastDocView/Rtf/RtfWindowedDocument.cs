@@ -81,19 +81,20 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     /// <summary>The block a bookmark marks; while the index is still building, the scan goes on only until it is found.</summary>
     public int? FindBookmark(string name)
     {
-        while (true)
-        {
-            if (KnownBookmark(name) is { } block) return block;
-            if (IsIndexComplete) return null;
-            ScanAhead(4096);
-        }
+        lock (_readLock)      // Monitor is reentrant: ScanAhead and the field lookups mid-render take it again
+            while (true)
+            {
+                if (KnownBookmark(name) is { } block) return block;
+                if (IsIndexComplete) return null;
+                ScanAhead(4096);
+            }
     }
 
     /// <summary>A bookmark among the blocks known so far (no scanning: field lookups run mid-render).</summary>
-    private int? KnownBookmark(string name) => _index.Bookmarks.BlockOf(name);
+    private int? KnownBookmark(string name) { lock (_readLock) return _index.Bookmarks.BlockOf(name); }
 
     /// <summary>Page text width per section (\paperw / \margl / \margr / \gutter and their per-section forms), from the index.</summary>
-    public IReadOnlyList<WordDocumentSection> Sections => _sections ??= WordDocumentPageSetup.FromSectionEnds(_index.SectionLastBlocks, _index.SectionTextWidths, _index.SectionColumnLefts);
+    public IReadOnlyList<WordDocumentSection> Sections { get { lock (_readLock) return _sections ??= WordDocumentPageSetup.FromSectionEnds(_index.SectionLastBlocks, _index.SectionTextWidths, _index.SectionColumnLefts); } }
     private IReadOnlyList<WordDocumentSection>? _sections;
     public bool IsIndexComplete { get { lock (_readLock) return _builder is null; } }
     public int KnownBlockCount { get { lock (_readLock) return _builder?.KnownBlockCount ?? _indexField.BlockCount; } }
@@ -326,6 +327,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             DocumentDate = name => Properties().Date(name),
             DocumentVariable = name => Properties().Variable(name),
             FileName = Path.GetFileName(path), FilePath = path, FileSize = size,
+            IsBookmarkListComplete = () => _builder is null,
             BookmarkText = BookmarkText,
             BookmarkBlock = KnownBookmark,
             ListLabelOfBlock = block => block >= 0 && block < _index.BlockCount ? LookupTable.ListLabelOf(block) : null,
@@ -460,10 +462,11 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         for (int blockIndex = first; blockIndex < end; blockIndex++)
         {
             _fieldContext.CurrentBlock = blockIndex;
+            _fieldContext.UsedIncompleteIndex = false;
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
             _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(_file, _index, _table, blockIndex);
-            result.Add(new WordDocumentBlockHtml(blockIndex, _table.BlockKindOf(blockIndex), html, notes));
+            result.Add(new WordDocumentBlockHtml(blockIndex, _table.BlockKindOf(blockIndex), html, notes, _fieldContext.UsedIncompleteIndex));
         }
         return result;
     }
@@ -474,11 +477,11 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     {
         string[] parts = (pictureId ?? "").Split(':');
         if (parts.Length != 2 || !int.TryParse(parts[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int blockIndex)
-            || !int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int ordinal)
-            || blockIndex >= _index.BlockCount)
+            || !int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int ordinal))
             return null;
         lock (_readLock)
         {
+            if (blockIndex >= _index.BlockCount) return null;
             if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
             try
             {
@@ -503,12 +506,14 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         }
     }
 
-    public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
+    public IReadOnlyList<WordDocumentHeading> Headings { get { lock (_readLock) return _index.Headings; } }
 
-    public (int footnotes, int endnotes) NoteCounts => (_footnoteCount, _endnoteCount);
+    public (int footnotes, int endnotes) NoteCounts { get { lock (_readLock) return (_footnoteCount, _endnoteCount); } }
 
     public IReadOnlyList<WordDocumentNoteReference> NoteReferences
-        => _noteReferences ??= _index.NoteReferences.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, r.BlockIndex)).ToArray();
+    {
+        get { lock (_readLock) return _noteReferences ??= _index.NoteReferences.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, r.BlockIndex)).ToArray(); }
+    }
     private WordDocumentNoteReference[]? _noteReferences;
 
     public void Dispose() => _file.Dispose();

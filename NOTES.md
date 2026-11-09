@@ -468,7 +468,7 @@ document model (LibreOffice builds a full SwDoc; we keep only the semantics).
 9. .doc text boxes (txbx story) after the anchoring paragraph — index-time map.
 10. `w:sym` / CSymbol glyph with its font (Wingdings bullets).
 11. Table-style conditional formatting (`tblStylePr` firstRow / banding) — render-time per row; row count per table at index time.
-12. Emphasis marks (`em` → `text-emphasis`) — .docx done 2026-10-28; .doc sprmCKcd still open.
+12. Emphasis marks (`em` → `text-emphasis`) — .docx done 2026-10-28; .doc / RTF / ODT done 2026-11-09 (see the section of that date).
 13. Underline styles + color (`u@val`, `u@color` + theme) — .docx done 2026-10-28; .doc sprmCKul patterns / sprmCCvUl still open.
 14. Drop caps as a floated first letter (`framePr@dropCap`, sprmPDcs 0x442C).
 15. .doc field-code hiding check (CFFldVanish).
@@ -532,6 +532,18 @@ overloads. Every rule below was read from the source named, not from memory:
   LibreOffice maps the same four (DomainMapper::getEmphasisValue).
 - Test: `DocxThemeAndUnderlineTest` over `SyntheticDocxGenerator.Write(..., withThemeSamples: true)`
   (paragraphs 45–49); the audit's handled run properties now include `em`.
+- **Character scale + Word 2010 text effects (2026-11-09)** - character scale (.docx `w:w`, .doc sprmCCharScale 0x4852,
+  RTF `\charscalex`, ODT `style:text-scale`; 1..600 else 100 as LibreOffice) is drawn per word by
+  `WordHtmlText.AppendScaled`: an inline-flex box `width:calc-size(max-content, size * f)` with the word inside,
+  `flex:none` + `transform:scaleX(f)`, centred (works the same in RTL and LTR). Lines still wrap between words; spaces
+  are scaled in boxes of their own (white-space:pre, then <wbr> for the break); font-stretch was rejected (Hebrew fonts have no width axis). Live: every box = f x natural width in the
+  app page, including under its CSS zoom. `w14:textFill`: solid (scheme colours + transforms) is the colour, with alpha an
+  rgba; gradFill = CSS linear (ang + 90deg) / radial (fillToRect centre) gradient with `background-clip:text` (a second empty layer clipped to the border box keeps a highlight behind the letters). `w14:glow` = two blurred text-shadows (rad/2, rad); `w14:shadow` = one
+  text-shadow from dist/dir/blurRad; sx/sy/kx/ky are not drawn: Word draws them as a scaled / skewed copy of the glyphs
+  anchored at algn (e.g. its perspective shadows lie flat behind the text), while CSS text-shadow can only offset and blur;
+  a transformed copy would need a second positioned text layer per line, which breaks wrapping and the windowed render. **w14:alpha is transparency**, the opposite of a:alpha
+  (LibreOffice DomainMapper.cxx:3733-3737, docxattributeoutput.cxx:3825-3828). Test: `TextEffectsFidelityTest`
+  (+ test-data/word-text-effects, Word 16 COM), live: `vue-demo/playwright/textEffectsCheck.mjs`.
 
 
 ## OpenDocument text (Odt/, 2026-10-28)
@@ -1815,3 +1827,115 @@ vs #d4d4d4 against the dark variant) gets class dark-text-on-fill = light-dark(c
 SmartArt accent blue 2.03 -> 5.71:1 (live). It runs in the library's one host output path,
 RenderBlocksForDisplay / RenderNotesForDisplay (WordWindowedDocumentHostExtensions), used by Core and the dev server;
 the renderers keep plain colours because that raw output is what the fidelity harness compares with Word.
+
+## Fields over a partial index (2026-11-04)
+
+- A field that reads a list the on-demand index is still building - REF / NOTEREF to a bookmark not found yet, TOC
+  (headings), INDEX / TOA (XE / TA entries), STYLEREF not found backward - shows nothing instead of Word's "not found"
+  error and marks its block provisional (`WordFieldContext.UsedIncompleteIndex`, reset per block; .rtf and .docx). The
+  page fetches provisional blocks again once the index is complete. .docx drops its note-HTML cache on completion.
+  .odt shows saved field text only, .doc is always complete, .txt / MHTML have no fields.
+- Theme colours: `url(...)` / `light-dark(...)` are skipped to their matching parenthesis; rgb() / rgba() / hsl() /
+  hsla() (MHTML) get the same light-dark pair as hex colours, alpha kept on the dark side.
+- Checks: StreamingFormatsIncrementalOpenTest (early REF to a late bookmark, RTF on demand), DocxThemeAndUnderlineTest.
+
+## Torat Emet book files read as .txt (2026-11-05)
+
+`Markup/ToratEmetFormat.cs` + scanner / index / document hooks. Index format 7 (head: `ToratEmetHead` = head end offset + key/value pairs, saved after the headings).
+
+- Detection (index pass, on the detection sample, single-byte / UTF-8 only): line 1 starts with `&` and holds a known `&Key=` (a `&word=` that is not a known key stays inside the value: CosmeticsType holds `=` and `&`), and a `$ ` line within 100 lines. Anything else is a plain .txt, unchanged (regression: `ToratEmetTest.RunNotTheFormat`).
+- The head = line 1 plus the following lines that are clearly metadata (blank, `// ...`, `[Section]`, `key=value`, a copy of the `&Key=` line, even inside tags). It is ONE block (block 0): the scanner does not start a block before the head end and treats its `<` as text (line 1 holds unbalanced tags). Block 0 draws a small header: ForcedBookName (else the first `$` title), SpecialTitle, author (RavMechaber / Mehaber), source (TextSource). A text line before the first heading is not metadata and is shown.
+- Marks at a line start followed by a space: `$` h2, `#` h3, `@` and `^` h4, `~` h5 (heading entries of the TOC, all five, whatever LastLevelIndex says: 240 books with LastLevelIndex=2 have `~` as their only structure); `!` hidden, the rest of the line shown. The mark is read across fed pieces (state machine in the scanner), the heading text is recorded without it; the first `$` heading is recorded as ForcedBookName when set (TOC root).
+- Tags: only b i u big small sup sub br are drawn (bare, own renderer, never raw HTML); every other tag and the size macros (`<90>`, `<SZ:150%%>`, `<TF>` ...) are dropped with their text kept; the scanner keeps only the whitelist on the open-element stack. `//` lines in the body stay visible (they are config text of the "mix" files, 419 lines).
+- Search matches block text without the mark and tags; never the hidden head.
+- Checks: `ToratEmetTest.Run` (with `--text`), `--torat-emet <folder> [--torat-emet-sample N | --torat-emet-stats]`.
+
+### Torat Emet update (2026-11-05, index format 10; supersedes the detection, level and `!` bullets above)
+
+- **Detection** (`ToratEmetFormat.TryReadHead`, only the detection sample, so first open / one pass / saved index always agree; the result is stored in the sidecar and never re-decided):
+  (a) line 1 starts with `&` and holds a known key (`wrap` and `rav` count, case-insensitive): a book when a heading mark line (`$ # @ ^ ~` and a space) is within the first 200 lines, or when line 1 holds only `wrap` / `rav` options (hidden head, plain text). No `$` title is needed. 200 lines because in 687 user books with a line-1 option the first mark is within 31 lines except one at line 101 (53 KB in); the whole 128 KB sample is searched (not 32 KB). Books folder: all 1,524 key books have a mark within 25 lines.
+  (b) no line-1 metadata: a book only when the FIRST line that is not blank and not a `//` comment (within 100 lines) is a `$ ` title AND an `@`, `#` or `~` line follows. A README with a `$ cmd` line further down stays plain. All 12 real user books of this kind still match. The head is empty (`HasHead` false): block 0 is an ordinary line. A line 1 that starts with `&` but holds no known key stays plain .txt.
+  Plain .txt stays plain: a markdown `# Title`, `$` only, a key line without marks (unless wrap/rav only), a one-line `&wrap=1`.
+- **No `$` title**: no root heading; `DocumentTitle` is null (the host uses the file name); the contents list the headings that exist.
+- **Levels** (user, 2026-11-05): `$` h1, `#` h2, `@` and `^` h3, `~` h4 (index heading levels 1-4).
+- **`!` label lines**: `! {X}` loses the mark; its line break goes and the next line joins it with one space as ONE block (no block for the label alone). The label stays alone when it is the last line, the next line is blank, or the next line starts with a mark and a space (heading or another label). The scanner holds the decision (`_labelState` 2/3/4, one held byte) across fed pieces; a span point is never taken while it is open. A label before a long line merges with the first piece only.
+- **PutNewLinesAsIs** (user decision 2026-11-05, overrides Config.txt default 1): only an explicit `1` keeps the file's lines; `0` AND absent normalize: blank and whitespace-only lines are no blocks (the open block restarts at the next line; the previous block absorbs the blank bytes and the renderer trims them; a label waits across the blank run for its text). Data (Books): key 0 in 497 books (16.8% blank lines), 1 in 216 (34.8%), absent in 819 (46.1%); user books: absent in all 1,523 (49.8% blank), now normalized (1.32M blocks for the 1,523 user books). Meaning of 0 vs 1 is our reading of the name and the data (the original program is closed): confirm.
+- **LastLevelIndex** (Config.txt: "~ (paragraph prefix) - lowest level, appears in index only if LastLevelIndex=1"; default 0): a `~` line is a contents entry when the value is 1 or more (2 treated like 1: its extra meaning is unknown); absent or 0 hides tilde lines from the contents (still drawn as h4). EXCEPT when that would leave the contents with nothing besides the `$` title (or nothing at all): then the tilde headings are included anyway, so a book is never un-navigable. The decision is made when the index pass finishes (while a first open is still partial, the tilde entries may be missing and appear at the end). A book without line-1 metadata keeps `~` in the contents. Data: absent 285 / 0: 18 / 1: 136 / 2: 1,094 books.
+- Blank-line counts (user books / Books, lines after the head): blank 1.39M of 2.80M / 1.35M of 2.93M (absent-key books); runs of 2: 80k / 61k, runs of 3: 191k / 10k, 4+: 2k / 3k; whitespace-only lines 180 / 3,369; trailing-space lines 389k / 242k; tab lines 405 / 6,161; NBSP lines 966 / 31; lines holding only tags 1,745 / 3,541 (kept: an explicit `<BR>` line is intent).
+
+| Key | Meaning (source) | Treatment |
+|---|---|---|
+| `wrap` (line 1) | `&wrap=1`, documented first-line option, no description found | parsed (`IsWrap`), shown nowhere; makes line 1 a book marker |
+| `rav` (line 1) | `&rav=<author>` documented option | parsed (`Rav`); also a book marker |
+| `UniqueId` | book id (BooksConfig.txt) | parsed, hidden |
+| `ForcedBookName` | book name | applied: document title, TOC root text of the `$` title, header |
+| `SpecialTitle` | extra title line | shown in the header |
+| `RavMechaber` / `Mehaber` | author | shown in the header (`Author`); `Mehaber` parsed |
+| `TextSource` | source | shown in the header |
+| `LastLevelIndex` | see above (Config.txt) | applied |
+| `PutNewLinesAsIs` | see above | applied (explicit 1 = as is; 0 / absent = blank lines dropped) |
+| `SearchInTitles` | default 1; the program's search scope | parsed (`SearchInTitles`), not used (UI of the original program) |
+| `PasukIndMode` | default 0; verse index display | parsed, not used (no documentation) |
+| `GroupId`, `Group`, `ChainFolderName`, `HiddenFromIndex`, `MixedDisplay` | library tree / grouping / mixed-text display of the original program | parsed and exposed on `ToratEmetHead`, not used (program UI only) |
+| `CosmeticsType` | `#key=value` display options (fonts, index prefixes, `#ip2=` ...) | parsed raw (`CosmeticsType`), not used; its tags are dropped like all non-whitelisted tags |
+| `Haskamot`, `FilesGotFrom`, `Comments`, `ParagraphPrefix`, `CreateIndex`, `SourceUrl`, `CommentSZ` | free text / options | parsed (`Get`), not shown |
+
+
+Every key is kept in `ToratEmetHead.Metadata` (also `key=value` head lines), typed accessors for all of them. Sources: `Config.txt` `[BooksParameters]` and the comment under `[General]`, `BooksConfig.txt`, data counts above. The public repos ToratEmetInWord/ToratEmetInWord and JewishOfficeAddIn only list the keys (metadata lines are skipped when building / searching); no semantics there.
+Things the format simply does (left as is): a `!` label followed by another label does not merge (each label merges only with a text line); a line holding only tags such as `<BR>` is kept as a line (explicit intent); a mark-only line such as `# ` is a (blank) heading line; with no line-1 metadata a blank FIRST line stays as an empty block 0; `wrap` has no documented effect, it is parsed (`IsWrap`) only.
+- Checks: `ToratEmetWidenedTest` (with `--text`): detection and plain regressions, labels (all line endings, first open, saved index), label / blank-run boundaries at the two feed-piece ends (every shift of the interesting bytes), PutNewLinesAsIs 0 / 1 / absent, LastLevelIndex, all keys. Corpus detection (`--torat-emet-stats`): MyBooks 11 -> 698 of 1,523; Books 1,543 -> 1,546 of 1,553.
+
+## Torat Emet first-open timings (2026-11-05)
+
+Library API (`WordWindowedDocumentOpener.Open` with `IndexesOnDemand`, a fresh index folder, then `RenderBlocksForDisplay(0, 40)`, then `ScanAhead` to the end),
+not the service path. OS file cache WARM (files were read once before). Machine shared with other work, so a run varies by 2x; ms are min/median/max of 3 files
+(the first file in a process also pays ~150-250 ms JIT, left out). The plain rows are the same books with the head and the marks stripped, in a path without the
+folder word. Heap = managed heap after a full GC with the document open (1.3-2.1 MB everywhere).
+
+Classes: small 1-5 KB, median 65-111 KB, large 1.2-2.0 MB, largest = the three biggest files of Books (5.7-7.2 MB, mishna_brura 27,495 blocks),
+MyBooks largest = the three biggest of MyBooks (8-19 MB).
+
+| class (ms) | open | first window | rest of index | reopen |
+|---|---|---|---|---|
+| small, before = after | 1/1/2 | 0/0/1 | in the open | 1/1/5 |
+| median, before = after | 3/4/6 | 1/2/6 | in the open | 3/5/10 |
+| large, before (8 MB rule) | 14/45/433 | 2/6/14 | in the open | 25/33/271 |
+| large, after (2 MB rule) | 9/21/22 | 1/1/2 | in the open | 8/19/31 |
+| largest, before | 66/193/344 | 2/4/4 | in the open | 65/95/218 |
+| largest, after | 5/5/7 | 2/2/2 | 77/82/114 (pulled) | 2/3/12 |
+| MyBooks largest, before | 5/35/64 | 1/2/2 | 0/31/416 | 3/29/31 |
+| MyBooks largest, after | 4/4/31 | 1/1/1 | 38/40/45 | 1/1/1 |
+| plain .txt of the same size, after (largest / MyBooks largest) | 6/7/12 / 4/4/38 | 2/4/10 / 1/1/1 | 71/83/186 / 30/33/49 | 2/2/7 / 1/1/1 |
+
+Findings. (1) The Torat Emet handling costs nothing measurable against a plain .txt of the same size (marks, heading levels, head parsing are inside the one scan).
+(2) The scan runs at ~50 MB/s, so a .txt under the 8 MB sidecar threshold was opened by ONE blocking pass: the largest books took 120-240 ms before the first window
+(344-523 ms on a cold first run) and saved no index, so a second open paid it again. `WordIndexPolicy.PlainTextSidecarThresholdBytes` (2 MB) now makes .txt / web
+archives open on demand from 2 MB: the open returns in 5-7 ms, the first window in ~2 ms, the rest of the index is pulled as the reader asks and saved; a reopen is 2-12 ms.
+(3) Every normal book (up to ~2 MB) opens and shows text in under 25 ms. Earlier live-check numbers (largest 111 ms, Sfat Emet 197 ms) were this blocking pass.
+
+## Torat Emet note lines in the header (2026-11-05, index format 14)
+
+- A short plain line right after the `$` title that is in a data list (`ToratEmetNotes.Data.cs`, the texts found as such a line in at least 3 books of the
+  corpus, normalised: tags removed, white space collapsed, trailing punctuation dropped) is a NOTE: it joins the one header line after the source
+  (`name . special title . author . source . notes`) and is not a block. Regenerate the list with `scripts/analyse-torat-emet-notes.py --emit-cs`.
+- Decided on the detection sample only (same bytes for a one-pass open, an on-demand first open and a rebuild): within the first 5 non-blank lines after the
+  title, only blank / comment / other note lines between, at most 120 characters, and a section heading (`# @ ^ ~`) later in the sample. A book with only a
+  title, or whose heading is past the sample, keeps every line as text. Only books with line-1 metadata have a header to hold notes.
+- The index carries the note byte ranges with the head (sidecar format 14). The scanner drops the bytes of a note as they are fed (so a block never starts
+  inside one, and no span anchor is taken inside one); a block that contains a note range in its byte span is decoded without it.
+- Search does not read the header (before and after), so a note is not searchable; it is a header line like the name, author and source.
+- Heading gap: the page gives every `.text-line` a zero-width-space `::after` (an empty run keeps a line's height). After a block-level heading it made a whole
+  extra line (about 25 css px) - the "empty line after a heading". Torat Emet heading wrappers switch it off; the heading's own bottom margin is `.2em`.
+
+## Emphasis marks, underline colour, borders and shading in .doc / RTF / ODT (2026-11-09)
+
+- Emphasis marks: .doc sprmCKcd 0x2A34 (kcd 1 dot, 2 comma, 3 circle, 4 under dot), RTF `\accdot` `\acccomma` `\acccircle` `\accunderdot` `\accnone`
+  (LibreOffice rtfdocumentimpl.cxx:2174-2200), ODT `style:text-emphasize` (txtprhdl.cxx:907-950; dot / disc = filled dot, accent = sesame) all reuse the
+  .docx `EmphasisMarkCss`. LibreOffice varies .doc kcd 1 / 2 by language (ww8par6.cxx:4942-4997); we draw them as Word and the .docx path do.
+- RTF `\ulc` -> `UnderlineColorHex`; `\chbrdr` + `\brdr*` -> the run border; `\brdrt/l/b/r` and `\box` -> paragraph borders (`\brdrl` / `\brdrr` = start / end, as .docx w:left
+  and .doc brcLeft); modifiers go to the last border named, as LibreOffice putBorderProperty does; cell / row / page / between / bar
+  borders swallow their modifiers (not drawn). `\brdrw` twips, 0.5 pt when absent. Not drawn: `\brsp` spacing, shadow, border groups (each paragraph is boxed alone).
+- RTF shading is real shading now (was drawn as highlight): `\chcbpat`/`\chcfpat`/`\chshdng` and `\cbpat`/`\cfpat`/`\shading` mixed as w:shd
+  (`WordShadingColor.Mix`; it wins over `\cb`); a `\bg*` / `\chbg*` pattern counts as 33.3 %. LibreOffice reads only `\cbpat` / `\chcbpat` (the fill): the pattern words follow the RTF 1.5 spec and Word.
+- RTF index format 10 (the group state grew). Test: `FormattingMarksFidelityTest` (`--fidelity`) over test-data/word-formatting/marks-borders-v1.doc / .rtf
+  (Word 16, make-marks-borders-fixture.ps1), hand-written RTF and .fodt.

@@ -37,7 +37,13 @@ internal enum RtfWord : byte
     Plain, Bold, Italic, AssociatedBold, AssociatedItalic, Underline, UnderlineDouble, UnderlineDotted, UnderlineDashed, UnderlineWave,
     UnderlineThick, UnderlineWords, UnderlineNone, Strike, StrikeDouble, FontSize, AssociatedFontSize, ForegroundColor, BackgroundColor,
     CharacterShading, Highlight, Superscript, Subscript, NoSuperSubscript, RaisedPosition, LoweredPosition, Hidden, AllCaps, SmallCaps,
-    Outline, Shadow, Emboss, Imprint, CharacterSpacing, RightToLeftCharacters, LeftToRightCharacters, LineBreakClear,
+    Outline, Shadow, Emboss, Imprint, CharacterSpacing, CharacterScale, RightToLeftCharacters, LeftToRightCharacters, LineBreakClear,
+    UnderlineColor, CharacterPatternColor, CharacterShadingPercent, CharacterShadingPattern,
+    EmphasisNone, EmphasisDot, EmphasisComma, EmphasisCircle, EmphasisUnderDot,
+    // ── borders and paragraph shading ──
+    CharacterBorder, ParagraphBorderTop, ParagraphBorderLeft, ParagraphBorderBottom, ParagraphBorderRight, ParagraphBorderBox, OtherBorder,
+    BorderWidth, BorderColor, BorderSingle, BorderDouble, BorderDotted, BorderDashed, BorderNone,
+    ParagraphBackgroundColor, ParagraphPatternColor, ParagraphShadingPercent, ParagraphShadingPattern,
 }
 
 /// <summary>
@@ -137,8 +143,36 @@ internal static class RtfControlWords
         ("chcbpat", RtfWord.CharacterShading), ("highlight", RtfWord.Highlight), ("super", RtfWord.Superscript), ("sub", RtfWord.Subscript),
         ("nosupersub", RtfWord.NoSuperSubscript), ("up", RtfWord.RaisedPosition), ("dn", RtfWord.LoweredPosition), ("v", RtfWord.Hidden),
         ("caps", RtfWord.AllCaps), ("scaps", RtfWord.SmallCaps), ("outl", RtfWord.Outline), ("shad", RtfWord.Shadow), ("embo", RtfWord.Emboss),
-        ("impr", RtfWord.Imprint), ("expndtw", RtfWord.CharacterSpacing), ("rtlch", RtfWord.RightToLeftCharacters), ("ltrch", RtfWord.LeftToRightCharacters),
+        ("impr", RtfWord.Imprint), ("expndtw", RtfWord.CharacterSpacing), ("charscalex", RtfWord.CharacterScale), ("rtlch", RtfWord.RightToLeftCharacters), ("ltrch", RtfWord.LeftToRightCharacters),
         ("lbr", RtfWord.LineBreakClear),
+        ("ulc", RtfWord.UnderlineColor), ("chcfpat", RtfWord.CharacterPatternColor), ("chshdng", RtfWord.CharacterShadingPercent),
+        ("chbghoriz", RtfWord.CharacterShadingPattern), ("chbgvert", RtfWord.CharacterShadingPattern), ("chbgfdiag", RtfWord.CharacterShadingPattern),
+        ("chbgbdiag", RtfWord.CharacterShadingPattern), ("chbgcross", RtfWord.CharacterShadingPattern), ("chbgdcross", RtfWord.CharacterShadingPattern),
+        ("chbgdkhoriz", RtfWord.CharacterShadingPattern), ("chbgdkvert", RtfWord.CharacterShadingPattern), ("chbgdkfdiag", RtfWord.CharacterShadingPattern),
+        ("chbgdkbdiag", RtfWord.CharacterShadingPattern), ("chbgdkcross", RtfWord.CharacterShadingPattern), ("chbgdkdcross", RtfWord.CharacterShadingPattern),
+        ("accnone", RtfWord.EmphasisNone), ("accdot", RtfWord.EmphasisDot), ("acccomma", RtfWord.EmphasisComma), ("acccircle", RtfWord.EmphasisCircle),
+        ("accunderdot", RtfWord.EmphasisUnderDot),
+        ("chbrdr", RtfWord.CharacterBorder), ("brdrt", RtfWord.ParagraphBorderTop), ("brdrl", RtfWord.ParagraphBorderLeft), ("brdrb", RtfWord.ParagraphBorderBottom),
+        ("brdrr", RtfWord.ParagraphBorderRight), ("box", RtfWord.ParagraphBorderBox),
+        // borders this reader does not draw: the \brdr* modifiers after them must not reach a paragraph or character border
+        ("brdrbtw", RtfWord.OtherBorder), ("brdrbar", RtfWord.OtherBorder), ("clbrdrt", RtfWord.OtherBorder), ("clbrdrl", RtfWord.OtherBorder),
+        ("clbrdrb", RtfWord.OtherBorder), ("clbrdrr", RtfWord.OtherBorder), ("pgbrdrt", RtfWord.OtherBorder), ("pgbrdrl", RtfWord.OtherBorder),
+        ("pgbrdrb", RtfWord.OtherBorder), ("pgbrdrr", RtfWord.OtherBorder), ("trbrdrt", RtfWord.OtherBorder), ("trbrdrl", RtfWord.OtherBorder),
+        ("trbrdrb", RtfWord.OtherBorder), ("trbrdrr", RtfWord.OtherBorder), ("trbrdrh", RtfWord.OtherBorder), ("trbrdrv", RtfWord.OtherBorder),
+        ("brdrw", RtfWord.BorderWidth), ("brdrcf", RtfWord.BorderColor),
+        ("brdrs", RtfWord.BorderSingle), ("brdrhair", RtfWord.BorderSingle), ("brdrth", RtfWord.BorderSingle), ("brdrtriple", RtfWord.BorderSingle),
+        ("brdrtnthsg", RtfWord.BorderSingle), ("brdrthtnsg", RtfWord.BorderSingle), ("brdrtnthtnsg", RtfWord.BorderSingle), ("brdrtnthmg", RtfWord.BorderSingle),
+        ("brdrthtnmg", RtfWord.BorderSingle), ("brdrtnthtnmg", RtfWord.BorderSingle), ("brdrtnthlg", RtfWord.BorderSingle), ("brdrthtnlg", RtfWord.BorderSingle),
+        ("brdrtnthtnlg", RtfWord.BorderSingle), ("brdrwavy", RtfWord.BorderSingle), ("brdrwavydb", RtfWord.BorderSingle), ("brdrdashdotstr", RtfWord.BorderSingle),
+        ("brdremboss", RtfWord.BorderSingle), ("brdrengrave", RtfWord.BorderSingle), ("brdroutset", RtfWord.BorderSingle), ("brdrinset", RtfWord.BorderSingle),
+        ("brdrdashd", RtfWord.BorderSingle), ("brdrdashdd", RtfWord.BorderSingle), ("brdrframe", RtfWord.BorderSingle),
+        ("brdrdb", RtfWord.BorderDouble), ("brdrdot", RtfWord.BorderDotted), ("brdrdash", RtfWord.BorderDashed), ("brdrdashsm", RtfWord.BorderDashed),
+        ("brdrnone", RtfWord.BorderNone), ("brdrnil", RtfWord.BorderNone),
+        ("cbpat", RtfWord.ParagraphBackgroundColor), ("cfpat", RtfWord.ParagraphPatternColor), ("shading", RtfWord.ParagraphShadingPercent),
+        ("bghoriz", RtfWord.ParagraphShadingPattern), ("bgvert", RtfWord.ParagraphShadingPattern), ("bgfdiag", RtfWord.ParagraphShadingPattern),
+        ("bgbdiag", RtfWord.ParagraphShadingPattern), ("bgcross", RtfWord.ParagraphShadingPattern), ("bgdcross", RtfWord.ParagraphShadingPattern),
+        ("bgdkhoriz", RtfWord.ParagraphShadingPattern), ("bgdkvert", RtfWord.ParagraphShadingPattern), ("bgdkfdiag", RtfWord.ParagraphShadingPattern),
+        ("bgdkbdiag", RtfWord.ParagraphShadingPattern), ("bgdkcross", RtfWord.ParagraphShadingPattern), ("bgdkdcross", RtfWord.ParagraphShadingPattern),
     ];
 
     static RtfControlWords()
