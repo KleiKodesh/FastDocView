@@ -2013,6 +2013,8 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   Wingdings codes), which a browser cannot draw. Any other font: a plain bullet. RTF levels now keep their \f (index format 13).
 - Test: `ListNumberFormatsFidelityTest` (`--list-formats`, in `--fidelity`) over test-data/word-lists/list-formats-v1-a / -b .docx / .doc / .rtf
   (Word 16 via COM, make-list-formats-fixture.ps1: every WdListNumberStyle x 13 start values, Word's ListString saved beside). Word 16's RTF writer
-  leaves `{\*\pn` open for MSONFC 36 and up (the next \listtext group closes it), so those RTF paragraphs are not checked. Symbol / Wingdings
+  leaves an empty `{\*\pn` group open for MSONFC 36 and up (52 unclosed groups in -b; Word 16 itself refuses to reopen the file, error 5151).
+  Fixed: `\pn` is now a pass-through destination as in LibreOffice (rtfdispatchdestination.cxx:505-507; text falls to the body,
+  rtfdocumentimpl.cxx:1695-1697), so those paragraphs keep their text and are checked again. Symbol / Wingdings
   bullets: DocxFidelityTest list labels.
 - Drop caps (.doc): notes referenced inside the initial now come with the paragraph that draws it, not the empty frame block.

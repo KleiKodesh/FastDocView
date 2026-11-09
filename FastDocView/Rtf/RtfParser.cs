@@ -751,6 +751,14 @@ internal sealed class RtfParser
                 _captureDepth = _depth;
                 _captured.Clear();
                 return;
+            // {\*\pn ...}: Word 6 paragraph numbering, a destination whose own words describe the number and whose text (none
+            // normally) stays in the body - LibreOffice rtfdispatchdestination.cxx:505-507 (PN -> PARAGRAPHNUMBERING, a known
+            // destination, so \* does not skip it) and rtfdocumentimpl.cxx:1695-1697 (text in it falls through to the body).
+            // Word 16's writer leaves {\*\pn group open for number formats Word 6 had none for (MSONFC 36 and up); skipping
+            // the group lost every following paragraph. Word itself refuses those files (5151, "unable to read").
+            case RtfWord.ParagraphNumbering:
+                if (!IsTextDestination(state)) SkipGroup(name);
+                return;
             case RtfWord.ListText: case RtfWord.ParagraphNumberText:
                 if (_listTextDepth >= 0 || !IsTextDestination(state)) { SkipGroup(name); return; }
                 state.Destination = RtfDestination.ListText;

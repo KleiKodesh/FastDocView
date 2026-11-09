@@ -44,14 +44,11 @@ public static class ListNumberFormatsFidelityTest
                 var labels = new List<string>();
                 foreach (WordDocumentBlockHtml block in document.RenderBlocks(1, document.BlockCount - 1))
                     labels.Add(LabelOf(block.Html));
-                int wrong = 0, notImplemented = 0, rtfUnclosedPn = 0;
+                int wrong = 0, notImplemented = 0;
                 var mismatches = new StringBuilder();
                 for (int i = 0; i < expected.Count; i++)
                 {
                     string actual = i < labels.Count ? labels[i] : "(missing)";
-                    // Word 16's RTF writer leaves the {\*\pn group of a format Word 6 had no \pn for (MSONFC 36 and up) open
-                    // until the next paragraph's \listtext group: the paragraph text sits in a skipped destination. Not checked.
-                    if (extension == "rtf" && int.Parse(expected[i].code, CultureInfo.InvariantCulture) >= 36) { rtfUnclosedPn++; continue; }
                     if (actual == expected[i].label) continue;
                     if (NotImplemented.Contains(expected[i].code)) { notImplemented++; continue; }
                     wrong++;
@@ -59,7 +56,7 @@ public static class ListNumberFormatsFidelityTest
                         mismatches.Append(" [code ").Append(expected[i].code).Append(" v").Append(expected[i].value).Append(": word ")
                                   .Append(Escape(expected[i].label)).Append(" got ").Append(Escape(actual)).Append(']');
                 }
-                TestReport.Check(wrong == 0, $"{extension} part {part}: {expected.Count - wrong - notImplemented - rtfUnclosedPn}/{expected.Count - notImplemented - rtfUnclosedPn} labels equal Word's"
+                TestReport.Check(wrong == 0, $"{extension} part {part}: {expected.Count - wrong - notImplemented}/{expected.Count - notImplemented} labels equal Word's"
                                              + $" ({notImplemented} in formats drawn as decimal: CJK / Korean / Thai / Vietnamese / Hindi counting words, kana orders, Word's custom formats)" + mismatches);
             }
         }
