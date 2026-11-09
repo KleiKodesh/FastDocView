@@ -2,6 +2,7 @@
 // floats (never a centred block for a two-sided wrap), that a contour reaches the browser as a shape-outside polygon, that the
 // text of a float's paragraph sits on the float's free side, and no console errors. DOM only, no screenshots.
 //   node playwright/wrapCheck.mjs <file> <minimum floats> <minimum contours>
+//   FASTDOCVIEW_VIEWPORT_WIDTH=420: a narrow window (a float drawn narrower than its size keeps its contour, in % of its box)
 import { chromium } from 'playwright'
 
 const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? `http://localhost:${process.env.FASTDOCVIEW_DEMO_PORT ?? 5189}/`
@@ -11,7 +12,7 @@ const check = (ok, what) => { console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${what}`);
 const step = text => console.log(`[${new Date().toLocaleTimeString()}] ${text}`)
 
 const browser = await chromium.launch()
-const page = await browser.newPage({ viewport: { width: 1300, height: 900 } })
+const page = await browser.newPage({ viewport: { width: Number(process.env.FASTDOCVIEW_VIEWPORT_WIDTH ?? 1300), height: 900 } })
 const errors = []
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)) })
 page.on('pageerror', e => errors.push(String(e).slice(0, 200)))
@@ -44,6 +45,7 @@ console.log('  floats', JSON.stringify(floats.map(f => [f.float, f.shape.slice(0
 check(floats.length >= Number(minimumFloats), `${floats.length} floating object(s), at least ${minimumFloats}`)
 const contours = floats.filter(f => f.shape.startsWith('polygon('))
 check(contours.length >= Number(minimumContours), `${contours.length} contour(s) as shape-outside polygon, at least ${minimumContours}`)
+check(contours.every(f => f.shape.includes('%')), 'every contour polygon is in percentages of its box')
 const beside = floats.filter(f => f.textLeft !== null && f.shape === 'none')
 check(beside.every(f => f.float === 'left' ? f.textLeft >= f.right - 1 : f.textRight <= f.left + 1),
   `the text beside each box float runs along its free side (${beside.length} checked)`)
