@@ -9,7 +9,7 @@ internal enum RtfWord : byte
     // ── document / header ──
     Rtf, Ansi, Mac, Pc, Pca, AnsiCodePage, DefaultFont, FontTable, FontCharset, FontCodePage, Font, AssociatedFont,
     ColorTable, Red, Green, Blue, StyleSheet, Style, CharacterStyle, SectionStyle, TableStyle, OutlineLevel,
-    ListTable, List, ListId, ListLevel, LevelNumberFormat, LevelNumberFormatNew, LevelStartAt, LevelText, LevelNumbers, LevelNoRestart, LevelLegal, LevelJustification, LevelFollow,
+    ListTable, List, ListId, ListLevel, LevelNumberFormat, LevelNumberFormatNew, LevelStartAt, LevelText, LevelNumbers, LevelNoRestart, LevelLegal, LevelJustification, LevelFollow, ListPicture, LevelPicture,
     ListOverrideTable, ListOverride, ListOverrideLevel, ListOverrideStartAt, ListOverrideIndex, ListLevelIndex,
     FootnoteNumberingArabic, FootnoteNumberingLowerAlpha, FootnoteNumberingUpperAlpha, FootnoteNumberingLowerRoman, FootnoteNumberingUpperRoman, FootnoteNumberingChicago,
     EndnoteNumberingArabic, EndnoteNumberingLowerAlpha, EndnoteNumberingUpperAlpha, EndnoteNumberingLowerRoman, EndnoteNumberingUpperRoman, EndnoteNumberingChicago,
@@ -97,7 +97,8 @@ internal static class RtfControlWords
         ("listlevel", RtfWord.ListLevel), ("levelnfc", RtfWord.LevelNumberFormat), ("levelnfcn", RtfWord.LevelNumberFormatNew),
         ("levelstartat", RtfWord.LevelStartAt), ("leveltext", RtfWord.LevelText), ("levelnumbers", RtfWord.LevelNumbers),
         ("levelnorestart", RtfWord.LevelNoRestart), ("levellegal", RtfWord.LevelLegal),
-        ("leveljc", RtfWord.LevelJustification), ("levelfollow", RtfWord.LevelFollow), ("listoverridetable", RtfWord.ListOverrideTable),
+        ("leveljc", RtfWord.LevelJustification), ("levelfollow", RtfWord.LevelFollow),
+        ("listpicture", RtfWord.ListPicture), ("levelpicture", RtfWord.LevelPicture), ("listoverridetable", RtfWord.ListOverrideTable),
         ("listoverride", RtfWord.ListOverride), ("lfolevel", RtfWord.ListOverrideLevel), ("listoverridestartat", RtfWord.ListOverrideStartAt),
         ("ls", RtfWord.ListOverrideIndex), ("ilvl", RtfWord.ListLevelIndex),
         ("ftnnar", RtfWord.FootnoteNumberingArabic), ("ftnnalc", RtfWord.FootnoteNumberingLowerAlpha), ("ftnnauc", RtfWord.FootnoteNumberingUpperAlpha),

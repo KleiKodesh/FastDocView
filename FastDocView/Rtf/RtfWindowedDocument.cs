@@ -330,7 +330,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             IsBookmarkListComplete = () => _builder is null,
             BookmarkText = BookmarkText,
             BookmarkBlock = KnownBookmark,
-            ListLabelOfBlock = block => block >= 0 && block < _index.BlockCount ? LookupTable.ListLabelOf(block) : null,
+            ListLabelOfBlock = block => block >= 0 && block < _index.BlockCount ? FieldListLabelOf(block) : null,
             ListContextOfBlock = ListContext,
             IsRightToLeftText = IsRightToLeft,
             NoteMarkOfBookmark = name => KnownBookmark(name) is { } block && _index.NoteReferencesInBlock(block) is { Length: > 0 } notes ? notes[0].Label : null,
@@ -351,7 +351,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     /// </summary>
     private string? ListContext(int block)
     {
-        if (block < 0 || block >= _index.BlockCount || LookupTable.ListLabelOf(block) is not { } own) return null;
+        if (block < 0 || block >= _index.BlockCount || FieldListLabelOf(block) is not { } own) return null;
         int need = LookupTable.ListLevelOf(block);
         if (need < 0) return null;
         int list = LookupTable.ListOf(block);
@@ -364,7 +364,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             int level = LookupTable.ListLevelOf(earlier);
             if (level < 0) continue;
             if (LookupTable.ListOf(earlier) != list) break;
-            if (level > need || LookupTable.ListLabelOf(earlier) is not { } label) continue;
+            if (level > need || FieldListLabelOf(earlier) is not { } label) continue;
             labels.Insert(0, level.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\u0002" + label);
             need = level - 1;
         }
@@ -486,8 +486,13 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
 
     /// <inheritdoc/>
     /// <remarks>Id "block:ordinal": that block is parsed again (one block's bytes) keeping only that picture's data.</remarks>
+    /// <summary>A block's list label as fields read it: a picture bullet reads as a bullet (as .docx does).</summary>
+    private string? FieldListLabelOf(int block) => LookupTable.ListLabelOf(block) is { } label && Html.WordListLabelHtml.PictureOf(label) is not null ? "•" : LookupTable.ListLabelOf(block);
+
     public WordDocumentPicture? ReadPicture(string pictureId)
     {
+        if (pictureId is not null && pictureId.StartsWith(RtfListNumbering.ListPicturePrefix, StringComparison.Ordinal))
+            return ReadListPicture(pictureId.Substring(RtfListNumbering.ListPicturePrefix.Length));
         string[] parts = (pictureId ?? "").Split(':');
         if (parts.Length != 2 || !int.TryParse(parts[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int blockIndex)
             || !int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int ordinal))
@@ -500,6 +505,23 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             {
                 return _renderer.ReadPicture(_file, _index, _table, blockIndex, ordinal) is { Data: { } data } picture
                     ? WordPictureHtml.Picture(picture.Extension, data) : null;
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
+    /// <summary>List picture N ({\*\listpicture}): its {\pict} body is read from the offset the index kept.</summary>
+    private WordDocumentPicture? ReadListPicture(string number)
+    {
+        if (!int.TryParse(number, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int index)) return null;
+        lock (_readLock)
+        {
+            if (index >= _index.Tables.ListPictures.Count) return null;
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                RtfPicture picture = new RtfParser(_renderer, _index.Tables, readsHeaderTables: false).ReadPictureAt(_file, _index.Tables.ListPictures[index].Offset);
+                return picture.Data is { } data ? WordPictureHtml.Picture(picture.Extension, data) : null;
             }
             finally { _releasableFile?.Release(); }
         }

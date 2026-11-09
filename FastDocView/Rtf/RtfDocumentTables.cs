@@ -23,8 +23,12 @@ public sealed class RtfDocumentTables
         public bool Legal;
         public int Justification;       // \leveljc: 0 left, 1 center, 2 right (LibreOffice rtfdispatchvalue.cxx reads \leveljc, not \leveljcn)
         public int Follow;              // \levelfollow: 0 tab, 1 space, 2 nothing
+        public int Picture = -1;        // \levelpicture: the picture bullet (an index into ListPictures), -1 none
         public int Font = -1;           //  in the \listlevel group: the label's font (a symbol-font bullet is recoded against it)
     }
+
+    /// <summary>A {\pict} of {\*\listpicture}: where its body starts in the file (its bytes are read on demand), its type and goal size.</summary>
+    public sealed class ListPictureEntry { public long Offset; public string Extension = ""; public int WidthTwips, HeightTwips; }
 
     public sealed class ListDefinition { public int ListId; public ListLevelDefinition[] Levels = []; }
 
@@ -35,6 +39,7 @@ public sealed class RtfDocumentTables
     public Dictionary<int, StyleEntry> Styles { get; } = new();
     public Dictionary<int, ListDefinition> Lists { get; } = new();
     public Dictionary<int, ListOverride> ListOverrides { get; } = new();
+    public List<ListPictureEntry> ListPictures { get; } = new();
     public int DefaultFont { get; set; } = -1;
     public int AnsiCodePage { get; set; } = 1252;
     public string FootnoteFormat { get; set; } = "decimal";
@@ -95,7 +100,7 @@ public sealed class RtfDocumentTables
             {
                 writer.Write(level.NumberFormat); writer.Write(level.StartAt); writer.Write(level.Text);
                 writer.Write(level.NumberPositions.Length); writer.Write(level.NumberPositions);
-                writer.Write(level.NoRestart); writer.Write(level.Legal); writer.Write(level.Justification); writer.Write(level.Follow); writer.Write(level.Font);
+                writer.Write(level.NoRestart); writer.Write(level.Legal); writer.Write(level.Justification); writer.Write(level.Follow); writer.Write(level.Font); writer.Write(level.Picture);
             }
         }
         writer.Write(ListOverrides.Count);
@@ -107,6 +112,8 @@ public sealed class RtfDocumentTables
             writer.Write(listOverride.Value.StartAtByLevel.Count);
             foreach (KeyValuePair<int, int> startAt in listOverride.Value.StartAtByLevel) { writer.Write(startAt.Key); writer.Write(startAt.Value); }
         }
+        writer.Write(ListPictures.Count);
+        foreach (ListPictureEntry picture in ListPictures) { writer.Write(picture.Offset); writer.Write(picture.Extension); writer.Write(picture.WidthTwips); writer.Write(picture.HeightTwips); }
     }
 
     public static RtfDocumentTables Read(BinaryReader reader)
@@ -142,7 +149,7 @@ public sealed class RtfDocumentTables
                 definition.NumberPositions = reader.ReadBytes(positions);
                 if (definition.NumberPositions.Length != positions) throw new EndOfStreamException("RTF index: list table truncated.");
                 definition.NoRestart = reader.ReadBoolean(); definition.Legal = reader.ReadBoolean();
-                definition.Justification = reader.ReadInt32(); definition.Follow = reader.ReadInt32(); definition.Font = reader.ReadInt32();
+                definition.Justification = reader.ReadInt32(); definition.Follow = reader.ReadInt32(); definition.Font = reader.ReadInt32(); definition.Picture = reader.ReadInt32();
                 list.Levels[level] = definition;
             }
             tables.Lists[key] = list;
@@ -158,6 +165,10 @@ public sealed class RtfDocumentTables
             for (int level = 0; level < startAts; level++) listOverride.StartAtByLevel[reader.ReadInt32()] = reader.ReadInt32();
             tables.ListOverrides[key] = listOverride;
         }
+        int pictures = reader.ReadInt32();
+        if (pictures < 0) throw new InvalidDataException("RTF index: list pictures damaged.");
+        for (int i = 0; i < pictures; i++)
+            tables.ListPictures.Add(new ListPictureEntry { Offset = reader.ReadInt64(), Extension = reader.ReadString(), WidthTwips = reader.ReadInt32(), HeightTwips = reader.ReadInt32() });
         return tables;
     }
 }

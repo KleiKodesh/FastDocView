@@ -662,6 +662,24 @@ internal sealed class RtfParser
             case RtfWord.LevelLegal: if (_level is not null && _levelDepth >= 0) _level.Legal = isOn; return;
             case RtfWord.LevelJustification: if (_level is not null && _levelDepth >= 0) _level.Justification = parameter; return;
             case RtfWord.LevelFollow: if (_level is not null && _levelDepth >= 0) _level.Follow = parameter; return;
+            // \levelpicture N: the level's bullet is picture N of {\*\listpicture} (LibreOffice rtfdispatchvalue.cxx:130-132 LEVELPICTURE ->
+            // lvlPicBulletId; the pictures are numbered from 0 in file order: rtfdocumentimpl.cxx:3853-3864 m_nListPictureId++)
+            case RtfWord.LevelPicture: if (_level is not null && _levelDepth >= 0 && hasParameter && parameter >= 0) _level.Picture = parameter; return;
+            case RtfWord.ListPicture:
+                if (_readsHeaderTables && _headerDepth >= 0 && _stack[_headerDepth].Destination == RtfDestination.ListTable) state.Destination = RtfDestination.ListPicture;
+                else SkipGroup(name);
+                return;
+            // {\*\shppict {\pict ...}} inside {\*\listpicture} (rtfdispatchdestination.cxx:131-133): the picture's place in the file is
+            // kept; its bytes are read only when the host asks for the picture
+            case RtfWord.ShapePicture when state.Destination == RtfDestination.ListPicture: return;
+            case RtfWord.Picture when state.Destination == RtfDestination.ListPicture:
+            {
+                long offset = Position;
+                (RtfPicture body, bool pictureClosed) = ReadPictureBody(keepsData: false);
+                _tables.ListPictures.Add(new RtfDocumentTables.ListPictureEntry { Offset = offset, Extension = body.Extension, WidthTwips = body.WidthTwips, HeightTwips = body.HeightTwips });
+                if (pictureClosed && !Pop()) _position = _end;
+                return;
+            }
             case RtfWord.LevelText:
                 if (_level is not null && _levelDepth >= 0) { state.Destination = RtfDestination.ListLevelText; _levelTextDepth = _depth; _headerText.Clear(); }
                 else SkipGroup(name);
@@ -1124,6 +1142,17 @@ internal sealed class RtfParser
         (RtfPicture picture, bool isClosed) = ReadPictureBody(_sink.WantsPictureData);
         if (isClosed && !Pop()) _position = _end;
         _sink.Picture(picture, state);
+    }
+
+    /// <summary>The picture whose {\pict} body starts at <paramref name="offset"/>, with its bytes (a list picture: <see cref="RtfDocumentTables.ListPictures"/>).</summary>
+    public RtfPicture ReadPictureAt(Stream source, long offset)
+    {
+        _source = source;
+        source.Position = offset;
+        _bufferOffset = offset;
+        _position = _end = 0;
+        _limit = source.Length;
+        return ReadPictureBody(keepsData: true).picture;
     }
 
     /// <summary>A {\pict} group's body up to its closing brace (consumed; the group is not popped), and whether it closed.</summary>

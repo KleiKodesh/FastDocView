@@ -577,7 +577,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             string text = _paragraphText.ToString().Trim();
             if (text.Length > 0) _headings.Add(new WordDocumentHeading(_starts.Count, outline + 1, text));
         }
-        string? storedLabel = _hasListText ? null : label;
+        // a picture bullet's label is stored even beside Word's flat {\listtext}: the renderer draws that copy as the picture bullet
+        string? storedLabel = _hasListText && !(label is not null && Html.WordListLabelHtml.PictureOf(label) is not null) ? null : label;
         EndBlock(_parser.Position, listLabel: storedLabel, listLevel: hasListParagraph ? state.ListLevel : -1);
         if (isSectionEnd) EndSection();
     }

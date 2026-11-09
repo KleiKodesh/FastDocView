@@ -37,6 +37,8 @@ internal enum RtfDestination : byte
     ShapePropertyValue,
     /// <summary>{\shptxt}: a text box's paragraphs.</summary>
     TextBox,
+    /// <summary>{\*\listpicture} in the list table: its {\pict} groups are the picture bullets, numbered from 0.</summary>
+    ListPicture,
 }
 
 /// <summary>

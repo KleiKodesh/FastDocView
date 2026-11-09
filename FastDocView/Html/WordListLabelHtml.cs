@@ -76,15 +76,17 @@ public static class WordListLabelHtml
     }
 
     /// <summary>
-    /// Word scales a picture bullet to the label's font, keeping only the picture's aspect ratio (measured in Word 16, PDF export
-    /// of test-data/word-lists/list-bullets-v1.docx: a 2:1 picture is drawn 8.85 pt high at 11 pt and 21.85 pt at 24 pt, about the
-    /// font's ascent; LibreOffice uses a fixed 14 pt height instead: NumberingManager.cxx:917-926, ww8par.cxx:5355-5362). Drawn
-    /// 0.9 em high (Arial's ascent, 0.905 em) on the baseline; the &lt;img&gt; goes through the picture endpoint like any picture.
+    /// Word draws a picture bullet 2 pt less high than the label's font size, whatever the font, keeping only the picture's aspect
+    /// ratio, its bottom on the baseline. Measured in Word 16 (PDF export, PyMuPDF; a 2:1 picture bullet of list-bullets-v1.docx at
+    /// each size): 8 pt -> 6.0, 10 -> 7.9, 11 -> 9.1, 12 -> 10.05, 14 -> 12.0, 18 -> 16.1, 24 -> 22.05, 36 -> 34.1, 48 -> 46.1 pt high;
+    /// Times New Roman and Courier New at 11 / 36 pt the same as Arial. LibreOffice does not follow the font: a fixed 14 pt height
+    /// (.docx NumberingManager.cxx:917-926; .doc the default bullet font's height x 12, ww8par.cxx:5355-5362; RTF goes through the
+    /// .docx path, rtfdocumentimpl.cxx:3853-3864) - Word is the reference here. The &lt;img&gt; goes through the picture endpoint.
     /// </summary>
-    private static void AppendPicture(StringBuilder html, (string PictureId, double Width, double Height) picture)
+    public static void AppendPicture(StringBuilder html, (string PictureId, double Width, double Height) picture)
     {
         html.Append("<img class=\"word-picture word-picture-bullet\" alt=\"\" ").Append(WordPictureHtml.PictureIdAttribute).Append("=\"")
-            .Append(WordHtmlText.Encode(picture.PictureId)).Append("\" decoding=\"async\" style=\"height:0.9em;width:auto;aspect-ratio:")
+            .Append(WordHtmlText.Encode(picture.PictureId)).Append("\" decoding=\"async\" style=\"height:max(calc(1em - 2pt),1px);width:calc(max(calc(1em - 2pt),1px) * ").Append(Number(picture.Width / picture.Height)).Append(");max-width:none;flex:none;aspect-ratio:")
             .Append(Number(picture.Width)).Append('/').Append(Number(picture.Height)).Append(";vertical-align:baseline\">");
     }
 

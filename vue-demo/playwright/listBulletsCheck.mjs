@@ -1,7 +1,7 @@
 // Live check of picture bullets in the app's FastDocView page, DOM measurements only:
-//   node playwright/listBulletsCheck.mjs <test-data/word-lists/list-bullets-v1.docx> [.odt]
-// Every picture bullet loads (naturalWidth > 0 through the host's picture endpoint), is drawn about 0.9 em of its label's
-// font high at a 2:1 ratio, and no console errors appear.
+//   node playwright/listBulletsCheck.mjs <test-data/word-lists/list-bullets-v1.docx> [.odt] [.doc] [.rtf]
+// Every picture bullet loads (naturalWidth > 0 through the host's picture endpoint), is drawn 2 pt less high than its label's
+// font (Word 16's rule, see WordListLabelHtml) at a 2:1 ratio, and no console errors appear.
 import { chromium } from 'playwright'
 
 const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? `http://localhost:${process.env.FASTDOCVIEW_DEMO_PORT ?? 5189}/`
@@ -26,12 +26,12 @@ for (const path of process.argv.slice(2)) {
   const bullets = await page.evaluate(() => [...document.querySelectorAll('img.word-picture-bullet')].map(i => {
     const box = i.getBoundingClientRect(), font = parseFloat(getComputedStyle(i.parentElement).fontSize)
     const zoom = box.height / parseFloat(getComputedStyle(i).height)
-    return { loaded: i.naturalWidth, ratio: box.width / box.height, emHeight: box.height / zoom / font }
+    return { loaded: i.naturalWidth, ratio: box.width / box.height, heightPx: box.height / zoom, font }
   }))
   for (const [n, b] of bullets.entries()) {
     check(b.loaded > 0, `${path}: bullet ${n} picture loaded (${b.loaded} px wide)`)
     check(Math.abs(b.ratio - 2) < 0.1, `${path}: bullet ${n} ratio 2:1 (${b.ratio.toFixed(2)})`)
-    check(Math.abs(b.emHeight - 0.9) < 0.05, `${path}: bullet ${n} 0.9 em high (${b.emHeight.toFixed(2)})`)
+    check(Math.abs(b.heightPx - (b.font - 8 / 3)) < 0.5, `${path}: bullet ${n} font size less 2 pt high (${b.heightPx.toFixed(2)} px at ${b.font.toFixed(2)} px)`)
   }
 }
 check(errors.length === 0, `no console errors (${errors.join(' | ')})`)

@@ -276,6 +276,24 @@ public static class DocBinaryPropertyModifiers
         return (location, isObject);
     }
 
+    /// <summary>
+    /// A list level's picture bullet ([MS-DOC] sprmCPbiIBullet 0x6887, sprmCPbiGrf 0x4888; LibreOffice sprmids.hxx:374-375): with
+    /// sprmCPbiGrf bit 0 set, the bullet is picture N of the "_PictureBullets" bookmark, N = sprmCPbiIBullet (LibreOffice
+    /// ww8par3.cxx:808-819, :839-845 reads them so; its writer puts the picture index there as 4 bytes: wrtw8num.cxx:355-358).
+    /// Null when the level has no picture bullet.
+    /// </summary>
+    public static int? PictureBulletIndexIn(byte[] grpprl, int start, int length)
+    {
+        int? index = null;
+        bool isPicture = false;
+        foreach ((ushort opcode, int operandAt, int operandLength) in Sprms(grpprl, start, length))
+        {
+            if (opcode == 0x6887 && operandLength >= 4) index = BitConverter.ToInt32(grpprl, operandAt);
+            else if (opcode == 0x4888 && operandLength >= 1) isPicture = (grpprl[operandAt] & 1) != 0;
+        }
+        return isPicture && index >= 0 ? index : null;
+    }
+
     public static bool HasSpecialCharacterFlag(byte[] grpprl, int start, int length)
     {
         foreach ((ushort opcode, int operandAt, _) in Sprms(grpprl, start, length))

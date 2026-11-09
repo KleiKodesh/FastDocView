@@ -234,8 +234,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
         WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : ""),
                                    _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft, formatting.HyphenationLanguageAttribute);
         _isParagraphRightToLeft = formatting.IsRightToLeft;
-        if (listLabel is { Length: > 0 }) AppendListLabel(html, listLabel, formatting);
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
+        if (listLabel is { Length: > 0 }) AppendListLabel(html, listLabel, formatting, ParagraphMarkFormatting(cpEnd, formatting.RunFormatting, styleBase));
         if (dropCapParagraph is { } dropCap) AppendDropCap(html, dropCap.cpStart, dropCap.cpEnd, formatting.RunFormatting, noteLabel);
         DocBinaryFieldReader fields = _fields ??= NewFieldReader(cpStart, restore: _textBoxDepth == 0);
         _baselineShift = 0;
@@ -252,17 +252,20 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// The label drawn as Word does: the paragraph's character formatting plus the level's grpprlChpx, followed by its
     /// ixchFollow (LVLF, [MS-DOC] 2.9.150; LibreOffice ww8par3.cxx: 0 tab, 1 space, 2 nothing).
     /// </summary>
-    private void AppendListLabel(StringBuilder html, string label, WordParagraphFormatting formatting)
+    private void AppendListLabel(StringBuilder html, string label, WordParagraphFormatting formatting, WordRunFormatting markFormatting)
     {
         DocBinaryListDefinitions.LevelDefinition? level = Lists.LevelOfParagraph(formatting.NumberingId, formatting.NumberingLevel);
         string? css = null;
-        WordRunFormatting labelFormatting = formatting.RunFormatting;
+        WordRunFormatting labelFormatting = markFormatting;
         if (level is { CharacterGrpprl.Length: > 0 })
         {
-            labelFormatting = formatting.RunFormatting.Clone();
+            labelFormatting = markFormatting.Clone();
             DocBinaryPropertyModifiers.ApplyCharacterSprms(labelFormatting, level.CharacterGrpprl, 0, level.CharacterGrpprl.Length, fonts: _styles.Fonts);
         }
-        if (level is { IsBullet: true })
+        if (level is { CharacterGrpprl.Length: > 0 } && DocBinaryPropertyModifiers.PictureBulletIndexIn(level.CharacterGrpprl, 0, level.CharacterGrpprl.Length) is { } pictureIndex
+            && PictureBulletLocation(pictureIndex) is { } location && Pictures.Locate(location) is { } picture)
+            label = WordListLabelHtml.PictureLabel(location.ToString(System.Globalization.CultureInfo.InvariantCulture), picture.widthPt, picture.heightPt);
+        else if (level is { IsBullet: true })
         {
             (label, bool keepsFont) = WordSymbolFontBullet.Resolve(label, labelFormatting.FontName);
             if (!keepsFont)
@@ -273,9 +276,55 @@ public sealed class DocBinaryParagraphHtmlRenderer
             }
         }
         if (!ReferenceEquals(labelFormatting, formatting.RunFormatting)) css = labelFormatting.ToCss(formatting.RunFormatting);
+        if (css is { Length: 0 }) css = null;
         WordListLabelSuffix suffix = level?.FollowCharacter switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab };
         WordListLabelAlignment alignment = level?.Justification switch { 1 => WordListLabelAlignment.Center, 2 => WordListLabelAlignment.End, _ => WordListLabelAlignment.Start };
         WordListLabelHtml.Append(html, label, css, suffix, formatting, DefaultTabStopTwips, alignment);
+    }
+
+    /// <summary>
+    /// The paragraph mark's character formatting: Word draws a list label in it (LibreOffice turns on
+    /// APPLY_PARAGRAPH_MARK_FORMAT_TO_NUMBERING for .doc, ww8par.cxx:1955), under the level's grpprlChpx.
+    /// </summary>
+    private WordRunFormatting ParagraphMarkFormatting(int cpEnd, WordRunFormatting paragraphBase, WordRunFormatting styleBase)
+    {
+        foreach ((WordRunFormatting mark, _, _, _, _) in CharacterRuns(cpEnd - 1, cpEnd, paragraphBase, styleBase)) return mark;
+        return paragraphBase;
+    }
+
+    private List<uint>? _pictureBullets;
+
+    /// <summary>
+    /// Picture bullet <paramref name="index"/>: the index-th inline picture of the paragraph holding the "_PictureBullets"
+    /// bookmark, from the bookmark's start on (LibreOffice ww8par.cxx:5302-5334 collects the as-character pictures of that
+    /// paragraph at or after the bookmark start, :5343-5348 picks the one the level names). Read once, on the first picture
+    /// bullet: one paragraph's runs, its pictures' PICF offsets kept.
+    /// </summary>
+    private uint? PictureBulletLocation(int index)
+    {
+        if (_pictureBullets is null)
+        {
+            _pictureBullets = new List<uint>();
+            if (Bookmarks.StartOf("_PictureBullets") is { } start)
+            {
+                int end = start, total = _pieces.TotalCharacterCount;
+                const int Chunk = 1024;
+                while (end < total)
+                {
+                    string text = _pieces.ReadText(end, Math.Min(total, end + Chunk));
+                    int mark = text.IndexOf('\r');
+                    if (mark >= 0) { end += mark; break; }
+                    if (text.Length == 0) { end = total; break; }
+                    end += text.Length;
+                }
+                var empty = new WordRunFormatting();
+                foreach ((_, string text, bool isSpecial, _, uint? picture) in CharacterRuns(start, end, empty, empty))
+                    if (isSpecial && picture is { } location)
+                        foreach (char c in text)
+                            if (c == '\u0001') _pictureBullets.Add(location);
+            }
+        }
+        return index < _pictureBullets.Count ? _pictureBullets[index] : null;
     }
 
     /// <summary>One table row: cells end at cell marks, the row at its row-end mark (the last paragraph).</summary>
@@ -583,7 +632,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 case '\u0001' when isSpecial && fieldState.IsInShapeResult && !(i + 1 < text.Length && text[i + 1] == '\u0001'): continue;
                 case '\u0001' when isSpecial && picture is { } location:
                     Flush();
-                    AppendPicture(html, location);
+                    if (!formatting.IsHidden) AppendPicture(html, location);   // hidden text (sprmCFVanish): e.g. the "_PictureBullets" pictures
                     continue;
                 case '\u0008' when isSpecial && _textBoxDepth == 0 && FloatingPictures?.At(runCp + i) is { } floating:
                     Flush();

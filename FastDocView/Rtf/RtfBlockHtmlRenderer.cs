@@ -83,7 +83,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     {
         PendingDropCap = null;
         _blockIndex = blockIndex;
-        _pictureOrdinal = 0;
+        _pictureOrdinal = 0; _hasDrawnListTextBullet = false;
         _bodyFlow = new Flow();
         _flow = _bodyFlow;
         _runText.Clear();
@@ -288,7 +288,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (_flow.ListText is { } listText)
         {
             html.Append(_flow.Inline.ToString(0, listText.position));            // net48 has no Append(StringBuilder, int, int)
-            WordListLabelHtml.Append(html, listText.html, null, listText.hasTab ? WordListLabelSuffix.Tab : WordListLabelSuffix.Nothing, formatting,
+            WordListLabelHtml.Append(html, listText.html, PictureBulletCss(state, isTopLevel), listText.hasTab ? WordListLabelSuffix.Tab : WordListLabelSuffix.Nothing, formatting,
                                      WordListLabelHtml.DefaultTabStopTwips, labelAlignment, isLabelHtml: true);
             html.Append(_flow.Inline.ToString(listText.position, _flow.Inline.Length - listText.position));
             _flow.ListText = null;
@@ -311,6 +311,11 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (isInTable) CellOf(Math.Max(1, (int)state.NestingLevel)).Cell.Append(html);
         else _flow.Output.Append(html);
     }
+
+    /// <summary>A picture bullet drawn from {\listtext}: the paragraph mark's run size and font (the state at its \par), which its height follows.</summary>
+    private string? PictureBulletCss(in RtfGroupState state, bool isTopLevel)
+        => isTopLevel && _isFirstParagraph && _indexListLabel is { } label && WordListLabelHtml.PictureOf(label) is not null
+           ? RunFormatting(state, false).ToCss(_documentRun) : null;
 
     /// <summary>A Wingdings / Webdings bullet keeps its code (WordSymbolFontBullet) and is drawn in the level's font.</summary>
     private string? SymbolFontCss(string label, RtfDocumentTables.ListLevelDefinition? listLevel)
@@ -397,6 +402,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     private int _blockIndex;
     private int _pictureOrdinal;                 // pictures met in this block so far (their ids count them)
+    private bool _hasDrawnListTextBullet;        // the {\listtext} picture bullet is drawn once per block
     private int _capturedPictureOrdinal = -1;    // >= 0: ReadPicture wants that picture's bytes
     private RtfPicture? _capturedPicture;
 
@@ -411,6 +417,15 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     {
         string? pictureId = PictureIdOf(picture);
         FlushRun();
+        // Word's flat {\listtext} copy of a picture bullet: drawn as the level's picture bullet (its size follows the label's font)
+        if (_listTextTarget is { } listTextTarget && _isFirstParagraph && _indexListLabel is { } indexLabel && WordListLabelHtml.PictureOf(indexLabel) is { } bullet)
+        {
+            if (_hasDrawnListTextBullet) return;
+            _hasDrawnListTextBullet = true;
+            WordListLabelHtml.AppendPicture(listTextTarget, bullet);
+            _flow.HasInline = true;
+            return;
+        }
         WordPictureLayout layout = new(picture.WidthTwips / 20.0, picture.HeightTwips / 20.0, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0);
         if (picture.Placement is { } shape) layout = ShapeLayout(shape, layout.WidthPt, layout.HeightPt);
         WordPictureHtml.Append(_listTextTarget ?? _flow.Inline, layout, pictureId);

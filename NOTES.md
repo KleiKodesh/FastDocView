@@ -1995,7 +1995,7 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 | Legacy numbering (w:legacy) | no (indent rules of Word 6 lists ignored) | no | no | n/a |
 | Style-linked numbering (pStyle in lvl, numStyleLink / styleLink) | yes | yes (rgistdPara) | no | n/a |
 | Symbol-font bullets | yes | yes | yes | yes (text-properties fo:font-family / style:font-name) |
-| Picture bullets (numPicBullet, \listpicture, list-level-style-image) | yes (VML / DrawingML) | no (text bullet) | no (text bullet) | yes (package picture) |
+| Picture bullets (numPicBullet, \listpicture, list-level-style-image) | yes (VML / DrawingML) | yes (_PictureBullets) | yes (\listpicture) | yes (package picture) |
 | Bullet colour and size | yes (level rPr) | yes | no (counted path) | no |
 
 - **Number formats**: `DocxNumberingDefinitions.FormatNumber` gained ordinal, cardinalText, ordinalText, decimalFullWidth(2), decimalHalfWidth,
@@ -2022,10 +2022,11 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 ## Picture bullets, ODT symbol bullets and label styles (2026-11-09; index formats .docx 19, ODT 14)
 
 - **Picture bullets** are a label text of their own (`WordListLabelHtml.PictureLabel`: U+FFFC, width/height, U+0001, picture id) drawn as an
-  `<img class="word-picture word-picture-bullet">` through the picture endpoint, never the bytes. Size: Word scales the picture to the label's font and
-  keeps only its ratio. Measured in Word 16 (PDF export of list-bullets-v1.docx, PyMuPDF): a 2:1 picture is 8.85 pt high at 11 pt and 21.85 pt at
-  24 pt (Arial, ascent 0.905 em); drawn 0.9 em high here (exact at 24 pt, 1 pt too tall at 11 pt - Word's small-size rule is not known).
-  LibreOffice uses a fixed 14 pt height instead (NumberingManager.cxx:917-926, ww8par.cxx:5355-5362).
+  `<img class="word-picture word-picture-bullet">` through the picture endpoint, never the bytes. Size (all formats): **the label's font size less 2 pt**, whatever the font,
+  ratio kept, bottom on the baseline (`height:max(calc(1em - 2pt),1px)`). Measured in Word 16 (PDF export, PyMuPDF, the 2:1 bullet of
+  list-bullets-v1.docx at each size): 8 -> 6.0, 10 -> 7.9, 11 -> 9.1, 12 -> 10.05, 14 -> 12.0, 18 -> 16.1, 24 -> 22.05, 36 -> 34.1, 48 -> 46.1 pt; Times
+  New Roman / Courier New at 11 / 36 pt the same as Arial. LibreOffice ignores the font: a fixed 14 pt height (NumberingManager.cxx:917-926,
+  ww8par.cxx:5355-5362; RTF via the .docx path, rtfdocumentimpl.cxx:3853-3864) - Word is the reference.
 - .docx: w:numPicBullet (VML v:shape style width/height + v:imagedata r:id, or DrawingML wp:extent + a:blip r:embed) read once from the head of
   numbering.xml (CT_Numbering puts them first), w:lvlPicBulletId on the level (LibreOffice NumberingManager.cxx:864-933); picture id "x:" numbering part
   "#" r:id, resolved through numbering.xml's relationships.
@@ -2034,9 +2035,14 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 - ODT symbol-font bullets: the level's style:text-properties fo:font-family (or style:font-name, taken as the family) goes through
   `WordSymbolFontBullet` as in .docx (xmlnumi.cxx:579-583, :645-694). ODT label style: text:style-name (xmlnumi.cxx:276-278) applied over the paragraph's
   run formatting; both ride in `OdtListStyle.Level.Layout` after U+0001.
-- **Not done**: .doc picture bullets (sprmCPbiIBullet 0x6887 + sprmCPbiGrf 0x4888 in the LVL grpprlChpx, the picture being the n-th inline picture after
-  the hidden "_PictureBullets" bookmark: ww8par3.cxx:798-877, ww8par.cxx:5302-5370) and RTF picture bullets ({\*\listpicture} shppict groups numbered
-  from 0, \levelpicture N: rtfdispatchdestination.cxx:131-133, rtfdispatchvalue.cxx:130, rtfdocumentimpl.cxx:3854-3858) still draw the level's text bullet.
-  Fixtures for both are in test-data/word-lists (list-bullets-v1.doc / .rtf).
-- Test: `ListBulletsFidelityTest` (`--list-bullets`, in `--fidelity`) over test-data/word-lists/list-bullets-v1.docx / .odt (make-list-bullets-fixture.ps1:
+- .doc (render time, no index change): sprmCPbiGrf 0x4888 bit 0 + sprmCPbiIBullet 0x6887 (4 bytes) in the LVL grpprlChpx (ww8par3.cxx:808-819,
+  :839-845; writer wrtw8num.cxx:355-358) name picture N of the paragraph holding the "_PictureBullets" bookmark, counted from the bookmark start
+  (ww8par.cxx:5302-5348); that paragraph's runs are read once per renderer, the id is the PICF offset as for any inline picture. Hidden (vanish)
+  inline pictures are no longer drawn (the _PictureBullets pictures are hidden). .doc list labels now draw in the paragraph mark's character
+  formatting under the level's grpprlChpx (LibreOffice sets APPLY_PARAGRAPH_MARK_FORMAT_TO_NUMBERING for .doc, ww8par.cxx:1955).
+- RTF (index format 14): {\*\listpicture} {\pict} groups are numbered from 0 in file order (rtfdispatchdestination.cxx:131-133,
+  rtfdocumentimpl.cxx:3853-3864); the index keeps each one's body offset, type and goal size (bytes read on demand: id "lp:N"); \levelpicture N
+  (rtfdispatchvalue.cxx:130-132) makes the level label a picture label. Word's flat {\listtext} copy of the bullet is drawn as that picture bullet
+  (the label is stored beside the \listtext for picture bullets only).
+- Test: `ListBulletsFidelityTest` (`--list-bullets`, in `--fidelity`) over test-data/word-lists/list-bullets-v1.docx / .odt (all checks) and .doc / .rtf (picture bullets) (make-list-bullets-fixture.ps1:
   Word 16's ListLevel.ApplyPictureBullet does nothing through COM, so add-picture-bullet.py writes Word's numPicBullet markup and Word re-saves the file).

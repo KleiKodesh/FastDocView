@@ -80,6 +80,11 @@ internal sealed class RtfListNumbering
     private static string FormatLabel(RtfDocumentTables.ListDefinition list, RtfDocumentTables.ListLevelDefinition definition, int[] counters, RtfDocumentTables tables)
     {
         string text = definition.Text;
+        // a picture bullet (\levelpicture) a browser can show is drawn as that picture ("lp:" id); else the level's text below
+        if (definition.Picture >= 0 && definition.Picture < tables.ListPictures.Count && tables.ListPictures[definition.Picture] is var picture
+            && Html.WordPictureHtml.ContentTypeOf(picture.Extension) is not null)
+            return Html.WordListLabelHtml.PictureLabel(ListPicturePrefix + definition.Picture.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                                       picture.WidthTwips > 0 ? picture.WidthTwips : 1, picture.HeightTwips > 0 ? picture.HeightTwips : 1);
         if (FormatName(definition.NumberFormat) == "bullet") return BulletOf(text, tables.FontName(definition.Font));
         var label = new StringBuilder(text.Length + 4);
         for (int i = 0; i < text.Length; i++)
@@ -96,6 +101,9 @@ internal sealed class RtfListNumbering
         }
         return label.ToString();
     }
+
+    /// <summary>The picture id of a list picture bullet: "lp:" and its index in <see cref="RtfDocumentTables.ListPictures"/>.</summary>
+    public const string ListPicturePrefix = "lp:";
 
     /// <summary>A symbol-font bullet (U+F0xx) recoded against the level's font (<see cref="Html.WordSymbolFontBullet"/>).</summary>
     public static string BulletOf(string text, string? fontName) => Html.WordSymbolFontBullet.Resolve(text, fontName).text;
