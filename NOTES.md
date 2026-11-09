@@ -468,7 +468,7 @@ document model (LibreOffice builds a full SwDoc; we keep only the semantics).
 9. .doc text boxes (txbx story) after the anchoring paragraph — index-time map.
 10. `w:sym` / CSymbol glyph with its font (Wingdings bullets).
 11. Table-style conditional formatting (`tblStylePr` firstRow / banding) — render-time per row; row count per table at index time.
-12. Emphasis marks (`em` → `text-emphasis`) — .docx done 2026-10-28; .doc sprmCKcd still open.
+12. Emphasis marks (`em` → `text-emphasis`) — .docx done 2026-10-28; .doc / RTF / ODT done 2026-11-09 (see the section of that date).
 13. Underline styles + color (`u@val`, `u@color` + theme) — .docx done 2026-10-28; .doc sprmCKul patterns / sprmCCvUl still open.
 14. Drop caps as a floated first letter (`framePr@dropCap`, sprmPDcs 0x442C).
 15. .doc field-code hiding check (CFFldVanish).
@@ -1925,3 +1925,16 @@ archives open on demand from 2 MB: the open returns in 5-7 ms, the first window 
 - Search does not read the header (before and after), so a note is not searchable; it is a header line like the name, author and source.
 - Heading gap: the page gives every `.text-line` a zero-width-space `::after` (an empty run keeps a line's height). After a block-level heading it made a whole
   extra line (about 25 css px) - the "empty line after a heading". Torat Emet heading wrappers switch it off; the heading's own bottom margin is `.2em`.
+
+## Emphasis marks, underline colour, borders and shading in .doc / RTF / ODT (2026-11-09)
+
+- Emphasis marks: .doc sprmCKcd 0x2A34 (kcd 1 dot, 2 comma, 3 circle, 4 under dot), RTF `\accdot` `\acccomma` `\acccircle` `\accunderdot` `\accnone`
+  (LibreOffice rtfdocumentimpl.cxx:2174-2200), ODT `style:text-emphasize` (txtprhdl.cxx:907-950; dot / disc = filled dot, accent = sesame) all reuse the
+  .docx `EmphasisMarkCss`. LibreOffice varies .doc kcd 1 / 2 by language (ww8par6.cxx:4942-4997); we draw them as Word and the .docx path do.
+- RTF `\ulc` -> `UnderlineColorHex`; `\chbrdr` + `\brdr*` -> the run border; `\brdrt/l/b/r` and `\box` -> paragraph borders (`\brdrl` / `\brdrr` = start / end, as .docx w:left
+  and .doc brcLeft); modifiers go to the last border named, as LibreOffice putBorderProperty does; cell / row / page / between / bar
+  borders swallow their modifiers (not drawn). `\brdrw` twips, 0.5 pt when absent. Not drawn: `\brsp` spacing, shadow, border groups (each paragraph is boxed alone).
+- RTF shading is real shading now (was drawn as highlight): `\chcbpat`/`\chcfpat`/`\chshdng` and `\cbpat`/`\cfpat`/`\shading` mixed as w:shd
+  (`WordShadingColor.Mix`; it wins over `\cb`); a `\bg*` / `\chbg*` pattern counts as 33.3 %. LibreOffice reads only `\cbpat` / `\chcbpat` (the fill): the pattern words follow the RTF 1.5 spec and Word.
+- RTF index format 10 (the group state grew). Test: `FormattingMarksFidelityTest` (`--fidelity`) over test-data/word-formatting/marks-borders-v1.doc / .rtf
+  (Word 16, make-marks-borders-fixture.ps1), hand-written RTF and .fodt.

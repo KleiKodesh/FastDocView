@@ -123,7 +123,9 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
            && a.Underline == b.Underline && a.Font == b.Font && a.ComplexFont == b.ComplexFont
            && a.FontSize == b.FontSize && a.ComplexFontSize == b.ComplexFontSize
            && a.ForegroundColor == b.ForegroundColor && a.BackgroundColor == b.BackgroundColor && a.ShadingColor == b.ShadingColor
-           && a.Highlight == b.Highlight && a.Position == b.Position && a.CharacterSpacing == b.CharacterSpacing && a.CharacterScale == b.CharacterScale;
+           && a.Highlight == b.Highlight && a.Position == b.Position && a.CharacterSpacing == b.CharacterSpacing && a.CharacterScale == b.CharacterScale
+           && a.UnderlineColor == b.UnderlineColor && a.EmphasisMark == b.EmphasisMark && a.CharacterPatternColor == b.CharacterPatternColor
+           && a.CharacterShading == b.CharacterShading && a.CharacterBorder.Equals(b.CharacterBorder);
 
     private void FlushRun()
     {
@@ -174,8 +176,16 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             CharacterSpacingTwips = state.CharacterSpacing,
             CharacterScalePercent = state.CharacterScale,
             ColorHex = _tables.ColorHex(state.ForegroundColor),
-            HighlightCssColor = HighlightCss(state.Highlight) ?? HexCss(_tables.ColorHex(state.ShadingColor)) ?? HexCss(_tables.ColorHex(state.BackgroundColor)),
+            HighlightCssColor = HighlightCss(state.Highlight),
+            // \chcbpat fill + \chcfpat pattern colour at \chshdng hundredths of a percent, mixed as w:shd (WordShadingColor)
+            ShadingHex = WordShadingColor.Mix(_tables.ColorHex(state.CharacterPatternColor), _tables.ColorHex(state.ShadingColor), state.CharacterShading / 10),
+            UnderlineColorHex = _tables.ColorHex(state.UnderlineColor),
+            BorderCss = BorderCss(state.CharacterBorder),
+            // the .docx w:em mapping (DocxStyleCascade): dot / under dot = filled dot, comma = filled sesame, circle = open circle
+            EmphasisMarkCss = state.EmphasisMark switch { 1 or 4 => "filled dot", 2 => "filled sesame", 3 => "open circle", _ => null },
+            IsEmphasisMarkBelow = state.EmphasisMark == 4,
         };
+        if (run.HighlightCssColor is null && run.ShadingHex is null) run.HighlightCssColor = HexCss(_tables.ColorHex(state.BackgroundColor));   // \chcbpat (w:shd) wins over \cb
         if (state.Underline != RtfUnderline.None)
         {
             run.IsUnderlined = true;
@@ -189,6 +199,20 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     }
 
     private static string? HexCss(string? hex) => hex is null ? null : "#" + hex;
+
+    /// <summary>
+    /// One RTF border as CSS, as the .docx border path writes it (DocxTableFormatting.BorderCss): \brdrwN twips (LibreOffice
+    /// rtfdispatchvalue.cxx:1032-1041 BRDRW -> eighths of a point, the same width), 0.5 pt when not given (the .docx sz default),
+    /// \brdrcfN from the colour table, auto = black. Null = no border set, "none" = \brdrnone.
+    /// </summary>
+    private string? BorderCss(in RtfBorder border)
+    {
+        if (border.Style == RtfBorderStyle.Absent) return null;
+        if (border.Style == RtfBorderStyle.None) return "none";
+        double points = border.Width > 0 ? Math.Max(0.25, border.Width / 20.0) : 0.5;
+        string style = border.Style switch { RtfBorderStyle.Double => "double", RtfBorderStyle.Dotted => "dotted", RtfBorderStyle.Dashed => "dashed", _ => "solid" };
+        return points.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "pt " + style + " " + (HexCss(_tables.ColorHex(border.Color)) ?? "#000");
+    }
 
     /// <summary>\highlightN — the RTF 1.5 spec's fixed palette (LibreOffice's RTF export writes the same ico numbers).</summary>
     private static string? HighlightCss(byte index) => index switch
@@ -253,7 +277,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         else _flow.Output.Append(html);
     }
 
-    private static WordParagraphFormatting ParagraphFormatting(in RtfGroupState state)
+    private WordParagraphFormatting ParagraphFormatting(in RtfGroupState state)
     {
         bool rtl = state.Has(RtfStateFlags.RightToLeftParagraph);
         var formatting = new WordParagraphFormatting
@@ -273,6 +297,13 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             FirstLineIndentTwips = state.FirstLineIndent,
             SpaceBeforeTwips = state.SpaceBefore,
             SpaceAfterTwips = state.SpaceAfter,
+            // \cbpat fill + \cfpat pattern colour at \shading hundredths of a percent, mixed as the .docx pPr w:shd
+            ShadingHex = WordShadingColor.Mix(_tables.ColorHex(state.ParagraphPatternColor), _tables.ColorHex(state.ParagraphBackgroundColor), state.ParagraphShading / 10),
+            // \brdrl / \brdrr -> w:pBdr left / right (LibreOffice rtfdispatchflag.cxx:762-795), which the .docx and .doc paths draw as start / end
+            BorderTopCss = BorderCss(state.BorderTop),
+            BorderBottomCss = BorderCss(state.BorderBottom),
+            BorderStartCss = BorderCss(state.BorderLeft),
+            BorderEndCss = BorderCss(state.BorderRight),
         };
         // \slN: none / 1000 = auto; with \slmult1 a multiple of 240; else negative = exactly, positive = at least (RTF 1.5 spec)
         if (state.LineSpacing != 0 && state.LineSpacing != 1000)
