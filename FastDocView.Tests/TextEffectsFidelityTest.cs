@@ -39,7 +39,7 @@ public static class TextEffectsFidelityTest
         html.Clear();
         WordHtmlText.AppendScaled(html, "a<b>x y</b>c d<br>e", 80);
         s = html.ToString();
-        TestReport.Check(s.Split(ScaleBox).Length - 1 == 2 && s.Contains("a<b>x y</b>c</span></span> ") && s.Contains("d<br>e</span></span>"),
+        TestReport.Check(s.Split(ScaleBox).Length - 1 == 2 && s.Contains("a<b>x y</b>c</span></span><span class=\"char-scale-space\"") && s.Contains(">"+" "+"</span></span><wbr>") && s.Contains("d<br>e</span></span>"),
                          "scale: one box per word, a space inside an open tag does not split, <br> is void: " + s);
     }
 
@@ -51,7 +51,7 @@ public static class TextEffectsFidelityTest
           + "<w:p>" + Run("<w:w w:val=\"150\"/><w:u w:val=\"single\"/>", "wide") + "</w:p>"
           + "<w:p>" + Run("<w:w w:val=\"700\"/>", "bad") + "</w:p>"
           + "<w:p>" + Run("<w:w w:val=\"80\"/>", string.Join(" ", Enumerable.Range(0, 80).Select(i => "word" + i))) + "</w:p>");   // 3: wraps (the live check)
-        TestReport.Check(html[0].Contains(ScaleBox + "0.8);text-decoration:inherit\"><span style=\"display:inline-block;flex:none;transform:scaleX(0.8);text-decoration:inherit\">two</span></span> " + ScaleBox),
+        TestReport.Check(html[0].Contains(ScaleBox + "0.8);text-decoration:inherit\"><span style=\"display:inline-block;flex:none;transform:scaleX(0.8);text-decoration:inherit\">two</span></span><span class=\"char-scale-space\""),
                          "docx w:w 80: each word in its own scaled box");
         TestReport.Check(html[1].Contains("text-decoration:underline;\">" + ScaleBox + "1.5)"), "docx w:w 150 inside the run's underline");
         TestReport.Check(!html[2].Contains("char-scale"), "docx w:w 700 (out of 1..600) = 100 (DomainMapper.cxx:2496)");
@@ -105,12 +105,15 @@ public static class TextEffectsFidelityTest
           + "<w:p>" + Run($"<w14:textFill {W14}><w14:gradFill><w14:gsLst><w14:gs w14:pos=\"0\"><w14:srgbClr w14:val=\"FF0000\"/></w14:gs>"
                           + "<w14:gs w14:pos=\"100000\"><w14:srgbClr w14:val=\"0000FF\"><w14:alpha w14:val=\"50000\"/></w14:srgbClr></w14:gs></w14:gsLst><w14:lin w14:ang=\"5400000\" w14:scaled=\"0\"/></w14:gradFill></w14:textFill>", "linear") + "</w:p>"
           + "<w:p>" + Run($"<w14:textFill {W14}><w14:gradFill><w14:gsLst><w14:gs w14:pos=\"0\"><w14:srgbClr w14:val=\"FFFF00\"/></w14:gs>"
-                          + "<w14:gs w14:pos=\"100000\"><w14:srgbClr w14:val=\"008000\"/></w14:gs></w14:gsLst><w14:path w14:path=\"circle\"><w14:fillToRect w14:l=\"50000\" w14:t=\"50000\" w14:r=\"50000\" w14:b=\"50000\"/></w14:path></w14:gradFill></w14:textFill>", "radial") + "</w:p>");
+                          + "<w14:gs w14:pos=\"100000\"><w14:srgbClr w14:val=\"008000\"/></w14:gs></w14:gsLst><w14:path w14:path=\"circle\"><w14:fillToRect w14:l=\"50000\" w14:t=\"50000\" w14:r=\"50000\" w14:b=\"50000\"/></w14:path></w14:gradFill></w14:textFill>", "radial") + "</w:p>"
+          + "<w:p>" + Run($"<w:highlight w:val=\"yellow\"/><w14:textFill {W14}><w14:gradFill><w14:gsLst><w14:gs w14:pos=\"0\"><w14:srgbClr w14:val=\"FF0000\"/></w14:gs>"
+                          + "<w14:gs w14:pos=\"100000\"><w14:srgbClr w14:val=\"0000FF\"/></w14:gs></w14:gsLst><w14:lin w14:ang=\"0\" w14:scaled=\"0\"/></w14:gradFill></w14:textFill>", "highlighted") + "</w:p>");
         TestReport.Check(html[0].Contains("color:rgba(255,0,0,0.6);"), "w14:textFill solid + w14:alpha 40% transparency = rgba opacity 0.6: " + html[0]);
         // no theme part in the fixture: accent1 resolves to nothing, so the run keeps the default colour rather than a wrong one
         TestReport.Check(!html[1].Contains("transparent"), "w14:textFill schemeClr without a theme: no fill css");
-        TestReport.Check(html[2].Contains("background-image:linear-gradient(180deg,#FF0000 0%,rgba(0,0,255,0.5) 100%);-webkit-background-clip:text;background-clip:text;color:transparent;"),
+        TestReport.Check(html[2].Contains("background-image:linear-gradient(180deg,#FF0000 0%,rgba(0,0,255,0.5) 100%),none;-webkit-background-clip:text,border-box;background-clip:text,border-box;color:transparent;"),
                          "w14:gradFill lin 90 deg = CSS 180deg (top to bottom), stops with alpha: " + html[2]);
+        TestReport.Check(html[4].Contains("background-clip:text,border-box;") && html[4].Contains("background-color:"), "gradient fill + highlight: the highlight keeps the border box: " + html[4]);
         TestReport.Check(html[3].Contains("radial-gradient(circle farthest-corner at 50% 50%,#FFFF00 0%,#008000 100%)"), "w14:gradFill path circle = radial gradient from fillToRect's centre: " + html[3]);
     }
 

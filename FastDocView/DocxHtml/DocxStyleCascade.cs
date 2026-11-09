@@ -590,7 +590,9 @@ public sealed class DocxStyleCascade
             double angle = (LongAttribute(plain.Element("lin"), "ang") ?? 0) / 60000.0 + 90;
             gradient = "linear-gradient(" + angle.ToString("0.##", CultureInfo.InvariantCulture) + "deg," + stopList + ")";
         }
-        formatting.TextFillCss = "background-image:" + gradient + ";-webkit-background-clip:text;background-clip:text;color:transparent;";
+        // a second, empty layer clipped to the border box: background-color (a highlight or shading) is clipped by the LAST
+        // layer, so it stays behind the letters instead of being cut to their shape
+        formatting.TextFillCss = "background-image:" + gradient + ",none;-webkit-background-clip:text,border-box;background-clip:text,border-box;color:transparent;";
     }
 
     /// <summary>

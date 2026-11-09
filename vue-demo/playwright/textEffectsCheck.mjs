@@ -40,6 +40,12 @@ for (const path of [scaleDocx, scaleDoc]) {
   const boxes = await measureScale()
   const exact = boxes.filter(b => Math.abs(b.boxWidth - b.natural * b.factor) < 0.6 && Math.abs(b.drawnWidth - b.boxWidth) < 0.6 && Math.abs(b.drawnLeft - b.left) < 0.6)
   check(boxes.length > 0 && exact.length === boxes.length, `${path.split(/[\\/]/).pop()}: ${exact.length}/${boxes.length} word boxes = factor x natural width, text drawn over the box (e.g. ${JSON.stringify(boxes[0])})`)
+  const spaces = await page.evaluate(() => [...document.querySelectorAll('.char-scale-space')].map(box => {
+    const inner = box.firstElementChild, factor = Number(/scaleX\(([\d.]+)\)/.exec(inner.getAttribute('style'))[1])
+    const zoom = box.getBoundingClientRect().width / parseFloat(getComputedStyle(box).width)
+    return { factor, width: box.getBoundingClientRect().width, natural: parseFloat(getComputedStyle(inner).width) * zoom }
+  }))
+  check(spaces.length > 0 && spaces.every(b => b.natural > 1 && Math.abs(b.width - b.natural * b.factor) < 0.3), `spaces scaled too: ${spaces.length} space boxes = factor x natural space width (e.g. ${JSON.stringify(spaces[0])})`)
   const factors = [...new Set(boxes.map(b => b.factor))]
   check(factors.includes(0.8) && (path.endsWith('.doc') ? factors.includes(1.5) : true), `factors seen: ${factors}`)
   if (path === scaleDocx) {
@@ -51,14 +57,16 @@ for (const path of [scaleDocx, scaleDoc]) {
 }
 
 await open(fillDocx, () => [...document.querySelectorAll('span')].some(s => s.textContent === 'linear'))
-const fills = await page.evaluate(() => Object.fromEntries(['alpha', 'linear', 'radial'].map(word => {
+const fills = await page.evaluate(() => Object.fromEntries(['alpha', 'linear', 'radial', 'highlighted'].map(word => {
   const span = [...document.querySelectorAll('span[style]')].find(s => s.textContent === word)
   const cs = span && getComputedStyle(span)
-  return [word, cs && { color: cs.color, clip: cs.backgroundClip || cs.webkitBackgroundClip, image: cs.backgroundImage }]
+  return [word, cs && { color: cs.color, clip: cs.backgroundClip || cs.webkitBackgroundClip, image: cs.backgroundImage, background: cs.backgroundColor }]
 })))
 check(fills.alpha?.color === 'rgba(255, 0, 0, 0.6)', `solid fill with alpha: ${JSON.stringify(fills.alpha)}`)
-check(fills.linear?.clip === 'text' && fills.linear.image.startsWith('linear-gradient(rgb(255, 0, 0)') && fills.linear.color === 'rgba(0, 0, 0, 0)', `linear gradient clipped to the text: ${JSON.stringify(fills.linear)}`)
-check(fills.radial?.clip === 'text' && fills.radial.image.startsWith('radial-gradient(circle'), `radial gradient clipped to the text: ${JSON.stringify(fills.radial)}`)
+check(fills.linear?.clip.startsWith('text') && fills.linear.image.startsWith('linear-gradient(rgb(255, 0, 0)') && fills.linear.color === 'rgba(0, 0, 0, 0)', `linear gradient clipped to the text: ${JSON.stringify(fills.linear)}`)
+check(fills.radial?.clip.startsWith('text') && fills.radial.image.startsWith('radial-gradient(circle'), `radial gradient clipped to the text: ${JSON.stringify(fills.radial)}`)
+
+check(fills.highlighted?.clip === 'text, border-box' && fills.highlighted.background === 'rgb(255, 255, 0)', `gradient + highlight: highlight painted over the border box: ${JSON.stringify(fills.highlighted)}`)
 
 await open(glowDocx, () => [...document.querySelectorAll('span')].some(s => s.textContent === 'glow'))
 const shadows = await page.evaluate(() => Object.fromEntries(['glow', 'shadow', 'legacy'].map(word => {

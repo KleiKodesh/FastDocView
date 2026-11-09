@@ -54,7 +54,7 @@ public static class WordHtmlText
     /// <c>scale x</c> its natural width (calc-size(max-content, ...)), its text scaled with transform:scaleX and centred in it
     /// (an overflowing flex item centres both ways, so the result is the same in right-to-left and left-to-right text;
     /// flex:none keeps the item at its natural width where the page lets words break anywhere).
-    /// Lines still break between words; spaces stay unscaled. Tags inside a word stay inside its box; a space inside an
+    /// Lines still break between words; spaces are scaled in boxes of their own. Tags inside a word stay inside its box; a space inside an
     /// open tag does not split.
     /// </summary>
     public static void AppendScaled(StringBuilder html, string encoded, int scalePercent)
@@ -63,6 +63,7 @@ public static class WordHtmlText
         string factor = (scalePercent / 100.0).ToString("0.##", CultureInfo.InvariantCulture);
         string open = "<span class=\"char-scale\" style=\"display:inline-flex;justify-content:center;width:calc-size(max-content,size * " + factor
                       + ");text-decoration:inherit\"><span style=\"display:inline-block;flex:none;transform:scaleX(" + factor + ");text-decoration:inherit\">";
+        string spaceOpen = open.Replace("class=\"char-scale\"", "class=\"char-scale-space\"").Replace("flex:none;", "flex:none;white-space:pre;");
         int depth = 0, wordStart = -1;
         for (int i = 0; i < encoded.Length; i++)
         {
@@ -90,7 +91,10 @@ public static class WordHtmlText
             if (isSeparator)
             {
                 if (wordStart >= 0) { html.Append(open).Append(encoded, wordStart, i - wordStart).Append("</span></span>"); wordStart = -1; }
-                html.Append(c);
+                // Word scales the spaces too: a space gets its own scaled box (white-space:pre keeps it from collapsing),
+                // and <wbr> after it keeps the line break opportunity the plain space gave
+                if (c == ' ') html.Append(spaceOpen).Append(' ').Append("</span></span><wbr>");
+                else html.Append(c);
             }
             else if (wordStart < 0) wordStart = i;
         }
