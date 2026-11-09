@@ -108,10 +108,16 @@ public sealed class WordRunFormatting
         string strike = StrikeCss();
         if (output == WordDecorationOutput.StrikeOnly || !IsUnderlined) { css.Append(strike); return; }
         if (strike.Length == 0) { css.Append(UnderlineCss()); return; }
-        // Both lines on one element share one style / thickness / color: the underline's (a renderer that can nest
-        // elements asks for StrikeOnly and draws the underline on an inner element instead).
-        css.Append(UnderlineCss().Replace("text-decoration:underline;", "text-decoration:underline line-through;"));
+        // Both on one element: text-decoration has one style for all its lines, so the underline keeps it (its own
+        // style / thickness / colour) and the strike is drawn as background lines in the text colour - single or
+        // double - over any highlight. (A renderer that can nest asks for StrikeOnly and puts the underline inside.)
+        css.Append(UnderlineCss()).Append("background-image:").Append(StrikeBackgroundImage()).Append(';');
     }
+
+    /// <summary>The strike line(s) as a background gradient: one 0.06em line at mid-height, or two for a double strike.</summary>
+    private string StrikeBackgroundImage() => IsDoubleStrikethrough
+        ? "linear-gradient(transparent calc(50% - 0.12em),currentColor 0 calc(50% - 0.06em),transparent 0 calc(50% + 0.06em),currentColor 0 calc(50% + 0.12em),transparent 0)"
+        : "linear-gradient(transparent calc(50% - 0.03em),currentColor 0 calc(50% + 0.03em),transparent 0)";
 
     /// <summary>w:em as CSS text-emphasis (+ position for marks drawn below the glyphs); empty when none.</summary>
     private string EmphasisCss()

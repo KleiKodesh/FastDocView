@@ -88,7 +88,11 @@ public static class DocBinaryPropertyModifiers
                 case 0x0837: formatting.IsStrikethrough = Toggle(grpprl[operandAt], formatting.IsStrikethrough, styleBaseline?.IsStrikethrough); break;
                 case 0x083C: formatting.IsHidden = Toggle(grpprl[operandAt], formatting.IsHidden, styleBaseline?.IsHidden); break;
                 case 0x085A: formatting.IsRightToLeft = grpprl[operandAt] != 0; break;
-                case 0x2A3E: formatting.IsUnderlined = grpprl[operandAt] != 0; break;
+                case 0x2A3E: ApplyUnderlineKind(formatting, grpprl[operandAt]); break;
+                case 0x6877:
+                    // sprmCCvUl: underline COLORREF (red, green, blue, fAuto) - LibreOffice ww8par6.cxx:3737 Read_UnderlineColor
+                    formatting.UnderlineColorHex = grpprl[operandAt + 3] != 0 ? null : $"{grpprl[operandAt]:X2}{grpprl[operandAt + 1]:X2}{grpprl[operandAt + 2]:X2}";
+                    break;
                 case 0x2A48: formatting.IsSuperscript = grpprl[operandAt] == 1; formatting.IsSubscript = grpprl[operandAt] == 2; break;
                 case 0x4A43: formatting.FontSizeHalfPoints = BitConverter.ToUInt16(grpprl, operandAt); break;
                 case 0x4A61: formatting.ComplexScriptFontSizeHalfPoints = BitConverter.ToUInt16(grpprl, operandAt); break;
@@ -109,7 +113,7 @@ public static class DocBinaryPropertyModifiers
                 case 0x8840: formatting.CharacterSpacingTwips = BitConverter.ToInt16(grpprl, operandAt); break;
                 case 0x4845: formatting.PositionHalfPoints = BitConverter.ToInt16(grpprl, operandAt); break;                            // sprmCHpsPos (LibreOffice sprmids.hxx)
                 case 0x0811: formatting.IsHidden = Toggle(grpprl[operandAt], formatting.IsHidden, styleBaseline?.IsHidden); break;     // sprmCFWebHidden (sprmids.hxx; 0x0868 is CFUsePgsuSettings)
-                case 0x2A53: formatting.IsStrikethrough = Toggle(grpprl[operandAt], formatting.IsStrikethrough, styleBaseline?.IsStrikethrough); break;   // double strike
+                case 0x2A53: formatting.IsDoubleStrikethrough = Toggle(grpprl[operandAt], formatting.IsDoubleStrikethrough, styleBaseline?.IsDoubleStrikethrough); break;   // sprmCFDStrike, a toggle (LibreOffice ww8par6.cxx:6086 Read_BoldUsw)
                 case 0x0838: formatting.IsOutline = Toggle(grpprl[operandAt], formatting.IsOutline, styleBaseline?.IsOutline); break;
                 case 0x0839: formatting.IsShadow = Toggle(grpprl[operandAt], formatting.IsShadow, styleBaseline?.IsShadow); break;
                 case 0x0858: formatting.IsEmboss = Toggle(grpprl[operandAt], formatting.IsEmboss, styleBaseline?.IsEmboss); break;
@@ -262,6 +266,23 @@ public static class DocBinaryPropertyModifiers
     }
 
     /// <summary>Toggle operands: 0 off, 1 on, 128 = as the style, 129 = opposite of the style.</summary>
+    /// <summary>sprmCKul ([MS-DOC] Kul): the underline kind, mapped as LibreOffice's Read_Underline does
+    /// (sw/source/filter/ww8/ww8par6.cxx:3615-3634): 2 = single under words only; 6/20/23/25/26/27/55 = heavy.</summary>
+    private static void ApplyUnderlineKind(WordRunFormatting formatting, byte kul)
+    {
+        formatting.IsUnderlined = kul != 0;
+        formatting.IsUnderlineWordsOnly = kul == 2;
+        formatting.UnderlineStyleCss = kul switch
+        {
+            3 => "double",
+            4 or 20 => "dotted",
+            7 or 9 or 10 or 23 or 25 or 26 or 39 or 55 => "dashed",
+            11 or 27 or 43 => "wavy",
+            _ => null,
+        };
+        formatting.IsUnderlineThick = kul is 6 or 20 or 23 or 25 or 26 or 27 or 55;
+    }
+
     private static bool Toggle(byte operand, bool current, bool? styleValue) => operand switch
     {
         0 => false,
