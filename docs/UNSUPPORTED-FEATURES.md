@@ -130,7 +130,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Show markup / original view toggle for tracked changes | docx, doc, rtf, odt | Only Word's final view (planned as a toggle in the coverage plan) | planned |
 | Comments | docx, doc, rtf, odt | Not shown in a reading view (references skipped) | deferred |
-| Equations: exact Word layout (m:eqArr alignment marks inside nested elements; continuation-line indent of a broken display equation, m:wrapIndent / m:wrapRight; the document's math settings m:mathPr such as m:brkBin "after"; glyph metrics: Chromium lays out the MathML, sizes differ from Word's PDF by the amounts in NOTES.md) | docx, doc, rtf | MathML Core has no line breaking or alignment groups; the equation, its breaks and its text are shown and searched | deferred |
+| Equations: what MathML Core cannot express exactly - m:brkBin "repeat" (the operator is not repeated on the continuation line, the break falls before it), m:wrapRight (continuation lines right-aligned through text-align-last, exact for two lines), m:eqArr alignment marks inside nested elements, and the width of stretched delimiters in Cambria Math (Chromium picks a wider size variant: a 2x2 matrix in parentheses 1.33 x Word's width, a growing integral 1.27 x; NOTES.md) | docx, doc, rtf | MathML Core has no line breaking, alignment groups or glyph-variant control; the equation, its breaks and its text are shown and searched | deferred |
 | Equations in .doc saved without equationXML (Word 2003 and older) | doc | No OMML in the file; the saved picture is shown | won't do |
 | Ruby | doc, rtf | Not read (EQ \o fields still compute) | deferred |
 

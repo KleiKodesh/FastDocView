@@ -48,8 +48,12 @@ public sealed class DocxCompatibilitySettings
     /// <summary>w:autoHyphenation (§17.15.1.10): the document hyphenates automatically (LibreOffice SettingsTable.cxx m_bAutoHyphenation → ParaIsHyphenation on the default style).</summary>
     public bool IsAutoHyphenation { get; }
 
+    /// <summary>m:mathPr (ECMA-376 22.1.2.62): the document's equation settings.</summary>
+    public Html.WordOfficeMathSettings Math { get; } = Html.WordOfficeMathSettings.Default;
+
     public DocxCompatibilitySettings(XDocument? settingsDocument)
     {
+        Math = Html.WordOfficeMathSettings.FromOoxml(settingsDocument?.Root?.Elements().FirstOrDefault(e => e.Name.LocalName == "mathPr" && e.Name.NamespaceName == Html.WordOfficeMathHtml.MathNamespace));
         if (settingsDocument?.Root?.Element(W + "autoHyphenation") is { } autoHyphenation) IsAutoHyphenation = DocxStyleCascade.IsOn(autoHyphenation.Attribute(W + "val"));
         if (DocxStyleCascade.TwipsAttribute(settingsDocument?.Root?.Element(W + "defaultTabStop"), "val") is > 0 and var tabStop) DefaultTabStopTwips = tabStop;
         if (settingsDocument?.Root?.Element(W + "gutterAtTop") is { } gutterAtTop) IsGutterAtTop = DocxStyleCascade.IsOn(gutterAtTop.Attribute(W + "val"));

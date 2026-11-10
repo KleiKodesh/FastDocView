@@ -20,7 +20,7 @@ internal enum RtfWord : ushort
     Footnote, FootnoteIsEndnote, Field, FieldResult, FieldInstruction, FieldLock, FieldPrivate, FormField, FormFieldType, FormFieldResult,
     FormFieldDefaultResult, FormFieldListEntry, FormFieldDefaultText, BookmarkStart, BookmarkEnd, ListText, ParagraphNumberText, ParagraphNumbering, UnicodePair, UnicodeDestination,
     Picture, ShapePicture, NonShapePicture, Shape, ShapeGroup, ShapeInstruction, ShapeResult, ShapeText, ShapeProperty, ShapePropertyName, ShapePropertyValue,
-    ShapeLeft, ShapeTop, ShapeRight, ShapeBottom, ShapeWrap, ShapeWrapSide, ObjectGroup, MathGroup, NestedTableProperties,
+    ShapeLeft, ShapeTop, ShapeRight, ShapeBottom, ShapeWrap, ShapeWrapSide, ObjectGroup, MathGroup, MathProperties, NestedTableProperties,
     // ── unicode / special characters ──
     UnicodeSkipCount, UnicodeCharacter, Binary, IgnorableDestination, HexCharacter,
     Paragraph, Section, Page, Line, Tab, Cell, Row, NestedCell, NestedRow, Column,
@@ -121,7 +121,7 @@ internal static class RtfControlWords
         ("shpgrp", RtfWord.ShapeGroup), ("shpinst", RtfWord.ShapeInstruction), ("shprslt", RtfWord.ShapeResult), ("shptxt", RtfWord.ShapeText),
         ("sp", RtfWord.ShapeProperty), ("sn", RtfWord.ShapePropertyName), ("sv", RtfWord.ShapePropertyValue), ("shpleft", RtfWord.ShapeLeft),
         ("shptop", RtfWord.ShapeTop), ("shpright", RtfWord.ShapeRight), ("shpbottom", RtfWord.ShapeBottom), ("shpwr", RtfWord.ShapeWrap), ("shpwrk", RtfWord.ShapeWrapSide),
-        ("object", RtfWord.ObjectGroup), ("nesttableprops", RtfWord.NestedTableProperties), ("mmath", RtfWord.MathGroup), ("moMath", RtfWord.MathGroup), ("moMathPara", RtfWord.MathGroup),
+        ("object", RtfWord.ObjectGroup), ("nesttableprops", RtfWord.NestedTableProperties), ("mmath", RtfWord.MathGroup), ("mmathPr", RtfWord.MathProperties), ("moMath", RtfWord.MathGroup), ("moMathPara", RtfWord.MathGroup),
         ("uc", RtfWord.UnicodeSkipCount), ("u", RtfWord.UnicodeCharacter), ("bin", RtfWord.Binary),
         ("par", RtfWord.Paragraph), ("sect", RtfWord.Section), ("page", RtfWord.Page), ("line", RtfWord.Line), ("tab", RtfWord.Tab),
         ("cell", RtfWord.Cell), ("row", RtfWord.Row), ("nestcell", RtfWord.NestedCell), ("nestrow", RtfWord.NestedRow), ("column", RtfWord.Column),

@@ -2252,6 +2252,24 @@ tlch); checked by the same test.
     (ascent + descent), the browser's math box is tighter, so single-line heights read ~0.8 by method, not layout.
     Baselines (distance from the box top) agree within 1-3 pt except where the height differs.
 
+### Equations, third pass: m:mathPr and Word's sizes (2026-11-10)
+
+- `Html/WordOfficeMathSettings.cs`: m:mathPr (22.1.2.62) from settings.xml (DocxCompatibilitySettings.Math) and RTF
+  {\mmathPr} (read in the header pass into RtfDocumentTables.MathProperties, index format 18; numbers per Word 16's
+  math-v2.rtf). A .doc stores none (defaults). Applied: mathFont (font of the math element), brkBin before / after (where
+  the wrap point is cut), smallFrac (display fractions small), dispDef off (display equations without display style),
+  lMargin / rMargin (padding), defJc (oMathPara without m:jc), wrapIndent (a hanging indent: continuation lines start
+  that far in), wrapRight (text-align-last right), intLim / naryLim (n-ary limit place without m:limLoc).
+- From Word's PDF (PyMuPDF span sizes): an inline equation's fraction is at script size (8.4 pt in 12 pt text), so
+  the second pass's displaystyle on inline fractions was wrong (its height match was the measuring method) - reverted;
+  fraction padding removed (UA 1px each side); operators in scripts (limits, sub / sup) set without spacing, as Word
+  (and TeX) do; a linear / skewed fraction's slash tight; delimiters stretch only around content taller than a line
+  (Chromium's stretched Cambria Math "(" is 9 pt against Word's 5.3 pt).
+- Result (math-v2.docx, 36 equations, +-25%): widths median 1.10, 34/36 within (one-letter fractions 0.90, sum 1.20,
+  product 1.18, lim 1.00, skewed 0.99, linear fraction and delimiters within); out: the 2x2 matrix 1.33 and the growing
+  integral 1.27 - stretched glyph variants in Cambria Math. Heights median 0.85, 30/36 within (font boxes against
+  math boxes, see above).
+
 ## Web archive pictures (2026-11-10)
 Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) and an `<img>` fallback inside
 `<![if !vml]>`, which is what a browser shows. The renderer skips the VML copy and draws the `<img>` through the picture

@@ -456,12 +456,15 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     public override bool WantsMath => true;
 
+    private WordOfficeMathSettings? _mathSettings;     // the document's {\mmathPr} (header tables)
+
     /// <summary>An equation ({\mmath}) as MathML; one that cannot be read keeps the equation mark.</summary>
     public override void Equation(byte[] group, in RtfGroupState state)
     {
         if (RtfOfficeMath.ToOmml(group, state.CodePage, _tables.ColorHex) is not { } equation) { Embedded(RtfEmbeddedKind.Equation, state); return; }
         FlushRun();
-        WordOfficeMathHtml.Append(_listTextTarget ?? _flow.Inline, equation, WordOfficeMathHtml.RunColorCss);
+        _mathSettings ??= WordOfficeMathSettings.FromRtf(_tables.MathProperties, _tables.FontName);
+        WordOfficeMathHtml.Append(_listTextTarget ?? _flow.Inline, equation, WordOfficeMathHtml.RunColorCss, _mathSettings);
         _flow.HasInline = true;
     }
 

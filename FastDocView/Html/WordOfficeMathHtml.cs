@@ -25,44 +25,70 @@ public sealed class WordOfficeMathHtml
     private const char CellBreak = '\u0001';
     private const char ForcedBreak = '\u0002';     // m:brk on a run of the equation's own row: a manual line break before it
 
-    private WordOfficeMathHtml(Func<XElement?, string?>? runCss) => _runCss = runCss;
+    private readonly WordOfficeMathSettings _settings;
+    private bool _isDisplay;           // rendering a display equation (m:oMathPara)
+    private int _scriptDepth;          // script arguments open (m:sub, m:sup, m:lim, m:deg): operators there lose their spacing
+
+    private WordOfficeMathHtml(Func<XElement?, string?>? runCss, WordOfficeMathSettings settings) { _runCss = runCss; _settings = settings; }
 
     /// <summary>Whether an element is an Office Math zone (m:oMath / m:oMathPara).</summary>
     public static bool IsMathZone(XElement element) => element.Name.LocalName is "oMath" or "oMathPara" && element.Name.NamespaceName == MathNamespace;
 
     public const string MathNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/math";
 
-    /// <summary>Appends an m:oMathPara (display math: one block line per m:oMath, aligned by m:jc) or an inline m:oMath.</summary>
-    public static void Append(StringBuilder html, XElement zone, Func<XElement?, string?>? runCss)
+    /// <summary>
+    /// Appends an m:oMathPara (display math: one block line per m:oMath, aligned by m:jc, else the document's m:defJc) or an
+    /// inline m:oMath, with the document's math settings (<see cref="WordOfficeMathSettings"/>; null: the defaults).
+    /// </summary>
+    public static void Append(StringBuilder html, XElement zone, Func<XElement?, string?>? runCss, WordOfficeMathSettings? settings = null)
     {
-        var converter = new WordOfficeMathHtml(runCss);
+        settings ??= WordOfficeMathSettings.Default;
+        var converter = new WordOfficeMathHtml(runCss, settings);
+        // m:mathFont (22.1.2.61): the font equations are drawn in (a run's own w:rFonts still wins)
+        string font = settings.Font is { } face ? "font-family:'" + WordHtmlText.CssFontName(face) + "';" : "";
         if (zone.Name.LocalName == "oMathPara")
         {
-            // m:oMathParaPr/m:jc (22.1.2.51): left, right, center, centerGroup (the default; a group's lines centred as one block)
-            string? jc = Val(zone.Element(M("oMathParaPr"))?.Element(M("jc")));
+            // m:oMathParaPr/m:jc (22.1.2.51): left, right, center, centerGroup; without it the document's m:defJc (22.1.2.25)
+            string? jc = Val(zone.Element(M("oMathParaPr"))?.Element(M("jc"))) ?? settings.DefaultJustification;
             string align = jc switch { "left" => "left", "right" => "right", _ => "center" };
+            converter._isDisplay = true;
+            var block = new StringBuilder("display:block;text-align:").Append(align);
+            // m:lMargin / m:rMargin (22.1.2.56 / 22.1.2.89): the display equation's own margins; m:wrapIndent (22.1.2.120): a
+            // broken equation's continuation lines start that far in (a hanging indent), or with m:wrapRight sit at the right
+            double indent = settings.WrapRight ? 0 : settings.WrapIndentPt;
+            block.Append(";padding-left:").Append(Points(settings.LeftMarginPt + indent)).Append("pt;padding-right:").Append(Points(settings.RightMarginPt)).Append("pt");
+            if (indent > 0) block.Append(";text-indent:-").Append(Points(indent)).Append("pt");
+            if (settings.WrapRight) block.Append(";text-align-last:right");
             foreach (XElement math in zone.Elements())
             {
                 if (math.Name.LocalName != "oMath") continue;
-                html.Append("<span class=\"omath-para\" style=\"display:block;text-align:").Append(align).Append("\">");
-                AppendBreakable(html, converter.Row(math));
+                html.Append("<span class=\"omath-para\" style=\"").Append(block).Append("\">");
+                converter.AppendBreakable(html, converter.Row(math), font);
                 html.Append("</span>");
             }
             return;
         }
-        html.Append("<math class=\"omath\" dir=\"ltr\">").Append(converter.Row(zone).Replace(ForcedBreak.ToString(), "")).Append("</math>");
+        html.Append("<math class=\"omath\" dir=\"ltr\"").Append(font.Length > 0 ? " style=\"" + font + "\"" : "").Append('>')
+            .Append(converter.Row(zone).Replace(ForcedBreak.ToString(), "")).Append("</math>");
     }
 
+    private static string Points(double points) => points.ToString("0.##", CultureInfo.InvariantCulture);
+
     /// <summary>
-    /// A display equation that can break like Word's: Word breaks a display equation too long for the line before a binary or
-    /// relation operator of its own row (m:brkBin "before", the default, 22.1.2.15), and at a run marked m:brk (22.1.2.16).
-    /// MathML Core has no line breaking, so the equation's row is cut there into consecutive math elements (each in display
-    /// style) the browser may wrap between; m:brk is a forced break. Nested structures are never cut.
+    /// A display equation that can break like Word's: Word breaks a display equation too long for the line at a binary or
+    /// relation operator of its own row - before it, after it, or both (m:brkBin before / after / repeat, 22.1.2.15) - and at a
+    /// run marked m:brk (22.1.2.16). MathML Core has no line breaking, so the equation's row is cut there into consecutive
+    /// math elements the browser may wrap between; m:brk is a forced break. Nested structures are never cut. m:dispDef off
+    /// (22.1.2.27) draws the display equation with the inline defaults (no display style).
     /// </summary>
-    private static void AppendBreakable(StringBuilder html, string row)
+    private void AppendBreakable(StringBuilder html, string row, string font)
     {
-        const string open = "<math class=\"omath\" dir=\"ltr\" displaystyle=\"true\" style=\"math-style:normal\"><mrow>";
-        string inner = row.StartsWith("<mrow>", StringComparison.Ordinal) && row.EndsWith("</mrow>", StringComparison.Ordinal) ? row.Substring(6, row.Length - 13) : row;
+        // Row() returns one mrow element; each piece reopens it with its attributes (an m:argSz scriptlevel stays on every piece)
+        int first = row.IndexOf('>');
+        string rowTag = row.StartsWith("<mrow", StringComparison.Ordinal) && row.EndsWith("</mrow>", StringComparison.Ordinal) && first > 0 ? row.Substring(0, first + 1) : "<mrow>";
+        string inner = rowTag.Length > 6 || row.StartsWith("<mrow>", StringComparison.Ordinal) ? row.Substring(rowTag.Length, row.Length - rowTag.Length - 7) : row;
+        string open = "<math class=\"omath\" dir=\"ltr\"" + (_settings.DisplayDefaults ? " displaystyle=\"true\" style=\"math-style:normal;" + font + "\"" : font.Length > 0 ? " style=\"" + font + "\"" : "") + ">" + rowTag;
+        bool after = _settings.BreakBinary == "after";
         var cuts = new List<(int at, bool forced)>();
         int depth = 0;
         for (int i = 0; i < inner.Length; i++)
@@ -77,7 +103,11 @@ public sealed class WordOfficeMathHtml
             {
                 int textEnd = inner.IndexOf("</mo>", close, StringComparison.Ordinal);
                 string op = textEnd > close ? System.Net.WebUtility.HtmlDecode(inner.Substring(close + 1, textEnd - close - 1)) : "";
-                if (i > 0 && IsBreakOperator(op)) cuts.Add((i, false));
+                if (i > 0 && IsBreakOperator(op))
+                {
+                    int at = after ? textEnd + 5 : i;
+                    if (at < inner.Length) cuts.Add((at, false));
+                }
             }
             if (isEnd) depth--; else if (!isEmpty) depth++;
             i = close;
@@ -91,7 +121,7 @@ public sealed class WordOfficeMathHtml
             html.Append(forced ? "<br>" : "\u200B").Append(open);
             start = forced ? at + 1 : at;
             // the operator now opens a math element: keep it an infix operator (its spacing as in the unbroken row)
-            if (string.CompareOrdinal(inner, start, "<mo", 0, 3) == 0 && inner[start + 3] is '>' or ' ') { html.Append("<mo form=\"infix\""); start += 3; }
+            if (start + 3 < inner.Length && string.CompareOrdinal(inner, start, "<mo", 0, 3) == 0 && inner[start + 3] is '>' or ' ') { html.Append("<mo form=\"infix\""); start += 3; }
         }
         html.Append(inner, start, inner.Length - start).Append("</mrow></math>");
     }
@@ -179,9 +209,11 @@ public sealed class WordOfficeMathHtml
         if (int.TryParse(Val(Property(container, "argPr", "argSz")), NumberStyles.Integer, CultureInfo.InvariantCulture, out int size) && size is >= -2 and <= 2 and not 0)
             html.Append(" scriptlevel=\"").Append(size < 0 ? "+" + (-size) : "-" + size).Append('"');
         html.Append('>');
+        bool isScript = container.Name.LocalName is "sub" or "sup" or "lim" or "deg";
         _rowDepth++;
+        if (isScript) _scriptDepth++;
         try { foreach (XElement child in container.Elements()) AppendElement(html, child); }
-        finally { _rowDepth--; }
+        finally { _rowDepth--; if (isScript) _scriptDepth--; }
         return html.Append("</mrow>").ToString();
     }
 
@@ -316,21 +348,25 @@ public sealed class WordOfficeMathHtml
         finally { _splitsAlignment = splits; }
     }
 
+    private string FractionStyle => (_isDisplay && _settings.SmallFractions ? " displaystyle=\"false\"" : "") + " style=\"padding-inline:0\"";
+
     private void AppendFraction(StringBuilder html, XElement element)
     {
         // 22.1.2.117 ST_FType: bar (stacked, the default), skw (skewed), lin (linear a/b), noBar (stacked, no line: binomial)
         string num = Row(Child(element, "num")), den = Row(Child(element, "den"));
         switch (Val(Property(element, "fPr", "type")))
         {
-            case "lin": html.Append("<mrow>").Append(num).Append("<mo>/</mo>").Append(den).Append("</mrow>"); break;
+            // Word sets the slash of a linear / skewed fraction tight (math-v2.pdf: "a/b" 20.3 pt); MathML's '/' has 1/6 em each side
+            case "lin": html.Append("<mrow>").Append(num).Append("<mo lspace=\"0\" rspace=\"0\">/</mo>").Append(den).Append("</mrow>"); break;
             case "skw":
                 // MathML Core has no bevelled fraction: the numerator raised, a slash, the denominator lowered
-                html.Append("<mrow><msup><mrow></mrow>").Append(num).Append("</msup><mo stretchy=\"false\">/</mo><msub><mrow></mrow>").Append(den).Append("</msub></mrow>");
+                html.Append("<mrow><msup><mrow></mrow>").Append(num).Append("</msup><mo stretchy=\"false\" lspace=\"0\" rspace=\"0\">/</mo><msub><mrow></mrow>").Append(den).Append("</msub></mrow>");
                 break;
-            // Word draws a fraction in an inline equation at full size (m:smallFrac off, the default, 22.1.2.98): display style
-            // for its numerator and denominator, as in Word's PDF (math-v2.pdf: an inline a/b is 21.4 pt tall, two full lines)
-            case "noBar": html.Append("<mfrac linethickness=\"0\" displaystyle=\"true\">").Append(num).Append(den).Append("</mfrac>"); break;
-            default: html.Append("<mfrac displaystyle=\"true\">").Append(num).Append(den).Append("</mfrac>"); break;
+            // Word draws an inline equation's fraction small (its numerator and denominator at script size: math-v2.pdf, 8.4 pt
+            // in 12 pt text) - MathML's own inline rule - and a display equation's at full size unless m:smallFrac (22.1.2.98).
+            // MathML Core pads a fraction by 1px each side (its user-agent sheet); Word's bar is as wide as its widest part.
+            case "noBar": html.Append("<mfrac linethickness=\"0\"").Append(FractionStyle).Append('>').Append(num).Append(den).Append("</mfrac>"); break;
+            default: html.Append("<mfrac").Append(FractionStyle).Append('>').Append(num).Append(den).Append("</mfrac>"); break;
         }
     }
 
@@ -342,7 +378,8 @@ public sealed class WordOfficeMathHtml
         string character = (pr is null ? null : Val(Child(pr, "chr"))) ?? "∫";
         string? location = pr is null ? null : Val(Child(pr, "limLoc"));
         bool isIntegral = character.Length == 1 && character[0] is >= '∫' and <= '∳';
-        bool isUnderOver = location is null ? !isIntegral : location == "undOvr";
+        // without m:limLoc: the document's m:intLim (integrals) / m:naryLim (the rest), 22.1.2.49 / 22.1.2.72
+        bool isUnderOver = (location ?? (isIntegral ? _settings.IntegralLimits : _settings.NaryLimits)) == "undOvr";
         bool hasSub = !(pr is not null && IsOn(Child(pr, "subHide"))), hasSup = !(pr is not null && IsOn(Child(pr, "supHide")));
         // m:grow (22.1.2.40, off by default for n-ary operators): the operator grows to its argument's height - a stretchy mo
         // in the row of the operator and its argument
@@ -367,19 +404,30 @@ public sealed class WordOfficeMathHtml
         string separator = (pr is null ? null : Val(Child(pr, "sepChr"))) ?? "|";
         string end = (pr is null ? null : Val(Child(pr, "endChr"))) ?? ")";
         // m:grow (22.1.2.40): the delimiters grow with their content; on unless turned off (LibreOffice: handleD reads it, ooxmlimport.cxx:511)
-        string stretchy = pr is not null && Child(pr, "grow") is { } grow && !IsOn(grow) ? "false" : "true";
+        // Word grows them only past one line of text: Chromium stretching a Cambria Math fence to a plain row picks a larger
+        // variant (9 pt for "(" at 12 pt against Word's 5.3: math-v2.pdf "(a+b)" 38.0 pt wide, ours 51.4 stretched, 38.3 not)
+        var arguments = element.Elements().Where(e => e.Name.LocalName == "e").Select(Row).ToList();
+        bool isTall = arguments.Any(IsTallerThanALine);
+        string stretchy = pr is not null && Child(pr, "grow") is { } grow && !IsOn(grow) || !isTall ? "false" : "true";
         html.Append("<mrow>");
         if (begin.Length > 0) html.Append("<mo fence=\"true\" form=\"prefix\" stretchy=\"").Append(stretchy).Append("\">").Append(WordHtmlText.Encode(begin)).Append("</mo>");
         bool first = true;
-        foreach (XElement argument in element.Elements().Where(e => e.Name.LocalName == "e"))
+        foreach (string argument in arguments)
         {
             if (!first && separator.Length > 0) html.Append("<mo separator=\"true\" stretchy=\"").Append(stretchy).Append("\">").Append(WordHtmlText.Encode(separator)).Append("</mo>");
-            html.Append(Row(argument));
+            html.Append(argument);
             first = false;
         }
         if (end.Length > 0) html.Append("<mo fence=\"true\" form=\"postfix\" stretchy=\"").Append(stretchy).Append("\">").Append(WordHtmlText.Encode(end)).Append("</mo>");
         html.Append("</mrow>");
     }
+
+    /// <summary>Whether rendered MathML stacks vertically (fractions, limits, tables, radicals, scripts): taller than a text line.</summary>
+    private static bool IsTallerThanALine(string mathMl)
+        => mathMl.Contains("<mfrac", StringComparison.Ordinal) || mathMl.Contains("<mtable", StringComparison.Ordinal) || mathMl.Contains("<munder", StringComparison.Ordinal)
+        || mathMl.Contains("<mover", StringComparison.Ordinal) || mathMl.Contains("<msqrt", StringComparison.Ordinal) || mathMl.Contains("<mroot", StringComparison.Ordinal)
+        || mathMl.Contains("<msup", StringComparison.Ordinal) || mathMl.Contains("<msub", StringComparison.Ordinal) || mathMl.Contains("<mmultiscripts", StringComparison.Ordinal)
+        || mathMl.Contains("largeop", StringComparison.Ordinal);
 
     private void AppendBorderBox(StringBuilder html, XElement element)
     {
@@ -474,7 +522,8 @@ public sealed class WordOfficeMathHtml
             "sans-serif" => Script.SansSerif, "monospace" => Script.Monospace, _ => Script.Roman,
         };
         bool bold = style is "b" or "bi", italic = style is null or "i" or "bi";
-        AppendSplit(html, text.ToString(), part => AppendMathText(html, part, script, bold, italic, style == "p", css));
+        bool isScript = _scriptDepth > 0;
+        AppendSplit(html, text.ToString(), part => AppendMathText(html, part, script, bold, italic, style == "p", css, isScript));
     }
 
     /// <summary>Text split at an eqArr row's alignment points ('&' there is a mark, not a character).</summary>
@@ -490,7 +539,7 @@ public sealed class WordOfficeMathHtml
     }
 
     /// <summary>Math text as tokens: numbers (digits with inner . or ,) mn, letters mi, the rest mo; spaces kept as space.</summary>
-    private static void AppendMathText(StringBuilder html, string text, Script script, bool bold, bool italic, bool isPlain, string? css)
+    private static void AppendMathText(StringBuilder html, string text, Script script, bool bold, bool italic, bool isPlain, string? css, bool isScript = false)
     {
         bool isStyled = bold || script != Script.Roman;
         for (int i = 0; i < text.Length;)
@@ -512,14 +561,17 @@ public sealed class WordOfficeMathHtml
                 else AppendToken(html, "mi", letters, css, !italic || isPlain ? "normal" : null);
             }
             else if (c == ' ') html.Append("<mspace width=\"0.25em\"></mspace>");
+            // in a script (limits, sub- and superscripts) Word sets operators without their spacing (as TeX does in script
+            // style: math-v2.pdf draws "i=1" under a sum 14.5 pt wide at 8.4 pt, no room around '=')
+            else if (isScript) AppendToken(html, "mo", text.Substring(i, end - i), css, null, " lspace=\"0\" rspace=\"0\"");
             else AppendToken(html, "mo", text.Substring(i, end - i), css, null);
             i = end;
         }
     }
 
-    private static void AppendToken(StringBuilder html, string tag, string text, string? css, string? mathVariant)
+    private static void AppendToken(StringBuilder html, string tag, string text, string? css, string? mathVariant, string? attributes = null)
     {
-        html.Append('<').Append(tag);
+        html.Append('<').Append(tag).Append(attributes);
         if (mathVariant is not null) html.Append(" mathvariant=\"").Append(mathVariant).Append('"');
         if (!string.IsNullOrEmpty(css)) html.Append(" style=\"").Append(css).Append('"');
         html.Append('>').Append(WordHtmlText.Encode(text)).Append("</").Append(tag).Append('>');

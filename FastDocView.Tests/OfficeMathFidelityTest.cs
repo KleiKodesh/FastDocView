@@ -30,6 +30,56 @@ public static class OfficeMathFidelityTest
         }
         RtfFieldEquations();
         ArgumentSize(Path.Combine(folder, "math-base.docx"));
+        MathSettings(Path.Combine(folder, "math-v2.rtf"));
+    }
+
+    private static readonly System.Xml.Linq.XNamespace MathNs = Html.WordOfficeMathHtml.MathNamespace;
+
+    private static string Render(string omml, Html.WordOfficeMathSettings settings)
+    {
+        var zone = System.Xml.Linq.XElement.Parse("<m:oMathPara xmlns:m=\"" + MathNs.NamespaceName + "\">" + omml + "</m:oMathPara>");
+        var html = new StringBuilder();
+        Html.WordOfficeMathHtml.Append(html, zone.Elements().Count() == 1 && zone.Elements().First().Name.LocalName == "oMathPara" ? zone.Elements().First() : zone, null, settings);
+        return System.Net.WebUtility.HtmlDecode(html.ToString());
+    }
+
+    private static string InlineRender(string omml, Html.WordOfficeMathSettings settings)
+    {
+        var zone = System.Xml.Linq.XElement.Parse("<m:oMath xmlns:m=\"" + MathNs.NamespaceName + "\">" + omml + "</m:oMath>");
+        var html = new StringBuilder();
+        Html.WordOfficeMathHtml.Append(html, zone, null, settings);
+        return System.Net.WebUtility.HtmlDecode(html.ToString());
+    }
+
+    /// <summary>
+    /// m:mathPr (22.1.2.62) read from settings.xml and applied: mathFont, brkBin after, smallFrac, dispDef off, margins,
+    /// wrapIndent / wrapRight, defJc, intLim / naryLim; and the RTF {\mmathPr} of Word 16's math-v2.rtf read into the same settings.
+    /// </summary>
+    private static void MathSettings(string rtfPath)
+    {
+        var settings = Html.WordOfficeMathSettings.FromOoxml(System.Xml.Linq.XElement.Parse(
+            "<m:mathPr xmlns:m=\"" + MathNs.NamespaceName + "\"><m:mathFont m:val=\"STIX Two Math\"/><m:brkBin m:val=\"after\"/><m:smallFrac/><m:dispDef m:val=\"0\"/>"
+            + "<m:lMargin m:val=\"360\"/><m:rMargin m:val=\"720\"/><m:defJc m:val=\"left\"/><m:wrapIndent m:val=\"720\"/><m:intLim m:val=\"undOvr\"/><m:naryLim m:val=\"subSup\"/></m:mathPr>"));
+        const string run = "<m:r><m:t>a+b</m:t></m:r>";
+        const string fraction = "<m:f><m:num><m:r><m:t>x</m:t></m:r></m:num><m:den><m:r><m:t>y</m:t></m:r></m:den></m:f>";
+        string display = Render("<m:oMath>" + run + fraction + "</m:oMath>", settings);
+        TestReport.Check(display.Contains("text-align:left;padding-left:54pt;padding-right:36pt;text-indent:-36pt", StringComparison.Ordinal), "m:mathPr: defJc left, lMargin 18 pt + wrapIndent 36 pt as a hanging indent, rMargin 36 pt");
+        TestReport.Check(display.Contains("font-family:'STIX Two Math'", StringComparison.Ordinal) && !display.Contains("displaystyle=\"true\"", StringComparison.Ordinal), "m:mathPr: mathFont on the equation; dispDef off = no display style");
+        TestReport.Check(display.Contains("<mfrac displaystyle=\"false\"", StringComparison.Ordinal), "m:mathPr: smallFrac = small fractions in display equations");
+        TestReport.Check(display.Contains("<mo>+</mo></mrow></math>\u200B", StringComparison.Ordinal), "m:mathPr: brkBin after = the break point after the operator");
+        string sum = InlineRender("<m:nary><m:naryPr><m:chr m:val=\"\u2211\"/></m:naryPr><m:sub/><m:sup/><m:e/></m:nary><m:nary><m:sub/><m:sup/><m:e/></m:nary>", settings);
+        TestReport.Check(sum.Contains("<msubsup><mo largeop=\"true\">\u2211", StringComparison.Ordinal) && sum.Contains("<munderover><mo largeop=\"true\">\u222B", StringComparison.Ordinal), "m:mathPr: naryLim subSup, intLim undOvr as the defaults without m:limLoc");
+        string defaults = Render("<m:oMath>" + run + fraction + "</m:oMath>", Html.WordOfficeMathSettings.Default);
+        TestReport.Check(defaults.Contains("text-align:center;padding-left:72pt;padding-right:0pt;text-indent:-72pt", StringComparison.Ordinal) && defaults.Contains("displaystyle=\"true\"", StringComparison.Ordinal)
+            && defaults.Contains("\u200B<math", StringComparison.Ordinal) && defaults.Contains("<mo form=\"infix\">+", StringComparison.Ordinal), "m:mathPr defaults: centred, wrapIndent 1 inch, display style, break before the operator");
+        string right = Render("<m:oMath>" + run + "</m:oMath>", Html.WordOfficeMathSettings.FromOoxml(System.Xml.Linq.XElement.Parse("<m:mathPr xmlns:m=\"" + MathNs.NamespaceName + "\"><m:wrapRight/></m:mathPr>")));
+        TestReport.Check(right.Contains("padding-left:0pt", StringComparison.Ordinal) && right.Contains("text-align-last:right", StringComparison.Ordinal), "m:mathPr: wrapRight = continuation lines at the right, no indent");
+        // the RTF header's {\mmathPr} (Word 16: \mmathFont34 = Cambria Math, \mdefJc1, \mwrapIndent1440)
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-math-settings-rtf") };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(rtfPath, policy);
+        string html = string.Concat(document.RenderBlocks(0, document.BlockCount).Select(b => b.Html));
+        TestReport.Check(html.Contains("<math class=\"omath\" dir=\"ltr\" style=\"font-family:'Cambria Math';\">", StringComparison.Ordinal)
+            && html.Contains("padding-left:72pt", StringComparison.Ordinal), ".rtf: {\\mmathPr} read: the math font and wrap indent applied");
     }
 
     /// <summary>m:argSz (22.1.2.6): Word 16 drops it from m:num when it re-saves, so it is checked on the hand-written base file.</summary>
@@ -114,10 +164,10 @@ public static class OfficeMathFidelityTest
         static bool Has(string block, params string[] parts) => parts.All(part => block.Contains(part, StringComparison.Ordinal));
         static bool Math(string block) => block.Contains("<math class=\"omath\"", StringComparison.Ordinal);
 
-        Expect("frac bar", b => Math(b) && Has(b, "<mfrac displaystyle=\"true\"><mrow><mi>a</mi></mrow><mrow><mi>b</mi></mrow></mfrac>"), "a stacked fraction");
-        Expect("frac skw", b => Has(b, "<msup><mrow></mrow><mrow><mi>a</mi></mrow></msup><mo stretchy=\"false\">/</mo>"), "a skewed fraction");
-        Expect("frac lin", b => Has(b, "<mi>a</mi></mrow><mo>/</mo><mrow><mi>b</mi>") && !b.Contains("<mfrac", StringComparison.Ordinal), "a linear fraction");
-        Expect("frac noBar", b => Has(b, "<mfrac linethickness=\"0\" displaystyle=\"true\">"), "a fraction without a bar");
+        Expect("frac bar", b => Math(b) && Has(b, "<mfrac style=\"padding-inline:0\"><mrow><mi>a</mi></mrow><mrow><mi>b</mi></mrow></mfrac>"), "a stacked fraction");
+        Expect("frac skw", b => Has(b, "<msup><mrow></mrow><mrow><mi>a</mi></mrow></msup><mo stretchy=\"false\" lspace=\"0\" rspace=\"0\">/</mo>"), "a skewed fraction");
+        Expect("frac lin", b => Has(b, "<mi>a</mi></mrow><mo lspace=\"0\" rspace=\"0\">/</mo><mrow><mi>b</mi>") && !b.Contains("<mfrac", StringComparison.Ordinal), "a linear fraction");
+        Expect("frac noBar", b => Has(b, "<mfrac linethickness=\"0\" style=\"padding-inline:0\">"), "a fraction without a bar");
         Expect("sqrt", b => Has(b, "<msqrt><mrow><mi>x</mi></mrow></msqrt>"), "a square root (degHide)");
         Expect("root", b => Has(b, "<mroot><mrow><mi>y</mi></mrow><mrow><mn>3</mn></mrow></mroot>"), "a cube root");
         Expect("sup", b => Has(b, "<msup><mrow><mi>x</mi></mrow><mrow><mn>2</mn></mrow></msup>"), "a superscript");
@@ -127,10 +177,10 @@ public static class OfficeMathFidelityTest
         Expect("integral", b => Has(b, "<msubsup><mo largeop=\"true\">∫</mo><mrow><mn>0</mn></mrow><mrow><mn>1</mn></mrow></msubsup>"), "an integral with limits as scripts");
         Expect("sum", b => Has(b, "<munderover><mo largeop=\"true\">∑</mo>"), "a sum with limits under and over");
         Expect("product", b => Has(b, "<msub><mo largeop=\"true\">∏</mo><mrow><mi>k</mi></mrow></msub>") && !b.Contains("<msubsup", StringComparison.Ordinal), "a product, upper limit hidden");
-        Expect("delim", b => Has(b, ">[</mo>", "separator=\"true\" stretchy=\"true\">;</mo>", "form=\"postfix\" stretchy=\"true\">}</mo>"), "begin / separator / end characters");
-        Expect("paren", b => Has(b, "form=\"prefix\" stretchy=\"true\">(</mo>", "form=\"postfix\" stretchy=\"true\">)</mo>"), "default parentheses");
+        Expect("delim", b => Has(b, ">[</mo>", "separator=\"true\" stretchy=\"false\">;</mo>", "form=\"postfix\" stretchy=\"false\">}</mo>"), "begin / separator / end characters");
+        Expect("paren", b => Has(b, "form=\"prefix\" stretchy=\"false\">(</mo>", "form=\"postfix\" stretchy=\"false\">)</mo>"), "default parentheses, not stretched around one line");
         Expect("func", b => Has(b, "<mi mathvariant=\"normal\">sin</mi>", "<mo>⁡</mo>", "<mi>θ</mi>"), "a function: upright name, apply, argument");
-        Expect("limlow", b => Has(b, "<munder><mrow><mi mathvariant=\"normal\">lim</mi></mrow><mrow><mi>n</mi><mo>→</mo><mi>∞</mi></mrow></munder>") || Has(b, "<munder><mrow><mi mathvariant=\"normal\">lim</mi></mrow><mrow><mi>n</mi><mo>→</mo><mo>∞</mo></mrow></munder>"), "a lower limit");
+        Expect("limlow", b => Has(b, "<munder><mrow><mi mathvariant=\"normal\">lim</mi></mrow><mrow><mi>n</mi><mo lspace=\"0\" rspace=\"0\">→</mo><mi>∞</mi></mrow></munder>") || Has(b, "<munder><mrow><mi mathvariant=\"normal\">lim</mi></mrow><mrow><mi>n</mi><mo lspace=\"0\" rspace=\"0\">→</mo><mo lspace=\"0\" rspace=\"0\">∞</mo></mrow></munder>"), "a lower limit");
         Expect("limupp", b => Has(b, "<mover><mrow><mi>x</mi></mrow><mrow><mi>d</mi><mi>e</mi><mi>f</mi></mrow></mover>"), "an upper limit");
         Expect("acc", b => Has(b, "<mover accent=\"true\"><mrow><mi>a</mi></mrow><mo stretchy=\"true\">˜</mo></mover>"), "a tilde accent (combining U+0303 drawn spacing)");
         Expect("acc hat", b => Has(b, "<mo stretchy=\"true\">ˆ</mo>"), "the default accent: a circumflex");
@@ -152,10 +202,10 @@ public static class OfficeMathFidelityTest
         Expect("colour", b => Has(b, "#FF0000") && Has(b, "<mi") , "a coloured run");
 
         string all = string.Join("\n", html);
-        TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:left\""), $"{format}: oMathPara jc left");
-        TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:right\""), $"{format}: oMathPara jc right");
+        TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:left"), $"{format}: oMathPara jc left");
+        TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:right"), $"{format}: oMathPara jc right");
         // Word 16 joins the two m:oMath of one m:oMathPara into one when it saves (math-v2.docx has one): a centred line
-        TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:center\"><math class=\"omath\" dir=\"ltr\" displaystyle=\"true\""), $"{format}: oMathPara centred (centerGroup, the default)");
+        TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:center;padding-left:72pt"), $"{format}: oMathPara centred (centerGroup, the default)");
         TestReport.Check(html.Any(b => b.Contains("<mi>t</mi><mi>a</mi><mi>b</mi><mi>l</mi><mi>e</mi>", StringComparison.Ordinal) && b.Contains("<mfrac", StringComparison.Ordinal)), $"{format}: an equation in a table cell");
         TestReport.Check(notes.Contains("<msup><mrow><mi>x</mi></mrow><mrow><mn>2</mn></mrow></msup>", StringComparison.Ordinal), $"{format}: an equation in a footnote");
         TestReport.Check(html.Any(b => b.Contains("<mi>b</mi><mi>o</mi><mi>x</mi>", StringComparison.Ordinal) && b.Contains("<msqrt>", StringComparison.Ordinal)), $"{format}: an equation in a text box");

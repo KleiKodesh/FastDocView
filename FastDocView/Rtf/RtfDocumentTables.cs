@@ -43,6 +43,8 @@ public sealed class RtfDocumentTables
     public sealed class ListOverride { public int Index; public int ListId; public Dictionary<int, int> StartAtByLevel = new(); }
 
     public Dictionary<int, FontEntry> Fonts { get; } = new();
+    /// <summary>{\mmathPr}: the document's math settings as control word -> parameter (WordOfficeMathSettings.FromRtf).</summary>
+    public Dictionary<string, int> MathProperties { get; } = new(StringComparer.Ordinal);
     public List<string?> Colors { get; } = new();            // "RRGGBB"; null = auto (the empty first entry)
     public Dictionary<int, StyleEntry> Styles { get; } = new();
     public Dictionary<int, ListDefinition> Lists { get; } = new();
@@ -95,6 +97,8 @@ public sealed class RtfDocumentTables
         foreach (KeyValuePair<int, FontEntry> font in Fonts) { writer.Write(font.Key); writer.Write(font.Value.Name); writer.Write(font.Value.Charset); writer.Write(font.Value.CodePage); }
         writer.Write(Colors.Count);
         foreach (string? color in Colors) writer.Write(color ?? "");
+        writer.Write(MathProperties.Count);
+        foreach (KeyValuePair<string, int> property in MathProperties) { writer.Write(property.Key); writer.Write(property.Value); }
         writer.Write(Styles.Count);
         foreach (KeyValuePair<int, StyleEntry> style in Styles) { writer.Write(style.Key); writer.Write(style.Value.Name); writer.Write(style.Value.OutlineLevel); }
         // lists: the compact index counts labels again when it rescans a span
@@ -141,6 +145,9 @@ public sealed class RtfDocumentTables
         for (int i = 0; i < fonts; i++) tables.Fonts[reader.ReadInt32()] = new FontEntry { Name = reader.ReadString(), Charset = reader.ReadInt32(), CodePage = reader.ReadInt32() };
         int colors = reader.ReadInt32();
         for (int i = 0; i < colors; i++) { string color = reader.ReadString(); tables.Colors.Add(color.Length == 0 ? null : color); }
+        int mathProperties = reader.ReadInt32();
+        if (mathProperties is < 0 or > 64) throw new InvalidDataException("RTF index: math properties damaged.");
+        for (int i = 0; i < mathProperties; i++) tables.MathProperties[reader.ReadString()] = reader.ReadInt32();
         int styles = reader.ReadInt32();
         for (int i = 0; i < styles; i++) tables.Styles[reader.ReadInt32()] = new StyleEntry { Name = reader.ReadString(), OutlineLevel = reader.ReadInt32() };
         int lists = reader.ReadInt32();

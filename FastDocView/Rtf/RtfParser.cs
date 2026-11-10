@@ -892,6 +892,11 @@ internal sealed class RtfParser
                 if (IsTextDestination(state)) _sink.Embedded(RtfEmbeddedKind.Object, state);
                 SkipGroup(name);
                 return;
+            case RtfWord.MathProperties:
+                // {\mmathPr ...} in the header: the document's math settings (control words with a number) for the equations
+                if (_readsHeaderTables && _depth <= 2) ReadMathProperties(CaptureGroup(name));
+                else SkipGroup(name);
+                return;
             case RtfWord.MathGroup:
                 // {\mmath ...}: the equation's OMML control words (RtfOfficeMath) are read from the group's bytes
                 if (IsTextDestination(state) && _sink.WantsMath) { _sink.Equation(CaptureGroup(name), state); return; }
@@ -1425,6 +1430,26 @@ internal sealed class RtfParser
         return depth;
     }
 
+
+    /// <summary>The \mXxxN words of a captured {\mmathPr} group into the header tables (later words win).</summary>
+    private void ReadMathProperties(byte[] group)
+    {
+        for (int i = 0; i < group.Length; i++)
+        {
+            if (group[i] != '\\' || i + 1 >= group.Length || group[i + 1] != 'm') continue;
+            int start = i + 1, end = start;
+            while (end < group.Length && IsLetter(group[end])) end++;
+            int digits = end;
+            bool negative = digits < group.Length && group[digits] == '-';
+            if (negative) digits++;
+            long value = 0;
+            int numberStart = digits;
+            while (digits < group.Length && group[digits] is >= (byte)'0' and <= (byte)'9') { value = Math.Min(value * 10 + (group[digits] - '0'), int.MaxValue); digits++; }
+            string word = System.Text.Encoding.ASCII.GetString(group, start, end - start);
+            if (word != "mmathPr" && _tables.MathProperties.Count < 64) _tables.MathProperties[word] = digits > numberStart ? (int)(negative ? -value : value) : 1;
+            i = digits - 1;
+        }
+    }
 
     /// <summary>
     /// The current group's bytes from its first control word (<paramref name="name"/>) to before its closing brace, which

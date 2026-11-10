@@ -431,7 +431,7 @@ public sealed class DocxBlockHtmlRenderer
                     break;
                 case "oMath" or "oMathPara" when WordOfficeMathHtml.IsMathZone(child):
                     // Office Math (ECMA-376 22.1) as MathML; a math run's w:rPr resolves like any run's
-                    WordOfficeMathHtml.Append(html, child, runProperties => _styles.ResolveRun(paragraphBase, runProperties).ToCss(paragraphBase, WordDecorationOutput.StrikeOnly) is { Length: > 0 } css ? css : null);
+                    WordOfficeMathHtml.Append(html, child, runProperties => _styles.ResolveRun(paragraphBase, runProperties).ToCss(paragraphBase, WordDecorationOutput.StrikeOnly) is { Length: > 0 } css ? css : null, _styles.Compatibility.Math);
                     break;
                 // Tracked changes show as Word's "final" view: w:del / w:moveFrom hidden, w:ins / w:moveTo shown.
                 // w:pPr, bookmarks, proofErr, commentRange, move ranges… render nothing.
