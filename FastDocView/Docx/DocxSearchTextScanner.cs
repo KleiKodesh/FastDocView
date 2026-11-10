@@ -23,7 +23,7 @@ namespace FastDocView.Docx;
 /// </summary>
 internal sealed class DocxSearchTextScanner
 {
-    private enum NamespaceKind : byte { Other, Wordprocessing, MarkupCompatibility, Diagram, Chart, Vml }
+    private enum NamespaceKind : byte { Other, Wordprocessing, MarkupCompatibility, Diagram, Chart, Vml, Math }
 
     /// <summary>
     /// Fields (null: field characters are not followed - the text of codes still is not, results are read as plain text).
@@ -45,6 +45,7 @@ internal sealed class DocxSearchTextScanner
         WordXmlSearchText.MarkupCompatibilityNamespace => NamespaceKind.MarkupCompatibility,
         WordXmlSearchText.DiagramNamespace => NamespaceKind.Diagram,
         WordXmlSearchText.VmlNamespace => NamespaceKind.Vml,
+        Html.WordOfficeMathHtml.MathNamespace => NamespaceKind.Math,
         WordXmlSearchText.ChartNamespace or WordXmlSearchText.ChartExNamespace => NamespaceKind.Chart,
         _ => NamespaceKind.Other,
     };
@@ -266,7 +267,8 @@ internal sealed class DocxSearchTextScanner
                 switch (local.Length)
                 {
                     case 1 when local[0] == (byte)'t':
-                        if (!isEmpty && Resolve(elementPrefix) == NamespaceKind.Wordprocessing) textDepth = elementDepth;
+                        // w:t, and m:t: an equation's text (Office Math, ECMA-376 22.1.2.116) is shown and searched like a run's
+                        if (!isEmpty && Resolve(elementPrefix) is NamespaceKind.Wordprocessing or NamespaceKind.Math) textDepth = elementDepth;
                         break;
                     case 1 when local[0] == (byte)'p':
                         if (isEmpty && Resolve(elementPrefix) == NamespaceKind.Wordprocessing) matcher.Separator();

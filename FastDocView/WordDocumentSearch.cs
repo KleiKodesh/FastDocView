@@ -447,6 +447,11 @@ internal sealed class WordXmlSearchText
         {
             foreach (XElement element in paragraph.Descendants())
             {
+                if (element.Name.LocalName == "t" && element.Name.NamespaceName == Html.WordOfficeMathHtml.MathNamespace)
+                {
+                    if (!element.Ancestors().TakeWhile(a => a != paragraph).Any(a => IsWordprocessing(a.Name.NamespaceName) && a.Name.LocalName is "moveFrom" or "del")) matcher.Feed(element.Value.AsSpan());
+                    continue;
+                }
                 if (!IsWordprocessing(element.Name.NamespaceName)) continue;
                 if (element.Ancestors().TakeWhile(a => a != paragraph).Any(a => IsWordprocessing(a.Name.NamespaceName) && a.Name.LocalName is "moveFrom" or "rt" or "del")) continue;   // not shown
                 if (element.Name.LocalName == "t") matcher.Feed(element.Value.AsSpan());
@@ -465,6 +470,11 @@ internal sealed class WordXmlSearchText
         {
             if (!IsWordprocessing(child.Name.NamespaceName))
             {
+                if (child.Name.LocalName == "t" && child.Name.NamespaceName == Html.WordOfficeMathHtml.MathNamespace)
+                {
+                    if (fields.IsIdle || fields.Shows(child.Value)) matcher.Feed(child.Value.AsSpan());    // an equation's text
+                    continue;
+                }
                 if (child.Name.LocalName != "Fallback") FeedFieldNodes(child, matcher, fields, simpleFields);
                 continue;
             }

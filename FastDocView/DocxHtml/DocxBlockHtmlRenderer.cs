@@ -394,7 +394,7 @@ public sealed class DocxBlockHtmlRenderer
         foreach (XElement element in paragraph.Descendants())
         {
             string name = element.Name.LocalName;
-            if (name is "t" or "tab" or "ptab" or "br" or "cr" or "sym" or "drawing" or "pict" or "object" or "footnoteReference" or "endnoteReference" or "noBreakHyphen")
+            if (name is "t" or "tab" or "ptab" or "br" or "cr" or "sym" or "drawing" or "pict" or "object" or "footnoteReference" or "endnoteReference" or "noBreakHyphen" or "oMath")
                 return true;
         }
         return false;
@@ -428,6 +428,10 @@ public sealed class DocxBlockHtmlRenderer
                     break;
                 case "AlternateContent":
                     if (ChosenAlternative(child) is { } chosen) yield return new(RenderInlineChildren(chosen, html, paragraphBase));
+                    break;
+                case "oMath" or "oMathPara" when WordOfficeMathHtml.IsMathZone(child):
+                    // Office Math (ECMA-376 22.1) as MathML; a math run's w:rPr resolves like any run's
+                    WordOfficeMathHtml.Append(html, child, runProperties => _styles.ResolveRun(paragraphBase, runProperties).ToCss(paragraphBase, WordDecorationOutput.StrikeOnly) is { Length: > 0 } css ? css : null);
                     break;
                 // Tracked changes show as Word's "final" view: w:del / w:moveFrom hidden, w:ins / w:moveTo shown.
                 // w:pPr, bookmarks, proofErr, commentRange, move ranges… render nothing.

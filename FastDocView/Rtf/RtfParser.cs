@@ -893,6 +893,8 @@ internal sealed class RtfParser
                 SkipGroup(name);
                 return;
             case RtfWord.MathGroup:
+                // {\mmath ...}: the equation's OMML control words (RtfOfficeMath) are read from the group's bytes
+                if (IsTextDestination(state) && _sink.WantsMath) { _sink.Equation(CaptureGroup(name), state); return; }
                 if (IsTextDestination(state)) _sink.Embedded(RtfEmbeddedKind.Equation, state);
                 SkipGroup(name);
                 return;
@@ -1423,6 +1425,47 @@ internal sealed class RtfParser
         return depth;
     }
 
+
+    /// <summary>
+    /// The current group's bytes from its first control word (<paramref name="name"/>) to before its closing brace, which
+    /// closes it (as <see cref="SkipGroup"/>: braces counted, escapes and \binN data stepped over).
+    /// </summary>
+    private byte[] CaptureGroup(ReadOnlySpan<byte> name)
+    {
+        var bytes = new List<byte>(256) { (byte)'\\' };
+        foreach (byte b in name) bytes.Add(b);
+        bytes.Add((byte)' ');
+        int depth = 1;
+        while (true)
+        {
+            int b = ReadByte();
+            if (b < 0) break;
+            if (b == '{') depth++;
+            else if (b == '}' && --depth == 0) { if (!Pop()) _position = _end; break; }
+            bytes.Add((byte)b);
+            if (b != '\\') continue;
+            int c = ReadByte();
+            if (c < 0) break;
+            bytes.Add((byte)c);
+            if (!IsLetter(c)) continue;
+            int length = 0;
+            while (true)
+            {
+                if (length < MaxWordLength) _word[length] = (byte)c;
+                length++;
+                c = ReadByte();
+                if (c < 0 || !IsLetter(c)) break;
+                bytes.Add((byte)c);
+            }
+            bool isBinary = length == 3 && _word[0] == 'b' && _word[1] == 'i' && _word[2] == 'n';
+            long parameter = 0;
+            if (c == '-') { bytes.Add((byte)c); c = ReadByte(); }
+            while (c >= '0' && c <= '9') { bytes.Add((byte)c); if (parameter < int.MaxValue) parameter = parameter * 10 + (c - '0'); c = ReadByte(); }
+            if (c >= 0) { if (c != ' ') _position--; else bytes.Add((byte)' '); }
+            if (isBinary && parameter > 0) SkipBytes(parameter);   // binary data: never text (the math reader skips its \bin)
+        }
+        return bytes.ToArray();
+    }
 
     /// <summary>Skips to the end of the current group (braces counted, escapes and \binN data stepped over) and closes it.</summary>
     private void SkipGroup(ReadOnlySpan<byte> name)

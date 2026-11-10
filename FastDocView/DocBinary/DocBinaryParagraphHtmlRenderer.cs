@@ -696,7 +696,16 @@ public sealed class DocBinaryParagraphHtmlRenderer
             if (c >= ' ') matcher.Feed(c);
             else if (c == '\t') matcher.Feed(' ');
             else if (c is '\r' or '\u0007' or '\u000B' or '\u000C') matcher.Separator();
+            else if (c == '\u0001' && DataLocationAt(cpStart + i) is { } location && EquationOf(location) is { } equation)
+                FeedEquationText(equation, matcher);     // a picture of an equation: its text is shown (AppendPicture), so searched
         }
+    }
+
+    /// <summary>An equation's text (its m:t, as the renderer shows them) to the matcher.</summary>
+    internal static void FeedEquationText(System.Xml.Linq.XElement equation, WordDocumentSearchMatcher matcher)
+    {
+        foreach (System.Xml.Linq.XElement text in equation.Descendants())
+            if (text.Name.LocalName == "t" && text.Name.NamespaceName == WordOfficeMathHtml.MathNamespace) matcher.Feed(text.Value.AsSpan());
     }
 
     /// <summary>Text with no fields to follow (a WordArt string): tabs as spaces, marks as separators.</summary>
@@ -1003,10 +1012,23 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// </summary>
     private void AppendPicture(StringBuilder html, uint location)
     {
+        if (EquationOf(location) is { } equation) { WordOfficeMathHtml.Append(html, equation, WordOfficeMathHtml.RunColorCss); return; }   // Word's picture of an equation: the equation itself
         if (Pictures.Locate(location) is { } picture)
             WordPictureHtml.Append(html, new WordPictureLayout(picture.widthPt, picture.heightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0),
                                    location.ToString(System.Globalization.CultureInfo.InvariantCulture));
         else html.Append("<span class=\"unsupported\">[image]</span>");
+    }
+
+    /// <summary>The m:oMathPara / m:oMath of a picture's equationXML (<see cref="DocBinaryPictures.EquationXml"/>); null: none or unreadable.</summary>
+    internal System.Xml.Linq.XElement? EquationOf(uint location)
+    {
+        if (Pictures.EquationXml(location) is not { Length: > 0 } xml) return null;
+        try
+        {
+            System.Xml.Linq.XElement root = System.Xml.Linq.XElement.Parse(xml.Trim('\uFEFF', '\0'));   // the property's string ends in NULs
+            return root.Descendants().FirstOrDefault(WordOfficeMathHtml.IsMathZone);
+        }
+        catch (System.Xml.XmlException) { return null; }
     }
 
     /// <summary>In the main text: a numbered note reference. Inside a note body: the note's own number.</summary>

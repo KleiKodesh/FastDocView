@@ -513,6 +513,22 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void Embedded(RtfEmbeddedKind kind, in RtfGroupState state) { if (!_parser.IsInFootnote) { _hasContent = true; _textLength += 8; } }
 
+    /// <summary>A span search reads an equation's text (as RtfSearchTextSink); the block counts it as the index pass did (an embedded object).</summary>
+    public override bool WantsMath => IsSearching;
+
+    public override void Equation(byte[] group, in RtfGroupState state)
+    {
+        if (!_parser.IsInListText && (_fields.IsIdle || _fields.Shows("x".AsSpan())))   // the search sink's rules (RtfSpanSearch.Text drops note text when notes are not searched)
+        {
+            var text = new System.Text.StringBuilder();
+            if (RtfOfficeMath.ToOmml(group, state.CodePage, _ => null) is { } equation)
+                foreach (System.Xml.Linq.XElement t in equation.Descendants())
+                    if (t.Name.LocalName == "t") text.Append(t.Value);
+            _search!.Text(text.ToString().AsSpan(), _parser);
+        }
+        Embedded(RtfEmbeddedKind.Equation, state);
+    }
+
     public override void Break(RtfWord word, in RtfGroupState state)
     {
         if (IsSearching) _search!.Separator();

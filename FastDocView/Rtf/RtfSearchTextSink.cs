@@ -54,6 +54,16 @@ internal sealed class RtfSearchTextSink : RtfSink
         _matcher!.Feed(text.AsSpan());
     }
 
+    public override bool WantsMath => true;
+
+    /// <summary>An equation's text, as the renderer shows it (RtfBlockHtmlRenderer.Equation).</summary>
+    public override void Equation(byte[] group, in RtfGroupState state)
+    {
+        if (_parser.IsInListText || (_parser.IsInFootnote && !_includeNotes)) return;
+        if (!_fields.IsIdle && !_fields.Shows("x".AsSpan())) return;     // inside a code or a replaced result: not shown
+        if (RtfOfficeMath.ToOmml(group, state.CodePage, _ => null) is { } equation) DocBinary.DocBinaryParagraphHtmlRenderer.FeedEquationText(equation, _matcher!);
+    }
+
     public override void ParagraphEnd(in RtfGroupState state, bool isSectionEnd) => _matcher!.Separator();
     public override void CellEnd(in RtfGroupState state, bool isNested) => _matcher!.Separator();
     public override void RowEnd(in RtfGroupState state, bool isNested) => _matcher!.Separator();

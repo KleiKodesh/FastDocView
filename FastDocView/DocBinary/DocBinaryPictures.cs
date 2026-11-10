@@ -67,6 +67,55 @@ internal sealed class DocBinaryPictures
         return null;
     }
 
+    /// <summary>
+    /// The Office Math (OMML) a picture stands for: Word saves an equation in a .doc as a picture whose OfficeArt shape
+    /// carries the equationXML property (MS-ODRAW 2.3.2.10 / 2.3.2.11: opid 0x030C, complex, a UTF-8 WordprocessingML 2003
+    /// document holding the m:oMath / m:oMathPara). Its property tables (FOPT 0xF00B, secondary 0xF121, tertiary 0xF122:
+    /// 6-byte entries, then the complex data in entry order, MS-ODRAW 2.2.9 / 2.3.1) are read from the picture's
+    /// OfficeArtSpContainer. LibreOffice does not read this property (its .doc import shows the picture); Word does. Null: none.
+    /// </summary>
+    public string? EquationXml(uint pictureLocation)
+    {
+        Stream? data = _dataStream;
+        if (data is null || pictureLocation + 0x44L > data.Length) return null;
+        byte[] header = Read(data, pictureLocation, 0x44);
+        if (header.Length < 0x44) return null;
+        uint lcb = BitConverter.ToUInt32(header, 0);
+        int cbHeader = BitConverter.ToUInt16(header, 4);
+        int mm = BitConverter.ToUInt16(header, 6);
+        if (lcb < PicfMinimumLength || cbHeader < 0x44 || cbHeader > lcb || pictureLocation + (long)lcb > data.Length || mm is not (0x64 or 0x66)) return null;
+        long position = pictureLocation + cbHeader;
+        if (mm == 0x66)
+        {
+            byte[] nameLength = Read(data, position, 1);
+            if (nameLength.Length < 1) return null;
+            position += 1 + nameLength[0];
+        }
+        if (RecordHeader(data, position) is not { Type: 0xF004 } shape) return null;
+        long end = Math.Min(position + 8 + shape.Length, pictureLocation + (long)lcb);
+        for (position += 8; position + 8 <= end;)
+        {
+            if (RecordHeader(data, position) is not { } record) return null;
+            if (record.Type is 0xF00B or 0xF121 or 0xF122 && record.Length <= end - position - 8)
+            {
+                byte[] table = Read(data, position + 8, (int)record.Length);
+                int entries = Math.Min(record.Instance, table.Length / 6);
+                long complexAt = entries * 6L;
+                for (int i = 0; i < entries; i++)
+                {
+                    int id = BitConverter.ToUInt16(table, i * 6);
+                    uint value = BitConverter.ToUInt32(table, i * 6 + 2);
+                    bool isComplex = (id & 0x8000) != 0;
+                    if ((id & 0x3FFF) == 0x030C && isComplex && complexAt + value <= table.Length)
+                        return System.Text.Encoding.UTF8.GetString(table, (int)complexAt, (int)value);
+                    if (isComplex) complexAt += value;
+                }
+            }
+            position += 8 + record.Length;
+        }
+        return null;
+    }
+
     /// <summary>The PNG / JPEG data of the blip record at <paramref name="blipAt"/> in <paramref name="data"/>; null for
     /// another record, another blip type or data past the stream's end.</summary>
     internal static (long dataAt, int dataLength, string extension)? Blip(Stream data, long blipAt)

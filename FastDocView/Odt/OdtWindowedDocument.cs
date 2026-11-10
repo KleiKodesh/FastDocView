@@ -413,12 +413,72 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         return false;
     }
 
-    /// <summary>The texts of a block's charts (title, axis titles, categories, legend, data labels), for search; empty when it has none.</summary>
+    /// <summary>The texts of a block's charts (title, axis titles, categories, legend, data labels) and formulas, for search; empty when it has none.</summary>
     private IEnumerable<string> ChartTexts(XElement block)
     {
         foreach (XElement embedded in block.Descendants(OdtBlockHtmlRenderer.DrawNs + "object"))
+        {
+            if (ReadFormula(embedded) is { } formula) { yield return WordMathMlHtml.Text(formula); continue; }
             if (embedded.Element(OdtStyleCascade.Office + "document") is null && ReadChart(embedded) is { } chart)
                 foreach (string text in chart.Texts()) yield return text;
+        }
+    }
+
+    // ── formulas: an embedded LibreOffice Math object's MathML, read when its block is rendered or searched ──
+
+    private readonly Dictionary<string, XElement?> _formulas = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The MathML math:math of a formula object: a flat file's inline math:math inside the draw:object, else the package's
+    /// "Object N/content.xml" (its root is math:math - LibreOffice's Math export, starmath/source/mathml/mathmlexport.cxx),
+    /// read on a short shared open only when the block is rendered or searched (a few recent ones kept). Null: not a formula.
+    /// </summary>
+    internal XElement? ReadFormula(XElement embedded)
+    {
+        if (embedded.Elements().FirstOrDefault(e => e.Name.LocalName == "math" && e.Name.NamespaceName == WordMathMlHtml.MathMlNamespace) is { } inline) return inline;
+        if (embedded.Element(OdtStyleCascade.Office + "document") is not null) return null;
+        if ((string?)embedded.Attribute(OdtBlockHtmlRenderer.XlinkNs + "href") is not { Length: > 0 } href || href.Contains(':')) return null;
+        string folder = (href.StartsWith("./", StringComparison.Ordinal) ? href.Substring(2) : href).TrimEnd('/');
+        if (folder.Length == 0 || folder.Contains("..")) return null;
+        lock (_readLock)
+        {
+            if (_formulas.TryGetValue(folder, out XElement? known)) return known;
+            XElement? formula = null;
+            try
+            {
+                if (File.Exists(FilePath))
+                {
+                    using FileStream file = WordDocumentFileStream.OpenShared(FilePath);
+                    if (!OdtPackage.IsFlatOpenDocumentText(file))
+                    {
+                        file.Position = 0;
+                        using var zip = new System.IO.Compression.ZipArchive(file, System.IO.Compression.ZipArchiveMode.Read, leaveOpen: true);
+                        if (zip.GetEntry(folder + "/content.xml") is { } entry && IsFormulaContent(entry))
+                        {
+                            using Stream data = entry.Open();
+                            var settings = new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore, XmlResolver = null };
+                            using var xml = System.Xml.XmlReader.Create(data, settings);
+                            formula = XDocument.Load(xml).Root;
+                        }
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is InvalidDataException or System.Xml.XmlException or FormatException or OverflowException) { formula = null; }
+            if (_formulas.Count >= ChartCacheSize) _formulas.Clear();
+            _formulas[folder] = formula;
+            return formula;
+        }
+    }
+
+    /// <summary>True when a sub-document's root element is MathML math:math (read up to the root only).</summary>
+    private static bool IsFormulaContent(System.IO.Compression.ZipArchiveEntry entry)
+    {
+        using Stream data = entry.Open();
+        var settings = new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore, XmlResolver = null };
+        using var xml = System.Xml.XmlReader.Create(data, settings);
+        while (xml.Read())
+            if (xml.NodeType == System.Xml.XmlNodeType.Element) return xml.LocalName == "math" && xml.NamespaceURI == WordMathMlHtml.MathMlNamespace;
+        return false;
     }
 
     private IReadOnlyList<OdtNoteReference> KnownNoteReferences => (IReadOnlyList<OdtNoteReference>?)_index?.NoteReferences ?? _builder!.KnownNoteReferences;
@@ -514,6 +574,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
             _renderer.RootOpenTag ??= _blocks.RootOpenTag;
             _renderer.Pictures ??= ReadPicture;
             _renderer.Charts ??= ReadChart;
+            _renderer.Formulas ??= ReadFormula;
             _renderer.ListStyles ??= _blocks.ListStyleNamed;
             _renderer.ResetProvisional();
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), _blocks.ListLevelOf(blockIndex), _blocks.ListLabelLayoutOf(blockIndex),

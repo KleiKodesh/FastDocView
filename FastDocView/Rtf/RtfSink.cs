@@ -32,6 +32,10 @@ internal abstract class RtfSink
     public virtual void ListTextStart() { }
     public virtual void ListTextEnd() { }
     public virtual void Embedded(RtfEmbeddedKind kind, in RtfGroupState state) { }
+    /// <summary>Whether {\mmath} groups are read (<see cref="Equation"/>) instead of skipped as an equation.</summary>
+    public virtual bool WantsMath => false;
+    /// <summary>An equation: its {\mmath} group's bytes (RtfOfficeMath turns them into OMML).</summary>
+    public virtual void Equation(byte[] group, in RtfGroupState state) { }
     /// <summary>True: the parser reads \pict and \shp groups into <see cref="Picture"/> (the HTML renderer); false: a placeholder (index, search).</summary>
     public virtual bool WantsPictures => false;
     /// <summary>True: <see cref="RtfPicture.Data"/> is decoded (reading one picture's bytes); false: only its size and type.</summary>

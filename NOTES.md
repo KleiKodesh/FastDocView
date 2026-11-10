@@ -2198,6 +2198,36 @@ tlch); checked by the same test.
   with LibreOffice's own PDF export of it. Layout and automatic scaling are DocxChart's (not chart2's), so positions differ
   from LibreOffice's; bars, slices, colours and texts match.
 - Harness: OdtChartsFidelityTest (--fidelity), the .odt and the LibreOffice-saved .fodt.
+## Equations as MathML (2026-11-10)
+
+- One converter, `Html/WordOfficeMathHtml.cs`: OMML (m:oMath / m:oMathPara) -> MathML Core, per ECMA-376 Part 1 22.1.2 and
+  Microsoft's OMML2MML.XSL mapping, checked against LibreOffice's OMML import (starmath/source/ooxmlimport.cxx: handleF 604,
+  handleNary 739, handleD 511, handleAcc 355, handleBar 447 (default bottom), handleR 863, handleRad 993, handleGroupChr 681).
+  MathML Core gaps: no menclose (border box = CSS-bordered mrow, strikes = gradients), no mathvariant but "normal" (styled
+  letters -> U+1D400 block, holes from Letterlike Symbols), no columnalign (CSS text-align on mtd), no bevelled mfrac (skewed
+  fraction = raised numerator / lowered denominator). Combining accents are drawn as their spacing forms. Display math
+  (m:oMathPara) = a block line per equation, text-align from m:jc (centerGroup = center), inline math display style off.
+- .docx: rendered where the paragraph has them (body, notes, tables, text boxes). Search: the byte scanners read m:t
+  like w:t (the note scanner hands a note with math to the parsed reader, which reads m:t).
+- .rtf: {\mmath} is captured as bytes by the parser (RtfParser.CaptureGroup) and rebuilt as OMML (`Rtf/RtfOfficeMath.cs`):
+  {\mX} = m:X, value groups = m:val (LibreOffice rtfdispatchdestination.cxx:537-578, rtfdocumentimpl.cxx:3316-3370);
+  \mscrN / \mstyN / \mjcN numbers taken from Word 16's own output (LibreOffice reads none of them). {\mmathPict} skipped.
+  The index pass still counts an equation as an embedded object (same block bounds); renderer, reference search sink and
+  span search read the text.
+- .doc: Word 16 writes no OLE equation and no math stream: each equation becomes an inline picture whose OfficeArt shape
+  has the equationXML property (MS-ODRAW 2.3.2.10, opid 0x030C, in the tertiary FOPT 0xF122): a UTF-8 WordprocessingML 2003
+  document with the m:oMathPara, NUL-terminated. Verified by saving via COM and dumping the Data stream. LibreOffice ignores
+  it (shows the picture). Drawn instead of the picture; search reads it at the picture's 0x01.
+- .odt / .fodt: a draw:object whose content.xml root is MathML math (LibreOffice Math, starmath/source/mathml/mathmlexport.cxx),
+  or the math inline in a flat file's draw:object, is written out through an allow-list (`Html/WordMathMlHtml.cs`):
+  semantics -> first child (StarMath annotation hidden), mstyle -> mrow with mapped variant / colour, mfenced -> fences.
+  Read when the block is rendered or searched (last 16 kept), like charts; formula text joins the chart-text search pass.
+- Fixtures: test-data/word-math (scripts/make-math-base-docx.py writes one paragraph per OMML element; make-math-fixtures.ps1
+  has Word 16 add a table cell, footnote and text box equation and save .docx / .rtf / .pdf / .doc - .doc last, since saving
+  as .doc turns the open document's equations into pictures; Word 2013+ compatibility is set or .rtf gets pictures too),
+  test-data/odt-math (scripts/make-odt-math.py, LibreOffice UNO, with LibreOffice's PDF). Harness: OfficeMathFidelityTest
+  (--math, in --fidelity). Live: vue-demo/playwright/mathCheck.mjs (MathML laid out with non-zero size).
+
 ## Web archive pictures (2026-11-10)
 Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) and an `<img>` fallback inside
 `<![if !vml]>`, which is what a browser shows. The renderer skips the VML copy and draws the `<img>` through the picture

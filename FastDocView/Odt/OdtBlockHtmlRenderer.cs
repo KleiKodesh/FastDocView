@@ -367,10 +367,14 @@ public sealed partial class OdtBlockHtmlRenderer
     private void AppendFrame(XElement frame, StringBuilder html)
     {
         if (frame.Element(DrawNs + "text-box") is { } textBox) { AppendTextBox(frame, textBox, html); return; }
+        if (frame.Element(DrawNs + "object") is { } formulaObject && Formulas?.Invoke(formulaObject) is { } formula && WordMathMlHtml.Append(html, formula)) return;
         if (frame.Element(DrawNs + "object") is { } embedded && Charts?.Invoke(embedded) is { } chart) { AppendChart(frame, chart, html); return; }
         if (frame.Element(DrawNs + "image") is { } image) { AppendPicture(frame, image, html); return; }
         html.Append("<span class=\"unsupported\">[image]</span>");
     }
+
+    /// <summary>The formula of a draw:object (its MathML math:math: inline in a flat file, else the sub-document's content.xml, read on demand); null when the object is not a formula.</summary>
+    internal Func<XElement, XElement?>? Formulas { get; set; }
 
     /// <summary>The chart of a draw:object (its sub-document read on demand, <see cref="OdtChart"/>); null when the object is not a chart - its preview picture is shown.</summary>
     internal Func<XElement, DocxHtml.DocxChart?>? Charts { get; set; }

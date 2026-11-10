@@ -124,7 +124,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Chart text sizes and automatic label layout as LibreOffice / Word lay them out | docx, odt | Positions of titles and tick labels are this library's own; the plot area and legend follow the saved positions | deferred |
 | chartex region map without a geography cache | docx | No map data; the saved fallback picture is shown | won't do |
 | SmartArt without a saved drawing part | docx | Layout engine not implemented; empty frame of the right size | deferred |
-| OLE objects as live content (embedded sheets, equations, media) | all | Only the saved preview picture is shown | won't do |
+| OLE objects as live content (embedded sheets, media; MathType / Equation 3.0 equations) | all | Only the saved preview picture is shown (Office Math and LibreOffice formulas are drawn as MathML, see the supported list) | won't do |
 
 ## Tracked changes, comments, ruby, math
 
@@ -132,7 +132,8 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Show markup / original view toggle for tracked changes | docx, doc, rtf, odt | Only Word's final view (planned as a toggle in the coverage plan) | planned |
 | Comments | docx, doc, rtf, odt | Not shown in a reading view (references skipped) | deferred |
-| Office Math (m:oMath / OMML, ODF math objects) | docx, rtf, odt | Not rendered: docx math runs are dropped; RTF \mmath is skipped; ODT math shows its preview picture. MathML mapping is planned (ECMA-376 22.1 maps almost 1:1) | planned |
+| Equations: exact Word layout (m:eqArr alignment marks inside nested elements, m:argSz, m:grow, line breaking of long display equations, the document's math font settings m:mathPr) | docx, doc, rtf | MathML Core has no counterpart for these; Chromium lays out the MathML (the equation and its text are shown and searched) | deferred |
+| Equations in .doc saved without equationXML (Word 2003 and older) | doc | No OMML in the file; the saved picture is shown | won't do |
 | Ruby | doc, rtf | Not read (EQ \o fields still compute) | deferred |
 
 ## Document level

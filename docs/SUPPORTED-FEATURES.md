@@ -218,12 +218,16 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 | chartex (waterfall, treemap, sunburst, histogram, box, funnel, region map) | partial (24) | n.a. | n.a. | n.a. | n.a. | n.a. |
 | SmartArt (from its saved drawing part) | partial (25) | n.a. | n.a. | n.a. | n.a. | n.a. |
 | OLE objects (their saved preview picture) | partial | partial | partial | partial | n.a. | n.a. |
+| Equations as MathML (Office Math / OMML; LibreOffice Math formulas), shown and searched, also in notes, tables and text boxes | yes (29) | yes (30) | yes (29) | yes (31) | n.a. | n.a. |
 
 24. A region map without a saved geography cache falls back to the saved picture.
 25. Without a drawing part the frame keeps its size and is empty.
 26. No chart reader for .doc / RTF (checked: no chart code in DocBinary/, Rtf/); the chart's saved preview picture is shown when the file has one.
 27. Bar / column, line, area, pie, donut, scatter, radar, stock, bubble; stacked and percent; gap and overlap; titles, subtitle, axis titles, scales, legend, value / percent / category / series labels, wall fill, series and point colours. Read only when the block is rendered or searched; chart text is found by search.
 28. Both formats (one renderer): logarithmic value axes, secondary value axis (labelled on the right), error bars (fixed, percent, standard deviation / error, custom; y and scatter x), trend lines (linear, exponential, logarithmic, power, polynomial, moving average) with equation and R squared, stock high-low lines and open-close boxes, 3-D charts drawn with a back wall, side wall and floor (no perspective), the saved plot-area and legend positions (.docx c:manualLayout inner / outer; ODT chart:coordinate-region, chart:plot-area, legend svg:x / svg:y).
+29. Every OMML element (ECMA-376 22.1): fractions (bar, skewed, linear, no bar), radicals, scripts and pre-scripts, n-ary operators with limit placement and hidden limits, delimiters (begin / separator / end characters), functions, lower / upper limits, accents, bars, boxes and border boxes, equation arrays (aligned at '&'), matrices with column alignment, group characters, phantoms, m:rPr (sty, scr, nor, lit), run colour and font, display equations (m:oMathPara) with their justification. MathML Core has no mathvariant other than normal: styled letters use the Mathematical Alphanumeric Symbols. RTF {\mmath} groups are rebuilt as OMML first.
+30. Word saves an equation in a .doc as a picture carrying its OMML (OfficeArt equationXML, MS-ODRAW 2.3.2.10); that OMML is drawn. Without it (Word 2003 and older) the picture shows.
+31. The MathML of the formula object (Object N/content.xml, or inline in .fodt) instead of its preview picture; the StarMath annotation is not shown; mstyle variants and colours mapped.
 
 ## Tracked changes, ruby, math
 

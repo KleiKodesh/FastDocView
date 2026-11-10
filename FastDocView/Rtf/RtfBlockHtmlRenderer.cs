@@ -454,6 +454,17 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _flow.HasInline = true;
     }
 
+    public override bool WantsMath => true;
+
+    /// <summary>An equation ({\mmath}) as MathML; one that cannot be read keeps the equation mark.</summary>
+    public override void Equation(byte[] group, in RtfGroupState state)
+    {
+        if (RtfOfficeMath.ToOmml(group, state.CodePage, _tables.ColorHex) is not { } equation) { Embedded(RtfEmbeddedKind.Equation, state); return; }
+        FlushRun();
+        WordOfficeMathHtml.Append(_listTextTarget ?? _flow.Inline, equation, WordOfficeMathHtml.RunColorCss);
+        _flow.HasInline = true;
+    }
+
     public override bool WantsPictures => true;
     public override bool WantsPictureData => _capturedPictureOrdinal >= 0;
 

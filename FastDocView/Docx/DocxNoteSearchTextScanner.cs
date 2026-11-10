@@ -118,7 +118,8 @@ internal sealed class DocxNoteSearchTextScanner
             bool parentIsRun = _isRun.Count > 0 && _isRun[_isRun.Count - 1];
             if (Is(local, "drawing") || Is(local, "pict") || Is(local, "object")) return false;    // the parser strips these first
             if (Is(local, "fldChar") || Is(local, "fldSimple") || Is(local, "instrText")) return false;   // fields: read through the field stack by the parsed path
-            if (Is(local, "moveFrom") || Is(local, "rt")) return false;   // a tracked move's source / a ruby's guide: not searched - the parsed path skips them
+            if (Is(local, "moveFrom") || Is(local, "rt")) return false;
+            if (Is(local, "oMath") || Is(local, "oMathPara")) return false;   // an equation: its m:t text is read by the parsed path   // a tracked move's source / a ruby's guide: not searched - the parsed path skips them
             if (local.Length is 1 or 2 or 3 && Resolve(prefix) == NamespaceKind.Wordprocessing)
             {
                 if (local.Length == 1 && local[0] == (byte)'p')
