@@ -297,6 +297,124 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         }
     }
 
+    private static readonly byte[] ObjectElementBytes = System.Text.Encoding.ASCII.GetBytes(":object");
+
+    /// <summary>Where a "prefix:object" start tag begins in raw block bytes (the name followed by white space, "/" or ">"), or -1.</summary>
+    private static int ObjectElementAt(ReadOnlySpan<byte> bytes)
+    {
+        for (int at = 0; at < bytes.Length;)
+        {
+            int found = bytes.Slice(at).IndexOf(ObjectElementBytes);
+            if (found < 0) return -1;
+            int end = at + found + ObjectElementBytes.Length;
+            if (end < bytes.Length && bytes[end] is 0x20 or 0x09 or 0x0D or 0x0A or 0x2F or 0x3E) return at + found;
+            at += found + 1;
+        }
+        return -1;
+    }
+
+    /// <summary>The block whose bytes hold an offset of the part (the last block of [first, end) starting at or before it).</summary>
+    private static int BlockAtOffset(IOdtBlockTable blocks, long offset, int first, int end)
+    {
+        int low = first, high = end - 1;
+        while (low < high)
+        {
+            int middle = low + (high - low + 1) / 2;
+            if (blocks.BlockStartOffset(middle) <= offset) low = middle; else high = middle - 1;
+        }
+        return low;
+    }
+
+    /// <summary>A block's chart texts fed to the matcher, its hits added to the batch's (merged with the block's own text hits).</summary>
+    private void FeedChartTexts(int blockIndex, WordDocumentSearchMatcher matcher, List<int> hits, List<int> counts)
+    {
+        matcher.Reset();
+        foreach ((_, XElement element) in _reader.ReadBlocks(blockIndex, 1))
+            foreach (string text in ChartTexts(element))
+            {
+                matcher.Separator();
+                matcher.Feed(text.AsSpan());
+            }
+        int count = matcher.Count;
+        matcher.Reset();
+        if (count == 0) return;
+        int at = hits.BinarySearch(blockIndex);
+        if (at >= 0) counts[at] += count;
+        else { hits.Insert(~at, blockIndex); counts.Insert(~at, count); }
+    }
+
+    // ── charts: an embedded chart sub-document read when its block is rendered or searched ──
+
+    private const int ChartCacheSize = 16;
+    private readonly Dictionary<string, DocxHtml.DocxChart?> _charts = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The chart of a draw:object (<see cref="OdtChart"/>): a flat file's inline office:document, else the package's
+    /// "Object N/content.xml" the xlink:href names, read on a short shared open only when the block is rendered or searched
+    /// (a few recent ones kept). Null when the object is not a chart (a formula, a spreadsheet: their preview picture shows).
+    /// </summary>
+    internal DocxHtml.DocxChart? ReadChart(XElement embedded)
+    {
+        if (embedded.Element(OdtStyleCascade.Office + "document") is { } inline) return OdtChart.Read(inline);
+        if ((string?)embedded.Attribute(OdtBlockHtmlRenderer.XlinkNs + "href") is not { Length: > 0 } href || href.Contains(':')) return null;
+        string folder = (href.StartsWith("./", StringComparison.Ordinal) ? href.Substring(2) : href).TrimEnd('/');
+        if (folder.Length == 0 || folder.Contains("..")) return null;
+        lock (_readLock)
+        {
+            if (_charts.TryGetValue(folder, out DocxHtml.DocxChart? known)) return known;
+            DocxHtml.DocxChart? chart = null;
+            // a damaged sub-document (bad zip entry, malformed XML) shows the preview picture instead of failing the block or the search
+            try
+            {
+            if (File.Exists(FilePath))
+            {
+                using FileStream file = WordDocumentFileStream.OpenShared(FilePath);
+                if (!OdtPackage.IsFlatOpenDocumentText(file))
+                {
+                    file.Position = 0;
+                    using var zip = new System.IO.Compression.ZipArchive(file, System.IO.Compression.ZipArchiveMode.Read, leaveOpen: true);
+                    if (zip.GetEntry(folder + "/content.xml") is { } entry && IsChartContent(entry))
+                    {
+                        using Stream data = entry.Open();
+                        var settings = new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null };
+                        using var xml = System.Xml.XmlReader.Create(data, settings);
+                        if (XDocument.Load(xml).Root is { } root) chart = OdtChart.Read(root);
+                    }
+                }
+            }
+            }
+            catch (Exception exception) when (exception is InvalidDataException or System.Xml.XmlException or FormatException or OverflowException) { chart = null; }
+            if (_charts.Count >= ChartCacheSize) _charts.Clear();
+            _charts[folder] = chart;
+            return chart;
+        }
+    }
+
+    /// <summary>True when a sub-document's office:body holds office:chart (read up to the body's first child, so a spreadsheet or formula is never loaded).</summary>
+    private static bool IsChartContent(System.IO.Compression.ZipArchiveEntry entry)
+    {
+        using Stream data = entry.Open();
+        var settings = new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null };
+        using var xml = System.Xml.XmlReader.Create(data, settings);
+        string office = OdtStyleCascade.Office.NamespaceName;
+        bool inBody = false;
+        while (xml.Read())
+        {
+            if (xml.NodeType != System.Xml.XmlNodeType.Element) continue;
+            if (!inBody) { inBody = xml.LocalName == "body" && xml.NamespaceURI == office; continue; }
+            return xml.LocalName == "chart" && xml.NamespaceURI == office;
+        }
+        return false;
+    }
+
+    /// <summary>The texts of a block's charts (title, axis titles, categories, legend, data labels), for search; empty when it has none.</summary>
+    private IEnumerable<string> ChartTexts(XElement block)
+    {
+        foreach (XElement embedded in block.Descendants(OdtBlockHtmlRenderer.DrawNs + "object"))
+            if (embedded.Element(OdtStyleCascade.Office + "document") is null && ReadChart(embedded) is { } chart)
+                foreach (string text in chart.Texts()) yield return text;
+    }
+
     private IReadOnlyList<OdtNoteReference> KnownNoteReferences => (IReadOnlyList<OdtNoteReference>?)_index?.NoteReferences ?? _builder!.KnownNoteReferences;
 
     /// <summary>Adds the note references found since the last call to the per-kind counts.</summary>
@@ -389,6 +507,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
             _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             _renderer.RootOpenTag ??= _blocks.RootOpenTag;
             _renderer.Pictures ??= ReadPicture;
+            _renderer.Charts ??= ReadChart;
             _renderer.ListStyles ??= _blocks.ListStyleNamed;
             _renderer.ResetProvisional();
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), _blocks.ListLevelOf(blockIndex), _blocks.ListLabelLayoutOf(blockIndex),
@@ -434,6 +553,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                 int end = Math.Min(_blocks.BlockCount, wantedEnd);
                 var hits = new List<int>();
                 var counts = new List<int>();
+                var objectBlocks = new SortedSet<int>();   // blocks holding a draw:object: their charts' texts are searched after the scan
                 if (fromBlock < end)
                 {
                     _searchText ??= new OdtSearchTextScanner(_blocks.RootOpenTag);
@@ -459,6 +579,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                             if (mode == OdtSearchTextMode.ReferenceXmlReader) _referenceSearchText!.FeedOdf(bytes, start, length, matcher, options.IncludeNotes);
                             else _searchText.Feed(bytes, start, length, matcher, options.IncludeNotes);
                             BlockEnded(blockIndex);
+                            if (ObjectElementAt(bytes.AsSpan(start, length)) >= 0) objectBlocks.Add(blockIndex);
                         }
                     }
                     int scanFrom = fromBlock;
@@ -484,6 +605,11 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                             matcher.Reset();
                             WordSearchBlocksResult result = _searchText.FeedBlocks(buffer.AsSpan(start, length), scanFrom, pieceEnd, frames, matcher, options.IncludeNotes, BlockEnded, out long stoppedAt);
                             pieceStartOffset = -1;
+                            // chart objects in the piece's own blocks (bytes past pieceEnd's start belong to later batches); collected
+                            // before the verdict, so a fallen-back or redone piece keeps them (the set has each block once)
+                            long pieceBytes = pieceEnd < _blocks.BlockCount ? Math.Min(length, compact.BlockStartOffset(pieceEnd) - startOffset) : length;
+                            for (int at = 0, found; at < pieceBytes && (found = ObjectElementAt(buffer.AsSpan(start + at, (int)pieceBytes - at))) >= 0; at += found + 1)
+                                objectBlocks.Add(BlockAtOffset(compact, startOffset + at + found, scanFrom, pieceEnd));
                             WordSearchPieceVerdict verdict = WordSearchPiece.Judge(result, isEndExact, stoppedAt, length);
                             if (verdict == WordSearchPieceVerdict.FallBackFromFailedBlock)
                             {
@@ -509,6 +635,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                         }
                     }
                     if (scanFrom < end) FeedRanges(scanFrom, end);
+                    foreach (int blockIndex in objectBlocks) FeedChartTexts(blockIndex, matcher, hits, counts);
                 }
                 return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
             }

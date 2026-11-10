@@ -2177,3 +2177,24 @@ tlch); checked by the same test.
   Word 16 does not write sprmTSetBrc / sprmTSetBrc80; the test rewrites the Cv sprms of a copy into them.
 - Two tables with no paragraph between: Word 16 joins them (Tables.Count 3 -> 2, the joined table has 4 rows), so they are one
   table here too: inside lines where they meet, each row with its own definition.
+
+## ODT charts drawn from their sub-documents (2026-11-10)
+
+- A draw:frame's draw:object that points at a chart sub-document ("./Object N" -> "Object N/content.xml"; in .fodt the
+  office:document inside the draw:object) is drawn as SVG instead of its ObjectReplacements preview picture. Not a chart (a
+  formula, a spreadsheet: checked by reading content.xml only up to office:body's first child) -> the preview picture, as before.
+- One model, one renderer: `Odt/OdtChart.cs` translates chart:chart into the DrawingML chart vocabulary (namespace-free
+  c:chartSpace) and hands it to `DocxChart.Read` / `Svg`, so .docx output is untouched. Every attribute it reads is cited to
+  LibreOffice's import (xmloff/source/chart SchXMLTools.cxx:136-149 classes, PropertyMaps.cxx:95-111, 168-175, 247-248,
+  SchXMLSeries2Context.cxx:324-328, 469-471, 572-643 domains, SchXMLAxisContext.cxx:575-594, SchXMLChartContext.cxx:1129-1140,
+  SchXMLPlotAreaContext.cxx:467 wall) and to chart2 defaults (ColumnChartType.cxx:116-119 gap 100 / overlap 0,
+  ConfigColorScheme.cxx:135-139 fallback colours).
+- Data come from the chart's own table:table (cell ranges "local-table.$B$2:.$B$4"); bubble = values are sizes, first
+  domain y, second x; scatter = first domain x, later series reuse the first series' domain.
+- Windowed: the sub-document is read only when its block is rendered or searched (short shared open of the package, the
+  last 16 charts kept). Search: block bytes holding a "prefix:object" tag are re-read after the batch's scan and their chart
+  texts (title, axis titles, categories, legend, data labels) fed to the matcher; hits merge with the block's own.
+- Fixture: test-data/odt-charts/odt-charts-v1.odt made by LibreOffice through UNO (scripts/make-odt-charts.py); compared
+  with LibreOffice's own PDF export of it. Layout and automatic scaling are DocxChart's (not chart2's), so positions differ
+  from LibreOffice's; bars, slices, colours and texts match.
+- Harness: OdtChartsFidelityTest (--fidelity), the .odt and the LibreOffice-saved .fodt.

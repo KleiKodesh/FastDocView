@@ -214,14 +214,15 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Charts (c:chart from cached values, as SVG) | yes | partial (26) | partial (26) | partial (26) | n.a. | n.a. |
+| Charts (as SVG: .docx c:chart from cached values; ODT chart:chart from its embedded sub-document) | yes | partial (26) | partial (26) | yes (27) | n.a. | n.a. |
 | chartex (waterfall, treemap, sunburst, histogram, box, funnel, region map) | partial (24) | n.a. | n.a. | n.a. | n.a. | n.a. |
 | SmartArt (from its saved drawing part) | partial (25) | n.a. | n.a. | n.a. | n.a. | n.a. |
 | OLE objects (their saved preview picture) | partial | partial | partial | partial | n.a. | n.a. |
 
 24. A region map without a saved geography cache falls back to the saved picture.
 25. Without a drawing part the frame keeps its size and is empty.
-26. No chart reader for these formats (checked: no chart code in DocBinary/, Rtf/, Odt/); the chart's saved preview picture is shown when the file has one.
+26. No chart reader for .doc / RTF (checked: no chart code in DocBinary/, Rtf/); the chart's saved preview picture is shown when the file has one.
+27. Bar / column, line, area, pie, donut, scatter, radar, stock (as lines), bubble, 3-D drawn as 2-D; stacked and percent; gap and overlap; titles, subtitle, axis titles, scales, legend, value / percent / category / series labels, wall fill, series and point colours. Read only when the block is rendered or searched; chart text is found by search. Not drawn: floor, logarithmic scales, secondary axes, error bars, trend lines, stock up/down bars.
 
 ## Tracked changes, ruby, math
 

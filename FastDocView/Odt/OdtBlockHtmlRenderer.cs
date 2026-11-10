@@ -17,7 +17,7 @@ public sealed partial class OdtBlockHtmlRenderer
 {
     private static readonly XNamespace TextNs = OdtStyleCascade.Text;
     private static readonly XNamespace TableNs = OdtStyleCascade.Table;
-    private static readonly XNamespace DrawNs = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+    internal static readonly XNamespace DrawNs = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
     private static readonly XNamespace XLinkNs = "http://www.w3.org/1999/xlink";
     private static readonly XNamespace LibreOfficeNs = "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0";
 
@@ -53,7 +53,7 @@ public sealed partial class OdtBlockHtmlRenderer
     private int _textBoxDepth;       // inside a text box / shape: paragraphs are block spans (no <p> inside a <p>)
     private bool _isParagraphRightToLeft;
 
-    private static readonly XNamespace XlinkNs = "http://www.w3.org/1999/xlink";
+    internal static readonly XNamespace XlinkNs = "http://www.w3.org/1999/xlink";
     private static readonly XNamespace OfficeNs = OdtStyleCascade.Office;
     private static readonly XNamespace SvgNs = OdtStyleCascade.Svg;
     private XElement? _currentBlock;
@@ -367,8 +367,22 @@ public sealed partial class OdtBlockHtmlRenderer
     private void AppendFrame(XElement frame, StringBuilder html)
     {
         if (frame.Element(DrawNs + "text-box") is { } textBox) { AppendTextBox(frame, textBox, html); return; }
+        if (frame.Element(DrawNs + "object") is { } embedded && Charts?.Invoke(embedded) is { } chart) { AppendChart(frame, chart, html); return; }
         if (frame.Element(DrawNs + "image") is { } image) { AppendPicture(frame, image, html); return; }
         html.Append("<span class=\"unsupported\">[image]</span>");
+    }
+
+    /// <summary>The chart of a draw:object (its sub-document read on demand, <see cref="OdtChart"/>); null when the object is not a chart - its preview picture is shown.</summary>
+    internal Func<XElement, DocxHtml.DocxChart?>? Charts { get; set; }
+
+    /// <summary>A chart drawn as SVG in the frame's box, placed like a picture (the same renderer .docx charts use).</summary>
+    private void AppendChart(XElement frame, DocxHtml.DocxChart chart, StringBuilder html)
+    {
+        double width = Points((string?)frame.Attribute(SvgNs + "width")), height = Points((string?)frame.Attribute(SvgNs + "height"));
+        WordPictureLayout layout = WithContour(frame, Placement(frame, width, height), width, height, null);
+        WordShapeHtml.OpenFrame(html, layout, growsWithText: false);
+        html.Append(chart.Svg(width, height));
+        WordShapeHtml.CloseFrame(html);
     }
 
     /// <summary>The bytes of an office:binary-data picture (base64), or null when they do not decode.</summary>

@@ -119,7 +119,8 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| Charts in .doc / RTF / ODT | doc, rtf, odt | No chart reader in DocBinary/, Rtf/, Odt/ (only docx chart parts are read); the saved preview picture shows where there is one | deferred |
+| Charts in .doc / RTF | doc, rtf | No chart reader in DocBinary/, Rtf/ (docx and ODT charts are read); the saved preview picture shows where there is one | deferred |
+| ODT chart parts: floor, logarithmic scale, secondary axes, error bars, trend lines, stock up/down bars, 3-D perspective | odt | Not in the shared chart renderer (DocxChart); the rest of the chart is drawn | deferred |
 | chartex region map without a geography cache | docx | No map data; the saved fallback picture is shown | won't do |
 | SmartArt without a saved drawing part | docx | Layout engine not implemented; empty frame of the right size | deferred |
 | OLE objects as live content (embedded sheets, equations, media) | all | Only the saved preview picture is shown | won't do |
