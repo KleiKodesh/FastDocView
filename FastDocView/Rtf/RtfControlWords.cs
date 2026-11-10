@@ -1,7 +1,7 @@
 namespace FastDocView.Rtf;
 
 /// <summary>The control words the RTF reader acts on. Anything else is either a destination it skips or a word it ignores.</summary>
-internal enum RtfWord : byte
+internal enum RtfWord : ushort
 {
     Unknown = 0,
     /// <summary>A destination the reader does not render: the whole group is skipped (header, info, pict, bookmarks, ...).</summary>
@@ -33,6 +33,8 @@ internal enum RtfWord : byte
     RightToLeftParagraph, LeftToRightParagraph, InTable, NestingLevel, PageBreakBefore, DropCapLines, DropCapType, FrameHorizontalDistance, ParagraphHyphenation,
     // ── table row ──
     RowDefault, CellBoundary, CellShading, RightToLeftRow, LeftToRightRow, RowLeft, RowAlignLeft, RowAlignCenter, RowAlignRight,
+    CellMergeFirst, CellMergeContinue, CellVerticalMergeFirst, CellVerticalMergeContinue, CellAlignTop, CellAlignCenter, CellAlignBottom, CellShadingPercent,
+    CellBorderTop, CellBorderLeft, CellBorderBottom, CellBorderRight, RowBorderTop, RowBorderLeft, RowBorderBottom, RowBorderRight, RowBorderHorizontal, RowBorderVertical,
     // ── character ──
     Plain, Bold, Italic, AssociatedBold, AssociatedItalic, Underline, UnderlineDouble, UnderlineDotted, UnderlineDashed, UnderlineWave,
     UnderlineThick, UnderlineWords, UnderlineNone, Strike, StrikeDouble, FontSize, AssociatedFontSize, ForegroundColor, BackgroundColor,
@@ -134,6 +136,14 @@ internal static class RtfControlWords
         ("pagebb", RtfWord.PageBreakBefore), ("dropcapli", RtfWord.DropCapLines), ("dropcapt", RtfWord.DropCapType), ("dxfrtext", RtfWord.FrameHorizontalDistance), ("dfrmtxtx", RtfWord.FrameHorizontalDistance), ("hyphpar", RtfWord.ParagraphHyphenation), ("lang", RtfWord.Language),
         ("trowd", RtfWord.RowDefault), ("cellx", RtfWord.CellBoundary), ("clcbpat", RtfWord.CellShading), ("rtlrow", RtfWord.RightToLeftRow), ("ltrrow", RtfWord.LeftToRightRow),
         ("trleft", RtfWord.RowLeft), ("trql", RtfWord.RowAlignLeft), ("trqc", RtfWord.RowAlignCenter), ("trqr", RtfWord.RowAlignRight),
+        // cell merges, vertical alignment, shading percentage (LibreOffice rtfdispatchflag.cxx:804-845 CLMGF / CLMRG / CLVMGF / CLVMRG / CLVERTAL*,
+        // rtfdispatchvalue.cxx:477 CLSHDNG)
+        ("clmgf", RtfWord.CellMergeFirst), ("clmrg", RtfWord.CellMergeContinue), ("clvmgf", RtfWord.CellVerticalMergeFirst), ("clvmrg", RtfWord.CellVerticalMergeContinue),
+        ("clvertalt", RtfWord.CellAlignTop), ("clvertalc", RtfWord.CellAlignCenter), ("clvertalb", RtfWord.CellAlignBottom), ("clshdng", RtfWord.CellShadingPercent),
+        // cell borders (rtfdispatchflag.cxx:702-730 CLBRDR*, RTFBorderState::CELL) and row borders (\trbrdr*: not read by LibreOffice; Word is the reference)
+        ("clbrdrt", RtfWord.CellBorderTop), ("clbrdrl", RtfWord.CellBorderLeft), ("clbrdrb", RtfWord.CellBorderBottom), ("clbrdrr", RtfWord.CellBorderRight),
+        ("trbrdrt", RtfWord.RowBorderTop), ("trbrdrl", RtfWord.RowBorderLeft), ("trbrdrb", RtfWord.RowBorderBottom), ("trbrdrr", RtfWord.RowBorderRight),
+        ("trbrdrh", RtfWord.RowBorderHorizontal), ("trbrdrv", RtfWord.RowBorderVertical),
         ("plain", RtfWord.Plain), ("b", RtfWord.Bold), ("i", RtfWord.Italic), ("ab", RtfWord.AssociatedBold), ("ai", RtfWord.AssociatedItalic),
         ("ul", RtfWord.Underline), ("uldb", RtfWord.UnderlineDouble), ("uld", RtfWord.UnderlineDotted), ("ulthd", RtfWord.UnderlineDotted),
         ("uldash", RtfWord.UnderlineDashed), ("uldashd", RtfWord.UnderlineDashed), ("uldashdd", RtfWord.UnderlineDashed), ("ulldash", RtfWord.UnderlineDashed),
@@ -156,10 +166,8 @@ internal static class RtfControlWords
         ("chbrdr", RtfWord.CharacterBorder), ("brdrt", RtfWord.ParagraphBorderTop), ("brdrl", RtfWord.ParagraphBorderLeft), ("brdrb", RtfWord.ParagraphBorderBottom),
         ("brdrr", RtfWord.ParagraphBorderRight), ("box", RtfWord.ParagraphBorderBox),
         // borders this reader does not draw: the \brdr* modifiers after them must not reach a paragraph or character border
-        ("brdrbtw", RtfWord.OtherBorder), ("brdrbar", RtfWord.OtherBorder), ("clbrdrt", RtfWord.OtherBorder), ("clbrdrl", RtfWord.OtherBorder),
-        ("clbrdrb", RtfWord.OtherBorder), ("clbrdrr", RtfWord.OtherBorder), ("pgbrdrt", RtfWord.OtherBorder), ("pgbrdrl", RtfWord.OtherBorder),
-        ("pgbrdrb", RtfWord.OtherBorder), ("pgbrdrr", RtfWord.OtherBorder), ("trbrdrt", RtfWord.OtherBorder), ("trbrdrl", RtfWord.OtherBorder),
-        ("trbrdrb", RtfWord.OtherBorder), ("trbrdrr", RtfWord.OtherBorder), ("trbrdrh", RtfWord.OtherBorder), ("trbrdrv", RtfWord.OtherBorder),
+        ("brdrbtw", RtfWord.OtherBorder), ("brdrbar", RtfWord.OtherBorder), ("pgbrdrt", RtfWord.OtherBorder), ("pgbrdrl", RtfWord.OtherBorder),
+        ("pgbrdrb", RtfWord.OtherBorder), ("pgbrdrr", RtfWord.OtherBorder),
         ("brdrw", RtfWord.BorderWidth), ("brdrcf", RtfWord.BorderColor),
         ("brdrs", RtfWord.BorderSingle), ("brdrhair", RtfWord.BorderSingle), ("brdrth", RtfWord.BorderSingle), ("brdrtriple", RtfWord.BorderSingle),
         ("brdrtnthsg", RtfWord.BorderSingle), ("brdrthtnsg", RtfWord.BorderSingle), ("brdrtnthtnsg", RtfWord.BorderSingle), ("brdrtnthmg", RtfWord.BorderSingle),
@@ -168,7 +176,7 @@ internal static class RtfControlWords
         ("brdremboss", RtfWord.BorderSingle), ("brdrengrave", RtfWord.BorderSingle), ("brdroutset", RtfWord.BorderSingle), ("brdrinset", RtfWord.BorderSingle),
         ("brdrdashd", RtfWord.BorderSingle), ("brdrdashdd", RtfWord.BorderSingle), ("brdrframe", RtfWord.BorderSingle),
         ("brdrdb", RtfWord.BorderDouble), ("brdrdot", RtfWord.BorderDotted), ("brdrdash", RtfWord.BorderDashed), ("brdrdashsm", RtfWord.BorderDashed),
-        ("brdrnone", RtfWord.BorderNone), ("brdrnil", RtfWord.BorderNone),
+        ("brdrnone", RtfWord.BorderNone), ("brdrnil", RtfWord.BorderNone), ("brdrtbl", RtfWord.BorderNone),
         ("cbpat", RtfWord.ParagraphBackgroundColor), ("cfpat", RtfWord.ParagraphPatternColor), ("shading", RtfWord.ParagraphShadingPercent),
         ("bghoriz", RtfWord.ParagraphShadingPattern), ("bgvert", RtfWord.ParagraphShadingPattern), ("bgfdiag", RtfWord.ParagraphShadingPattern),
         ("bgbdiag", RtfWord.ParagraphShadingPattern), ("bgcross", RtfWord.ParagraphShadingPattern), ("bgdcross", RtfWord.ParagraphShadingPattern),

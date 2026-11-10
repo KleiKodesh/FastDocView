@@ -76,7 +76,28 @@ internal enum RtfUnderline : byte { None, Single, Double, Dotted, Dashed, Wave, 
 internal enum RtfAlignment : byte { Unset, Left, Right, Center, Justify }
 
 /// <summary>Where the \brdr* modifiers that follow go (LibreOffice RTFBorderState, rtfdocumentimpl.cxx:169-203 putBorderProperty).</summary>
-internal enum RtfBorderTarget : byte { None, Character, Top, Left, Bottom, Right, Box, Other }
+internal enum RtfBorderTarget : byte
+{
+    None, Character, Top, Left, Bottom, Right, Box, Other,
+    // the row definition's (parser state, not group state): the next \cellx's sides, the row's outer sides and inner lines
+    CellTop, CellLeft, CellBottom, CellRight, RowTop, RowLeft, RowBottom, RowRight, RowHorizontal, RowVertical,
+}
+
+/// <summary>A cell's merge marks (\clmgf / \clmrg across, \clvmgf / \clvmrg down).</summary>
+[Flags]
+internal enum RtfCellMerge : byte { None = 0, First = 1, Continue = 2, VerticalFirst = 4, VerticalContinue = 8 }
+
+/// <summary>One cell of a row definition: its right edge (\cellx), fill (\clcbpat, \clshdng), merge marks, vertical alignment and borders.</summary>
+[StructLayout(LayoutKind.Sequential, Pack = 1)]
+internal struct RtfCellDefinition
+{
+    public int Boundary;
+    public short Shading;            // colour-table index, 0 = none
+    public short ShadingPercent;     // \clshdng in hundredths of a percent
+    public RtfCellMerge Merge;
+    public byte VerticalAlignment;   // 0 top, 1 centre, 2 bottom
+    public RtfBorder Top, Left, Bottom, Right;
+}
 
 internal enum RtfBorderStyle : byte { Absent, Single, Double, Dotted, Dashed, None }
 

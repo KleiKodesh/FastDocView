@@ -17,7 +17,11 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     {
         public readonly List<string> Cells = new();
         public readonly StringBuilder Cell = new();
+        /// <summary>A nested table's rows read so far: drawn as one table (real rowspans) when the cell around it goes on.</summary>
+        public readonly List<NestedRow> PendingRows = new();
     }
+
+    private sealed record NestedRow(RtfCellDefinition[] Cells, RtfBorder[] RowBorders, bool IsRightToLeft, string[] Html);
 
     /// <summary>Where paragraphs go: the block (or a note body) and the paragraph being built.</summary>
     private sealed class Flow
@@ -93,6 +97,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _nextNote = 0;
         _renderedNotes = notes.Length == 0 ? null : new List<WordDocumentNoteHtml>(notes.Length);
         _indexListLabel = table.ListLabelOf(blockIndex);
+        _cellsMergedBelow = index.CellsMergedBelow(blockIndex);
         _isFirstParagraph = true;
         _fields.Restore(table.FieldStateOf(blockIndex));
         _fieldLinks.Clear();
@@ -109,8 +114,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         while (_flow != _bodyFlow) EndNote(isEndnote: false);
         FlushRun();
         if (_flow.HasInline) EmitParagraph(_parser.Current, isSectionEnd: false);
-        for (int level = _flow.Tables.Count - 1; level >= 0; level--)
-            if (_flow.Tables[level].Cells.Count > 0 || _flow.Tables[level].Cell.Length > 0) CloseRow(level + 1);
+        CloseOpenTables();
         return (_bodyFlow.Output.ToString(), (IReadOnlyList<WordDocumentNoteHtml>?)_renderedNotes ?? []);
     }
 
@@ -326,7 +330,12 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (isTopLevel) _isFirstParagraph = false;
         _baselineShift = 0;                                            // an ADVANCE up / down shift lasts to the paragraph end
 
-        if (isInTable) CellOf(Math.Max(1, (int)state.NestingLevel)).Cell.Append(html);
+        if (isInTable)
+        {
+            int level = Math.Max(1, (int)state.NestingLevel);
+            FlushNestedTablesAbove(level);                                // a nested table ended: the cell goes on below it
+            CellOf(level).Cell.Append(html);
+        }
         else _flow.Output.Append(html);
     }
 
@@ -449,6 +458,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     public override bool WantsPictureData => _capturedPictureOrdinal >= 0;
 
     private int _blockIndex;
+    private ulong _cellsMergedBelow;     // the outer row's cells that the next row continues (\clvmrg), from the index
     private int _pictureOrdinal;                 // pictures met in this block so far (their ids count them)
     private bool _hasDrawnListTextBullet;        // the {\listtext} picture bullet is drawn once per block
     private int _capturedPictureOrdinal = -1;    // >= 0: ReadPicture wants that picture's bytes
@@ -559,8 +569,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (_textBoxOuterFlow is null) return;
         FlushRun();
         if (_flow.HasInline) EmitParagraph(_parser.Current, isSectionEnd: false);
-        for (int level = _flow.Tables.Count - 1; level >= 0; level--)
-            if (_flow.Tables[level].Cells.Count > 0 || _flow.Tables[level].Cell.Length > 0) CloseRow(level + 1);
+        CloseOpenTables();
         string html = _flow.Output.ToString();
         _flow = _textBoxOuterFlow;
         _textBoxOuterFlow = null;
@@ -771,6 +780,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             inCell.NestingLevel = (byte)level;
             EmitParagraph(inCell, isSectionEnd: false);
         }
+        FlushNestedTablesAbove(level);
         TableLevel table = CellOf(level);
         table.Cells.Add(table.Cell.ToString());
         table.Cell.Clear();
@@ -791,52 +801,179 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         CloseRow(level);
     }
 
+    /// <summary>A block (or text box) ends: rows left open are closed, nested tables drawn into their cells, innermost first.</summary>
+    private void CloseOpenTables()
+    {
+        for (int level = _flow.Tables.Count; level >= 1; level--)
+        {
+            FlushNestedTablesAbove(level);
+            if (_flow.Tables[level - 1].Cells.Count > 0 || _flow.Tables[level - 1].Cell.Length > 0) CloseRow(level);
+        }
+        FlushNestedTablesAbove(1);
+    }
+
+    /// <summary>Draws the nested tables deeper than <paramref name="level"/> whose rows are all read into the cell that holds them.</summary>
+    private void FlushNestedTablesAbove(int level)
+    {
+        for (int nested = _flow.Tables.Count; nested > Math.Max(1, level); nested--)
+        {
+            TableLevel table = _flow.Tables[nested - 1];
+            if (table.PendingRows.Count == 0) continue;
+            var html = new StringBuilder(256);
+            AppendNestedTable(html, table.PendingRows);
+            table.PendingRows.Clear();
+            CellOf(nested - 1).Cell.Append(html);
+        }
+    }
+
+    /// <summary>
+    /// Closes a row. An outer row is one block and its own &lt;table&gt; (the windowed rule: a cell merged down is drawn by its
+    /// borders - see <see cref="RtfRandomAccessIndex.CellsMergedBelow"/>); a nested row (\nestrow, read inside the outer row's
+    /// block) waits in its level until the cell around it goes on, and its table is drawn whole, with rowspans.
+    /// </summary>
     private void CloseRow(int level)
     {
         TableLevel table = CellOf(level);
         if (table.Cell.Length > 0) { table.Cells.Add(table.Cell.ToString()); table.Cell.Clear(); }
+        string[] cellsHtml = table.Cells.ToArray();
+        table.Cells.Clear();
+        if (level > 1)
+        {
+            // Word writes the nested row's definition ({\*\nesttableprops}) right before its \nestrow
+            table.PendingRows.Add(new NestedRow(_parser.NestedCells.ToArray(), _parser.NestedRowBorders.ToArray(), _parser.IsNestedRowRightToLeft, cellsHtml));
+            return;
+        }
         var html = new StringBuilder(256);
-        bool isOuter = level == 1;
+        IReadOnlyList<RtfCellDefinition> cells = _parser.Cells;
         // An outer row is as wide as its cells (\cellx are right edges from the column's left, the first cell starts at \trleft -
         // LibreOffice rtfdocumentimpl.cxx: cell width = cellx - previous, first = cellx - trleft; trleft = the table indent);
         // \trqc / \trqr centre it / put it at the right.
-        string? rowCss = null;
-        if (isOuter)
-        {
-            IReadOnlyList<int> edges = _parser.CellBoundaries;
-            int rowLeft = _parser.RowLeftTwips;
-            int rowWidth = edges.Count > 0 ? edges[edges.Count - 1] - rowLeft : 0;
-            rowCss = "table-layout:fixed;" + (rowWidth > 0 ? "width:" + WordParagraphFormatting.TwipsToPt(rowWidth) + "pt;" : "")
-                   + (_parser.RowAlignment switch
-                   {
-                       1 => "margin-left:auto;margin-right:auto;",
-                       2 => "margin-left:auto;margin-right:0;",
-                       // 	rleft: "the leftmost edge of the table with respect to the left edge of its column" (RTF 1.5 spec,
-                       // Row Formatting) - a physical left, also in a right-to-left row
-                       _ => "margin-left:" + (rowLeft != 0 ? WordParagraphFormatting.TwipsToPt(rowLeft) + "pt" : "0") + ";margin-right:auto;",
-                   });
-        }
-        WordHtmlText.AppendOpenTag(html, "table", rowCss, isOuter ? "table-row" : null, _parser.IsRowRightToLeft ? true : null);
+        int rowLeft = _parser.RowLeftTwips;
+        int rowWidth = cells.Count > 0 ? cells[cells.Count - 1].Boundary - rowLeft : 0;
+        string rowCss = "table-layout:fixed;" + (rowWidth > 0 ? "width:" + WordParagraphFormatting.TwipsToPt(rowWidth) + "pt;" : "")
+                      + (_parser.RowAlignment switch
+                      {
+                          1 => "margin-left:auto;margin-right:auto;",
+                          2 => "margin-left:auto;margin-right:0;",
+                          // \trleft: "the leftmost edge of the table with respect to the left edge of its column" (RTF 1.5 spec,
+                          // Row Formatting) - a physical left, also in a right-to-left row
+                          _ => "margin-left:" + (rowLeft != 0 ? WordParagraphFormatting.TwipsToPt(rowLeft) + "pt" : "0") + ";margin-right:auto;",
+                      });
+        WordHtmlText.AppendOpenTag(html, "table", rowCss, "table-row", _parser.IsRowRightToLeft ? true : null);
         html.Append("<tr>");
-        IReadOnlyList<int> boundaries = _parser.CellBoundaries;
-        IReadOnlyList<short> shading = _parser.CellShading;
-        for (int i = 0; i < table.Cells.Count; i++)
-        {
-            var css = new StringBuilder();
-            if (isOuter && i < boundaries.Count)
+        ulong mergedBelow = _flow == _bodyFlow ? _cellsMergedBelow : 0;
+        AppendRowCells(html, cells, _parser.RowBorders, cellsHtml, rowLeft, rowSpans: null, mergedBelow);
+        html.Append("</tr></table>");
+        _flow.Output.Append(html);
+    }
+
+    /// <summary>A nested table, all its rows read: one &lt;table&gt;, cells merged down (\clvmgf + \clvmrg below) as rowspans.</summary>
+    private void AppendNestedTable(StringBuilder html, List<NestedRow> rows)
+    {
+        WordHtmlText.AppendOpenTag(html, "table", "table-layout:fixed;", "nested-table", rows[0].IsRightToLeft ? true : null);
+        // a \clvmrg cell with no merge above it at the same edge (malformed, or a table that starts mid-merge) is an ordinary cell
+        for (int row = 0; row < rows.Count; row++)
+            for (int i = 0; i < rows[row].Cells.Length; i++)
             {
-                int width = boundaries[i] - (i == 0 ? _parser.RowLeftTwips : boundaries[i - 1]);
+                ref RtfCellDefinition cell = ref rows[row].Cells[i];
+                if ((cell.Merge & RtfCellMerge.VerticalContinue) == 0) continue;
+                int edge = cell.Boundary;
+                bool hasAbove = row > 0 && rows[row - 1].Cells.Any(above => above.Boundary == edge && (above.Merge & (RtfCellMerge.VerticalFirst | RtfCellMerge.VerticalContinue)) != 0);
+                if (!hasAbove) cell.Merge = (cell.Merge & ~RtfCellMerge.VerticalContinue) | RtfCellMerge.VerticalFirst;
+            }
+        for (int row = 0; row < rows.Count; row++)
+        {
+            RtfCellDefinition[] cells = rows[row].Cells;
+            var rowSpans = new int[cells.Length];
+            for (int i = 0; i < cells.Length; i++)
+            {
+                if ((cells[i].Merge & RtfCellMerge.VerticalFirst) == 0) continue;
+                int span = 1;
+                while (row + span < rows.Count && rows[row + span].Cells.Any(below => below.Boundary == cells[i].Boundary && (below.Merge & RtfCellMerge.VerticalContinue) != 0))
+                    span++;
+                rowSpans[i] = span;
+            }
+            html.Append("<tr>");
+            AppendRowCells(html, cells, rows[row].RowBorders, rows[row].Html, 0, rowSpans, 0);
+            html.Append("</tr>");
+        }
+        html.Append("</table>");
+    }
+
+    /// <summary>
+    /// The &lt;td&gt;s of one row from its definition: width (\cellx - the previous edge), \clmgf + \clmrg as a colspan (a
+    /// continued cell's text is dropped, as Word and LibreOffice do), \clvmrg cells covered by a rowspan (nested) or drawn
+    /// empty with no top border (outer rows: one block each), fill (\clcbpat, \clshdng), \clvertalc / b, and the borders
+    /// (\clbrdr*, else the row's \trbrdr*; none named = no line, as Word draws it).
+    /// </summary>
+    private void AppendRowCells(StringBuilder html, IReadOnlyList<RtfCellDefinition> cells, IReadOnlyList<RtfBorder> rowBorders, string[] cellsHtml,
+                                int rowLeft, int[]? rowSpans, ulong mergedBelow)
+    {
+        int count = Math.Max(cells.Count, cellsHtml.Length);
+        // a row that names no border at all keeps the stylesheet's cell lines (old writers save none; drawn as before)
+        bool hasBorders = rowBorders.Any(border => border.Style != RtfBorderStyle.Absent)
+                          || cells.Any(cell => cell.Top.Style != RtfBorderStyle.Absent || cell.Left.Style != RtfBorderStyle.Absent
+                                               || cell.Bottom.Style != RtfBorderStyle.Absent || cell.Right.Style != RtfBorderStyle.Absent)
+                          || mergedBelow != 0 || cells.Any(cell => (cell.Merge & RtfCellMerge.VerticalContinue) != 0);
+        for (int i = 0; i < count; i++)
+        {
+            RtfCellDefinition cell = i < cells.Count ? cells[i] : default;
+            if ((cell.Merge & RtfCellMerge.Continue) != 0 && (cell.Merge & RtfCellMerge.First) == 0 && i > 0) continue;   // drawn by the first cell
+            bool isCoveredBelow = (cell.Merge & RtfCellMerge.VerticalContinue) != 0;
+            if (isCoveredBelow && rowSpans is not null) continue;                                                       // under a rowspan
+            int span = 1;
+            while (i + span < cells.Count && (cells[i + span].Merge & RtfCellMerge.Continue) != 0 && (cells[i + span].Merge & RtfCellMerge.First) == 0) span++;
+            int last = i + span - 1;
+            var css = new StringBuilder();
+            if (i < cells.Count)
+            {
+                int width = cells[Math.Min(last, cells.Count - 1)].Boundary - (i == 0 ? rowLeft : cells[i - 1].Boundary);
                 if (width > 0) css.Append("width:").Append(WordParagraphFormatting.TwipsToPt(width)).Append("pt;");
-                if (_tables.ColorHex(shading[i]) is { } fill) css.Append("background:").Append(WordHtmlColor.Css(fill)).Append(';');
+                if (CellFillCss(cell) is { } fill) css.Append("background:").Append(fill).Append(';');
+                if (cell.VerticalAlignment != 0) css.Append("vertical-align:").Append(cell.VerticalAlignment == 1 ? "middle" : "bottom").Append(';');
+                bool isFirst = i == 0, isLast = last >= cells.Count - 1;
+                RtfCellDefinition lastCell = cells[Math.Min(last, cells.Count - 1)];
+                if (hasBorders) AppendCellBorders(css, cell, lastCell, rowBorders, isFirst, isLast, isCoveredBelow, (mergedBelow & (1UL << Math.Min(i, 63))) != 0);
             }
             html.Append("<td");
+            if (span > 1) html.Append(" colspan=\"").Append(span.ToString(CultureInfo.InvariantCulture)).Append('"');
+            if (rowSpans is not null && i < rowSpans.Length && rowSpans[i] > 1) html.Append(" rowspan=\"").Append(rowSpans[i].ToString(CultureInfo.InvariantCulture)).Append('"');
+            if (isCoveredBelow) html.Append(" class=\"merged-up\"");
             if (css.Length > 0) html.Append(" style=\"").Append(css).Append('"');
-            html.Append('>').Append(table.Cells[i]).Append("</td>");
+            html.Append('>');
+            if (!isCoveredBelow && i < cellsHtml.Length) html.Append(cellsHtml[i]);
+            html.Append("</td>");
         }
-        html.Append("</tr></table>");
-        table.Cells.Clear();
-        if (level == 1) _flow.Output.Append(html);
-        else CellOf(level - 1).Cell.Append(html);
+    }
+
+    private void AppendCellBorders(StringBuilder css, in RtfCellDefinition cell, in RtfCellDefinition lastCell, IReadOnlyList<RtfBorder> rowBorders,
+                                   bool isFirst, bool isLast, bool isCoveredBelow, bool isMergedBelow)
+    {
+        AppendCellBorder(css, "top", cell.Top, rowBorders[0], rowBorders[4], forceNone: isCoveredBelow);
+        AppendCellBorder(css, "bottom", cell.Bottom, rowBorders[2], rowBorders[4], forceNone: isMergedBelow);
+        AppendCellBorder(css, "left", cell.Left, isFirst ? rowBorders[1] : rowBorders[5], default, forceNone: false);
+        AppendCellBorder(css, "right", lastCell.Right, isLast ? rowBorders[3] : rowBorders[5], default, forceNone: false);
+    }
+
+    /// <summary>One side: the cell's own border, else the row's for that side (\trbrdrt / b / l / r, inner \trbrdrh / v), else none.</summary>
+    private void AppendCellBorder(StringBuilder css, string side, in RtfBorder own, in RtfBorder row, in RtfBorder inner, bool forceNone)
+    {
+        string? value = forceNone ? "none" : BorderCss(own) ?? BorderCss(row) ?? BorderCss(inner) ?? "none";
+        css.Append("border-").Append(side).Append(':').Append(value).Append(';');
+    }
+
+    /// <summary>
+    /// The cell fill: \clcbpat, darkened by \clshdng (hundredths of a percent of the pattern colour - black, the auto colour - over
+    /// the fill; LibreOffice rtfdispatchvalue.cxx:477-540 maps it to w:shd pctN, which Word draws as that mix).
+    /// </summary>
+    private string? CellFillCss(in RtfCellDefinition cell)
+    {
+        string? fill = _tables.ColorHex(cell.Shading);
+        if (cell.ShadingPercent <= 0) return fill is null ? null : WordHtmlColor.Css(fill);
+        int baseColor = fill is { Length: 6 } ? int.Parse(fill, NumberStyles.HexNumber, CultureInfo.InvariantCulture) : 0xFFFFFF;
+        double keep = 1 - cell.ShadingPercent / 10000.0;
+        int Mix(int shift) => (int)Math.Round(((baseColor >> shift) & 0xFF) * keep);
+        return "#" + (Mix(16) << 16 | Mix(8) << 8 | Mix(0)).ToString("X6", CultureInfo.InvariantCulture);
     }
 
     // ── notes ────────────────────────────────────────────────────────────────────────

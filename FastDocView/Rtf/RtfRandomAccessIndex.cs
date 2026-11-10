@@ -18,7 +18,7 @@ public readonly record struct RtfNoteReference(int BlockIndex, WordDocumentNoteK
 public sealed class RtfRandomAccessIndex
 {
     private const string Magic = "KHRTFIDX";
-    private const int FormatVersion = 15;    // 15: list level character formatting, Word 6 levels; 14: list picture bullets; 13: list level fonts; 12: drop caps, hyphenation, language (group state + header); 11: gutter placement (rtlgutter, gutterprl) in section widths; 10: group state carries borders, shading, underline colour, emphasis; 9: section column lefts; 8: XE / TA entries;     // 7: anchor heads hold the open fields + field counters (RtfFieldTracker)
+    private const int FormatVersion = 16;    // 16: row definitions carry merges, vertical alignment, cell + row borders (snapshot), rows merged down; 15: list level character formatting, Word 6 levels; 14: list picture bullets; 13: list level fonts; 12: drop caps, hyphenation, language (group state + header); 11: gutter placement (rtlgutter, gutterprl) in section widths; 10: group state carries borders, shading, underline colour, emphasis; 9: section column lefts; 8: XE / TA entries;     // 7: anchor heads hold the open fields + field counters (RtfFieldTracker)
      // 4: compact block tables; 5: no per-block tables - span anchors + parser snapshot + list state, Elias-Fano lists; 6: row indent + alignment in the snapshot
     /// <summary>File bytes between span anchors: a random block rescans at most this much.</summary>
     public const long AnchorSpanBytes = 256 << 10;
@@ -43,6 +43,21 @@ public sealed class RtfRandomAccessIndex
 
     /// <summary>XE / TA field codes with their blocks ("block U+0001 code"): an INDEX / TOA saved without a result is built from them.</summary>
     public string[] IndexEntries { get; init; } = [];
+
+    /// <summary>
+    /// Outer table rows whose cells the next row continues (\clvmgf / \clvmrg): the row's block and a bit per cell (by its
+    /// \cellx order). A row is one block, so a cell merged down is drawn as cells without the line between them; which cell
+    /// goes on below needs the next row, so it is found at index time.
+    /// </summary>
+    public int[] MergedRowBlocks { get; init; } = [];
+    public ulong[] MergedRowCells { get; init; } = [];
+
+    /// <summary>The cells of row <paramref name="blockIndex"/> that the next row continues (bit i = cell i); 0 when none.</summary>
+    public ulong CellsMergedBelow(int blockIndex)
+    {
+        int at = Array.BinarySearch(MergedRowBlocks, blockIndex);
+        return at >= 0 ? MergedRowCells[at] : 0;
+    }
     private readonly WordListCounterState.DeltaChain _scanStates;
 
     public RtfRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, RtfDocumentTables tables, bool isRightToLeft,
@@ -155,6 +170,9 @@ public sealed class RtfRandomAccessIndex
         new EliasFanoSequence(Bookmarks.Blocks).Write(writer);
         Section($"bookmarks ({Bookmarks.Names.Length})");
         IndexBinaryArrays.WriteCompressedStrings(writer, IndexEntries);
+        IndexBinaryArrays.WriteDeltaVarints(writer, MergedRowBlocks);
+        foreach (ulong cells in MergedRowCells) writer.Write(cells);
+        Section($"rows merged down ({MergedRowBlocks.Length})");
         writer.Flush();
     }
 
@@ -211,6 +229,10 @@ public sealed class RtfRandomAccessIndex
         if (bookmarkBlocks.Length != bookmarkNames.Length || bookmarkBlocks.Any(block => block < 0 || block >= Math.Max(1, blockCount)))
             throw new InvalidDataException("RTF index: bookmark table does not match the blocks.");
         string[] indexEntries = IndexBinaryArrays.ReadCompressedStrings(reader);
+        int[] mergedRowBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
+        if (mergedRowBlocks.Any(block => (uint)block >= (uint)blockCount)) throw new InvalidDataException("RTF index: merged rows do not match the blocks.");
+        var mergedRowCells = new ulong[mergedRowBlocks.Length];
+        for (int i = 0; i < mergedRowCells.Length; i++) mergedRowCells[i] = reader.ReadUInt64();
         return new RtfRandomAccessIndex(sourceLength, sourceTicks, tables, isRightToLeft, blockCount, lastBlockEnd, anchors, groupTotals, headings, notes)
         {
             SectionLastBlocks = sectionLastBlocks,
@@ -218,6 +240,8 @@ public sealed class RtfRandomAccessIndex
             SectionColumnLefts = sectionColumnLefts,
             Bookmarks = new WordDocumentBookmarkTable(bookmarkNames, bookmarkBlocks),
             IndexEntries = indexEntries,
+            MergedRowBlocks = mergedRowBlocks,
+            MergedRowCells = mergedRowCells,
         };
     }
 
