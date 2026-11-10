@@ -101,7 +101,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Picture cropping (a:srcRect, \piccrop, fo:clip) | docx, rtf, odt (doc: size only) | Crop is not applied: the whole picture is drawn in the frame | deferred |
 | Through wrap (text over holes) | all | Holes cannot be laid out in CSS; drawn as tight | won't do |
 | Page / margin-relative vertical position | all | No page | planned (paged view) |
-| Pictures in web archives | mhtml | Shown as `[image]` (blocks carry no pictures yet) | deferred |
 | Picture effects (artistic effects, recolour, soft edges, 3-D rotation) | docx | Not read | deferred |
 
 ## Shapes, WordArt, text boxes

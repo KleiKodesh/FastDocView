@@ -8,7 +8,7 @@ The view is a **flow view** (Word's draft / continuous view): no pages. Anything
 separate paged view, which is not built yet.
 
 - MHTML = Word web archives: the HTML Word saved is passed through block by block; `<style>` sheets are dropped,
-  so only inline formatting survives, and pictures show as `[image]`.
+  so only inline formatting survives. Pictures are read from their archive part on request (the `<img>` Word writes; its VML copy is skipped).
 - .txt = one block per line (encoding detection identical to Notepad++), plus the Torat Emet book markup.
 
 **How to verify:** in `FastDocView.Tests`, `dotnet run -c Release -- --audit <files>` (unhandled constructs per file, keep at 0),
@@ -184,7 +184,7 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Inline pictures (by id through the host's picture endpoint) | yes | yes | yes | yes | n.a. | no |
+| Inline pictures (by id through the host's picture endpoint) | yes | yes | yes | yes | n.a. | yes |
 | Floating pictures: square, tight, top-and-bottom wrap, offsets | yes | yes | yes | yes | n.a. | n.a. |
 | Contour wrap from the wrap polygon | yes | yes | yes | yes | n.a. | n.a. |
 | Two-sided wrap (floats flush to its nearer edge; contour as shape-outside) | yes (18) | yes (18) | yes (18) | yes (18) | n.a. | n.a. |

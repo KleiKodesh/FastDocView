@@ -1,4 +1,5 @@
 using System.Text;
+using FastDocView.Html;
 
 namespace FastDocView.Markup;
 
@@ -41,7 +42,8 @@ public static class MarkupBlockRenderer
         return true;
     }
 
-    public static string Render(string openTags, string content)
+    /// <param name="drawsPictures">A web archive: its &lt;img&gt; parts are read on request. Plain text has no parts, so an &lt;img&gt; typed in it stays the placeholder.</param>
+    public static string Render(string openTags, string content, bool drawsPictures = false)
     {
         string text = openTags + content;
         var html = new StringBuilder(text.Length + 32);
@@ -89,13 +91,71 @@ public static class MarkupBlockRenderer
                 i = close < 0 ? text.Length : Math.Max(close, text.IndexOf('>', close) + 1);
                 continue;
             }
-            if (name == "img" || name == "v:imagedata") { html.Append(ImagePlaceholder); continue; }
+            // Word's web archive writes each picture twice: VML (v:imagedata) and an <img> fallback inside <![if !vml]>, which is
+            // what a browser shows (it has no VML). The <img> is drawn through the picture pipeline; the VML copy is skipped.
+            if (name == "v:imagedata") continue;
+            if (name == "img") { if (drawsPictures) AppendPicture(html, tag); else html.Append(ImagePlaceholder); continue; }
             if (DroppedTags.Contains(name)) continue;
             html.Append(Sanitize(tag, name));
             if (!VoidElements.Contains(name) && !isSelfClosing) open.Add(name);
         }
         for (int k = open.Count - 1; k >= 0; k--) html.Append("</").Append(open[k]).Append('>');
         return html.ToString();
+    }
+
+    /// <summary>The prefix of a web-archive picture id; the rest is the &lt;img&gt;'s src (see MarkupWindowedDocument.ReadPicture).</summary>
+    public const string WebArchivePicturePrefix = "mh:";
+
+    /// <summary>An &lt;img&gt; as a picture read on request: its src names the archive part, width / height (CSS px) keep the box.</summary>
+    private static void AppendPicture(StringBuilder html, string tag)
+    {
+        string? source = AttributeValue(tag, "src");
+        if (string.IsNullOrWhiteSpace(source) || !IsSafeValue(source!)) { html.Append(ImagePlaceholder); return; }
+        double Points(string attribute) =>
+            double.TryParse(AttributeValue(tag, attribute), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double px) && px > 0 ? px * 72 / 96 : 0;
+        var layout = new WordPictureLayout(Points("width"), Points("height"), WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0);
+        WordPictureHtml.Append(html, layout, WebArchivePicturePrefix + System.Net.WebUtility.HtmlDecode(source!.Trim()));
+    }
+
+    /// <summary>One attribute's value in a start tag (quoted or bare, names case-insensitive), or null - the same rules as <see cref="Sanitize"/>.</summary>
+    private static string? AttributeValue(string tag, string wanted)
+    {
+        int i = 1;
+        while (i < tag.Length && !char.IsWhiteSpace(tag[i]) && tag[i] != '>' && tag[i] != '/') i++;   // past the element name
+        while (i < tag.Length)
+        {
+            while (i < tag.Length && (char.IsWhiteSpace(tag[i]) || tag[i] == '/')) i++;
+            if (i >= tag.Length || tag[i] == '>') return null;
+            int nameStart = i;
+            while (i < tag.Length && !char.IsWhiteSpace(tag[i]) && tag[i] != '=' && tag[i] != '>' && tag[i] != '/') i++;
+            string attribute = tag.Substring(nameStart, i - nameStart);
+            string? value = null;
+            int afterName = i;
+            while (i < tag.Length && char.IsWhiteSpace(tag[i])) i++;
+            if (i < tag.Length && tag[i] == '=')
+            {
+                i++;
+                while (i < tag.Length && char.IsWhiteSpace(tag[i])) i++;
+                if (i < tag.Length && (tag[i] == '"' || tag[i] == '\''))
+                {
+                    char quote = tag[i];
+                    int close = tag.IndexOf(quote, i + 1);
+                    if (close < 0) close = tag.Length - 1;
+                    value = tag.Substring(i + 1, close - i - 1);
+                    i = close + 1;
+                }
+                else
+                {
+                    int start = i;
+                    while (i < tag.Length && !char.IsWhiteSpace(tag[i]) && tag[i] != '>') i++;
+                    value = tag.Substring(start, i - start);
+                }
+            }
+            else i = afterName;
+            if (attribute.Length == 0) { i++; continue; }
+            if (attribute.Equals(wanted, StringComparison.OrdinalIgnoreCase)) return value ?? "";
+        }
+        return null;
     }
 
     private static bool IsAsciiLetter(char c) => (c | 0x20) >= 'a' && (c | 0x20) <= 'z';

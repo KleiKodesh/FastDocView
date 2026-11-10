@@ -226,9 +226,9 @@ public static class MarkupIndexAndRenderTest
         bool ok = prefix[0].Html.Contains("<h1 dir=RTL>" + Title + " 1</h1>")
                   && prefix[1].Html.StartsWith("<div class=WordSection1 dir=RTL>") && prefix[1].Html.Contains("<b>" + Bold + "</b> a=b")
                   && prefix[2].Kind == WordDocumentBlockKind.Table && prefix[2].Html.Contains(Line)
-                  && prefix[3].Html.Contains(MarkupBlockRenderer.ImagePlaceholder) && !prefix[3].Html.Contains("v:shape") && !prefix[3].Html.Contains("<img");
+                  && prefix[3].Html.Contains("data-word-picture=\"" + MarkupBlockRenderer.WebArchivePicturePrefix + "image001.png\"") && !prefix[3].Html.Contains("v:shape") && !prefix[3].Html.Contains("image-placeholder");
         if (!ok) foreach (WordDocumentBlockHtml block in prefix) Console.WriteLine($"      {block.BlockIndex}: {Ascii(block.Html)}");
-        TestReport.Check(ok, $"{what}: heading, paragraph reopening its section div, table block, image placeholder");
+        TestReport.Check(ok, $"{what}: heading, paragraph reopening its section div, table block, picture (VML copy skipped)");
         TestReport.Check(document.Headings.Count == MhtmlExpectedHeadingCount(count) && document.Headings[0].Text == Title + " 1", $"{what}: headings {document.Headings.Count}");
         var random = new Random(3);
         bool windowsOk = true;

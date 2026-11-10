@@ -50,6 +50,55 @@ public static class WebArchiveContainer
         throw new InvalidDataException("Web archive: no text/html part.");
     }
 
+    /// <summary>
+    /// The decoded body of the first leaf part whose headers satisfy <paramref name="matches"/> (headers lower-cased), with its
+    /// Content-Type and Content-Location; null when no part matches. Only part headers are read until the match, then that one
+    /// body - never another part or the whole archive (a picture is read on request, like every other format's).
+    /// </summary>
+    public static byte[]? ReadPart(Stream file, Func<IReadOnlyDictionary<string, string>, bool> matches, out string contentType, out string location)
+    {
+        contentType = location = "";
+        file.Position = 0;
+        var lines = new MarkupLineReader(file);
+        Dictionary<string, string> top = ReadHeaders(lines);
+        string topType = top.TryGetValue("content-type", out string? t) ? t : "";
+        string? boundary = Parameter(topType, "boundary");
+        if (!MediaType(topType).StartsWith("multipart/", StringComparison.Ordinal) || string.IsNullOrEmpty(boundary)) return null;
+        var boundaries = new List<string> { boundary! };
+        while (boundaries.Count > 0 && lines.ReadLine(out ReadOnlySpan<byte> line, out _))
+        {
+            int level = boundaries.Count - 1;
+            bool isClose = false;
+            while (level >= 0 && !IsBoundaryLine(line, boundaries[level], out isClose)) level--;
+            if (level < 0) continue;
+            boundaries.RemoveRange(level + 1, boundaries.Count - level - 1);
+            if (isClose) { boundaries.RemoveAt(level); continue; }
+            Dictionary<string, string> part = ReadHeaders(lines);
+            string type = part.TryGetValue("content-type", out string? pt) ? pt : "text/plain";
+            string? inner = Parameter(type, "boundary");
+            if (MediaType(type).StartsWith("multipart/", StringComparison.Ordinal) && !string.IsNullOrEmpty(inner)) { boundaries.Add(inner!); continue; }
+            if (!matches(part)) continue;
+            contentType = MediaType(type);
+            location = part.TryGetValue("content-location", out string? l) ? l : "";
+            var decoder = new MimeTransferDecoder(TransferEncodingOf(part));
+            var body = new MemoryStream();
+            var decoded = new byte[0];
+            while (lines.ReadLine(out ReadOnlySpan<byte> bodyLine, out long offset))
+            {
+                bool ends = false;
+                foreach (string open in boundaries) if (IsBoundaryLine(bodyLine, open, out _)) { ends = true; break; }
+                if (ends) break;
+                byte[] encoded = bodyLine.ToArray();
+                if (decoded.Length < encoded.Length + 4) decoded = new byte[encoded.Length + 4];
+                int produced = 0;
+                decoder.Feed(encoded, 0, encoded.Length, offset, decoded, null, ref produced);
+                body.Write(decoded, 0, produced);
+            }
+            return body.ToArray();
+        }
+        return null;
+    }
+
     /// <summary>"--boundary" [whitespace] (or the "--boundary--" close-delimiter), RFC 2046 §5.1.1.</summary>
     public static bool IsBoundaryLine(ReadOnlySpan<byte> line, string boundary, out bool isClose)
     {

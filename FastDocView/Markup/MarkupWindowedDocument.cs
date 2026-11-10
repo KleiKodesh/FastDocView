@@ -18,8 +18,58 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
 {
     /// <summary>Text and web archives carry no page setup: Word's default text width.</summary>
     public int? FindBookmark(string name) => null;     // bookmarks not indexed for this format yet
-    /// <summary>Plain text has no pictures; a web archive's pictures are not shown yet (its blocks carry none).</summary>
-    public WordDocumentPicture? ReadPicture(string pictureId) => null;
+    /// <summary>
+    /// A web archive's picture by the id its &lt;img&gt; carries ("mh:" + src): the archive part whose Content-Location is the src
+    /// (Word writes "file:///.../name_files/image001.png" for src "name_files/image001.png", so a location ending in "/" + src
+    /// matches too), or whose Content-ID is a "cid:" src. Only part headers are read until it, then that one body (RFC 2557 §8).
+    /// Plain text has no pictures.
+    /// </summary>
+    public WordDocumentPicture? ReadPicture(string pictureId)
+    {
+        if (!pictureId.StartsWith(MarkupBlockRenderer.WebArchivePicturePrefix, StringComparison.Ordinal)) return null;
+        string source = pictureId.Substring(MarkupBlockRenderer.WebArchivePicturePrefix.Length);
+        lock (_readLock)
+        {
+            if (_index.Kind != MarkupSourceKind.WebArchive) return null;
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                bool isContentId = source.StartsWith("cid:", StringComparison.OrdinalIgnoreCase);
+                string wanted = isContentId ? source.Substring(4).Trim('<', '>') : NormalizedLocation(source);
+                if (wanted.Length == 0) return null;
+                // An exact Content-Location first; only when none is exact, a location ending in "/" + src (Word's relative srcs).
+                string contentType = "", partLocation = "";
+                byte[]? bytes = isContentId
+                    ? WebArchiveContainer.ReadPart(_file, headers => headers.TryGetValue("content-id", out string? id)
+                          && id.Trim().Trim('<', '>').Equals(wanted, StringComparison.OrdinalIgnoreCase), out contentType, out partLocation)
+                    : WebArchiveContainer.ReadPart(_file, headers => headers.TryGetValue("content-location", out string? location)
+                          && NormalizedLocation(location) == wanted, out contentType, out partLocation)
+                      ?? WebArchiveContainer.ReadPart(_file, headers => headers.TryGetValue("content-location", out string? location)
+                          && NormalizedLocation(location).EndsWith("/" + wanted, StringComparison.Ordinal), out contentType, out partLocation);
+                if (bytes is null) return null;
+                string extension = Path.GetExtension(NormalizedLocation(partLocation.Length > 0 ? partLocation : source));
+                if (WordPictureHtml.ContentTypeOf(extension) is null) extension = contentType switch
+                {
+                    "image/png" => ".png", "image/jpeg" or "image/jpg" or "image/pjpeg" => ".jpg", "image/gif" => ".gif",
+                    "image/bmp" => ".bmp", "image/webp" => ".webp", "image/svg+xml" => ".svg", _ => WordPictureHtml.ExtensionOf(bytes),
+                };
+                return WordPictureHtml.Picture(extension, bytes);
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
+    /// <summary>A location compared case-insensitively with '%' escapes decoded, '\' as '/', and no leading "./".</summary>
+    private static string NormalizedLocation(string location)
+    {
+        string value;
+        try { value = Uri.UnescapeDataString(location.Trim()); } catch (UriFormatException) { value = location.Trim(); }
+        value = value.Replace('\\', '/');
+        while (value.StartsWith("./", StringComparison.Ordinal)) value = value.Substring(2);
+        int query = value.IndexOfAny(['?', '#']);
+        return (query < 0 ? value : value.Substring(0, query)).ToLowerInvariant();
+    }
+
     public IReadOnlyList<WordDocumentSection> Sections => WordDocumentPageSetup.DefaultSections;
 
     private const int ReadChunkBytes = 1 << 16;
@@ -300,7 +350,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         {
             string content = DecodeBlock(text, textStart, block);
             string openTags = _table.OpenTags(block);
-            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(openTags, content)
+            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(openTags, content, drawsPictures: true)
                         : _index.ToratEmet is { } toratEmet ? (block == 0 && toratEmet.HasHead ? ToratEmetFormat.RenderHeader(toratEmet, FirstTitle(_index)) : ToratEmetFormat.RenderLine(openTags, content))
                         : MarkupBlockRenderer.RenderLine(openTags, content);
             WordDocumentBlockKind kind = content.TrimStart().StartsWith("<table", StringComparison.OrdinalIgnoreCase) ? WordDocumentBlockKind.Table : WordDocumentBlockKind.Paragraph;

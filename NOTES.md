@@ -2198,3 +2198,9 @@ tlch); checked by the same test.
   with LibreOffice's own PDF export of it. Layout and automatic scaling are DocxChart's (not chart2's), so positions differ
   from LibreOffice's; bars, slices, colours and texts match.
 - Harness: OdtChartsFidelityTest (--fidelity), the .odt and the LibreOffice-saved .fodt.
+## Web archive pictures (2026-11-10)
+Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) and an `<img>` fallback inside
+`<![if !vml]>`, which is what a browser shows. The renderer skips the VML copy and draws the `<img>` through the picture
+pipeline (id "mh:" + src, width/height from the tag). `ReadPicture` reads only part headers until the part whose
+Content-Location is the src (or ends with "/" + src) or whose Content-ID is a `cid:` src, then decodes that one body
+(RFC 2557). Test: `--mhtml-pictures` (in `--fidelity`), fixture test-data/word-mhtml/pictures-v1.mht from Word 16.
