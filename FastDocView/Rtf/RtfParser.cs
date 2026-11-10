@@ -662,6 +662,11 @@ internal sealed class RtfParser
             case RtfWord.LevelLegal: if (_level is not null && _levelDepth >= 0) _level.Legal = isOn; return;
             case RtfWord.LevelJustification: if (_level is not null && _levelDepth >= 0) _level.Justification = parameter; return;
             case RtfWord.LevelFollow: if (_level is not null && _levelDepth >= 0) _level.Follow = parameter; return;
+            // \levelold / \levelspace / \levelindent: a Word 6 level (RTF 1.9.1 list table; LibreOffice reads none of them - Word 16 writes
+            // them for w:legacy, make-legacy-lists-fixture.ps1)
+            case RtfWord.LevelOld: if (_level is not null && _levelDepth >= 0) _level.IsLegacy = isOn; return;
+            case RtfWord.LevelSpace: if (_level is not null && _levelDepth >= 0) _level.LegacySpace = parameter; return;
+            case RtfWord.LevelIndent: if (_level is not null && _levelDepth >= 0) _level.LegacyIndent = parameter; return;
             // \levelpicture N: the level's bullet is picture N of {\*\listpicture} (LibreOffice rtfdispatchvalue.cxx:130-132 LEVELPICTURE ->
             // lvlPicBulletId; the pictures are numbered from 0 in file order: rtfdocumentimpl.cxx:3853-3864 m_nListPictureId++)
             case RtfWord.LevelPicture: if (_level is not null && _levelDepth >= 0 && hasParameter && parameter >= 0) _level.Picture = parameter; return;
@@ -1000,14 +1005,17 @@ internal sealed class RtfParser
             case RtfWord.Bold: case RtfWord.AssociatedBold:
                 if (isComplexSlot) { state.Set(RtfStateFlags.ComplexBold, isOn); state.Set(RtfStateFlags.ComplexBoldSet, true); }
                 else state.Set(RtfStateFlags.Bold, isOn);
+                if (_level is not null && _levelDepth >= 0) { if (isComplexSlot) _level.ComplexBold = (sbyte)(isOn ? 1 : 0); else _level.Bold = (sbyte)(isOn ? 1 : 0); }
                 return;
             case RtfWord.Italic: case RtfWord.AssociatedItalic:
                 if (isComplexSlot) { state.Set(RtfStateFlags.ComplexItalic, isOn); state.Set(RtfStateFlags.ComplexItalicSet, true); }
                 else state.Set(RtfStateFlags.Italic, isOn);
+                if (_level is not null && _levelDepth >= 0) { if (isComplexSlot) _level.ComplexItalic = (sbyte)(isOn ? 1 : 0); else _level.Italic = (sbyte)(isOn ? 1 : 0); }
                 return;
             case RtfWord.Font: case RtfWord.AssociatedFont:
                 if (_headerDepth >= 0 && _stack[_headerDepth].Destination == RtfDestination.FontTable) { StartFontEntry(parameter); return; }
                 if (word == RtfWord.Font && _level is not null && _levelDepth >= 0) _level.Font = parameter;
+                if (isComplexSlot && _level is not null && _levelDepth >= 0) _level.ComplexFont = parameter;
                 if (isComplexSlot) { state.ComplexFont = (short)parameter; state.Set(RtfStateFlags.ComplexFontSet, true); }
                 else state.Font = (short)parameter;
                 if (word == RtfWord.Font) state.CodePage = _tables.CodePageOfFont(parameter);   // LibreOffice: only \f changes the encoding
@@ -1017,6 +1025,7 @@ internal sealed class RtfParser
                 short size = (short)(hasParameter ? Math.Max(1, Math.Min(3276, parameter)) : 24);
                 if (isComplexSlot) { state.ComplexFontSize = size; state.Set(RtfStateFlags.ComplexSizeSet, true); }
                 else state.FontSize = size;
+                if (_level is not null && _levelDepth >= 0) { if (isComplexSlot) _level.ComplexFontSize = size; else _level.FontSize = size; }
                 return;
             }
             case RtfWord.Underline: state.Underline = isOn ? RtfUnderline.Single : RtfUnderline.None; return;
@@ -1028,7 +1037,7 @@ internal sealed class RtfParser
             case RtfWord.UnderlineWords: state.Underline = isOn ? RtfUnderline.Words : RtfUnderline.None; return;
             case RtfWord.UnderlineNone: state.Underline = RtfUnderline.None; return;
             case RtfWord.Strike: case RtfWord.StrikeDouble: state.Set(RtfStateFlags.Strike, isOn); return;
-            case RtfWord.ForegroundColor: state.ForegroundColor = (short)parameter; return;
+            case RtfWord.ForegroundColor: state.ForegroundColor = (short)parameter; if (_level is not null && _levelDepth >= 0) _level.Color = parameter; return;
             case RtfWord.BackgroundColor: state.BackgroundColor = (short)parameter; return;
             // \chcbpat = the shading fill (LibreOffice rtfdispatchvalue.cxx:920-925 CHCBPAT -> w:shd fill); \chcfpat / \chshdng /
             // \chbg* (RTF 1.5 spec "Character Borders and Shading") are not read by LibreOffice: Word is the reference, mixed as w:shd.

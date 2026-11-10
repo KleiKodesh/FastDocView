@@ -22,7 +22,8 @@ public sealed class DocxNumberingDefinitions
     /// <param name="RunProperties">The level's w:rPr: the label's own formatting.</param>
     public sealed record LevelDefinition(string Format, string Text, int Start, int? Restart = null, bool IsLegal = false,
                                          string Suffix = "tab", XElement? RunProperties = null,
-                                         XElement? ParagraphProperties = null, string Justification = "left", int? PictureBulletId = null);
+                                         XElement? ParagraphProperties = null, string Justification = "left", int? PictureBulletId = null,
+                                         Html.WordListLabelLegacy? Legacy = null);
 
     /// <summary>
     /// A w:numPicBullet (17.9.20): the picture's relationship id in numbering.xml's part (VML v:imagedata r:id or a DrawingML
@@ -174,7 +175,11 @@ public sealed class DocxNumberingDefinitions
         // w:lvlJc (17.9.7): where the label sits against its position; w:pPr (17.9.23): the level's indents and tab stops
         string justification = (string?)level.Element(W + "lvlJc")?.Attribute(W + "val") ?? "left";
         int? pictureBulletId = DocxStyleCascade.TwipsAttribute(level.Element(W + "lvlPicBulletId"), "val");
-        return new LevelDefinition(format, text, start, restart, isLegal, suffix, level.Element(W + "rPr"), level.Element(W + "pPr"), justification, pictureBulletId);
+        // w:legacy (17.9.10): a Word 6 / 95 level - legacySpace / legacyIndent in twips (absent = 0) replace the suffix (WordListLabelLegacy)
+        Html.WordListLabelLegacy? legacy = level.Element(W + "legacy") is { } legacyElement && DocxStyleCascade.IsOn(legacyElement.Attribute(W + "legacy"))
+            ? new Html.WordListLabelLegacy(DocxStyleCascade.TwipsAttribute(legacyElement, "legacySpace") ?? 0, DocxStyleCascade.TwipsAttribute(legacyElement, "legacyIndent") ?? 0)
+            : null;
+        return new LevelDefinition(format, text, start, restart, isLegal, suffix, level.Element(W + "rPr"), level.Element(W + "pPr"), justification, pictureBulletId, legacy);
     }
 
     /// <summary>

@@ -281,7 +281,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
         if (css is { Length: 0 }) css = null;
         WordListLabelSuffix suffix = level?.FollowCharacter switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab };
         WordListLabelAlignment alignment = level?.Justification switch { 1 => WordListLabelAlignment.Center, 2 => WordListLabelAlignment.End, _ => WordListLabelAlignment.Start };
-        WordListLabelHtml.Append(html, label, css, suffix, formatting, DefaultTabStopTwips, alignment);
+        WordListLabelHtml.Append(html, label, css, suffix, formatting, DefaultTabStopTwips, alignment, legacy: level?.Legacy);
     }
 
     /// <summary>

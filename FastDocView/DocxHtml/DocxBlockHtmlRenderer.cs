@@ -344,7 +344,7 @@ public sealed class DocxBlockHtmlRenderer
             }
             string labelCss = labelMark.ToCss(formatting.RunFormatting) + DocxStyleCascade.LevelCssFor(label.LevelCss, usesComplexScript);
             WordListLabelSuffix suffix = label.Suffix switch { DocxListLabelSuffix.Space => WordListLabelSuffix.Space, DocxListLabelSuffix.Nothing => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab };
-            WordListLabelHtml.Append(html, label.Text, labelCss.Length > 0 ? labelCss : null, suffix, formatting, _styles.Compatibility.DefaultTabStopTwips, label.Alignment);
+            WordListLabelHtml.Append(html, label.Text, labelCss.Length > 0 ? labelCss : null, suffix, formatting, _styles.Compatibility.DefaultTabStopTwips, label.Alignment, legacy: label.Legacy);
         }
         if (_listLabel is not null) _listLabel = null;              // only the block's first paragraph carries it
         if (dropCapParagraph is not null)

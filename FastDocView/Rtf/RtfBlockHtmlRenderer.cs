@@ -307,15 +307,15 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         {
             html.Append(_flow.Inline.ToString(0, listText.position));            // net48 has no Append(StringBuilder, int, int)
             WordListLabelHtml.Append(html, listText.html, PictureBulletCss(state, isTopLevel), listText.hasTab ? WordListLabelSuffix.Tab : WordListLabelSuffix.Nothing, formatting,
-                                     WordListLabelHtml.DefaultTabStopTwips, labelAlignment, isLabelHtml: true);
+                                     WordListLabelHtml.DefaultTabStopTwips, labelAlignment, isLabelHtml: true, legacy: listLevel?.Legacy);
             html.Append(_flow.Inline.ToString(listText.position, _flow.Inline.Length - listText.position));
             _flow.ListText = null;
         }
         else
         {
             if (isTopLevel && _isFirstParagraph && _indexListLabel is { Length: > 0 } label)
-                WordListLabelHtml.Append(html, label, SymbolFontCss(label, listLevel), listLevel?.Follow switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab },
-                                         formatting, WordListLabelHtml.DefaultTabStopTwips, labelAlignment);
+                WordListLabelHtml.Append(html, label, CountedLabelCss(state, label, listLevel), listLevel?.Follow switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab },
+                                         formatting, WordListLabelHtml.DefaultTabStopTwips, labelAlignment, legacy: listLevel?.Legacy);
             html.Append(_flow.Inline);
         }
         html.Append("</").Append(tag).Append('>');
@@ -334,6 +334,36 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     private string? PictureBulletCss(in RtfGroupState state, bool isTopLevel)
         => isTopLevel && _isFirstParagraph && _indexListLabel is { } label && WordListLabelHtml.PictureOf(label) is not null
            ? RunFormatting(state, false).ToCss(_documentRun) : null;
+
+    /// <summary>
+    /// A label counted at index time (no \listtext): the paragraph mark's formatting (the state at its \par) plus the level's own
+    /// \listlevel character formatting, in the Latin or complex-script set the label picks (WordListLabelScript) - what Word 16
+    /// writes when it re-saves such a file (list-bullets-nolisttext-v1.rtf: "1." = mark \f \fs + level \b \cf).
+    /// </summary>
+    private string? CountedLabelCss(in RtfGroupState state, string label, RtfDocumentTables.ListLevelDefinition? level)
+    {
+        if (WordListLabelHtml.PictureOf(label) is not null) return RunFormatting(state, false).ToCss(_documentRun);
+        // a symbol-font bullet is judged by its symbol code, strong left-to-right (as the .docx path: DocxStyleCascade.IsLatinLabel)
+        bool isSymbolBullet = level is { NumberFormat: 23 } && _tables.FontName(level.Font) is not null;
+        bool isComplex = !isSymbolBullet && WordListLabelScript.UsesComplexScript(label, state.Has(RtfStateFlags.RightToLeftParagraph));
+        WordRunFormatting run = RunFormatting(state, isComplex);
+        if (level is not null)
+        {
+            sbyte bold = isComplex ? level.ComplexBold : level.Bold, italic = isComplex ? level.ComplexItalic : level.Italic;
+            int size = isComplex ? level.ComplexFontSize : level.FontSize;
+            if (bold >= 0) run.IsBold = bold == 1;
+            if (italic >= 0) run.IsItalic = italic == 1;
+            if (size > 0) run.FontSizeHalfPoints = (short)size;
+            if (_tables.ColorHex(level.Color) is { } color) run.ColorHex = color;
+            if (isComplex && _tables.FontName(level.ComplexFont) is { } complexFont) run.FontName = complexFont;
+        }
+        // the level's \f: a Wingdings bullet keeps it; a Symbol bullet was recoded at index time and draws in the text's font
+        if (!isComplex && level is not null && _tables.FontName(level.Font) is { } font
+            && (level.NumberFormat != 23 || SymbolFontCss(label, level) is not null))
+            run.FontName = font;
+        string css = run.ToCss(_documentRun);
+        return css.Length > 0 ? css : null;
+    }
 
     /// <summary>A Wingdings / Webdings bullet keeps its code (WordSymbolFontBullet) and is drawn in the level's font.</summary>
     private string? SymbolFontCss(string label, RtfDocumentTables.ListLevelDefinition? listLevel)

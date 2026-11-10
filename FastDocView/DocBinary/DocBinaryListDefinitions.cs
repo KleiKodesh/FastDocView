@@ -30,6 +30,9 @@ public sealed class DocBinaryListDefinitions
         public byte RestartLimitLevel;             // ilvlRestartLim
         public byte[] PlaceholderOffsets = [];     // rgbxchNums: one-based offsets into NumberText, zero-terminated
         public byte FollowCharacter;               // ixchFollow: 0 tab, 1 space, 2 nothing
+        /// <summary>A Word 6 / 95 level: LVLF flag 0x40 with dxaSpace (offset 16) and dxaIndent (offset 20) - LibreOffice ww8par3.cxx:672-674
+        /// (bV6 = 0x40) and :691-692 (nV6DxaSpace, nV6Indent); Word 16 writes w:legacy's legacySpace / legacyIndent there (make-legacy-lists-fixture.ps1).</summary>
+        public Html.WordListLabelLegacy? Legacy;
         public string NumberText = "";             // xst.rgtchar; a placeholder's char value is the zero-based level it stands for
         public int ParagraphGrpprlLength;
         public int CharacterGrpprlLength;
@@ -238,7 +241,8 @@ public sealed class DocBinaryListDefinitions
             NoRestart = (flags & 0x08) != 0,
             PlaceholderOffsets = lvlf.AsSpan(6, 9).ToArray(),
             FollowCharacter = lvlf[15],
-            // 16: dxaIndentSav, 20: unused2 (4 bytes each)
+            // 16 / 20: dxaSpace / dxaIndent of a Word 6 level (flag 0x40); [MS-DOC] 2.9.150 names them dxaIndentSav / unused2
+            Legacy = (flags & 0x40) != 0 ? new Html.WordListLabelLegacy(BitConverter.ToInt32(lvlf, 16), BitConverter.ToInt32(lvlf, 20)) : null,
             CharacterGrpprlLength = lvlf[24],
             ParagraphGrpprlLength = lvlf[25],
             RestartLimitLevel = lvlf[26],

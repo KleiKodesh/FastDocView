@@ -21,9 +21,14 @@ public static class ListBulletsFidelityTest
             if (!File.Exists(path)) { TestReport.Check(false, $"test-data/word-lists/list-bullets-v1{extension} present"); continue; }
             Check(path, extension);
         }
+        // the same .rtf without its flat label groups (strip-list-labels.py): every label counted and drawn from the level's formatting
+        string bare = Path.GetFullPath(Path.Combine(folder, "list-bullets-nolisttext-v1.rtf"));
+        if (File.Exists(bare)) Check(bare, ".rtf", hasFlatLabels: false);
+        else TestReport.Check(false, "test-data/word-lists/list-bullets-nolisttext-v1.rtf present");
+        LegacyListsFidelityTest.Run();
     }
 
-    private static void Check(string path, string format)
+    private static void Check(string path, string format, bool hasFlatLabels = true)
     {
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-list-bullets-" + format.TrimStart('.')) };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
@@ -57,7 +62,8 @@ public static class ListBulletsFidelityTest
         string label = Label(styled);
         TestReport.Check(label.Contains("#FF0000") && !label.Contains("font-weight:bold") && !label.Contains("font-size:11pt"),
                          $"{format}: the numbered label is red, complex-script size and not bold, as Word draws it (got [{Shorten(label)}])");
-        if (format is ".doc" or ".rtf")
+        // Word 16's re-save of the label-less .rtf writes the label's complex-script font as the mark's (\af0), not Arial: no font check
+        if (format is ".doc" || (format == ".rtf" && hasFlatLabels))
             TestReport.Check(label.Contains("font-family:'Arial'") || (format == ".doc" && Regex.IsMatch(styled, "<p [^>]*font-family:'Arial'")),
                              $"{format}: the numbered label draws in the complex-script font Arial (got [{Shorten(styled)}])");
     }

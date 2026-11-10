@@ -1,0 +1,16 @@
+text x=144 | legacy none item | 1.
+text x=144 | legacy s0i0 item | 1.
+text x=157.65 | legacy s0i1000 item | 1.
+text x=167.6 | legacy s1000i0 item | 1.
+text x=157.65 | legacy s100i1000 item | 1.
+text x=144 | legacy s0i200 item | 1.
+text x=152.7 | legacy s700i0 item | 1.
+text x=182.5 | legacy s0i1500 item | 1.
+text x=144 | legacy none item | 1.
+text x=131.6 | legacy s0i0 item | 1.
+text x=172.55 | legacy s0i1000 item | 1.
+text x=181.25 | legacy s1000i0 item | 1.
+text x=172.55 | legacy s100i1000 item | 1.
+text x=131.6 | legacy s0i200 item | 1.
+text x=166.35 | legacy s700i0 item | 1.
+text x=197.4 | legacy s0i1500 item | 1.

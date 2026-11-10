@@ -24,7 +24,15 @@ public sealed class RtfDocumentTables
         public int Justification;       // \leveljc: 0 left, 1 center, 2 right (LibreOffice rtfdispatchvalue.cxx reads \leveljc, not \leveljcn)
         public int Follow;              // \levelfollow: 0 tab, 1 space, 2 nothing
         public int Picture = -1;        // \levelpicture: the picture bullet (an index into ListPictures), -1 none
-        public int Font = -1;           //  in the \listlevel group: the label's font (a symbol-font bullet is recoded against it)
+        public int Font = -1;           // \f in the \listlevel group: the label's font (a symbol-font bullet is recoded against it)
+        // The label's own character formatting: \af \fs \afs \cf \b \i in the \listlevel group = the level's rPr (LibreOffice
+        // rtfdocumentimpl.cxx:2322 / rtfdispatchvalue.cxx:203 put them in the level's table sprms). -1 = not set. Word draws a
+        // counted label with the paragraph mark's formatting plus these (Word 16 re-save of list-bullets-nolisttext-v1.rtf).
+        public int ComplexFont = -1, FontSize = -1, ComplexFontSize = -1, Color = -1;
+        public sbyte Bold = -1, ComplexBold = -1, Italic = -1, ComplexItalic = -1;
+        public bool IsLegacy;                  // \levelold: a Word 6 level, drawn with \levelspace / \levelindent (WordListLabelLegacy)
+        public int LegacySpace, LegacyIndent;
+        public Html.WordListLabelLegacy? Legacy => IsLegacy ? new Html.WordListLabelLegacy(LegacySpace, LegacyIndent) : null;
     }
 
     /// <summary>A {\pict} of {\*\listpicture}: where its body starts in the file (its bytes are read on demand), its type and goal size.</summary>
@@ -101,6 +109,9 @@ public sealed class RtfDocumentTables
                 writer.Write(level.NumberFormat); writer.Write(level.StartAt); writer.Write(level.Text);
                 writer.Write(level.NumberPositions.Length); writer.Write(level.NumberPositions);
                 writer.Write(level.NoRestart); writer.Write(level.Legal); writer.Write(level.Justification); writer.Write(level.Follow); writer.Write(level.Font); writer.Write(level.Picture);
+                writer.Write(level.ComplexFont); writer.Write(level.FontSize); writer.Write(level.ComplexFontSize); writer.Write(level.Color);
+                writer.Write(level.Bold); writer.Write(level.ComplexBold); writer.Write(level.Italic); writer.Write(level.ComplexItalic);
+                writer.Write(level.IsLegacy); writer.Write(level.LegacySpace); writer.Write(level.LegacyIndent);
             }
         }
         writer.Write(ListOverrides.Count);
@@ -150,6 +161,9 @@ public sealed class RtfDocumentTables
                 if (definition.NumberPositions.Length != positions) throw new EndOfStreamException("RTF index: list table truncated.");
                 definition.NoRestart = reader.ReadBoolean(); definition.Legal = reader.ReadBoolean();
                 definition.Justification = reader.ReadInt32(); definition.Follow = reader.ReadInt32(); definition.Font = reader.ReadInt32(); definition.Picture = reader.ReadInt32();
+                definition.ComplexFont = reader.ReadInt32(); definition.FontSize = reader.ReadInt32(); definition.ComplexFontSize = reader.ReadInt32(); definition.Color = reader.ReadInt32();
+                definition.Bold = reader.ReadSByte(); definition.ComplexBold = reader.ReadSByte(); definition.Italic = reader.ReadSByte(); definition.ComplexItalic = reader.ReadSByte();
+                definition.IsLegacy = reader.ReadBoolean(); definition.LegacySpace = reader.ReadInt32(); definition.LegacyIndent = reader.ReadInt32();
                 list.Levels[level] = definition;
             }
             tables.Lists[key] = list;

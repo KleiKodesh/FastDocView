@@ -12,6 +12,14 @@ public enum WordListLabelSuffix : byte { Tab, Space, Nothing }
 public enum WordListLabelAlignment : byte { Start, Center, End }
 
 /// <summary>
+/// A Word 6 / 95 style level (.docx w:legacy, ECMA-376 17.9.10; .doc LVLF fWord6 with dxaSpace / dxaIndent). LibreOffice reads
+/// w:legacy and drops it (NumberingManager.cxx:119-120) and keeps only dxaIndent as the list tab position for .doc (ww8par3.cxx:976-979),
+/// so Word 16 is the reference (make-legacy-lists-fixture.ps1): no tab after the label - the text starts at the furthest of the start
+/// indent, label start + IndentTwips, label end + SpaceTwips.
+/// </summary>
+public readonly record struct WordListLabelLegacy(int SpaceTwips, int IndentTwips);
+
+/// <summary>
 /// Draws a list label where Word puts it. The label starts at the first-line position (start indent + first-line
 /// indent; the hanging indent puts it before the text column). After a tab suffix the text starts at the next tab stop
 /// after the label's start: a custom stop, the start indent itself when the paragraph hangs (Word's implicit list tab
@@ -27,10 +35,23 @@ public static class WordListLabelHtml
 
     public static void Append(StringBuilder html, string label, string? labelCss, WordListLabelSuffix suffix,
                               WordParagraphFormatting paragraph, int defaultTabStopTwips,
-                              WordListLabelAlignment alignment = WordListLabelAlignment.Start, bool isLabelHtml = false)
+                              WordListLabelAlignment alignment = WordListLabelAlignment.Start, bool isLabelHtml = false, WordListLabelLegacy? legacy = null)
     {
         html.Append("<span class=\"list-marker\"");
         string css = labelCss ?? "";
+        if (legacy is { } word6)
+        {
+            int hanging = Math.Max(0, -paragraph.FirstLineIndentTwips);
+            int reach = Math.Max(hanging, word6.IndentTwips);
+            if (reach > 0) css += "min-width:" + WordParagraphFormatting.TwipsToPt(reach) + "pt;";
+            html.Append(" style=\"").Append(css).Append("\"><span");
+            if (word6.SpaceTwips > 0) html.Append(" style=\"padding-inline-end:").Append(WordParagraphFormatting.TwipsToPt(word6.SpaceTwips)).Append("pt\"");
+            html.Append('>');
+            if (PictureOf(label) is { } legacyPicture) AppendPicture(html, legacyPicture);
+            else html.Append(isLabelHtml ? label : WordHtmlText.Encode(label));
+            html.Append("</span></span>");
+            return;
+        }
         if (suffix == WordListLabelSuffix.Tab && TabGapTwips(paragraph, defaultTabStopTwips) is var gap && gap > 0)
             css += "min-width:" + WordParagraphFormatting.TwipsToPt(gap) + "pt;";
         if (css.Length > 0) html.Append(" style=\"").Append(css).Append('"');

@@ -228,7 +228,7 @@ public sealed class DocxDocumentParts
             if (definition is not null && !_levelParagraphXml.TryGetValue(definition, out paragraphXml!))
                 _levelParagraphXml[definition] = paragraphXml = definition.ParagraphProperties?.ToString(SaveOptions.DisableFormatting) ?? "";
             return new DocxListLabel(label, DocxListLabel.SuffixOf(definition?.Suffix), css, paragraphXml, DocxListLabel.AlignmentOf(definition?.Justification),
-                                     string.Join("\u0001", _counter.ContextOf(numId, level)));
+                                     string.Join("\u0001", _counter.ContextOf(numId, level)), definition?.Legacy);
         }
 
         /// <summary>The counter state now (empty when the document has no numbering).</summary>

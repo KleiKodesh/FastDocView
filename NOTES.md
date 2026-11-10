@@ -1991,8 +1991,8 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 | isLgl | yes | yes | yes (\levellegal) | n/a |
 | Suffix tab / space / nothing | yes | yes | yes | yes (label-followed-by) |
 | lvlJc, level indents / tab | yes | yes | yes (\leveljc) | yes (label-alignment) |
-| Label rPr (font, size, colour, b, i, u) | yes | yes (grpprlChpx) | no (counted path); \listtext runs keep their formatting | yes (text:style-name) |
-| Legacy numbering (w:legacy) | no (indent rules of Word 6 lists ignored) | no | no | n/a |
+| Label rPr (font, size, colour, b, i, u) | yes | yes (grpprlChpx) | yes (\listlevel group: \f \af \fs \afs \cf \b \i over the mark); \listtext runs keep their formatting | yes (text:style-name) |
+| Legacy numbering (w:legacy) | yes (legacySpace / legacyIndent) | yes (LVLF 0x40, dxaSpace / dxaIndent) | yes (\levelold \levelspace \levelindent) | n/a |
 | Style-linked numbering (pStyle in lvl, numStyleLink / styleLink) | yes | yes (rgistdPara) | no | n/a |
 | Symbol-font bullets | yes | yes | yes | yes (text-properties fo:font-family / style:font-name) |
 | Picture bullets (numPicBullet, \listpicture, list-level-style-image) | yes (VML / DrawingML) | yes (_PictureBullets) | yes (\listpicture) | yes (package picture) |
@@ -2070,8 +2070,8 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   drawn in the text font; Wingdings keeps its code and font.
 - Test: `ListBulletsFidelityTest` now runs every check on .doc and .rtf too (the skip is gone), plus the picture bullet's label size
   (11 / 24 pt) and the symbol bullets' 11 pt in all four formats; the numbered label is checked red, complex size, not bold.
-- Not done (body runs: fixed, see the next section): RTF labels counted at index time (no \listtext) do not take the level's \leveltext character formatting;
-  legacy numbering (w:legacy, .doc fPrev / fPrevSpace) is not drawn; a .doc bullet whose Wingdings font is set only by sprmCFtcBi.
+- Not done (body runs: fixed, see the next section; counted RTF labels and legacy numbering: fixed, see "Label formatting without \listtext;
+  Word 6 levels"): a .doc bullet whose Wingdings font is set only by sprmCFtcBi.
 
 ## Body text: Latin or complex-script set per run (2026-11-09; index format .docx 21)
 
@@ -2095,5 +2095,21 @@ tlch); checked by the same test.
   (writerfilter dmapper/NumberingManager.cxx:271-273). All formats draw a plain U+2022 in the text font (the WordSymbolFontBullet rule
   for a symbol code in a non-symbol font); .docx no longer falls back to w:cs for the bullet font (index 21: labels are stored).
 - Test: `BodyScriptFidelityTest` (`--body-script`, in `--fidelity`) over body-script-v1.docx / .doc / .rtf / .odt.
-- Not done: RTF labels counted at index time (no \listtext) do not take the \listlevel group's character formatting; legacy
-  numbering (w:legacy / w:legacySpace / w:legacyIndent, .doc fPrev / fPrevSpace) is not drawn.
+- Counted RTF labels and legacy numbering: done, see the next section.
+
+## Label formatting without \listtext; Word 6 levels (2026-11-10)
+
+- RTF labels counted at index time (no \listtext / \pntext) draw with the paragraph mark's formatting (the state at \par) plus the
+  level's own character words in its \listlevel group (\f \af \fs \afs \cf \b \i, per Latin / complex-script slot), in the set the
+  label picks (WordListLabelScript; a symbol-font bullet is Latin). LibreOffice: rtfdocumentimpl.cxx:2322 and rtfdispatchvalue.cxx:203 /
+  :770 put these in the level's table sprms (its rPr; \cf is not, rtfdispatchvalue.cxx:834-841). Word 16 reference: re-saving
+  list-bullets-nolisttext-v1.rtf (Word's list-bullets-v1.rtf with every flat label group removed, strip-list-labels.py) writes
+  "1." as \b\f37\fs22\cf6 = mark \f \fs + level \b \cf, the bullets in the level's font; its complex-script font comes back as
+  \af0, so the bare file is not checked for Arial. RTF index format 15.
+- Word 6 / 95 levels: .docx w:legacy (legacySpace / legacyIndent, ECMA-376 17.9.10), .doc LVLF flag 0x40 with dxaSpace at 16 and
+  dxaIndent at 20 (LibreOffice ww8par3.cxx:672-674, :691-692; [MS-DOC] 2.9.150 names those fields dxaIndentSav / unused2), RTF
+  \levelold \levelspace \levelindent. LibreOffice drops w:legacy (NumberingManager.cxx:119-120) and uses dxaIndent only as the list
+  tab position (ww8par3.cxx:976-979), so Word 16 is the reference: legacy-lists-v1 (make-legacy-lists.py + make-legacy-lists-fixture.ps1,
+  text positions in legacy-lists-v1.expected.txt) shows no tab after the label - the text starts at the furthest of the start indent,
+  label start + legacyIndent and label end + legacySpace. Drawn as a label box min-width max(hanging, legacyIndent) whose label is padded
+  by legacySpace (WordListLabelLegacy). Test: LegacyListsFidelityTest (in --list-bullets).
