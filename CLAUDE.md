@@ -114,6 +114,10 @@ view over SQLite.
   doesn't support it, say so and treat Word as the reference.
 
 - Every new format feature needs a harness check (synthetic or real file) and a NOTES.md update.
+- **Keep the feature lists current** (user, 2026-11-10): every change that adds, completes, removes
+  or limits a feature updates [docs/SUPPORTED-FEATURES.md](docs/SUPPORTED-FEATURES.md) and
+  [docs/UNSUPPORTED-FEATURES.md](docs/UNSUPPORTED-FEATURES.md) in the same commit: move the item
+  between them, fix its per-format cells, and state the reason for anything still unsupported.
 - Long runs report progress per step (`IProgress<WordDocumentIndexProgress>`, every 100 files in
   corpus mode) and stay light: below-normal priority, one file at a time, bounded memory.
 - Default sidecar threshold is 8 MB of text (body + notes); change it with a measurement.
