@@ -102,16 +102,21 @@ List number formats are under active work (Fields/ and the numbering files); NOT
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Borders (table, cell; theme colours in docx) | yes | yes | yes | yes | n.a. | partial (2) |
+| Borders (table, cell; theme colours in docx) | yes | partial (T1) | partial (T2) | yes | n.a. | partial (2) |
 | Shading | yes | yes | yes | yes | n.a. | partial (2) |
 | Conditional table styles (first / last row and column, banding) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
-| Merged cells (horizontal and vertical) | yes | yes | yes | yes | n.a. | yes |
-| Nested tables | yes | yes | yes | yes | n.a. | yes |
+| Merged cells (horizontal and vertical) | yes | no | no | yes | n.a. | yes |
+| Nested tables | yes | partial (T3) | no | yes | n.a. | yes |
 | Widths (grid, cell, indent, cell margins) | yes | yes | yes | yes | n.a. | partial (2) |
-| Direction (bidiVisual / RTL rows) | yes | yes | yes | yes | n.a. | yes |
-| Vertical alignment in cells | yes | yes | yes | yes | n.a. | partial (2) |
+| Direction (bidiVisual / RTL rows) | yes | yes | no | yes | n.a. | yes |
+| Vertical alignment in cells | yes | no | no | yes | n.a. | partial (2) |
+| Cell text direction (vertical text) | yes | no | no | no | n.a. | n.a. |
 | Big tables split into row blocks (windowed) | yes | yes | yes | yes | n.a. | yes |
 | Tracked row deletion hidden | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
+
+T1. .doc: the row's sprmTTableBorders border on every cell; per-cell borders are not read.
+T2. RTF: cell / row borders (\clbrdr*, 	rbrdr*) are parsed but not drawn; widths and \clcbpat shading are.
+T3. .doc: an inner row end (sprmPFInnerTtp) closes a row; the inner table is not nested inside its cell.
 
 ## Sections and pages
 

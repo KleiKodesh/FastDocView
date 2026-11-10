@@ -49,7 +49,13 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
 | Floating table position (tblpPr) and text wrap around tables | docx, doc, rtf | Ignored by design (frame / table positioning) | planned (paged view) |
-| Vertical cell text direction | doc, rtf, odt (docx partial) | Not drawn | deferred |
+| Vertical cell text direction | doc, rtf, odt | Not drawn (docx w:textDirection is) | deferred |
+| Merged cells | doc, rtf | Not read: .doc cell merge flags and RTF \clmgf / \clvmgf are ignored | deferred |
+| Per-cell borders | doc, rtf | .doc draws the table border on every cell; RTF cell / row borders not drawn | deferred |
+| Nested tables | doc (flattened), rtf (\itap / 
+estcell not read) | Inner rows are not placed in their cell | deferred |
+| Cell vertical alignment | doc, rtf | Not read | deferred |
+| RTL row order | rtf | tlrow not applied to the row | deferred |
 | Repeat header row, row "can't split" | all | Page-bound | planned (paged view) |
 | Exact row heights as Word measures | all | No exact Word metrics in a flow view | won't do |
 
