@@ -79,6 +79,7 @@ tlrow not applied to the row | deferred |
 | Notes-only render (a note's block body is built and dropped) | docx, odt | Speed item, not correctness | deferred |
 | Restart note numbering per page | docx, doc, rtf | Page-bound | planned (paged view) |
 | Note start value and per-section restart | docx (numStart / numRestart), doc (Dop) | Not read | deferred |
+| Notes inside text boxes / drawing text | odt/fodt | The drawing-text renderer skips text:note (OdtBlockHtmlRenderer.Drawing) | deferred |
 | Note number format | doc | Always decimal; nfcFtnRef / nfcEdnRef not read | deferred |
 
 ## Fields
