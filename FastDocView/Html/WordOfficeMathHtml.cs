@@ -58,11 +58,14 @@ public sealed class WordOfficeMathHtml
             double indent = settings.WrapRight ? 0 : settings.WrapIndentPt;
             block.Append(";padding-left:").Append(Points(settings.LeftMarginPt + indent)).Append("pt;padding-right:").Append(Points(settings.RightMarginPt)).Append("pt");
             if (indent > 0) block.Append(";text-indent:-").Append(Points(indent)).Append("pt");
-            if (settings.WrapRight) block.Append(";text-align-last:right");
+            // m:wrapRight and m:brkBin repeat depend on where the browser wraps: the page finishes them once the lines are known
+            // (the app's fastDocViewMath.ts: continuation lines moved to the right edge, the repeated operator shown at a line start)
+            string marks = (settings.WrapRight ? " data-math-wrap-right=\"\"" : "") + (settings.BreakBinary == "repeat" ? " data-math-break=\"repeat\"" : "");
             foreach (XElement math in zone.Elements())
             {
                 if (math.Name.LocalName != "oMath") continue;
-                html.Append("<span class=\"omath-para\" style=\"").Append(block).Append("\">");
+                // dir ltr: an equation reads left to right in a right-to-left paragraph too (its pieces must not flow from the right)
+                html.Append("<span class=\"omath-para\" dir=\"ltr\"").Append(marks).Append(" style=\"").Append(block).Append("\">");
                 converter.AppendBreakable(html, converter.Row(math), font);
                 html.Append("</span>");
             }
@@ -71,6 +74,12 @@ public sealed class WordOfficeMathHtml
         html.Append("<math class=\"omath\" dir=\"ltr\"").Append(font.Length > 0 ? " style=\"" + font + "\"" : "").Append('>')
             .Append(converter.Row(zone).Replace(ForcedBreak.ToString(), "")).Append("</math>");
     }
+
+    /// <summary>The operator a "repeat" break starts the next line with: itself, or for a minus what m:brkBinSub says.</summary>
+    private string RepeatedOperator(string op) => op is "-" or "\u2212" ? _settings.BreakBinarySubtraction == "-+" ? "+" : op : op;
+
+    /// <summary>For brkBinSub "+-" a broken minus ends its line as a plus (the minus starts the next line); null: unchanged.</summary>
+    private string? LineEndOperator(string op) => op is "-" or "−" && _settings.BreakBinarySubtraction == "+-" ? "+" : null;
 
     private static string Points(double points) => points.ToString("0.##", CultureInfo.InvariantCulture);
 
@@ -88,8 +97,11 @@ public sealed class WordOfficeMathHtml
         string rowTag = row.StartsWith("<mrow", StringComparison.Ordinal) && row.EndsWith("</mrow>", StringComparison.Ordinal) && first > 0 ? row.Substring(0, first + 1) : "<mrow>";
         string inner = rowTag.Length > 6 || row.StartsWith("<mrow>", StringComparison.Ordinal) ? row.Substring(rowTag.Length, row.Length - rowTag.Length - 7) : row;
         string open = "<math class=\"omath\" dir=\"ltr\"" + (_settings.DisplayDefaults ? " displaystyle=\"true\" style=\"math-style:normal;" + font + "\"" : font.Length > 0 ? " style=\"" + font + "\"" : "") + ">" + rowTag;
-        bool after = _settings.BreakBinary == "after";
+        // brkBin (22.1.2.15): before (the default) - the operator starts the next line; after - it ends the line; repeat - it
+        // ends the line and starts the next again (as brkBinSub says for a minus, 22.1.2.16: "--", "-+" or "+-")
+        bool after = _settings.BreakBinary is "after" or "repeat", repeats = _settings.BreakBinary == "repeat";
         var cuts = new List<(int at, bool forced)>();
+        var repeated = new Dictionary<int, string>();     // cut -> the operator element the next line starts with (repeat)
         int depth = 0;
         for (int i = 0; i < inner.Length; i++)
         {
@@ -106,7 +118,11 @@ public sealed class WordOfficeMathHtml
                 if (i > 0 && IsBreakOperator(op))
                 {
                     int at = after ? textEnd + 5 : i;
-                    if (at < inner.Length) cuts.Add((at, false));
+                    if (at < inner.Length)
+                    {
+                        cuts.Add((at, false));
+                        if (repeats) repeated[at] = "<mo class=\"omath-repeat\" form=\"infix\" style=\"display:none\"" + (LineEndOperator(op) is { } end ? " data-line-end=\"" + WordHtmlText.Encode(end) + "\"" : "") + ">" + WordHtmlText.Encode(RepeatedOperator(op)) + "</mo>";
+                    }
                 }
             }
             if (isEnd) depth--; else if (!isEmpty) depth++;
@@ -119,9 +135,10 @@ public sealed class WordOfficeMathHtml
             if (at <= start) continue;      // nothing before this cut (an operator right after a forced break)
             html.Append(inner, start, at - start).Append("</mrow></math>");
             html.Append(forced ? "<br>" : "\u200B").Append(open);
+            if (!forced && repeated.TryGetValue(at, out string? again)) html.Append(again);
             start = forced ? at + 1 : at;
             // the operator now opens a math element: keep it an infix operator (its spacing as in the unbroken row)
-            if (start + 3 < inner.Length && string.CompareOrdinal(inner, start, "<mo", 0, 3) == 0 && inner[start + 3] is '>' or ' ') { html.Append("<mo form=\"infix\""); start += 3; }
+            if (!after && start + 3 < inner.Length && string.CompareOrdinal(inner, start, "<mo", 0, 3) == 0 && inner[start + 3] is '>' or ' ') { html.Append("<mo form=\"infix\""); start += 3; }
         }
         html.Append(inner, start, inner.Length - start).Append("</mrow></math>");
     }
@@ -387,6 +404,7 @@ public sealed class WordOfficeMathHtml
         // undOvr limits move beside the operator in an inline equation, as Word draws them (math-v2.pdf: an inline sum is 15.8 pt
         // tall, limits as scripts): MathML's movablelimits does exactly that outside display style
         string op = "<mo largeop=\"true\"" + (grows ? " stretchy=\"true\" symmetric=\"true\"" : "") + ">" + WordHtmlText.Encode(character) + "</mo>";
+        if (grows) { var stretched = new StringBuilder(); AppendStretched(stretched, op, character, true); op = stretched.ToString(); }
         string sub = Row(Child(element, "sub")), sup = Row(Child(element, "sup"));
         html.Append("<mrow>");
         if (hasSub && hasSup) html.Append(isUnderOver ? "<munderover>" : "<msubsup>").Append(op).Append(sub).Append(sup).Append(isUnderOver ? "</munderover>" : "</msubsup>");
@@ -410,17 +428,53 @@ public sealed class WordOfficeMathHtml
         bool isTall = arguments.Any(IsTallerThanALine);
         string stretchy = pr is not null && Child(pr, "grow") is { } grow && !IsOn(grow) || !isTall ? "false" : "true";
         html.Append("<mrow>");
-        if (begin.Length > 0) html.Append("<mo fence=\"true\" form=\"prefix\" stretchy=\"").Append(stretchy).Append("\">").Append(WordHtmlText.Encode(begin)).Append("</mo>");
+        if (begin.Length > 0) AppendStretched(html, "<mo fence=\"true\" form=\"prefix\" stretchy=\"" + stretchy + "\">" + WordHtmlText.Encode(begin) + "</mo>", begin, stretchy == "true");
         bool first = true;
         foreach (string argument in arguments)
         {
-            if (!first && separator.Length > 0) html.Append("<mo separator=\"true\" stretchy=\"").Append(stretchy).Append("\">").Append(WordHtmlText.Encode(separator)).Append("</mo>");
+            if (!first && separator.Length > 0) AppendStretched(html, "<mo separator=\"true\" stretchy=\"" + stretchy + "\">" + WordHtmlText.Encode(separator) + "</mo>", separator, stretchy == "true");
             html.Append(argument);
             first = false;
         }
-        if (end.Length > 0) html.Append("<mo fence=\"true\" form=\"postfix\" stretchy=\"").Append(stretchy).Append("\">").Append(WordHtmlText.Encode(end)).Append("</mo>");
+        if (end.Length > 0) AppendStretched(html, "<mo fence=\"true\" form=\"postfix\" stretchy=\"" + stretchy + "\">" + WordHtmlText.Encode(end) + "</mo>", end, stretchy == "true");
         html.Append("</mrow>");
     }
+
+    /// <summary>
+    /// A stretched operator at Word's width. Word draws a grown delimiter or n-ary operator with the font's OpenType MATH size
+    /// variants (MathVariants), and a variant of Cambria Math is barely wider than the base glyph (math-v2.pdf: "(" around a
+    /// two-row matrix 5.9 pt against 5.0 unstretched; a growing integral 9.7 pt). LibreOffice Math does not use variants at all:
+    /// it scales the glyph's height and keeps its width (starmath/source/node.cxx SmMathSymbolNode::AdaptToY: "we only want to
+    /// scale the height"). Chromium's stretched Cambria Math glyphs are much wider (measured in the live rig at 12 pt: "(" 9.0 pt
+    /// against 5.3 unstretched, "{" 8.3 / 4.5, an integral 15.8 / 9.8, a sum 34.5 / 15.8), so the stretched operator is given
+    /// Word's width - its unstretched width, 1.11 times for a delimiter as Word's "(" - in an mpadded centred on the glyph (an
+    /// mpadded around an operator is still the embellished operator that stretches). Only for Cambria Math, which these
+    /// measurements are of. The table holds one measurement (a two-row matrix, a fraction): Chromium's widths did not change
+    /// with the stretched height between 1 em and 3 em, but a much taller operator could take a wider variant.
+    /// </summary>
+    private void AppendStretched(StringBuilder html, string mo, string character, bool stretches)
+    {
+        if (!stretches || _settings.Font is { } face && !face.Equals("Cambria Math", StringComparison.OrdinalIgnoreCase)
+            || !ChromiumCambriaStretch.TryGetValue(character, out (double stretched, double unstretched, bool isLarge) widths))
+        {
+            html.Append(mo);
+            return;
+        }
+        double target = widths.isLarge ? widths.unstretched : widths.unstretched * 1.11;
+        if (target >= widths.stretched) { html.Append(mo); return; }
+        html.Append("<mpadded width=\"").Append(Points(target)).Append("em\" lspace=\"-").Append(Points((widths.stretched - target) / 2)).Append("em\">").Append(mo).Append("</mpadded>");
+    }
+
+    /// <summary>Chromium's widths (em) of a stretched / unstretched Cambria Math operator (measured at 12 pt, see AppendStretched).</summary>
+    private static readonly Dictionary<string, (double stretched, double unstretched, bool isLarge)> ChromiumCambriaStretch = new(StringComparer.Ordinal)
+    {
+        ["("] = (0.75, 0.442, false), [")"] = (0.75, 0.442, false), ["{"] = (0.692, 0.375, false), ["}"] = (0.692, 0.375, false),
+        ["["] = (0.442, 0.375, false), ["]"] = (0.442, 0.375, false), ["|"] = (0.375, 0.317, false), ["\u2016"] = (0.692, 0.5, false),
+        ["\u27E8"] = (0.442, 0.375, false), ["\u27E9"] = (0.442, 0.375, false), ["\u2308"] = (0.442, 0.375, false), ["\u2309"] = (0.442, 0.375, false),
+        ["\u230A"] = (0.442, 0.375, false), ["\u230B"] = (0.442, 0.375, false),
+        ["\u222B"] = (1.317, 0.817, true), ["\u222C"] = (1.567, 1.192, true), ["\u222E"] = (1.067, 0.817, true),
+        ["\u2211"] = (2.875, 1.317, true), ["\u220F"] = (2.942, 1.5, true),
+    };
 
     /// <summary>Whether rendered MathML stacks vertically (fractions, limits, tables, radicals, scripts): taller than a text line.</summary>
     private static bool IsTallerThanALine(string mathMl)

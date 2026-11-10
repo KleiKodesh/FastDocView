@@ -73,7 +73,14 @@ public static class OfficeMathFidelityTest
         TestReport.Check(defaults.Contains("text-align:center;padding-left:72pt;padding-right:0pt;text-indent:-72pt", StringComparison.Ordinal) && defaults.Contains("displaystyle=\"true\"", StringComparison.Ordinal)
             && defaults.Contains("\u200B<math", StringComparison.Ordinal) && defaults.Contains("<mo form=\"infix\">+", StringComparison.Ordinal), "m:mathPr defaults: centred, wrapIndent 1 inch, display style, break before the operator");
         string right = Render("<m:oMath>" + run + "</m:oMath>", Html.WordOfficeMathSettings.FromOoxml(System.Xml.Linq.XElement.Parse("<m:mathPr xmlns:m=\"" + MathNs.NamespaceName + "\"><m:wrapRight/></m:mathPr>")));
-        TestReport.Check(right.Contains("padding-left:0pt", StringComparison.Ordinal) && right.Contains("text-align-last:right", StringComparison.Ordinal), "m:mathPr: wrapRight = continuation lines at the right, no indent");
+        TestReport.Check(right.Contains("padding-left:0pt", StringComparison.Ordinal) && right.Contains("data-math-wrap-right", StringComparison.Ordinal), "m:mathPr: wrapRight = continuation lines at the right (marked for the page), no indent");
+        string repeat = Render("<m:oMath><m:r><m:t>a-b+c</m:t></m:r></m:oMath>", Html.WordOfficeMathSettings.FromOoxml(System.Xml.Linq.XElement.Parse("<m:mathPr xmlns:m=\"" + MathNs.NamespaceName + "\"><m:brkBin m:val=\"repeat\"/><m:brkBinSub m:val=\"-+\"/></m:mathPr>")));
+        TestReport.Check(repeat.Contains("data-math-break=\"repeat\"", StringComparison.Ordinal) && repeat.Contains("<mo>-</mo></mrow></math>\u200B", StringComparison.Ordinal)
+            && repeat.Contains("<mo class=\"omath-repeat\" form=\"infix\" style=\"display:none\">+</mo>", StringComparison.Ordinal),
+            "m:mathPr: brkBin repeat = the operator ends the line and a hidden copy (brkBinSub -+: a plus after a minus) starts the next");
+        string plusMinus = Render("<m:oMath><m:r><m:t>a-b</m:t></m:r></m:oMath>", Html.WordOfficeMathSettings.FromOoxml(System.Xml.Linq.XElement.Parse("<m:mathPr xmlns:m=\"" + MathNs.NamespaceName + "\"><m:brkBin m:val=\"repeat\"/><m:brkBinSub m:val=\"+-\"/></m:mathPr>")));
+        TestReport.Check(plusMinus.Contains("<mo class=\"omath-repeat\" form=\"infix\" style=\"display:none\" data-line-end=\"+\">-</mo>", StringComparison.Ordinal),
+            "m:mathPr: brkBinSub +- = the next line starts with the minus, the broken line ends with a plus (marked for the page)");
         // the RTF header's {\mmathPr} (Word 16: \mmathFont34 = Cambria Math, \mdefJc1, \mwrapIndent1440)
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-math-settings-rtf") };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(rtfPath, policy);
@@ -202,10 +209,10 @@ public static class OfficeMathFidelityTest
         Expect("colour", b => Has(b, "#FF0000") && Has(b, "<mi") , "a coloured run");
 
         string all = string.Join("\n", html);
-        TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:left"), $"{format}: oMathPara jc left");
-        TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:right"), $"{format}: oMathPara jc right");
+        TestReport.Check(Has(all, "omath-para\" dir=\"ltr\" style=\"display:block;text-align:left"), $"{format}: oMathPara jc left");
+        TestReport.Check(Has(all, "omath-para\" dir=\"ltr\" style=\"display:block;text-align:right"), $"{format}: oMathPara jc right");
         // Word 16 joins the two m:oMath of one m:oMathPara into one when it saves (math-v2.docx has one): a centred line
-        TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:center;padding-left:72pt"), $"{format}: oMathPara centred (centerGroup, the default)");
+        TestReport.Check(Has(all, "omath-para\" dir=\"ltr\" style=\"display:block;text-align:center;padding-left:72pt"), $"{format}: oMathPara centred (centerGroup, the default)");
         TestReport.Check(html.Any(b => b.Contains("<mi>t</mi><mi>a</mi><mi>b</mi><mi>l</mi><mi>e</mi>", StringComparison.Ordinal) && b.Contains("<mfrac", StringComparison.Ordinal)), $"{format}: an equation in a table cell");
         TestReport.Check(notes.Contains("<msup><mrow><mi>x</mi></mrow><mrow><mn>2</mn></mrow></msup>", StringComparison.Ordinal), $"{format}: an equation in a footnote");
         TestReport.Check(html.Any(b => b.Contains("<mi>b</mi><mi>o</mi><mi>x</mi>", StringComparison.Ordinal) && b.Contains("<msqrt>", StringComparison.Ordinal)), $"{format}: an equation in a text box");

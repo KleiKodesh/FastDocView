@@ -2270,6 +2270,24 @@ tlch); checked by the same test.
   integral 1.27 - stretched glyph variants in Cambria Math. Heights median 0.85, 30/36 within (font boxes against
   math boxes, see above).
 
+### Equations, fourth pass: stretched widths, repeat breaks, wrapRight (2026-11-10)
+
+- Stretched operators: Word uses Cambria Math's MATH size variants, barely wider than the base ("(" 5.9 pt around a 2x2
+  matrix, 5.0 unstretched; growing integral 9.7 pt). LibreOffice uses no variants: SmMathSymbolNode::AdaptToY
+  (starmath/source/node.cxx) scales the glyph height and keeps its width. Chromium's stretched Cambria Math glyphs measured
+  in the live rig are wide whatever the height ("(" 9.0 / 5.3 unstretched, "{" 8.3 / 4.5, integral 15.8 / 9.8, sum 34.5 /
+  15.8; maxsize, lspace / rspace and form change nothing). So a stretched operator in Cambria Math sits in an mpadded of Word's
+  width (its unstretched width, x1.11 for delimiters as Word's "("), centred (WordOfficeMathHtml.AppendStretched; the
+  measured widths are a table there). Result: matrix 1.33 -> 1.13, growing integral 1.27 -> 1.10, parentheses 1.11; all
+  36 widths within 25% (heights 28/36: the measuring method, see the third pass).
+- brkBin repeat (22.1.2.15) and wrapRight (22.1.2.121) depend on where the browser wraps: the library cuts after the
+  operator and starts the next piece with a hidden copy (brkBinSub "-+" a plus, "+-" the line ends with a plus), and marks
+  the block; the app's fastDocViewMath.ts (v-fast-doc-view-math) shows a copy only where its piece starts a line, top down
+  (a shown copy only moves later breaks), and for wrapRight right-aligns the block while keeping the first line where its
+  alignment puts it - repeated until the lines settle, again on resize. An equation block is dir="ltr": in a right-to-left
+  paragraph its pieces flowed from the right. Live check: vue-demo/playwright/mathBreaksCheck.mjs on math-settings-v1.docx
+  (scripts/make-math-settings-docx.py).
+
 ## Web archive pictures (2026-11-10)
 Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) and an `<img>` fallback inside
 `<![if !vml]>`, which is what a browser shows. The renderer skips the VML copy and draws the `<img>` through the picture
