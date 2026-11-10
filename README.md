@@ -44,3 +44,8 @@ documents.Use(id, document => document.ScanFor(5000, TimeSpan.FromMilliseconds(2
 `FastDocView.DevServer/Program.cs` is a complete host in ~150 lines.
 
 Design, measurements, limitations and the specifications used: [NOTES.md](NOTES.md).
+
+## Feature support
+
+What each format renders, verified in the code: [docs/SUPPORTED-FEATURES.md](docs/SUPPORTED-FEATURES.md).
+What is missing or partial, with the reason and status: [docs/UNSUPPORTED-FEATURES.md](docs/UNSUPPORTED-FEATURES.md).

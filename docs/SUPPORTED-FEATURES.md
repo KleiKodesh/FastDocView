@@ -1,0 +1,223 @@
+# FastDocView: supported features
+
+Audited 2026-11-10 against the code (readers, cascades and renderers under `FastDocView/`), not only NOTES.md.
+Cells: **yes** = read and rendered; **partial** = rendered with a limit (numbered note under the table);
+**no** = not rendered (see [UNSUPPORTED-FEATURES.md](UNSUPPORTED-FEATURES.md)); **n.a.** = the format has no such thing.
+
+The view is a **flow view** (Word's draft / continuous view): no pages. Anything page-bound waits for the
+separate paged view, which is not built yet.
+
+- MHTML = Word web archives: the HTML Word saved is passed through block by block; `<style>` sheets are dropped,
+  so only inline formatting survives, and pictures show as `[image]`.
+- .txt = one block per line (encoding detection identical to Notepad++), plus the Torat Emet book markup.
+
+**How to verify:** in `FastDocView.Tests`, `dotnet run -c Release -- --audit <files>` (unhandled constructs per file, keep at 0),
+`--corpus ../test-data` (about 5,000 third-party files: 0 crashes, clear errors), `--real <files>`, `--odt N`, `--rtf N`,
+`--rtf-audit`, `--text N`, `--mhtml N`, `--notes-streaming N`; live: `vue-demo` `npm run dev`, then
+`node playwright/appCheck.mjs <file>` (and `playwright/textEffectsCheck.mjs`).
+
+## Character formatting
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Fonts (Latin and complex-script sets, per-run script) | yes | yes | yes | partial (1) | n.a. | partial (2) |
+| Theme fonts (minorBidi / majorBidi, themeFontLang) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
+| Sizes (Latin and complex) | yes | yes | yes | yes | n.a. | partial (2) |
+| Colours, auto colour | yes | yes | yes | yes | n.a. | partial (2) |
+| Theme colours with tint / shade | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
+| Highlight | yes | yes | yes | yes | n.a. | partial (2) |
+| Character shading (patterns mixed to one colour) | yes | yes | yes | yes | n.a. | partial (2) |
+| Character borders | yes | yes | yes | yes | n.a. | partial (2) |
+| Bold, italic (complex-script variants too) | yes | yes | yes | yes | n.a. | partial (2) |
+| Underline styles (double, dotted, dashed, wavy, thick / heavy) | yes | yes | yes | yes | n.a. | partial (2) |
+| Underline colour | yes | yes | yes | yes | n.a. | partial (2) |
+| Underline words only | partial (3) | partial (3) | partial (3) | partial (3) | n.a. | n.a. |
+| Strike, double strike | yes | yes | yes | yes | n.a. | partial (2) |
+| Caps, small caps | yes | yes | yes | yes | n.a. | partial (2) |
+| Superscript / subscript | yes | yes | yes | yes | n.a. | partial (2) |
+| Raised / lowered position | yes | yes | yes | yes | n.a. | partial (2) |
+| Character spacing | yes | yes | yes | yes | n.a. | partial (2) |
+| Character scale (per-word scaleX boxes) | yes | yes | yes | yes | n.a. | n.a. |
+| Emphasis marks | yes | yes | yes | yes | n.a. | n.a. |
+| Legacy effects: outline, shadow, emboss, imprint / engrave | yes | yes | yes | yes | n.a. | n.a. |
+| w14 text effects: textFill solid / gradient, glow, shadow, textOutline | partial (4) | n.a. | n.a. | n.a. | n.a. | n.a. |
+| Hidden text (vanish) kept hidden; webHidden | yes | yes | yes | yes | n.a. | n.a. |
+| RTL runs and bidi embedding inside LTR paragraphs | yes | yes | yes | yes | yes | yes |
+| Symbol characters (w:sym, sprmCSymbol, symbol fonts to Unicode) | yes | yes | yes | yes | n.a. | n.a. |
+| Language ids (for hyphenation) | yes | yes | yes | yes | n.a. | n.a. |
+
+1. ODT has no per-run script flag; each paragraph is split by script per text node (LibreOffice's rule), so a run broken by a span is judged in pieces.
+2. MHTML keeps inline `style=` only; class-based formatting from the dropped `<style>` sheet is lost.
+3. Drawn as a plain underline: CSS has no skip-the-spaces underline (LibreOffice does the same).
+4. Shadow / glow offset and blur are drawn; shadow scale and skew (sx, sy, kx, ky) are not (CSS text-shadow cannot transform).
+
+## Paragraphs
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Alignment (justified with manual-break rule) | yes | yes | yes | yes | n.a. | partial (2) |
+| Direction (RTL / LTR) | yes | yes | yes | yes | yes | yes |
+| Indents (start, end, first line, hanging) | yes | yes | yes | yes | n.a. | partial (2) |
+| Spacing before / after, contextual spacing | yes | yes | yes | yes | n.a. | partial (2) |
+| Line spacing (auto, exact, at least) | yes | yes | yes | yes | n.a. | partial (2) |
+| Paragraph borders | yes | yes | partial (5) | yes | n.a. | partial (2) |
+| Paragraph shading | yes | yes | yes | yes | n.a. | partial (2) |
+| Tab stops | partial (6) | partial (6) | partial (6) | partial (6) | n.a. | n.a. |
+| Drop caps | yes | yes | yes | partial (7) | n.a. | n.a. |
+| Automatic hyphenation (by language; Hebrew has no dictionary) | yes | yes | yes | yes | n.a. | n.a. |
+| Headings as h1-h6 and the navigation tree | yes | yes | yes | yes | partial (8) | yes |
+| Frames (framePr) | partial (9) | partial (9) | partial (9) | n.a. | n.a. | n.a. |
+
+5. RTF: `\brsp` spacing, border shadow and border groups are not drawn (each paragraph is boxed alone).
+6. Tab stops become `tab-size`; leaders and right / centre / decimal alignment are not laid out as Word does.
+7. ODT: only the paragraph's first text node is wrapped; a drop cap split across spans is not joined.
+8. Torat Emet markup gives headings; plain .txt has none.
+9. Drop-cap frames are drawn; other frames flow as ordinary paragraphs (no positioning).
+
+## Lists
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Number formats (decimal, letters, roman, hebrew1 / hebrew2, ordinal and more, Word-verified) | yes | yes | yes | yes | n.a. | yes (10) |
+| Start value | yes | yes | yes | yes | n.a. | yes (10) |
+| Restart after a higher level / never | yes | yes | partial (11) | yes | n.a. | n.a. |
+| Overrides (startOverride, LFOLVL, lfolevel, start-value) | yes | yes | partial (11) | yes | n.a. | n.a. |
+| Legal numbering (isLgl) | yes | yes | yes | n.a. | n.a. | n.a. |
+| Suffix (tab / space / nothing) and label alignment | yes | yes | yes | yes | n.a. | n.a. |
+| Label styling (paragraph-mark formatting, complex-script set) | yes | yes | yes | yes | n.a. | n.a. |
+| Style-linked numbering | yes | yes | no | n.a. | n.a. | n.a. |
+| Bullets, symbol bullets (Symbol / Wingdings mapped to Unicode) | yes | yes | yes | yes | yes (12) | yes (10) |
+| Picture bullets | yes | yes | yes | yes | n.a. | n.a. |
+| Bullet colour and size | yes | yes | partial (13) | partial (13) | n.a. | n.a. |
+| Legacy numbering (Word 6 levels, \pn, w:legacy) | yes | yes | yes | n.a. | n.a. | n.a. |
+
+10. Word writes the label into the HTML; it is shown as written.
+11. RTF: `\levelnorestart` yes, but no restart-limit level; a level replaced by an override is not read (start-at is).
+12. Torat Emet line marks.
+13. Counted RTF labels and ODT bullets take the label formatting rules, not a separate bullet colour / size.
+
+List number formats are under active work (Fields/ and the numbering files); NOTES.md "List numbering" holds the audit.
+
+## Tables
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Borders (table, cell; theme colours in docx) | yes | yes | yes | yes | n.a. | partial (2) |
+| Shading | yes | yes | yes | yes | n.a. | partial (2) |
+| Conditional table styles (first / last row and column, banding) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
+| Merged cells (horizontal and vertical) | yes | yes | yes | yes | n.a. | yes |
+| Nested tables | yes | yes | yes | yes | n.a. | yes |
+| Widths (grid, cell, indent, cell margins) | yes | yes | yes | yes | n.a. | partial (2) |
+| Direction (bidiVisual / RTL rows) | yes | yes | yes | yes | n.a. | yes |
+| Vertical alignment in cells | yes | yes | yes | yes | n.a. | partial (2) |
+| Big tables split into row blocks (windowed) | yes | yes | yes | yes | n.a. | yes |
+| Tracked row deletion hidden | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
+
+## Sections and pages
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Text column width = page width minus margins and gutter, per section | yes | yes | yes | yes | yes (14) | yes (14) |
+| Section breaks as section boundaries | yes | yes | yes | yes | n.a. | n.a. |
+| Page-number fields as a `#` placeholder | yes | yes | yes | partial (15) | n.a. | n.a. |
+
+14. Letter with 1 inch margins (LibreOffice's Word-import default).
+15. ODT shows the saved field text.
+
+Headers / footers, columns and page layout are not shown (flow view): see UNSUPPORTED-FEATURES.md.
+
+## Notes
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Footnotes and endnotes, read on demand with their block | yes | yes | yes | yes | partial (16) | partial (17) |
+| Numbering counted at index time (formats, custom marks) | yes | yes | yes | yes | n.a. | n.a. |
+| Notes pane, hover tooltip, links both ways | yes | yes | yes | yes | yes | partial (17) |
+
+16. Torat Emet note lines only.
+17. Word's own HTML note links and texts are passed through.
+
+## Fields
+
+One engine (`Fields/`) for docx, doc and rtf. A cached result shows once; a field with no result, a dirty unlocked one and
+the fields Word draws from their code are computed. Computed: SEQ, REF (\n \r \w \h), NOTEREF, STYLEREF (block-relative),
+TOC (from the index's headings), INDEX / TOA, LISTNUM, AUTONUM*, = formulas, IF, COMPARE, date / time and document
+properties, SYMBOL, EQ (as MathML Core), MACROBUTTON, GOTOBUTTON, HYPERLINK, form fields (text, check box, drop-down),
+ADVANCE, and the `\*` number / case switches. Page placeholders: PAGE, PAGEREF (\h still links), NUMPAGES, SECTION,
+SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKIPIF, PRINT.
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Field results and computation | yes | yes | yes | partial (15) | n.a. | n.a. |
+
+## Links, bookmarks, TOC
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| External hyperlinks | yes | yes | yes | yes | n.a. | yes |
+| Bookmarks and internal links (jump to the block) | yes | yes | yes | yes | n.a. | yes |
+| TOC (field or index body) | yes | yes | yes | yes | n.a. | yes |
+
+## Pictures
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Inline pictures (by id through the host's picture endpoint) | yes | yes | yes | yes | n.a. | no |
+| Floating pictures: square, tight, top-and-bottom wrap, offsets | yes | yes | yes | yes | n.a. | n.a. |
+| Contour wrap from the wrap polygon | yes | yes | yes | yes | n.a. | n.a. |
+| Two-sided wrap | partial (18) | partial (18) | partial (18) | partial (18) | n.a. | n.a. |
+| Cropping | no | partial (19) | no | no | n.a. | n.a. |
+
+18. CSS cannot wrap text on both sides of a float: the object floats flush to its side.
+19. .doc crops change the shown size only; the picture is not clipped.
+
+## Shapes, WordArt, text boxes
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Preset / custom shapes as SVG (geometry, fills, lines, line ends) | yes | yes | yes | yes | n.a. | n.a. |
+| VML shapes | yes | n.a. | n.a. | n.a. | n.a. | no |
+| Groups, drawing canvas | yes | partial (20) | partial (20) | yes | n.a. | n.a. |
+| Text boxes (linked chains shown in the first box) | yes | partial (21) | partial (21) | yes | n.a. | n.a. |
+| WordArt / Fontwork (text on outlines) | yes | yes | yes | yes | n.a. | n.a. |
+| Connectors | partial (22) | partial (22) | partial (22) | yes | n.a. | n.a. |
+| 3-D | no | no | no | partial (23) | n.a. | n.a. |
+
+20. A group, or a shape holding a text box, is not drawn as a floating object; its parts render inline.
+21. Rendered as an inline frame after the anchoring paragraph, not positioned.
+22. Drawn as the line / preset geometry saved; no connection routing.
+23. ODT `draw:extrude` is drawn flat with its extrusion colour (OdtExtrusion), not as true 3-D.
+
+## Charts, SmartArt, objects
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Charts (c:chart from cached values, as SVG) | yes | no | no | no | n.a. | n.a. |
+| chartex (waterfall, treemap, sunburst, histogram, box, funnel, region map) | partial (24) | n.a. | n.a. | n.a. | n.a. | n.a. |
+| SmartArt (from its saved drawing part) | partial (25) | n.a. | n.a. | n.a. | n.a. | n.a. |
+| OLE objects (their saved preview picture) | partial | partial | partial | partial | n.a. | n.a. |
+
+24. A region map without a saved geography cache falls back to the saved picture.
+25. Without a drawing part the frame keeps its size and is empty.
+
+## Tracked changes, ruby, math
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Tracked changes as Word's final view (deletions hidden) | yes | yes | yes | yes | n.a. | n.a. |
+| Ruby (as HTML ruby; search reads the base) | yes | n.a. | n.a. | yes | n.a. | n.a. |
+| EQ field equations (MathML Core) | yes | yes | yes | n.a. | n.a. | n.a. |
+
+## Document level
+
+| Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Windowed loading, streaming index, sidecar cache | yes | yes | yes | yes | yes | yes |
+| First open shows text from the partial index | yes | yes | yes | yes | yes | yes |
+| In-document search (byte-level; fields, notes, hidden text aware) | yes | yes | yes | yes | yes | yes |
+| Dark theme (colour rewrite; auto colour inherits) | yes | yes | yes | yes | yes | yes |
+| Clear errors: encrypted, corrupt, online-only, not found, unsupported, access denied | yes | yes | yes | yes | yes | yes |
+| Malformed XML: content before the first error kept | yes | n.a. | n.a. | no | n.a. | n.a. |
+| A block that fails becomes a placeholder, reported once | yes | yes | yes | yes | yes | yes |
+| Word coexistence: shared read while Word holds or saves the file; changed file reopens | yes | yes | yes | yes | yes | yes |
+| Variants: .docm / .dotx / .dotm, .ott, RTF saved as .doc | yes | n.a. | yes | yes | n.a. | n.a. |
