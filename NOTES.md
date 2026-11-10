@@ -2222,11 +2222,35 @@ tlch); checked by the same test.
   or the math inline in a flat file's draw:object, is written out through an allow-list (`Html/WordMathMlHtml.cs`):
   semantics -> first child (StarMath annotation hidden), mstyle -> mrow with mapped variant / colour, mfenced -> fences.
   Read when the block is rendered or searched (last 16 kept), like charts; formula text joins the chart-text search pass.
-- Fixtures: test-data/word-math (scripts/make-math-base-docx.py writes one paragraph per OMML element; make-math-fixtures.ps1
+- Fixtures: test-data/word-math, math-v2 (scripts/make-math-base-docx.py writes one paragraph per OMML element; make-math-fixtures.ps1
   has Word 16 add a table cell, footnote and text box equation and save .docx / .rtf / .pdf / .doc - .doc last, since saving
   as .doc turns the open document's equations into pictures; Word 2013+ compatibility is set or .rtf gets pictures too),
   test-data/odt-math (scripts/make-odt-math.py, LibreOffice UNO, with LibreOffice's PDF). Harness: OfficeMathFidelityTest
   (--math, in --fidelity). Live: vue-demo/playwright/mathCheck.mjs (MathML laid out with non-zero size).
+
+### Equations, second pass (2026-11-10)
+
+- One text extractor for search, `WordOfficeMathHtml.SearchText` (parsed readers: .docx notes, .doc, RTF): m:t, w:sym (as
+  drawn), w:br in a math run = a space, and an m:eqArr row's own '&' dropped - the renderer's rules. The .docx body byte
+  scanner keeps a per-depth kind (m:r / m:e / m:eqArr) to apply the same rules without parsing.
+- m:argSz (22.1.2.6) -> scriptlevel on the argument's mrow (-1 -> +1). m:grow (22.1.2.40): delimiters stretch unless
+  grow is off; an n-ary operator with grow on is a stretchy, symmetric mo.
+- Breaking (22.1.2.15 brkBin, 22.1.2.16 brk): MathML Core cannot break a line, so a display equation's own row is cut
+  before each top-level binary / relation operator into consecutive display-style math elements joined by U+200B (the
+  browser wraps there only when the line is full, as Word does); a run with m:brk forces a <br>. Nested structures are
+  never cut. Not done: Word's continuation indent (m:wrapIndent).
+- RTF: an equation in a field's code is neither shown nor searched (the parser does not treat a field instruction as a
+  text destination, so the {\mmath} group is skipped for all sinks); one in the result is both. Test: hand-written RTF.
+- Geometry against Word's PDF: scripts/compare-math-geometry.py (PyMuPDF text positions of each "case X:" line) against
+  vue-demo/playwright/mathGeometry.mjs (the live rig's math boxes, px * 0.75), math-v2.docx, 36 equations, tolerance +-25%:
+  - before: 16 outside. Fixed from the numbers: an inline fraction is full size in Word (m:smallFrac off): its
+    height was 0.62 of Word's, now 0.99 (mfrac displaystyle); undOvr limits of an inline n-ary go beside the operator
+    as in Word (sum height 1.51 -> 1.09); matrix column gap (width 0.65 -> 1.02).
+  - after: widths median 1.12 of Word's, 29/36 within 25% (out: fractions 1.28-1.35 - MathML's fraction padding on narrow
+    one-letter fractions, sum 1.45 / product 1.26 / lim 1.37 - script limits and operator spacing, argSz 1.42 on the
+    hand-written case Word drops). Heights median 0.85, 27/36 within 25%: the PDF's glyph boxes are font boxes
+    (ascent + descent), the browser's math box is tighter, so single-line heights read ~0.8 by method, not layout.
+    Baselines (distance from the box top) agree within 1-3 pt except where the height differs.
 
 ## Web archive pictures (2026-11-10)
 Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) and an `<img>` fallback inside

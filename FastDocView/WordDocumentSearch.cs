@@ -447,9 +447,12 @@ internal sealed class WordXmlSearchText
         {
             foreach (XElement element in paragraph.Descendants())
             {
-                if (element.Name.LocalName == "t" && element.Name.NamespaceName == Html.WordOfficeMathHtml.MathNamespace)
+                if (element.Name.NamespaceName == Html.WordOfficeMathHtml.MathNamespace || element.Ancestors().TakeWhile(a => a != paragraph).Any(Html.WordOfficeMathHtml.IsMathZone))
                 {
-                    if (!element.Ancestors().TakeWhile(a => a != paragraph).Any(a => IsWordprocessing(a.Name.NamespaceName) && a.Name.LocalName is "moveFrom" or "del")) matcher.Feed(element.Value.AsSpan());
+                    // an equation: its text as drawn, once (at its outermost zone)
+                    if (Html.WordOfficeMathHtml.IsMathZone(element) && !element.Ancestors().TakeWhile(a => a != paragraph).Any(Html.WordOfficeMathHtml.IsMathZone)
+                        && !element.Ancestors().TakeWhile(a => a != paragraph).Any(a => IsWordprocessing(a.Name.NamespaceName) && a.Name.LocalName is "moveFrom" or "del" or "rt"))
+                        matcher.Feed(Html.WordOfficeMathHtml.SearchText(element).AsSpan());
                     continue;
                 }
                 if (!IsWordprocessing(element.Name.NamespaceName)) continue;
@@ -470,9 +473,10 @@ internal sealed class WordXmlSearchText
         {
             if (!IsWordprocessing(child.Name.NamespaceName))
             {
-                if (child.Name.LocalName == "t" && child.Name.NamespaceName == Html.WordOfficeMathHtml.MathNamespace)
+                if (Html.WordOfficeMathHtml.IsMathZone(child))
                 {
-                    if (fields.IsIdle || fields.Shows(child.Value)) matcher.Feed(child.Value.AsSpan());    // an equation's text
+                    string equation = Html.WordOfficeMathHtml.SearchText(child);     // an equation's text as drawn
+                    if (fields.IsIdle || fields.Shows(equation)) matcher.Feed(equation.AsSpan());
                     continue;
                 }
                 if (child.Name.LocalName != "Fallback") FeedFieldNodes(child, matcher, fields, simpleFields);

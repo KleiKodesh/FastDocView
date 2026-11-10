@@ -3,9 +3,9 @@ using System.Text;
 namespace FastDocView.Tests;
 
 /// <summary>
-/// Equations (Office Math, ECMA-376 Part 1 22.1) as MathML: test-data/word-math/math-v1.docx / .rtf / .doc, saved by Word 16
+/// Equations (Office Math, ECMA-376 Part 1 22.1) as MathML: test-data/word-math/math-v2.docx / .rtf / .doc, saved by Word 16
 /// from one document with a paragraph per OMML construct (scripts/make-math-base-docx.py, then make-math-fixtures.ps1 adds an
-/// equation in a table cell, a footnote and a text box; Word's PDF of it is math-v1.pdf). .docx keeps m:oMath, .rtf
+/// equation in a table cell, a footnote and a text box; Word's PDF of it is math-v2.pdf). .docx keeps m:oMath, .rtf
 /// {\mmath} groups, .doc a picture per equation whose OfficeArt equationXML property (MS-ODRAW 2.3.2.10, opid 0x030C) holds the
 /// OMML; all three must give the same MathML structure and their equation text must be found by search.
 /// </summary>
@@ -17,8 +17,8 @@ public static class OfficeMathFidelityTest
         string folder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-math"));
         foreach (string extension in new[] { ".docx", ".rtf", ".doc" })
         {
-            string path = Path.Combine(folder, "math-v1" + extension);
-            if (!File.Exists(path)) { TestReport.Check(false, $"test-data/word-math/math-v1{extension} present"); continue; }
+            string path = Path.Combine(folder, "math-v2" + extension);
+            if (!File.Exists(path)) { TestReport.Check(false, $"test-data/word-math/math-v2{extension} present"); continue; }
             WordSaved(path, extension);
         }
         string odtFolder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "odt-math"));
@@ -27,6 +27,42 @@ public static class OfficeMathFidelityTest
             string path = Path.Combine(odtFolder, "odt-math-v1" + extension);
             if (!File.Exists(path)) { TestReport.Check(false, $"test-data/odt-math/odt-math-v1{extension} present"); continue; }
             LibreOfficeSaved(path, extension);
+        }
+        RtfFieldEquations();
+        ArgumentSize(Path.Combine(folder, "math-base.docx"));
+    }
+
+    /// <summary>m:argSz (22.1.2.6): Word 16 drops it from m:num when it re-saves, so it is checked on the hand-written base file.</summary>
+    private static void ArgumentSize(string path)
+    {
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-math-base") };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+        string html = string.Concat(document.RenderBlocks(0, document.BlockCount).Select(b => b.Html)).Replace(" style=\"font-family:'Cambria Math';\"", "");
+        TestReport.Check(html.Contains("<mrow scriptlevel=\"+1\"><mi>s</mi>", StringComparison.Ordinal), "math-base.docx: m:argSz -1: the argument one script level smaller");
+    }
+
+    /// <summary>
+    /// Hand-written RTF: an equation inside a field's code is not shown and not searched (the parser reads a field instruction
+    /// as no text destination), one in the field's result is both - the renderer and both search readers agree.
+    /// </summary>
+    private static void RtfFieldEquations()
+    {
+        const string math = @"{\mmath{\*\moMath{\mr\mscr0\msty2 WORD}}}";
+        string rtf = @"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}" + "\n"
+            + @"\pard before {\field{\*\fldinst { QUOTE " + math.Replace("WORD", "codeeq") + @" }}{\fldrslt {" + math.Replace("WORD", "resulteq") + @"}}} after\par" + "\n}";
+        string path = Path.Combine(TestReport.OutputDirectory, "math-field-equations-v1.rtf");
+        File.WriteAllText(path, rtf);
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-math-field-rtf") };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+        string html = string.Concat(document.RenderBlocks(0, document.BlockCount).Select(b => System.Net.WebUtility.HtmlDecode(b.Html)));
+        TestReport.Check(!html.Contains("<mi>c</mi><mi>o</mi><mi>d</mi><mi>e</mi>", StringComparison.Ordinal), ".rtf: an equation in a field's code is not shown");
+        TestReport.Check(html.Contains("<mi>r</mi><mi>e</mi><mi>s</mi><mi>u</mi><mi>l</mi><mi>t</mi>", StringComparison.Ordinal), ".rtf: an equation in a field's result is shown");
+        TestReport.Check(document.Search("codeeq", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0, ".rtf: an equation in a field's code is not searched");
+        TestReport.Check(document.Search("resulteq", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length > 0, ".rtf: an equation in a field's result is searched");
+        if (document is Rtf.RtfWindowedDocument windowed)
+        {
+            TestReport.Check(windowed.SearchByBlockReparse("codeeq", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0
+                && windowed.SearchByBlockReparse("resulteq", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length > 0, ".rtf: the per-block reference search agrees");
         }
     }
 
@@ -78,10 +114,10 @@ public static class OfficeMathFidelityTest
         static bool Has(string block, params string[] parts) => parts.All(part => block.Contains(part, StringComparison.Ordinal));
         static bool Math(string block) => block.Contains("<math class=\"omath\"", StringComparison.Ordinal);
 
-        Expect("frac bar", b => Math(b) && Has(b, "<mfrac><mrow><mi>a</mi></mrow><mrow><mi>b</mi></mrow></mfrac>"), "a stacked fraction");
+        Expect("frac bar", b => Math(b) && Has(b, "<mfrac displaystyle=\"true\"><mrow><mi>a</mi></mrow><mrow><mi>b</mi></mrow></mfrac>"), "a stacked fraction");
         Expect("frac skw", b => Has(b, "<msup><mrow></mrow><mrow><mi>a</mi></mrow></msup><mo stretchy=\"false\">/</mo>"), "a skewed fraction");
         Expect("frac lin", b => Has(b, "<mi>a</mi></mrow><mo>/</mo><mrow><mi>b</mi>") && !b.Contains("<mfrac", StringComparison.Ordinal), "a linear fraction");
-        Expect("frac noBar", b => Has(b, "<mfrac linethickness=\"0\">"), "a fraction without a bar");
+        Expect("frac noBar", b => Has(b, "<mfrac linethickness=\"0\" displaystyle=\"true\">"), "a fraction without a bar");
         Expect("sqrt", b => Has(b, "<msqrt><mrow><mi>x</mi></mrow></msqrt>"), "a square root (degHide)");
         Expect("root", b => Has(b, "<mroot><mrow><mi>y</mi></mrow><mrow><mn>3</mn></mrow></mroot>"), "a cube root");
         Expect("sup", b => Has(b, "<msup><mrow><mi>x</mi></mrow><mrow><mn>2</mn></mrow></msup>"), "a superscript");
@@ -89,7 +125,7 @@ public static class OfficeMathFidelityTest
         Expect("subsup", b => Has(b, "<msubsup><mrow><mi>x</mi></mrow><mrow><mi>i</mi></mrow><mrow><mn>2</mn></mrow></msubsup>"), "both scripts");
         Expect("pre", b => Has(b, "<mmultiscripts><mrow><mi>Y</mi></mrow><mprescripts/><mrow><mn>1</mn></mrow><mrow><mi>n</mi></mrow></mmultiscripts>"), "pre-scripts");
         Expect("integral", b => Has(b, "<msubsup><mo largeop=\"true\">∫</mo><mrow><mn>0</mn></mrow><mrow><mn>1</mn></mrow></msubsup>"), "an integral with limits as scripts");
-        Expect("sum", b => Has(b, "<munderover><mo largeop=\"true\" movablelimits=\"false\">∑</mo>"), "a sum with limits under and over");
+        Expect("sum", b => Has(b, "<munderover><mo largeop=\"true\">∑</mo>"), "a sum with limits under and over");
         Expect("product", b => Has(b, "<msub><mo largeop=\"true\">∏</mo><mrow><mi>k</mi></mrow></msub>") && !b.Contains("<msubsup", StringComparison.Ordinal), "a product, upper limit hidden");
         Expect("delim", b => Has(b, ">[</mo>", "separator=\"true\" stretchy=\"true\">;</mo>", "form=\"postfix\" stretchy=\"true\">}</mo>"), "begin / separator / end characters");
         Expect("paren", b => Has(b, "form=\"prefix\" stretchy=\"true\">(</mo>", "form=\"postfix\" stretchy=\"true\">)</mo>"), "default parentheses");
@@ -103,26 +139,38 @@ public static class OfficeMathFidelityTest
         Expect("box", b => Has(b, "<mrow><mrow><mi>q</mi></mrow></mrow>") || Has(b, "<mi>q</mi>"), "a box: just its content");
         Expect("borderbox", b => Has(b, "class=\"omath-border-box\" style=\"padding:0.1em;border:1px solid currentColor\"", "<msup>"), "a bordered box");
         Expect("eqarr", b => Has(b, "<mtable class=\"omath-eqarr\">", "<mtd style=\"text-align:right;padding:0\"><mrow><mi>x</mi></mrow></mtd><mtd style=\"text-align:left;padding:0\"><mrow><mo>=</mo><mn>1</mn></mrow></mtd>") && !Strip(b).Contains('&'), "an equation array aligned at '&'");
-        Expect("matrix", b => Has(b, "<mtable class=\"omath-matrix\"><mtr><mtd style=\"text-align:center\"><mrow><mn>1</mn></mrow></mtd>"), "a 2x2 matrix");
+        Expect("matrix", b => Has(b, "<mtable class=\"omath-matrix\"><mtr><mtd style=\"text-align:center;padding:0 0.25em\"><mrow><mn>1</mn></mrow></mtd>"), "a 2x2 matrix");
         Expect("groupchr", b => Has(b, "<munder><mrow><mi>a</mi><mo>+</mo>", "<mo stretchy=\"true\">⏟</mo></munder>"), "a group character under (the default)");
         Expect("groupchr top", b => Has(b, "<mover><mrow><mi>k</mi></mrow><mo stretchy=\"true\">⏞</mo></mover>"), "a group character over");
         Expect("phant", b => Has(b, "<mphantom><mrow><mi>b</mi><mi>b</mi><mi>b</mi></mrow></mphantom>"), "a hidden phantom keeps its space");
         Expect("styles", b => Has(b, "<mi mathvariant=\"normal\">P</mi>", "\U0001D401", "<mi>I</mi>", "\U0001D47F"), "plain, bold, italic, bold italic");
         Expect("scripts", b => Has(b, "ℝ", "\U0001D509", "ℒ", "\U0001D61A", "\U0001D67C"), "double-struck, fraktur, script, sans-serif, monospace letters");
         Expect("normal text", b => Has(b, "<mtext>if x</mtext>", "<mi>l</mi><mi>i</mi><mi>t</mi>"), "normal text as text, m:lit ignored");
+        // Word 16's RTF writes a math w:sym as a SYMBOL field with code 63 ('?'): the character is lost in the file itself
+        if (format != ".rtf") Expect("symbol", b => Has(b, "<mo>\u2200</mo>"), "a w:sym in a math run drawn as its character");
+        Expect("grow", b => Has(b, "stretchy=\"true\" symmetric=\"true\">\u222B</mo>", "form=\"prefix\" stretchy=\"false\">(</mo>"), "m:grow: the integral grows, the delimiters (grow off) do not");
         Expect("colour", b => Has(b, "#FF0000") && Has(b, "<mi") , "a coloured run");
 
         string all = string.Join("\n", html);
         TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:left\""), $"{format}: oMathPara jc left");
         TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:right\""), $"{format}: oMathPara jc right");
-        // Word 16 joins the two m:oMath of one m:oMathPara into one when it saves (math-v1.docx has one): a centred line
+        // Word 16 joins the two m:oMath of one m:oMathPara into one when it saves (math-v2.docx has one): a centred line
         TestReport.Check(Has(all, "omath-para\" style=\"display:block;text-align:center\"><math class=\"omath\" dir=\"ltr\" displaystyle=\"true\""), $"{format}: oMathPara centred (centerGroup, the default)");
-        TestReport.Check(html.Any(b => b.Contains("<mi>t</mi><mi>a</mi><mi>b</mi><mi>l</mi><mi>e</mi>", StringComparison.Ordinal) && b.Contains("<mfrac>", StringComparison.Ordinal)), $"{format}: an equation in a table cell");
+        TestReport.Check(html.Any(b => b.Contains("<mi>t</mi><mi>a</mi><mi>b</mi><mi>l</mi><mi>e</mi>", StringComparison.Ordinal) && b.Contains("<mfrac", StringComparison.Ordinal)), $"{format}: an equation in a table cell");
         TestReport.Check(notes.Contains("<msup><mrow><mi>x</mi></mrow><mrow><mn>2</mn></mrow></msup>", StringComparison.Ordinal), $"{format}: an equation in a footnote");
         TestReport.Check(html.Any(b => b.Contains("<mi>b</mi><mi>o</mi><mi>x</mi>", StringComparison.Ordinal) && b.Contains("<msqrt>", StringComparison.Ordinal)), $"{format}: an equation in a text box");
         TestReport.Check(html.All(b => !b.Contains("[image]", StringComparison.Ordinal)), $"{format}: no equation left as an unshown picture");
 
-        foreach (string query in new[] { "tablemath", "notemath", "boxmath", "sin", "red" })
+        string breaks = html.FirstOrDefault(b => b.Contains("<mi>b</mi><mi>r</mi><mi>k</mi>", StringComparison.Ordinal)) ?? "";
+        // Word 16 drops m:brk from the equation XML it keeps in a .doc
+        if (format != ".doc") TestReport.Check(breaks.Contains("</math><br><math", StringComparison.Ordinal), $"{format}: m:brk: a manual line break in a display equation");
+        string longEquation = html.FirstOrDefault(b => b.Contains("<mi>l</mi><mi>o</mi><mi>n</mi><mi>g</mi>", StringComparison.Ordinal)) ?? "";
+        TestReport.Check(longEquation.Split(new[] { "<math class=\"omath\"" }, StringSplitOptions.None).Length >= 40 && longEquation.Contains("\u200B<math", StringComparison.Ordinal),
+            $"{format}: a long display equation can break before its operators (one piece per term)");
+        foreach (string query in new[] { "x=1", "y=22" })
+            TestReport.Check(document.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length > 0, $"{format}: search reads an equation array row without its '&' alignment marks (\"{query}\")");
+        TestReport.Check(document.Search("&=", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0, $"{format}: search does not find the hidden '&'");
+        foreach (string query in format == ".rtf" ? new[] { "tablemath", "notemath", "boxmath", "sin", "red" } : new[] { "tablemath", "notemath", "boxmath", "sin", "red", "forall\u2200" })
         {
             WordDocumentSearchBatch result = document.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount);
             TestReport.Check(result.HitBlocks.Length > 0, $"{format}: search finds equation text \"{query}\"");

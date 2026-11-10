@@ -704,8 +704,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// <summary>An equation's text (its m:t, as the renderer shows them) to the matcher.</summary>
     internal static void FeedEquationText(System.Xml.Linq.XElement equation, WordDocumentSearchMatcher matcher)
     {
-        foreach (System.Xml.Linq.XElement text in equation.Descendants())
-            if (text.Name.LocalName == "t" && text.Name.NamespaceName == WordOfficeMathHtml.MathNamespace) matcher.Feed(text.Value.AsSpan());
+        matcher.Feed(WordOfficeMathHtml.SearchText(equation).AsSpan());
     }
 
     /// <summary>Text with no fields to follow (a WordArt string): tabs as spaces, marks as separators.</summary>

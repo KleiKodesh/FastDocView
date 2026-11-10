@@ -1,4 +1,4 @@
-# Builds math-v1.docx / .doc / .rtf / .pdf with Word 16 (COM) from math-base.docx (scripts/make-math-base-docx.py: one
+# Builds math-v2.docx / .doc / .rtf / .pdf with Word 16 (COM) from math-base.docx (scripts/make-math-base-docx.py: one
 # paragraph per OMML construct), adding an equation in a table cell, a footnote and a text box.
 # Run from this folder: powershell -File make-math-fixtures.ps1   (the harness reads the saved files; Word is not needed to test)
 $ErrorActionPreference = 'Stop'
@@ -24,10 +24,10 @@ try {
     MathAt $fn.Range "notemath=x^2"
     $box = $d.Shapes.AddTextbox(1, 100, 100, 200, 60, $d.Paragraphs.Item($d.Paragraphs.Count).Range)
     MathAt $box.TextFrame.TextRange ("boxmath=" + [char]0x221A + "y")
-    $d.SaveAs2("$dir\math-v1.docx", 16)
-    $d.SaveAs2("$dir\math-v1.rtf", 6)
-    $d.SaveAs2("$dir\math-v1.pdf", 17)
-    $d.SaveAs2("$dir\math-v1.doc", 0)   # last: saving as .doc turns the open document's equations into pictures
+    $d.SaveAs2("$dir\math-v2.docx", 16)
+    $d.SaveAs2("$dir\math-v2.rtf", 6)
+    $d.SaveAs2("$dir\math-v2.pdf", 17)
+    $d.SaveAs2("$dir\math-v2.doc", 0)   # last: saving as .doc turns the open document's equations into pictures
     $d.Close(0)
 }
 finally { $w.Quit() }

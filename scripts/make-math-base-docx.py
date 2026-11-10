@@ -45,6 +45,9 @@ CASES = [
     ("scripts", r("R", '<m:scr m:val="double-struck"/><m:sty m:val="p"/>') + r("F", '<m:scr m:val="fraktur"/><m:sty m:val="p"/>') + r("L", '<m:scr m:val="script"/><m:sty m:val="p"/>') + r("S", '<m:scr m:val="sans-serif"/>') + r("M", '<m:scr m:val="monospace"/><m:sty m:val="p"/>')),
     ("normal text", r("if x", '<m:nor/>') + r("lit", '<m:lit/>')),
     ("colour", '<m:r><w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/><w:color w:val="FF0000"/></w:rPr><m:t>red</m:t></m:r>'),
+    ("symbol", r("forall") + '<m:r><w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr><w:sym w:font="Cambria Math" w:char="2200"/></m:r>'),
+    ("argsz", f'<m:f>{arg("num", "<m:argPr><m:argSz m:val=\"-1\"/></m:argPr>", r("small"))}{arg("den", r("b"))}</m:f>'),
+    ("grow", f'<m:nary><m:naryPr><m:grow m:val="1"/><m:limLoc m:val="subSup"/></m:naryPr>{arg("sub", r("0"))}{arg("sup", r("1"))}{e("<m:f>" + arg("num", r("a")) + arg("den", r("b")) + "</m:f>")}</m:nary><m:d><m:dPr><m:grow m:val="0"/></m:dPr>{e("<m:f>" + arg("num", r("c")) + arg("den", r("d")) + "</m:f>")}</m:d>'),
 ]
 
 def para(label, math, display):
@@ -58,6 +61,9 @@ paras = [para(f"case {label}", m, None) for label, m in CASES]
 paras.append(f'<w:p><m:oMathPara><m:oMathParaPr><m:jc m:val="left"/></m:oMathParaPr><m:oMath>{r("left=1")}</m:oMath></m:oMathPara></w:p>')
 paras.append(f'<w:p><m:oMathPara><m:oMath>{r("center=2")}</m:oMath><m:oMath>{r("second=3")}</m:oMath></m:oMathPara></w:p>')
 paras.append(f'<w:p><m:oMathPara><m:oMathParaPr><m:jc m:val="right"/></m:oMathParaPr><m:oMath>{r("right=4")}</m:oMath></m:oMathPara></w:p>')
+paras.append(f'<w:p><m:oMathPara><m:oMath>{r("brkfirst=a+b")}{r("+c", "<m:brk/>")}{r("=d")}</m:oMath></m:oMathPara></w:p>')
+long_terms = "+".join(f"x{i}" for i in range(1, 41))
+paras.append(f'<w:p><m:oMathPara><m:oMath>{r("longeq=" + long_terms)}</m:oMath></m:oMathPara></w:p>')
 paras.append('<w:p><w:r><w:t>last paragraph</w:t></w:r></w:p>')
 
 NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '

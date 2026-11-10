@@ -183,6 +183,7 @@ internal static class RtfOfficeMath
                     RunProperties(currentRun).Add(new XElement(M + "sty", new XAttribute(M + "val", Styles[parameter]))); continue;
                 case "mnor" when currentRun is not null: RunProperties(currentRun).Add(new XElement(M + "nor")); continue;
                 case "mlit" when currentRun is not null: RunProperties(currentRun).Add(new XElement(M + "lit")); continue;
+                case "mbrk" when currentRun is not null: RunProperties(currentRun).Add(new XElement(M + "brk")); continue;   // a manual break before the run (Word 16 writes \mbrk in the \mr group)
                 case "mjc" when hasParameter && parameter is >= 1 and <= 4 && Container().Name.LocalName == "oMathParaPr":
                     Container().Add(new XElement(M + "jc", new XAttribute(M + "val", Justifications[parameter]!))); continue;
             }

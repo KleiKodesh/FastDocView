@@ -23,6 +23,18 @@ namespace FastDocView.Docx;
 /// </summary>
 internal sealed class DocxSearchTextScanner
 {
+    private enum MathKind : byte { Other, Run, Argument, EquationArray }
+
+    private readonly List<MathKind> _mathKinds = new();     // per open element depth: what it is in an equation (m:eqArr row runs)
+
+    private MathKind MathKindAt(int depth) => depth >= 0 && depth < _mathKinds.Count ? _mathKinds[depth] : MathKind.Other;
+
+    private void SetMathKind(int depth, MathKind kind)
+    {
+        while (_mathKinds.Count <= depth) _mathKinds.Add(MathKind.Other);
+        _mathKinds[depth] = kind;
+    }
+
     private enum NamespaceKind : byte { Other, Wordprocessing, MarkupCompatibility, Diagram, Chart, Vml, Math }
 
     /// <summary>
@@ -84,6 +96,8 @@ internal sealed class DocxSearchTextScanner
         int position = 0, end = xml.Length;
         int depth = 0;          // open elements; an element's XmlReader depth = depth before it opens
         int textDepth = -1;     // depth of the open w:t
+        bool dropsAlignment = false;   // the open m:t is an m:eqArr row's own run: its '&' are alignment marks, not text (WordOfficeMathHtml)
+        _mathKinds.Clear();
         int skipDepth = -1;     // depth of the open skipped element (w:pPr, w:rPr, mc:Fallback)
         int instructionDepth = -1;     // depth of the open w:instrText
         int formDepth = -1;            // depth of the open w:fldChar whose w:ffData is being read
@@ -114,7 +128,7 @@ internal sealed class DocxSearchTextScanner
                 int semicolon = xml.Slice(position).IndexOf((byte)';');
                 if (semicolon < 0 || !TryDecodeEntity(xml.Slice(position + 1, semicolon - 1), out int codePoint)) return Fail(block, out stoppedAt);
                 if (instructionDepth >= 0 && skipDepth < 0) fields!.Instruction(char.ConvertFromUtf32(codePoint));
-                else if (textDepth >= 0 && skipDepth < 0 && (fields is null || fields.IsIdle || fields.Shows(char.ConvertFromUtf32(codePoint)))) matcher.FeedCodePoint(codePoint);
+                else if (textDepth >= 0 && skipDepth < 0 && !(dropsAlignment && codePoint == '&') && (fields is null || fields.IsIdle || fields.Shows(char.ConvertFromUtf32(codePoint)))) matcher.FeedCodePoint(codePoint);
                 position += semicolon + 1;
                 continue;
             }
@@ -136,7 +150,11 @@ internal sealed class DocxSearchTextScanner
                     int close = rest.Slice(9).IndexOf("]]>"u8);
                     if (close < 0) return Fail(block, out stoppedAt);
                     if (instructionDepth >= 0 && skipDepth < 0) fields!.Instruction(Encoding.UTF8.GetString(rest.Slice(9, close).ToArray()));
-                    else if (textDepth >= 0 && skipDepth < 0 && (fields is null || fields.IsIdle || fields.Shows(Encoding.UTF8.GetString(rest.Slice(9, close).ToArray())))) matcher.FeedUtf8(rest.Slice(9, close));
+                    else if (textDepth >= 0 && skipDepth < 0 && (fields is null || fields.IsIdle || fields.Shows(Encoding.UTF8.GetString(rest.Slice(9, close).ToArray()))))
+                    {
+                        if (!dropsAlignment) matcher.FeedUtf8(rest.Slice(9, close));
+                        else foreach (char c in Encoding.UTF8.GetString(rest.Slice(9, close).ToArray())) if (c != '&') matcher.Feed(c);
+                    }
                     position += 9 + close + 3;
                     continue;
                 }
@@ -177,7 +195,7 @@ internal sealed class DocxSearchTextScanner
                 {
                     if (depth == skipDepth) skipDepth = -1;
                 }
-                else if (depth == textDepth) textDepth = -1;
+                else if (depth == textDepth) { textDepth = -1; dropsAlignment = false; }
                 else
                 {
                     int nameEnd = nameStart;
@@ -268,16 +286,28 @@ internal sealed class DocxSearchTextScanner
                 {
                     case 1 when local[0] == (byte)'t':
                         // w:t, and m:t: an equation's text (Office Math, ECMA-376 22.1.2.116) is shown and searched like a run's
-                        if (!isEmpty && Resolve(elementPrefix) is NamespaceKind.Wordprocessing or NamespaceKind.Math) textDepth = elementDepth;
+                        if (!isEmpty && Resolve(elementPrefix) is NamespaceKind.Wordprocessing or NamespaceKind.Math)
+                        {
+                            textDepth = elementDepth;
+                            dropsAlignment = Resolve(elementPrefix) == NamespaceKind.Math && MathKindAt(elementDepth - 1) == MathKind.Run
+                                && MathKindAt(elementDepth - 2) == MathKind.Argument && MathKindAt(elementDepth - 3) == MathKind.EquationArray;
+                        }
+                        break;
+                    case 3 when Is(local, "sym") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing && MathKindAt(elementDepth - 1) == MathKind.Run && hasAttributes:
+                        // a symbol in an equation's run is drawn (WordOfficeMathHtml.SymbolCharacter), so searched
+                        if (AttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "char"u8) is { } symbolCode
+                            && int.TryParse(symbolCode, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out int symbol))
+                            matcher.Feed(Html.WordOfficeMathHtml.SymbolCharacter(symbol).AsSpan());
                         break;
                     case 1 when local[0] == (byte)'p':
                         if (isEmpty && Resolve(elementPrefix) == NamespaceKind.Wordprocessing) matcher.Separator();
                         break;
                     case 2 when (Is(local, "br") || Is(local, "cr")) && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
-                        matcher.Separator();
+                        if (MathKindAt(elementDepth - 1) == MathKind.Run) { if (Is(local, "br")) matcher.Feed(' '); }   // in an equation's run: w:br drawn as a space, w:cr not drawn
+                        else matcher.Separator();
                         break;
                     case 3 when Is(local, "tab") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
-                        matcher.Feed(' ');
+                        if (MathKindAt(elementDepth - 1) != MathKind.Run) matcher.Feed(' ');      // a tab in an equation's run is not drawn
                         break;
                     case 2 when Is(local, "rt") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:          // a ruby's guide text: shown above its base, not searched
                     case 8 when Is(local, "moveFrom") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:    // a tracked move's source: hidden in Word's final view
@@ -300,7 +330,12 @@ internal sealed class DocxSearchTextScanner
                 }
             }
             if (isEmpty) { if (_namespaces.HasBlockDeclarations) _namespaces.Pop(depth); }
-            else depth++;
+            else
+            {
+                SetMathKind(elementDepth, skipDepth >= 0 && skipDepth != elementDepth ? MathKind.Other : Resolve(PrefixOf(xml.Slice(elementNameStart, elementNameEnd - elementNameStart), out ReadOnlySpan<byte> openedLocal)) != NamespaceKind.Math ? MathKind.Other
+                    : Is(openedLocal, "r") ? MathKind.Run : Is(openedLocal, "e") ? MathKind.Argument : Is(openedLocal, "eqArr") ? MathKind.EquationArray : MathKind.Other);
+                depth++;
+            }
         }
         if (segmented)
         {

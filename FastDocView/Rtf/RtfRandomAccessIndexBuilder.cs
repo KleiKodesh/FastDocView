@@ -1,3 +1,4 @@
+using FastDocView.Html;
 using System.Text;
 using FastDocView.DocxHtml;
 
@@ -520,11 +521,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     {
         if (!_parser.IsInListText && (_fields.IsIdle || _fields.Shows("x".AsSpan())))   // the search sink's rules (RtfSpanSearch.Text drops note text when notes are not searched)
         {
-            var text = new System.Text.StringBuilder();
-            if (RtfOfficeMath.ToOmml(group, state.CodePage, _ => null) is { } equation)
-                foreach (System.Xml.Linq.XElement t in equation.Descendants())
-                    if (t.Name.LocalName == "t") text.Append(t.Value);
-            _search!.Text(text.ToString().AsSpan(), _parser);
+            if (RtfOfficeMath.ToOmml(group, state.CodePage, _ => null) is { } equation) _search!.Text(WordOfficeMathHtml.SearchText(equation).AsSpan(), _parser);
         }
         Embedded(RtfEmbeddedKind.Equation, state);
     }
