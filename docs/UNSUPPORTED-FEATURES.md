@@ -55,7 +55,8 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Nested tables | doc (flattened), rtf (\itap / 
 estcell not read) | Inner rows are not placed in their cell | deferred |
 | Cell vertical alignment | doc, rtf | Not read | deferred |
-| RTL row order | rtf | tlrow not applied to the row | deferred |
+| RTL row order | rtf | 
+tlrow not applied to the row | deferred |
 | Repeat header row, row "can't split" | all | Page-bound | planned (paged view) |
 | Exact row heights as Word measures | all | No exact Word metrics in a flow view | won't do |
 
@@ -77,6 +78,8 @@ estcell not read) | Inner rows are not placed in their cell | deferred |
 | Notes at the page bottom / end of section | all | Draft-view model on purpose: notes pane and tooltip | won't do (flow view) |
 | Notes-only render (a note's block body is built and dropped) | docx, odt | Speed item, not correctness | deferred |
 | Restart note numbering per page | docx, doc, rtf | Page-bound | planned (paged view) |
+| Note start value and per-section restart | docx (numStart / numRestart), doc (Dop) | Not read | deferred |
+| Note number format | doc | Always decimal; nfcFtnRef / nfcEdnRef not read | deferred |
 
 ## Fields
 

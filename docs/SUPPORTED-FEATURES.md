@@ -136,9 +136,14 @@ Headers / footers, columns and page layout are not shown (flow view): see UNSUPP
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
 | Footnotes and endnotes, read on demand with their block | yes | yes | yes | yes | partial (16) | partial (17) |
-| Numbering counted at index time (formats, custom marks) | yes | yes | yes | yes | n.a. | n.a. |
+| Numbering counted at index time, custom marks | yes | yes | yes | yes | n.a. | n.a. |
+| Number format and start value | partial (N1) | partial (N2) | yes | yes | n.a. | n.a. |
+| Separator notes dropped | yes | yes | yes | n.a. | n.a. | n.a. |
+| Search inside notes | yes | yes | yes | yes | n.a. | n.a. |
 | Notes pane, hover tooltip, links both ways | yes | yes | yes | yes | yes | partial (17) |
 
+N1. docx: settings.xml numFmt per kind is read; numStart and numRestart are not.
+N2. .doc: always decimal from 1 (the Dop's nfcFtnRef / nFtn are not read).
 16. Torat Emet note lines only.
 17. Word's own HTML note links and texts are passed through.
 
