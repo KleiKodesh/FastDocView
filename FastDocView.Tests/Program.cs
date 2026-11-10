@@ -69,8 +69,9 @@ for (int i = 0; i < args.Length; i++)
         case "--connector-route": OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); skipSynthetic = true; break;   // only the connector routing checks (seconds)
         case "--mhtml-pictures": WebArchivePicturesTest.Run(); skipSynthetic = true; break;   // web archive pictures (seconds)
         case "--tables": WordTablesFidelityTest.Run(); skipSynthetic = true; break;   // only the table checks (seconds)
-        case "--fields": WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); skipSynthetic = true; break;
         case "--math": OfficeMathFidelityTest.Run(); skipSynthetic = true; break;   // only the equation checks (seconds)   // only the Word field checks (seconds)
+        case "--charts": OdtChartsFidelityTest.Run(); skipSynthetic = true; break;   // only the chart checks (seconds); writes TestOutput/charts-*.html
+        case "--fields": WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); skipSynthetic = true; break;   // only the Word field checks (seconds)
         case "--drop-caps": DropCapsAndHyphenationFidelityTest.Run(); skipSynthetic = true; break;
         case "--list-bullets": ListBulletsFidelityTest.Run(); skipSynthetic = true; break;   // only the list bullet / label checks
         case "--body-script-sample": BodyScriptFidelityTest.DumpSample(args[i + 1], int.Parse(args[i + 2]), int.Parse(args[i + 3])); return 0;

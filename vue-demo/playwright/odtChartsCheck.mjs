@@ -1,7 +1,7 @@
-// Live check of .odt charts in the app's FastDocView page: open test-data/odt-charts/odt-charts-v2.odt, check every chart
+// Live check of .odt charts in the app's FastDocView page: open test-data/odt-charts/odt-charts-v3.odt, check every chart
 // is drawn as SVG filling its frame (not the preview picture), titles and series colours show, no console errors.
 // Chart search is checked by the harness (OdtChartsFidelityTest). DOM only, no screenshots.
-//   node playwright/odtChartsCheck.mjs <path to odt-charts-v2.odt>
+//   node playwright/odtChartsCheck.mjs <path to odt-charts-v3.odt>
 import { chromium } from 'playwright'
 
 const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? `http://localhost:${process.env.FASTDOCVIEW_DEMO_PORT ?? 5189}/`

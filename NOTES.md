@@ -2256,3 +2256,24 @@ Content-Location is the src (or ends with "/" + src) or whose Content-ID is a `c
 - Fixture odt-charts-v2.odt (17 charts; scripts/make-odt-charts.py, LibreOffice UNO; the equation is written into the chart XML
   because UNO's equation properties are not reachable from Python) and odt-charts-v2.docx (LibreOffice's own .docx export of it).
 - Fix: the ODT chart cache is cleared and the read refused (WordDocumentSourceChangedException) when the file was replaced.
+
+## Chart 3-D projection, trend options, error ranges, LibreOffice / Word text layout (2026-11-10)
+
+- 3-D (DocxChart.ThreeD.cs): c:view3D as oox maps it (plotareaconverter.cxx:262-323: bars rotY 20 / rotX 15 defaults, perspective
+  halved, parallel when right-angled or 0; pies rotX - 90 elevation; flat shading, ambient #CCCCCC + light #666666 from (0.2, 0.4, 1),
+  pies #B3B3B3 / #4C4C4C), camera distance from the perspective (ThreeDHelper.cxx:605-645). Right-angled axes = oblique (front faces
+  flat). Columns: walls, floor, gridlines, labels and boxes painted far to near, back faces culled (as OdtExtrusion,
+  defaultprocessor3d.cxx:348-431). Pies: tilted disc, darker rim. ODT: dr3d:vpn gives rotY = atan2(x, z), rotX = asin(y) (the fixture's
+  scene exports to docx as rotY 25 / rotX 10, matching), dr3d:projection, chart:right-angled-axes, ambient and first light colour.
+- Trend lines: c:forward / c:backward, c:intercept (fit of the other powers to y - intercept); ODT regression-extrapolate-*,
+  regression-force-intercept / intercept-value (PropertyMaps.cxx:222-234). Error amounts: .docx c:plus / c:minus numRef caches; ODT
+  error-category cell-range with error-upper-range / lower-range over the chart's table (PropertyMaps.cxx:239-240).
+- Text: sizes from a:defRPr / a:rPr sz (ODT fo:font-size mapped in). Automatic value scale: ticks one label height apart, at most 10,
+  interval 1 / 2 / 5 x 10^n (LibreOffice VCartesianAxis.cxx:1559-1612, ScaleAutomatism.cxx:43-49, 851-940: plus one interval past
+  20/21; Word: +5 % headroom, measured 40 -> 45, 3 -> 3.5, 7 -> 8, 10 -> 12, 8 -> 9). midCat lines on the category ticks. LibreOffice
+  gaps measured from its PDF: value labels 0.7 x size from the axis, baseline 0.08 x size above the tick, bar value labels 0.7 x size
+  higher, axis title 0.5 x size lower, subtitle as its own object.
+- Measured (scripted, gs txtwrite of LibreOffice's and Word's PDFs vs our SVG text, relative to each chart's title, 230 texts):
+  ODT vs LibreOffice median 0.4 pt x / 0.3 pt y (mean 7.0 / 2.6; outliers are legend keys and horizontal-bar labels); .docx vs Word
+  median 2.6 / 2.4 pt (mean 7.4 / 4.4) - the LibreOffice-written .docx has no c:manualLayout and Word sizes the plot itself.
+- Fixture odt-charts-v3 (19 charts: + 3-D pie, cell-range errors; trend line extended 1 forward / 0.5 back through 0).

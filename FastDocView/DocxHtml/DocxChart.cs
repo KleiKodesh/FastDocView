@@ -21,7 +21,7 @@ namespace FastDocView.DocxHtml;
 /// the legend on its side, the plot area in the rest or at its c:manualLayout; value axes from 0 (or the data minimum when
 /// it is negative) to a 1 / 2 / 5 x 10^n step above the data, or the axis' c:min / c:max / c:majorUnit.
 /// </summary>
-internal sealed class DocxChart
+internal sealed partial class DocxChart
 {
     private const double EmuPerPoint = 12700;
 
@@ -64,6 +64,8 @@ internal sealed class DocxChart
         public double? Min, Max, MajorUnit;
         public bool Gridlines;
         public string? Title;
+        public double TitleSize = 10, LabelSize = 9;
+        public bool MidCategory;
         public string? FormatCode;
         public bool Reversed;
         public double? LogBase;
@@ -79,6 +81,9 @@ internal sealed class DocxChart
     private XElement? _chartSpaceProperties, _plotAreaProperties;
     private (double X, double Y, double W, double H)? _plotLayout;
     private bool _plotLayoutInner;
+    private List<double> _titleSizes = new();
+    private bool _libreOfficeLayout, _separateTitleLines;
+    private double _legendSize = 9, _dataLabelSize = 9;
     private (double X, double Y)? _legendLayout;
     private bool _is3D;
     private XElement? _floorProperties, _backWallProperties;
@@ -95,7 +100,19 @@ internal sealed class DocxChart
         if (Value(chartSpace.Element("style")) is { } style && int.TryParse(style, out int styleIndex)) model._style = styleIndex;
         else if (chartSpace.Element("AlternateContent")?.Element("Fallback")?.Element("style") is { } fallbackStyle && int.TryParse(Value(fallbackStyle), out int fallbackIndex)) model._style = fallbackIndex;
         model._chartSpaceProperties = chartSpace.Element("spPr");
-        if (chart.Element("title") is { } title) model._title = TitleText(title);
+        // text sizes (a:defRPr / a:rPr sz in hundredths of a point): the element's own, else the chart's c:txPr; Office's defaults otherwise
+        double? chartSize = FontSize(chartSpace.Element("txPr"));
+        // a chart read from OpenDocument is laid out by LibreOffice's rules (OdtChart marks it)
+        model._libreOfficeLayout = (string?)chartSpace.Attribute("layoutRules") == "libreoffice";
+        model._separateTitleLines = (string?)chart.Element("title")?.Attribute("separateLines") == "1";
+        if (chart.Element("title") is { } title)
+        {
+            model._title = TitleText(title);
+            double fallback = FontSize(title.Element("txPr")) ?? 14;
+            model._titleSizes = title.Element("tx")?.Element("rich")?.Elements("p").Select(p => FontSize(p) ?? fallback).ToList() ?? new List<double> { fallback };
+        }
+        if (chart.Element("legend") is { } legendText) model._legendSize = FontSize(legendText.Element("txPr")) ?? chartSize ?? 9;
+        model._dataLabelSize = FontSize(chart.Element("plotArea")?.Descendants("dLbls").Select(d => d.Element("txPr")).FirstOrDefault(t => t is not null)) ?? chartSize ?? 9;
         XElement? plotArea = chart.Element("plotArea");
         model._plotAreaProperties = plotArea?.Element("spPr");
         if (plotArea?.Element("layout")?.Element("manualLayout") is { } manual && Number(manual.Element("w")) is { } w && Number(manual.Element("h")) is { } h)
@@ -107,6 +124,7 @@ internal sealed class DocxChart
         // 3-D: c:view3D, c:floor, c:backWall (21.2.2.228, 21.2.2.69, 21.2.2.11)
         model._is3D = plotArea?.Elements().Any(e => e.Name.LocalName.EndsWith("3DChart", StringComparison.Ordinal)) == true;   // c:view3D alone is written for 2-D charts too
         model._floorProperties = chart.Element("floor")?.Element("spPr");
+        if (model._is3D) model._view3D = ReadView3D(chart.Element("view3D"), plotArea?.Element("pie3DChart") is not null);
         model._backWallProperties = chart.Element("backWall")?.Element("spPr");
         foreach (XElement element in plotArea?.Elements() ?? [])
         {
@@ -119,6 +137,8 @@ internal sealed class DocxChart
                     Min = Number(element.Element("scaling")?.Element("min")), Max = Number(element.Element("scaling")?.Element("max")),
                     MajorUnit = Number(element.Element("majorUnit")), Gridlines = element.Element("majorGridlines") is not null,
                     Title = element.Element("title") is { } axisTitle ? TitleText(axisTitle) : null,
+                    MidCategory = Value(element.Element("crossBetween")) == "midCat",
+                    TitleSize = FontSize(element.Element("title")) ?? (chartSize is { } c10 ? c10 : 10), LabelSize = FontSize(element.Element("txPr")) ?? chartSize ?? 9,
                     FormatCode = (string?)element.Element("numFmt")?.Attribute("formatCode"),
                     Reversed = Value(element.Element("scaling")?.Element("orientation")) == "maxMin",
                     LogBase = Number(element.Element("scaling")?.Element("logBase")), Position = Value(element.Element("axPos")),
@@ -440,14 +460,23 @@ internal sealed class DocxChart
         double top = 6, bottom = height - 6, left = 6, right = width - 6;
         if (_title is not null)
         {
+            // each line at its own size, 1.2 x the size apart, the first baseline one size below the top
             string[] lines = _title.Split('\n');
-            for (int i = 0; i < lines.Length; i++) Text(svg, width / 2, top + 14 + i * 16.8, lines[i], 14, textColor, "middle");
-            top += 8 + lines.Length * 16.8;
+            double y = top;
+            for (int i = 0; i < lines.Length; i++)
+            {
+                double size = TitleSize(i);
+                // LibreOffice's title and subtitle are two objects: the next baseline is the two sizes apart (measured 13 + 11 = 24 pt in its PDF)
+                if (_separateTitleLines && i > 0) y += size - TitleSize(i - 1) * 0.2;
+                Text(svg, width / 2, y + size, lines[i], size, textColor, "middle");
+                y += size * 1.2;
+            }
+            top = y + 8;
         }
         List<(string Text, string Color, bool Line)> legend = LegendEntries();
         if (legend.Count > 0)
         {
-            const double entryHeight = 13, size = 9;
+            double size = _legendSize, entryHeight = size * 13 / 9;
             if (_legendLayout is { } at)
             {
                 // c:legend c:manualLayout (21.2.2.95): the legend's top left corner where it was saved; the plot area keeps its room
@@ -480,7 +509,8 @@ internal sealed class DocxChart
         if (_plotLayout is { } manual) (left, top, right, bottom) = (manual.X * width, manual.Y * height, (manual.X + manual.W) * width, (manual.Y + manual.H) * height);
         if (_groups.Count == 0) { svg.Append("</svg>"); return svg.ToString(); }
         Group main = _groups[0];
-        if (main.Kind is Kind.Pie or Kind.Doughnut) DrawPie(svg, main, left, top, right, bottom, textColor);
+        if (main.Kind is Kind.Pie && _is3D) Draw3DPie(svg, main, left, top, right, bottom, textColor);
+        else if (main.Kind is Kind.Pie or Kind.Doughnut) DrawPie(svg, main, left, top, right, bottom, textColor);
         else if (main.Kind == Kind.Radar) DrawRadar(svg, main, left, top, right, bottom, textColor);
         else DrawAxes(svg, left, top, right, bottom, textColor);
         svg.Append("</svg>");
@@ -507,7 +537,7 @@ internal sealed class DocxChart
         if (percent) return (axis?.Min ?? 0, axis?.Max ?? 1, axis?.MajorUnit ?? 0.1);
         double min = axis?.Min ?? Math.Min(0, dataMin), max = axis?.Max ?? Math.Max(0, dataMax);
         if (max <= min) max = min + 1;
-        double step = axis?.MajorUnit ?? NiceStep((max - min) / 5);
+        double step = axis?.MajorUnit is { } unit && unit > (max - min) / 1000 ? unit : NiceStep((max - min) / 5);   // a c:majorUnit of 0 or less, or tiny, would never end
         if (axis?.Min is null) min = Math.Floor(min / step) * step;
         if (axis?.Max is null) max = Math.Ceiling(max / step) * step;
         if (max <= min) max = min + step;
@@ -549,6 +579,45 @@ internal sealed class DocxChart
     /// smallest positive value to the one at or above the largest, a tick per power - LibreOffice's automatic logarithmic scale works on
     /// the logarithms the same way (chart2/source/view/axes/ScaleAutomatism.cxx:294-330, calculateExplicitIncrementAndScaleForLogarithmic).
     /// </summary>
+    /// <summary>
+    /// The automatic linear scale as LibreOffice or Word makes it. Both fit as many ticks as the axis has room for, one label height
+    /// apart (LibreOffice: VCartesianAxis.cxx:1559-1612, axis length / text height, at most 10, ScaleAutomatism.cxx:43-49), with an interval
+    /// of 1, 2 or 5 x 10^n at or above range / count (ScaleAutomatism.cxx:851-913). LibreOffice rounds the ends out to the interval and adds
+    /// one more interval when the data reach past 20/21 of the range (:918-940); Word first adds 5 % of the range above the largest value
+    /// (measured on Word's PDFs of the fixture: 40 -> 45, 3 -> 3.5, 7 -> 8, 10 -> 12, 8 -> 9) and rounds out.
+    /// </summary>
+    private (double Min, double Max, double Step)? AutoScale(double dataMin, double dataMax, Axis? axis, double axisLength, double labelSize)
+    {
+        if (axis?.MajorUnit is > 0 && axis.Min is not null && axis.Max is not null) return null;
+        double min = Math.Min(0, dataMin), max = Math.Max(0, dataMax);
+        if (!_libreOfficeLayout)
+        {
+            double span = max - min;
+            if (max > 0) max += span * 0.05;
+            if (min < 0) min -= span * 0.05;
+        }
+        min = axis?.Min ?? min; max = axis?.Max ?? max;
+        if (max <= min) max = min + 1;
+        int count = Math.Max(2, Math.Min(10, (int)(axisLength / Math.Max(1, labelSize * 1.2))));
+        double step = axis?.MajorUnit is { } unit && unit > (max - min) / 1000 ? unit : NiceStep((max - min) / count);
+        double low = axis?.Min ?? Math.Floor(min / step + 1e-9) * step, high = axis?.Max ?? Math.Ceiling(max / step - 1e-9) * step;
+        if (_libreOfficeLayout && axis?.Max is null && high != 0 && (dataMax - low) / (high - low) > 20.0 / 21.0) high += step;
+        if (_libreOfficeLayout && axis?.Min is null && low != 0 && (high - dataMin) / (high - low) > 20.0 / 21.0) low -= step;
+        if (high <= low) high = low + step;
+        return (low, high, step);
+    }
+
+    private (double Min, double Max, List<double> Ticks) AxisScale(double dataMin, double dataMax, double positiveMin, Axis? axis, bool percent, double axisLength, double labelSize)
+    {
+        if (axis?.LogBase is null && !percent && axisLength > 0 && AutoScale(dataMin, dataMax, axis, axisLength, labelSize) is { } auto)
+        {
+            var autoTicks = new List<double>();
+            for (double v = auto.Min; v <= auto.Max + auto.Step / 1000; v += auto.Step) autoTicks.Add(v);
+            return (auto.Min, auto.Max, autoTicks);
+        }
+        return AxisScale(dataMin, dataMax, positiveMin, axis, percent);
+    }
+
     private static (double Min, double Max, List<double> Ticks) AxisScale(double dataMin, double dataMax, double positiveMin, Axis? axis, bool percent)
     {
         var ticks = new List<double>();
@@ -590,7 +659,9 @@ internal sealed class DocxChart
         if (primaryGroups.Count == 0) { primaryGroups = secondaryGroups; secondaryGroups = new(); secondaryAxis = null; }
         percent = primaryGroups.Any(g => g.Grouping == "percentStacked");
         (double dataMin, double dataMax, double positiveMin) = DataRange(primaryGroups, categoryCount);
-        (double vMin, double vMax, List<double> valueTicks) = AxisScale(dataMin, dataMax, positiveMin, valueAxis, percent);
+        double estimatedLength = Math.Max(1, horizontal ? right - left - 60 : bottom - top - 30);
+        double axisLabelSize = valueAxis?.LabelSize ?? categoryAxis?.LabelSize ?? 9;
+        (double vMin, double vMax, List<double> valueTicks) = AxisScale(dataMin, dataMax, positiveMin, valueAxis, percent, estimatedLength, axisLabelSize);
         // x range for scatter / bubble
         double xMin = 0, xMax = categoryCount, xStep = 1;
         if (xy)
@@ -601,7 +672,8 @@ internal sealed class DocxChart
             if (xAxis is not null && !xAxis.IsCategory) categoryAxis = xAxis;
         }
         // room for tick labels and axis titles
-        double labelSize = 9;
+        double labelSize = valueAxis?.LabelSize ?? categoryAxis?.LabelSize ?? 9;
+        double valueTitleSize = valueAxis?.TitleSize ?? 10, categoryTitleSize = categoryAxis?.TitleSize ?? 10;
         string valueFormat = valueAxis?.FormatCode ?? (percent ? "0%" : _groups[0].Series[0].FormatCode ?? "General");
         var valueLabels = new List<(double Value, string Text)>();
         if (valueAxis is not { Deleted: true })
@@ -612,7 +684,7 @@ internal sealed class DocxChart
         if (secondaryAxis is not null)
         {
             (double sDataMin, double sDataMax, double sPositiveMin) = DataRange(secondaryGroups, categoryCount);
-            (sMin, sMax, List<double> secondaryTicks) = AxisScale(sDataMin, sDataMax, sPositiveMin, secondaryAxis, secondaryGroups.Any(g => g.Grouping == "percentStacked"));
+            (sMin, sMax, List<double> secondaryTicks) = AxisScale(sDataMin, sDataMax, sPositiveMin, secondaryAxis, secondaryGroups.Any(g => g.Grouping == "percentStacked"), estimatedLength, axisLabelSize);
             string secondaryFormat = secondaryAxis.FormatCode ?? secondaryGroups[0].Series[0].FormatCode ?? "General";
             foreach (double v in secondaryTicks) secondaryLabels.Add((v, FormatNumber(Math.Round(v, 10), secondaryFormat)));
         }
@@ -621,14 +693,14 @@ internal sealed class DocxChart
         {
             // c:layoutTarget inner: the stored rectangle is the plot itself; the labels and titles go outside it
             double catLabelWidth = Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize));
-            left -= (valueAxis?.Title is not null && !horizontal ? 14 : 0) + (categoryAxis?.Title is not null && !categoryAxis.Deleted && horizontal ? 14 : 0)
+            left -= (valueAxis?.Title is not null && !horizontal ? valueTitleSize + 4 : 0) + (categoryAxis?.Title is not null && !categoryAxis.Deleted && horizontal ? categoryTitleSize + 4 : 0)
                     + (horizontal ? (categoryAxis is { Deleted: true } ? 0 : catLabelWidth) : valueLabelWidth);
-            bottom += (valueAxis?.Title is not null && horizontal ? 14 : 0) + (categoryAxis?.Title is not null && !categoryAxis.Deleted && !horizontal ? 14 : 0)
+            bottom += (valueAxis?.Title is not null && horizontal ? valueTitleSize + 4 : 0) + (categoryAxis?.Title is not null && !categoryAxis.Deleted && !horizontal ? categoryTitleSize + 4 : 0)
                       + (horizontal ? labelSize + 4 : categoryAxis is { Deleted: true } ? 0 : labelSize + 4);
             right += secondaryLabelWidth + (secondaryAxis?.Title is not null ? 14 : 0);
         }
-        if (valueAxis?.Title is { } valueTitle) { if (horizontal) bottom -= 14; else left += 14; Text(svg, horizontal ? (left + right) / 2 : left - 6, horizontal ? bottom + 12 : (top + bottom) / 2, valueTitle, 10, textColor, "middle", horizontal ? 0 : -90); }
-        if (categoryAxis?.Title is { } categoryTitle && !categoryAxis.Deleted) { if (horizontal) left += 14; else bottom -= 14; Text(svg, horizontal ? left - 6 : (left + right) / 2, horizontal ? (top + bottom) / 2 : bottom + 12, categoryTitle, 10, textColor, "middle", horizontal ? -90 : 0); }
+        if (valueAxis?.Title is { } valueTitle) { double room = valueTitleSize + 4; if (horizontal) bottom -= room; else left += room; Text(svg, horizontal ? (left + right) / 2 : left - 6, horizontal ? bottom + valueTitleSize + 2 : (top + bottom) / 2, valueTitle, valueTitleSize, textColor, "middle", horizontal ? 0 : -90); }
+        if (categoryAxis?.Title is { } categoryTitle && !categoryAxis.Deleted) { double room = categoryTitleSize + 4; if (horizontal) left += room; else bottom -= room; Text(svg, horizontal ? left - 6 : (left + right) / 2, horizontal ? (top + bottom) / 2 : bottom + categoryTitleSize + 2 + (_libreOfficeLayout ? categoryTitleSize * 0.5 : 0), categoryTitle, categoryTitleSize, textColor, "middle", horizontal ? -90 : 0); }
         if (secondaryAxis?.Title is { } secondaryTitle) { right -= 14; Text(svg, right + 6, (top + bottom) / 2, secondaryTitle, 10, textColor, "middle", 90); }
         right -= secondaryLabelWidth;
         if (horizontal) { bottom -= labelSize + 4; left += categoryAxis is { Deleted: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
@@ -636,6 +708,11 @@ internal sealed class DocxChart
         double plotWidth = Math.Max(1, right - left), plotHeight = Math.Max(1, bottom - top);
         string gridColor = DocxDrawingColor.Css(new XElement("c", new XElement("schemeClr", new XAttribute("val", "tx1"), new XElement("lumMod", new XAttribute("val", "15000")), new XElement("lumOff", new XAttribute("val", "85000")))), _theme) ?? "#D9D9D9";
         string? plotFill = PropertiesFill(_plotAreaProperties, null);
+        if (_is3D && !horizontal && !xy && _groups.Count == 1 && _groups[0].Kind == Kind.Bar)
+        {
+            Draw3DColumns(svg, categoryCount, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { Deleted: true }, textColor, gridColor, plotFill);
+            return;
+        }
         if (_is3D && !horizontal)
         {
             // the 3-D look: back wall, side wall and floor as a box seen from the front right; the data stand on the front plane
@@ -665,7 +742,8 @@ internal sealed class DocxChart
             {
                 double y = bottom - t * plotHeight;
                 if (valueAxis?.Gridlines != false) svg.Append("<path d=\"M").Append(N(left)).Append(' ').Append(N(y)).Append('H').Append(N(right)).Append("\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
-                Text(svg, left - 4, y + labelSize / 3, text, labelSize, textColor, "end");
+                // LibreOffice centres the label's full text height on the tick (measured: baseline 0.08 x size above it); Word a third of the size below
+                Text(svg, left - (_libreOfficeLayout ? labelSize * 0.7 : 4), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, textColor, "end");
             }
         }
         foreach ((double value, string text) in secondaryLabels)
@@ -675,7 +753,7 @@ internal sealed class DocxChart
             for (int i = 0; i < categoryCount; i++)
             {
                 string label = i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture);
-                double centre = (i + 0.5) / categoryCount;
+                double centre = MidCategory() ? (categoryCount == 1 ? 0.5 : (double)i / (categoryCount - 1)) : (i + 0.5) / categoryCount;
                 if (horizontal) Text(svg, left - 4, bottom - centre * plotHeight + labelSize / 3, label, labelSize, textColor, "end");
                 else Text(svg, left + centre * plotWidth, bottom + labelSize + 2, label, labelSize, textColor, "middle");
             }
@@ -699,7 +777,23 @@ internal sealed class DocxChart
         svg.Append("<path d=\"M").Append(N(left)).Append(' ').Append(N(bottom)).Append('H').Append(N(right)).Append("\" stroke=\"").Append(axisColor).Append("\" stroke-width=\"0.75\"/>");
     }
 
+    /// <summary>c:crossBetween midCat (21.2.2.33): the value axis crosses at the categories, so points and labels sit on the category ticks, first and last at the plot's edges (only when no bars share the plot).</summary>
+    private bool MidCategory() => ValueAxis() is { MidCategory: true } && _groups.All(g => g.Kind is Kind.Line or Kind.Area);
+
     private static double CategoryLabelWidth(List<string> categories, double labelSize) => categories.DefaultIfEmpty("").Max(c => c.Length) * labelSize * 0.55 + 6;
+
+    private static Func<double, double> ValueToAxisOf(Axis? axis, double min, double max) => AxisMap(axis, min, max);
+
+    /// <summary>The first a:defRPr / a:rPr sz under an element (points), or null.</summary>
+    private static double? FontSize(XElement? element)
+    {
+        if (element is null) return null;
+        foreach (XElement run in element.DescendantsAndSelf().Where(e => e.Name.LocalName is "defRPr" or "rPr"))
+            if (double.TryParse((string?)run.Attribute("sz"), NumberStyles.Float, CultureInfo.InvariantCulture, out double hundredths) && hundredths > 0) return hundredths / 100;
+        return null;
+    }
+
+    private double TitleSize(int line) => _titleSizes.Count == 0 ? 14 : _titleSizes[Math.Min(line, _titleSizes.Count - 1)];
 
     /// <summary>Value to its place on an axis (0 = start, 1 = end): linear, or logarithmic (values at or below the start sit on it).</summary>
     private static Func<double, double> AxisMap(Axis? axis, double min, double max)
@@ -771,14 +865,15 @@ internal sealed class DocxChart
             var ys = points.Select(p => p.Y).ToList();
             string lineColor = trend.Element("spPr")?.Element("ln")?.Element("solidFill") is { } solid ? DocxDrawingColor.Css(solid, _theme) ?? color : color;
             var path = new StringBuilder();
-            double xLow = xs.Min(), xHigh = xs.Max();
+            // c:backward / c:forward (21.2.2.9 / 21.2.2.70): the line extended by that much along x
+            double xLow = xs.Min() - Math.Max(0, Number(trend.Element("backward")) ?? 0), xHigh = xs.Max() + Math.Max(0, Number(trend.Element("forward")) ?? 0);
             if (type == "movingAvg")
             {
                 int period = Math.Max(2, (int)(Number(trend.Element("period")) ?? 2));
                 for (int i = period - 1; i < points.Count; i++)
                     path.Append(path.Length == 0 ? 'M' : 'L').Append(N(points[i].Px)).Append(' ').Append(N(toPy(ys.Skip(i - period + 1).Take(period).Average())));
             }
-            else if (Fit(type, (int)(Number(trend.Element("order")) ?? 2), xs, ys) is { } fit)
+            else if (Fit(type, (int)(Number(trend.Element("order")) ?? 2), xs, ys, Number(trend.Element("intercept"))) is { } fit)
             {
                 for (int k = 0; k <= 40; k++)
                 {
@@ -805,7 +900,9 @@ internal sealed class DocxChart
     /// <summary>A least-squares trend: its function, equation text and R squared.</summary>
     private sealed record TrendFit(Func<double, double> Evaluate, string Equation, double RSquared);
 
-    private static TrendFit? Fit(string type, int order, List<double> xs, List<double> ys)
+    /// <param name="intercept">c:intercept (21.2.2.83): the value at x = 0 the line is forced through (linear, polynomial, exponential;
+    /// LibreOffice's ForceIntercept / InterceptValue, xmloff PropertyMaps.cxx:222-225).</param>
+    private static TrendFit? Fit(string type, int order, List<double> xs, List<double> ys, double? intercept = null)
     {
         // linearised forms: y = a + b x (linear), ln y = ln a + b x (exp), y = a + b ln x (log), ln y = ln a + b ln x (power)
         bool logX = type is "log" or "power", logY = type is "exp" or "power";
@@ -813,7 +910,8 @@ internal sealed class DocxChart
         int degree = type == "poly" ? Math.Max(2, Math.Min(6, order)) : 1;
         if (pairs.Count <= degree) return null;
         double[] u = pairs.Select(p => logX ? Math.Log(p.x) : p.x).ToArray(), v = pairs.Select(p => logY ? Math.Log(p.y) : p.y).ToArray();
-        double[]? c = PolynomialLeastSquares(u, v, degree);
+        double? fixedConstant = intercept is { } forced && type is "linear" or "poly" or "exp" ? (type == "exp" ? (forced > 0 ? Math.Log(forced) : null) : forced) : null;
+        double[]? c = PolynomialLeastSquares(u, v, degree, fixedConstant);
         if (c is null) return null;
         double Poly(double t) { double r = 0; for (int i = degree; i >= 0; i--) r = r * t + c[i]; return r; }
         Func<double, double> evaluate = type switch
@@ -836,14 +934,16 @@ internal sealed class DocxChart
     }
 
     /// <summary>Coefficients c[0..degree] of the least-squares polynomial (normal equations, Gaussian elimination with partial pivoting); null when singular.</summary>
-    private static double[]? PolynomialLeastSquares(double[] x, double[] y, int degree)
+    /// <param name="fixedConstant">A forced constant term: only the powers 1..degree are fitted, to y minus it.</param>
+    private static double[]? PolynomialLeastSquares(double[] x, double[] y, int degree, double? fixedConstant = null)
     {
-        int n = degree + 1;
+        int first = fixedConstant is null ? 0 : 1, n = degree + 1 - first;
+        double constant = fixedConstant ?? 0;
         var a = new double[n, n + 1];
         for (int row = 0; row < n; row++)
         {
-            for (int column = 0; column < n; column++) a[row, column] = x.Sum(t => Math.Pow(t, row + column));
-            a[row, n] = x.Select((t, i) => Math.Pow(t, row) * y[i]).Sum();
+            for (int column = 0; column < n; column++) a[row, column] = x.Sum(t => Math.Pow(t, row + column + 2 * first));
+            a[row, n] = x.Select((t, i) => Math.Pow(t, row + first) * (y[i] - constant)).Sum();
         }
         for (int pivot = 0; pivot < n; pivot++)
         {
@@ -858,7 +958,8 @@ internal sealed class DocxChart
                 for (int column = pivot; column <= n; column++) a[row, column] -= factor * a[pivot, column];
             }
         }
-        return Enumerable.Range(0, n).Select(i => a[i, n] / a[i, i]).ToArray();
+        double[] solved = Enumerable.Range(0, n).Select(i => a[i, n] / a[i, i]).ToArray();
+        return fixedConstant is null ? solved : new[] { constant }.Concat(solved).ToArray();
     }
 
     /// <summary>
@@ -922,7 +1023,7 @@ internal sealed class DocxChart
                 svg.Append("<rect x=\"").Append(N(x)).Append("\" y=\"").Append(N(y)).Append("\" width=\"").Append(N(Math.Max(0, w))).Append("\" height=\"").Append(N(Math.Max(0, h)))
                    .Append("\" fill=\"").Append(fill.Css).Append('"').Append(fill.Opacity < 1 ? " fill-opacity=\"" + N(fill.Opacity) + "\"" : "").Append("/>");
                 if (LabelText(group, series, i) is { } label)
-                    Text(svg, group.Horizontal ? x + w + 2 : x + w / 2, group.Horizontal ? y + h / 2 + 3 : y - 2, label, 9, textColor, group.Horizontal ? "start" : "middle");
+                    Text(svg, group.Horizontal ? x + w + 2 : x + w / 2, group.Horizontal ? y + h / 2 + 3 : y - 2 - (_libreOfficeLayout ? 0.7 * _dataLabelSize : 0), label, _dataLabelSize, textColor, group.Horizontal ? "start" : "middle");
                 if (!group.Horizontal && (series.ErrorBars.Count > 0 || series.Trendlines.Count > 0 && !stacked))
                 {
                     if (!extras.TryGetValue(series, out var list)) extras[series] = list = new();
@@ -953,7 +1054,7 @@ internal sealed class DocxChart
                 double from = stacked ? baseline[i] : Math.Max(vMin, Math.Min(vMax, 0));
                 double to = stacked ? baseline[i] + value : value;
                 if (stacked) baseline[i] = to;
-                double x = left + (i + 0.5) / categories * width;
+                double x = left + (MidCategory() ? (categories == 1 ? 0.5 : (double)i / (categories - 1)) : (i + 0.5) / categories) * width;
                 points.Add((x, top + height - axis(to) * height, i));
                 pointValues.Add(to);
                 lower.Add((x, top + height - axis(from) * height));
@@ -980,10 +1081,10 @@ internal sealed class DocxChart
                     foreach (var p in points) svg.Append("<circle cx=\"").Append(N(p.X)).Append("\" cy=\"").Append(N(p.Y)).Append("\" r=\"2.5\" fill=\"").Append(css == "none" ? AutomaticColor(series.Index, totalSeries) : css).Append("\"/>");
             }
             foreach (var p in points)
-                if (LabelText(group, series, p.Index) is { } label) Text(svg, p.X, p.Y - 4, label, 9, textColor, "middle");
+                if (LabelText(group, series, p.Index) is { } label) Text(svg, p.X, p.Y - 4, label, _dataLabelSize, textColor, "middle");
             if (series.ErrorBars.Count > 0 || series.Trendlines.Count > 0)
                 DrawSeriesExtras(svg, series, points.Select((p, k) => (p.X, p.Y, (double)(p.Index + 1), pointValues[k], p.Index)).ToList(),
-                                 v => top + height - axis(v) * height, x => left + (x - 0.5) / categories * width,
+                                 v => top + height - axis(v) * height, x => left + (MidCategory() ? (categories == 1 ? 0.5 : (x - 1) / (categories - 1)) : (x - 0.5) / categories) * width,
                                  group.Kind == Kind.Area ? FillOf(group, series, -1, totalSeries).Css : LineOf(series, totalSeries).Css, textColor, stacked);
         }
     }
@@ -1026,7 +1127,7 @@ internal sealed class DocxChart
                     foreach (var p in points) svg.Append("<circle cx=\"").Append(N(p.X)).Append("\" cy=\"").Append(N(p.Y)).Append("\" r=\"2.5\" fill=\"").Append(css == "none" ? AutomaticColor(series.Index, totalSeries) : css).Append("\"/>");
             }
             foreach (var p in points)
-                if (LabelText(group, series, p.Index) is { } label) Text(svg, p.X, p.Y - 4, label, 9, textColor, "middle");
+                if (LabelText(group, series, p.Index) is { } label) Text(svg, p.X, p.Y - 4, label, _dataLabelSize, textColor, "middle");
             if (series.ErrorBars.Count > 0 || series.Trendlines.Count > 0)
                 DrawSeriesExtras(svg, series, points.Select((p, k) => (p.X, p.Y, data[k].X, data[k].Y, p.Index)).ToList(),
                                  v => top + height - axisY(v) * height, x => left + axisX(x) * width, css == "none" ? AutomaticColor(series.Index, totalSeries) : css, textColor);
@@ -1071,7 +1172,7 @@ internal sealed class DocxChart
             if (LabelText(group, series, i) is { } label)
             {
                 double middle = (angle + sweep / 2) * Math.PI / 180, at = inner > 0 ? (inner + radius) / 2 : radius * 0.65;
-                Text(svg, cx + at * Math.Cos(middle), cy + at * Math.Sin(middle) + 3, label, 9, textColor, "middle");
+                Text(svg, cx + at * Math.Cos(middle), cy + at * Math.Sin(middle) + 3, label, _dataLabelSize, textColor, "middle");
             }
             angle += sweep;
         }

@@ -4,7 +4,7 @@ using FastDocView;
 namespace FastDocView.Tests;
 
 /// <summary>
-/// .odt charts (--fidelity, seconds): test-data/odt-charts/odt-charts-v2.odt, made by LibreOffice itself through UNO
+/// .odt charts (--fidelity, seconds): test-data/odt-charts/odt-charts-v3.odt, made by LibreOffice itself through UNO
 /// (scripts/make-odt-charts.py: one Writer chart per class - column with subtitle, axis titles and value labels, stacked bars,
 /// percent columns, line, stacked area, pie, donut, scatter, radar, stock, bubble, 3-D column). Each chart is drawn as SVG from
 /// its "Object N" sub-document (not the preview picture), with the series colours LibreOffice wrote; the same file saved
@@ -14,15 +14,16 @@ public static class OdtChartsFidelityTest
 {
     private static readonly string[] Titles =
         ["Column Sales", "Stacked Bars", "Percent Columns", "Line Trend", "Area Stack", "Pie Share", "Donut Rings", "Scatter Points", "Radar Net", "Stock Prices", "Bubble Sizes", "Column Depth",
-         "Log Growth", "Two Axes", "Error Bars", "Trend Fit", "Candle Stock"];
+         "Log Growth", "Two Axes", "Error Bars", "Trend Fit", "Pie Depth", "Range Errors", "Candle Stock"];
 
     public static void Run()
     {
         TestReport.Step("ODT charts: LibreOffice-made charts drawn from their sub-documents");
-        string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "odt-charts", "odt-charts-v2.odt");
+        string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "odt-charts", "odt-charts-v3.odt");
         TestReport.Check(File.Exists(path), "chart fixture exists");
         if (!File.Exists(path)) return;
         List<string> html = Render(path);
+        File.WriteAllText(Path.Combine(TestReport.OutputDirectory, "charts-odt.html"), string.Concat(html));
         Check(html, "odt");
         TestReport.Check(SearchCount(path, "Quarter Axis") == 1 && SearchCount(path, "Sub Heading") == 1 && SearchCount(path, "Speed") == 1 && SearchCount(path, "Bubble Sizes") == 1,
                          "search: axis title, subtitle, a radar category, a title - each found once, in its chart's block");
@@ -35,6 +36,7 @@ public static class OdtChartsFidelityTest
         if (File.Exists(docx))
         {
             List<string> word = Render(docx);
+            File.WriteAllText(Path.Combine(TestReport.OutputDirectory, "charts-docx.html"), string.Concat(word));
             int drawn = Regex.Matches(string.Concat(word), "<svg class=\"word-chart\"").Count;
             TestReport.Check(drawn == Titles.Length, "docx: every chart drawn (" + drawn + ")");
             CheckParts(word, "docx", layout: false);
@@ -80,11 +82,21 @@ public static class OdtChartsFidelityTest
         string errors = Block("Error Bars");
         TestReport.Check(Regex.Matches(errors, "word-chart-error-bar").Count == 3, format + ": an error bar per point (" + Regex.Matches(errors, "word-chart-error-bar").Count + ")");
         string trend = Block("Trend Fit");
+        var trendXs = Regex.Matches(trend, "class=\"word-chart-trendline\" d=\"([^\"]*)\"").Cast<Match>().SelectMany(m => Regex.Matches(m.Groups[1].Value, "[ML]([0-9.]+) ").Cast<Match>()).Select(m => double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToList();
+        var pointXs = Regex.Matches(trend, "<circle cx=\"([0-9.]+)\"").Cast<Match>().Select(m => double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToList();
+        TestReport.Check(trendXs.Count > 0 && pointXs.Count > 0 && trendXs.Max() > pointXs.Max() + 1 && trendXs.Min() < pointXs.Min() - 1, format + ": trend line extended forward and backward past the points");
         TestReport.Check(trend.Contains("word-chart-trendline") && trend.Contains("R&#178; = 1<") && Regex.IsMatch(trend, ">(f[(]x[)]|y) = "), format + ": trend line with its equation and R squared (" + string.Join(" | ", Regex.Matches(trend, ">([^<]*= [^<]*)<").Cast<Match>().Select(m => m.Groups[1].Value)) + ")");
         string candle = Block("Candle Stock");
         TestReport.Check(Regex.Matches(candle, "word-chart-hilow").Count == 3 && Regex.Matches(candle, "word-chart-updown").Count == 3, format + ": stock high-low lines and open-close boxes");
         TestReport.Check(candle.Contains("word-chart-updown\" x=") && candle.Contains("#FFFFFF") , format + ": a rising day is a white box");
         string depth = Block("Column Depth");
+        var boxFills = Regex.Matches(depth, "class=\"word-chart-box\" d=\"[^\"]*\" fill=\"(#[0-9A-F]{6})\"").Cast<Match>().Select(m => m.Groups[1].Value).ToList();
+        TestReport.Check(boxFills.Count >= 4 && boxFills.Distinct().Count() >= 2, format + ": 3-D columns as projected boxes, faces shaded differently (" + boxFills.Count + " faces, " + boxFills.Distinct().Count() + " shades)");
+        string pie3D = Block("Pie Depth");
+        TestReport.Check(Regex.Matches(pie3D, "word-chart-pie-top").Count == 4 && pie3D.Contains("word-chart-pie-side"), format + ": 3-D pie: four tilted slices over a darker rim");
+        TestReport.Check(Regex.Matches(Block("Range Errors"), "word-chart-error-bar").Count == 3, format + ": error amounts from a cell range, one bar per point");
+        string columnSales = Block("Column Sales");
+        TestReport.Check(columnSales.Contains(format == "odt" || format == "fodt" ? ">50<" : ">45<"), format + ": automatic value scale as " + (format == "docx" ? "Word (5 % headroom: 40 -> 45)" : "LibreOffice (one more step near the top: 40 -> 50)"));
         TestReport.Check(depth.Contains("word-chart-floor"), format + ": 3-D column chart drawn with wall and floor");
         if (layout)
         {

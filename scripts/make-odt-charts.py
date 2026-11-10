@@ -1,4 +1,4 @@
-# Builds test-data/odt-charts/odt-charts-v2.odt (and, converted by LibreOffice, odt-charts-v2.docx) with LibreOffice itself (UNO): one Writer chart per chart type.
+# Builds test-data/odt-charts/odt-charts-v3.odt (and, converted by LibreOffice, odt-charts-v3.docx) with LibreOffice itself (UNO): one Writer chart per chart type.
 # Run with LibreOffice's python while soffice listens:  soffice --headless --accept="pipe,name=fdvcharts;urp;" (SAL_DISABLE_PRINTERLIST=1 SAL_DISABLE_DEFAULTPRINTER=1)
 import sys, time, uno
 from com.sun.star.beans import PropertyValue
@@ -24,7 +24,7 @@ def extras(name, chart):
         d.HasSecondaryYAxis = True
         d.getDataRowProperties(1).Axis = 4  # ChartAxisAssign.SECONDARY_Y
         d.HasSecondaryYAxisTitle = True; d.SecondYAxisTitle.String = "Ratio Axis"
-    if name == "ChartErrors":
+    if name in ("ChartErrors", "ChartRangeErrors"):
         row = d.getDataRowProperties(0)
         row.ErrorCategory = uno.Enum("com.sun.star.chart.ChartErrorCategory", "CONSTANT_VALUE")
         row.ConstantErrorHigh = 2.0; row.ConstantErrorLow = 1.0
@@ -33,6 +33,10 @@ def extras(name, chart):
         series = chart.getFirstDiagram().getCoordinateSystems()[0].getChartTypes()[0].getDataSeries()[0]
         curve = ctx.ServiceManager.createInstanceWithContext("com.sun.star.chart2.LinearRegressionCurve", ctx)
         series.addRegressionCurve(curve)
+        added = series.getRegressionCurves()[0]
+        for key, value in (("ExtrapolateForward", 1.0), ("ExtrapolateBackward", 0.5), ("ForceIntercept", True), ("InterceptValue", 0.0)):
+            try: added.setPropertyValue(key, value)
+            except Exception as e: print("curve", key, e)
     if name == "ChartColumn3D":
         d.getFloor().FillColor = 0xCCE5FF
 
@@ -54,6 +58,8 @@ CHARTS = [
     ("ChartSecondary", "com.sun.star.chart.BarDiagram", {}, "Two Axes", ["J", "K", "L"], ["Units", "Ratio"], [[100, 0.2], [200, 0.5], [300, 0.9]]),
     ("ChartErrors", "com.sun.star.chart.BarDiagram", {}, "Error Bars", ["E1", "E2", "E3"], ["Measured"], [[5], [8], [6]]),
     ("ChartTrend", "com.sun.star.chart.XYDiagram", {}, "Trend Fit", ["1", "2", "3", "4"], ["X", "Obs"], [[1, 2], [2, 4.5], [3, 5.5], [4, 8]]),
+    ("ChartPie3D", "com.sun.star.chart.PieDiagram", {"Dim3D": True}, "Pie Depth", ["North", "South", "East", "West"], ["Share"], [[40], [30], [20], [10]]),
+    ("ChartRangeErrors", "com.sun.star.chart.BarDiagram", {}, "Range Errors", ["R1", "R2", "R3"], ["Level"], [[2], [3], [4]]),
     ("ChartCandle", "com.sun.star.chart.StockDiagram", {"UpDown": True}, "Candle Stock", ["D1", "D2", "D3"], ["Open", "Low", "High", "Close"], [[10, 8, 14, 13], [13, 11, 15, 12], [12, 9, 16, 15]]),
 ]
 for name, service, props, title, rows, cols, data in CHARTS:
@@ -99,6 +105,10 @@ temporary = out + ".tmp"
 with zipfile.ZipFile(out) as source, zipfile.ZipFile(temporary, "w") as target:
     for item in source.infolist():
         data = source.read(item.filename)
+        if item.filename.endswith("/content.xml") and b"Range Errors" in data:
+            # error amounts from a cell range (ODF chart:error-category cell-range, error-upper-range / lower-range): the values column itself
+            text = data.decode("utf-8").replace('chart:error-category="constant"', 'chart:error-category="cell-range" chart:error-upper-range="local-table.$B$2:.$B$4" chart:error-lower-range="local-table.$B$2:.$B$4"')
+            data = text.encode("utf-8")
         if item.filename.endswith("/content.xml") and b"chart:regression-curve" in data:
             text = data.decode("utf-8")
             start = text.index("<chart:regression-curve")

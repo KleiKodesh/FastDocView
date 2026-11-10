@@ -119,9 +119,8 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
 | Charts in .doc / RTF | doc, rtf | No chart reader in DocBinary/, Rtf/ (docx and ODT charts are read); the saved preview picture shows where there is one | deferred |
-| Chart 3-D perspective and rotation (c:view3D rotX / rotY / perspective; ODT dr3d:scene) | docx, odt | 3-D charts are drawn as their 2-D kind inside a wall-and-floor box; a real projection is not implemented | deferred |
-| Chart trend line extrapolation, forced intercept; error bars from cell ranges | docx, odt | The line spans the data only; cell-range error amounts are not read | deferred |
-| Chart text sizes and automatic label layout as LibreOffice / Word lay them out | docx, odt | Positions of titles and tick labels are this library's own; the plot area and legend follow the saved positions | deferred |
+| 3-D line, area and bar (horizontal) charts in projection; Gouraud shading; ODT light directions | docx, odt | Columns and pies are projected and shaded; these keep the flat wall-and-floor drawing, one light from Word's default direction | deferred |
+| Word's automatic plot-area layout; rotated / staggered / wrapped crowded category labels | docx, odt | Measured over the 19-chart fixture: ODT texts median 0.4 pt (x) / 0.3 pt (y) from LibreOffice's PDF; .docx without a saved layout median 2.6 / 2.4 pt from Word's PDF (largest gaps where Word sizes the plot area itself) | deferred |
 | chartex region map without a geography cache | docx | No map data; the saved fallback picture is shown | won't do |
 | SmartArt without a saved drawing part | docx | Layout engine not implemented; empty frame of the right size | deferred |
 | OLE objects as live content (embedded sheets, media; MathType / Equation 3.0 equations) | all | Only the saved preview picture is shown (Office Math and LibreOffice formulas are drawn as MathML, see the supported list) | won't do |

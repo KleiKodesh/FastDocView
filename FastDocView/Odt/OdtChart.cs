@@ -180,7 +180,11 @@ internal static class OdtChart
                 point += repeat;
             }
 
-            if ((Labels(series, ChartProperty) ?? Labels(plotArea, ChartProperty)) is { } labels) element.Add(labels);
+            if ((Labels(series, ChartProperty) ?? Labels(plotArea, ChartProperty)) is { } labels)
+            {
+                if (SizeOf((string?)series.Attribute(Chart + "style-name"), styles) is { } labelSize) labels.Add(TextProperties(labelSize));
+                element.Add(labels);
+            }
 
             List<string> domains = series.Elements(Chart + "domain").Select(d => (string?)d.Attribute(Table + "cell-range-address") ?? "").ToList();
             if (domains.Count > 0 && firstDomains is null) firstDomains = domains;
@@ -217,7 +221,7 @@ internal static class OdtChart
                 if (symbol is null or "none") element.Add(new XElement("marker", new XElement("symbol", new XAttribute("val", "none"))));
                 if (ChartProperty(plotArea, "interpolation") is "cubic-spline" or "b-spline") element.Add(new XElement("smooth", new XAttribute("val", "1")));
             }
-            AddErrorBars(element, series, styles);
+            AddErrorBars(element, series, styles, data);
             AddTrendlines(element, series, styles);
             group.Add(element);
             index++;
@@ -269,12 +273,13 @@ internal static class OdtChart
         string? title = TitleText(chart.Element(Chart + "title"));
         string? subtitle = TitleText(chart.Element(Chart + "subtitle"));
         string? heading = title is null ? subtitle : subtitle is null ? title : title + "\n" + subtitle;
-        if (heading is not null) chartElement.Add(RichTitle(heading));
+        var headingSizes = (title is null ? new List<double?>() : LineSizes(chart.Element(Chart + "title"), styles)).Concat(subtitle is null ? new List<double?>() : LineSizes(chart.Element(Chart + "subtitle"), styles)).ToList();
+        if (heading is not null) chartElement.Add(RichTitle(heading, headingSizes));
         else chartElement.Add(new XElement("autoTitleDeleted", new XAttribute("val", "1")));
         // 3-D: chart:three-dimensional on the plot area (PropertyMaps.cxx:95): the wall and chart:floor (SchXMLPlotAreaContext.cxx:467-471) give the box look
         if (Flag("three-dimensional"))
         {
-            chartElement.Add(new XElement("view3D"));
+            chartElement.Add(View3D(plotArea, ChartProperty));
             foreach (XElement group in plot.Elements().Where(e => e.Name.LocalName is "barChart" or "lineChart" or "areaChart" or "pieChart").ToList())
                 group.Name = group.Name.LocalName.Replace("Chart", "3DChart");
             if (plot.Element("spPr") is { } wallFill) chartElement.Add(new XElement("backWall", new XElement(wallFill)));
@@ -289,6 +294,7 @@ internal static class OdtChart
                 "start" => "l", "top" => "t", "bottom" => "b", "top-end" => "tr", _ => "r",
             };
             var legendElement = new XElement("legend", new XElement("legendPos", new XAttribute("val", position)));
+            if (SizeOf((string?)legend.Attribute(Chart + "style-name"), styles) is { } legendSize) legendElement.Add(TextProperties(legendSize));
             if (chartWidth > 0 && chartHeight > 0 && legend.Attribute(Svg + "x") is not null && legend.Attribute(Svg + "y") is not null)
                 legendElement.Add(new XElement("layout", new XElement("manualLayout",
                     new XElement("xMode", new XAttribute("val", "edge")), new XElement("yMode", new XAttribute("val", "edge")),
@@ -296,7 +302,11 @@ internal static class OdtChart
                     new XElement("y", new XAttribute("val", N(Length((string?)legend.Attribute(Svg + "y")) / chartHeight))))));
             chartElement.Add(legendElement);
         }
-        var space = new XElement("chartSpace", chartElement);
+        var space = new XElement("chartSpace", new XAttribute("layoutRules", "libreoffice"), chartElement);
+        if (chartElement.Element("title") is { } titleElement && title is not null && subtitle is not null) titleElement.SetAttributeValue("separateLines", "1");
+        // LibreOffice's line and area charts put the points on the category ticks (exported to .docx as c:crossBetween midCat)
+        if (groups.Keys.All(k => k.StartsWith("line", StringComparison.Ordinal) || k.StartsWith("area", StringComparison.Ordinal)) && groups.Count > 0)
+            foreach (XElement valueAxis in plot.Elements("valAx")) valueAxis.Element("crossAx")!.AddBeforeSelf(new XElement("crossBetween", new XAttribute("val", "midCat")));
         // the chart area: chart:chart's own style fill (LibreOffice writes a white area as draw:fill-color)
         string? areaFill = GraphicProperty(chart, Draw, "fill-color");
         string? areaFillKind = GraphicProperty(chart, Draw, "fill");
@@ -343,7 +353,8 @@ internal static class OdtChart
         var element = new XElement(kind, new XElement("axId", Val(id)), scaling,
                                    new XElement("delete", Val(axis is null || chartProperty(axis, "display-label") == "false" && axis.Element(Chart + "title") is null ? 1 : 0)));
         if (axis?.Elements(Chart + "grid").Any(g => (string?)g.Attribute(Chart + "class") is null or "major") == true) element.Add(new XElement("majorGridlines"));
-        if (TitleText(axis?.Element(Chart + "title")) is { } title) element.Add(RichTitle(title));
+        if (TitleText(axis?.Element(Chart + "title")) is { } title) element.Add(RichTitle(title, LineSizes(axis!.Element(Chart + "title"), styles)));
+        if (SizeOf((string?)axis?.Attribute(Chart + "style-name"), styles) is { } labelSize) element.Add(TextProperties(labelSize));
         if (chartProperty(axis, "interval-major") is { } step) element.Add(new XElement("majorUnit", new XAttribute("val", step)));
         element.Add(new XElement("crossAx", Val(crossId)));
         return element;
@@ -388,7 +399,7 @@ internal static class OdtChart
     /// LibreOffice reads the positive amount from chart:error-lower-limit and the negative one from chart:error-upper-limit
     /// (PropertyMaps.cxx:205-206, kept as it is); chart:error-upper-indicator / lower-indicator choose the sides.
     /// </summary>
-    private static void AddErrorBars(XElement element, XElement series, Dictionary<string, XElement> styles)
+    private static void AddErrorBars(XElement element, XElement series, Dictionary<string, XElement> styles, DataTable data)
     {
         var sources = series.Elements(Chart + "error-indicator").Select(e => ((string?)e.Attribute(Chart + "style-name"), (string?)e.Attribute(Chart + "dimension") ?? "y")).ToList();
         if (sources.Count == 0) sources.Add(((string?)series.Attribute(Chart + "style-name"), "y"));
@@ -396,7 +407,7 @@ internal static class OdtChart
         {
             if (styleName is null || !styles.TryGetValue(styleName, out XElement? style) || style.Element(Style + "chart-properties") is not { } properties) continue;
             string? category = (string?)properties.Attribute(Chart + "error-category");
-            if (category is null or "none" or "cell-range") continue;
+            if (category is null or "none") continue;
             double Amount(string name) => double.TryParse((string?)properties.Attribute(Chart + name), NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : 0;
             bool upper = (string?)properties.Attribute(Chart + "error-upper-indicator") == "true", lower = (string?)properties.Attribute(Chart + "error-lower-indicator") == "true";
             if (!upper && !lower) continue;
@@ -413,6 +424,11 @@ internal static class OdtChart
                     break;
                 case "standard-deviation": bars.Add(new XElement("errValType", new XAttribute("val", "stdDev")), new XElement("val", new XAttribute("val", "1"))); break;
                 case "standard-error": bars.Add(new XElement("errValType", new XAttribute("val", "stdErr"))); break;
+                case "cell-range":
+                    // chart:error-upper-range / lower-range (PropertyMaps.cxx:239-240): the amounts per point from the chart's own table
+                    bars.Add(new XElement("errValType", new XAttribute("val", "cust")),
+                             Numbers("plus", data.Range((string?)properties.Attribute(Chart + "error-upper-range"))), Numbers("minus", data.Range((string?)properties.Attribute(Chart + "error-lower-range"))));
+                    break;
                 default:
                     bars.Add(new XElement("errValType", new XAttribute("val", "cust")), Constant("plus", Amount("error-lower-limit")), Constant("minus", Amount("error-upper-limit")));
                     break;
@@ -450,6 +466,10 @@ internal static class OdtChart
             trend.Add(new XElement("trendlineType", new XAttribute("val", type)));
             if (type == "poly") trend.Add(new XElement("order", new XAttribute("val", Property("regression-max-degree") ?? "2")));
             if (type == "movingAvg") trend.Add(new XElement("period", new XAttribute("val", Property("regression-period") ?? "2")));
+            // extrapolation and a forced intercept (PropertyMaps.cxx:222-234: regression-extrapolate-forward / backward, regression-force-intercept, regression-intercept-value)
+            if (Property("regression-extrapolate-forward") is { } forward) trend.Add(new XElement("forward", new XAttribute("val", forward)));
+            if (Property("regression-extrapolate-backward") is { } backward) trend.Add(new XElement("backward", new XAttribute("val", backward)));
+            if (Property("regression-force-intercept") == "true") trend.Add(new XElement("intercept", new XAttribute("val", Property("regression-intercept-value") ?? "0")));
             XElement? equation = curve.Element(Chart + "equation");
             trend.Add(new XElement("dispRSqr", Val((string?)equation?.Attribute(Chart + "display-r-square") == "true" ? 1 : 0)),
                       new XElement("dispEq", Val((string?)equation?.Attribute(Chart + "display-equation") == "true" ? 1 : 0)));
@@ -482,6 +502,43 @@ internal static class OdtChart
             }
             group.Add(new XElement("upDownBars", new XElement("gapWidth", Val(150)), Bars("upBars", "stock-gain-marker"), Bars("downBars", "stock-loss-marker")));
         }
+    }
+
+    /// <summary>
+    /// The 3-D scene of the plot area (ODF dr3d attributes, read by xmloff's SdXML3DSceneAttributesHelper): dr3d:vpn is the direction
+    /// toward the viewer, so its turn about the vertical axis is rotY and its height rotX (LibreOffice writes the docx view3D from the same
+    /// scene: the fixture's vpn (0.416, 0.174, 0.893) exports as rotY 25, rotX 10); dr3d:projection parallel = no perspective, else
+    /// chart2's default perspective (20, i.e. OOXML 40); chart:right-angled-axes (PropertyMaps.cxx:160); dr3d:ambient-color and the first
+    /// enabled dr3d:light's diffuse colour and direction for the shading.
+    /// </summary>
+    private static XElement View3D(XElement? plotArea, Func<XElement?, string, string?> chartProperty)
+    {
+        XNamespace dr3d = "urn:oasis:names:tc:opendocument:xmlns:dr3d:1.0";
+        var view = new XElement("view3D");
+        (double X, double Y, double Z)? Vector(string? text)
+        {
+            if (text is null) return null;
+            string[] parts = text.Trim('(', ')', ' ').Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 3) return null;
+            double[] v = parts.Select(p => double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? d : double.NaN).ToArray();
+            return v.Any(double.IsNaN) ? null : (v[0], v[1], v[2]);
+        }
+        if (Vector((string?)plotArea?.Attribute(dr3d + "vpn")) is { } vpn)
+        {
+            double length = Math.Sqrt(vpn.X * vpn.X + vpn.Y * vpn.Y + vpn.Z * vpn.Z);
+            if (length > 0)
+            {
+                view.Add(new XElement("rotX", new XAttribute("val", N(Math.Asin(Math.Max(-1, Math.Min(1, vpn.Y / length))) * 180 / Math.PI))));
+                view.Add(new XElement("rotY", new XAttribute("val", N(Math.Atan2(vpn.X, vpn.Z) * 180 / Math.PI))));
+            }
+        }
+        view.Add(new XElement("rAngAx", Val(chartProperty(plotArea, "right-angled-axes") == "true" ? 1 : 0)));
+        view.Add(new XElement("perspective", Val((string?)plotArea?.Attribute(dr3d + "projection") == "parallel" ? 0 : 40)));
+        double Grey(string? css) => css is { Length: 7 } && int.TryParse(css.Substring(1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int red) ? red / 255.0 : double.NaN;
+        if (Grey((string?)plotArea?.Attribute(dr3d + "ambient-color")) is var ambient && !double.IsNaN(ambient)) view.SetAttributeValue("ambient", N(ambient));
+        XElement? light = plotArea?.Elements(dr3d + "light").FirstOrDefault(l => (string?)l.Attribute(dr3d + "enabled") == "true");
+        if (Grey((string?)light?.Attribute(dr3d + "diffuse-color")) is var diffuse && !double.IsNaN(diffuse)) view.SetAttributeValue("light", N(diffuse));
+        return view;
     }
 
     private static double Length(string? value) => value is not null && OdtStyleCascade.Twips(value) is { } twips ? twips / 20.0 : 0;
@@ -518,8 +575,27 @@ internal static class OdtChart
     private static string ParagraphText(XElement paragraph)
         => System.Text.RegularExpressions.Regex.Replace(paragraph.Value, @"\s+", " ").Trim();
 
-    private static XElement RichTitle(string text)
-        => new("title", new XElement("tx", new XElement("rich", text.Split('\n').Select(line => new XElement("p", new XElement("r", new XElement("t", line)))))));
+    /// <summary>A title in DrawingML rich text, each line with its size (a:rPr sz, hundredths of a point) when known.</summary>
+    private static XElement RichTitle(string text, List<double?>? sizes = null)
+        => new("title", new XElement("tx", new XElement("rich", text.Split('\n').Select((line, i) =>
+            new XElement("p", new XElement("r", sizes is not null && i < sizes.Count && sizes[i] is { } size ? new XElement("rPr", new XAttribute("sz", N(size * 100))) : null, new XElement("t", line)))))));
+
+    /// <summary>A text size from a style's style:text-properties fo:font-size (points), or null.</summary>
+    private static double? SizeOf(string? styleName, Dictionary<string, XElement> styles)
+    {
+        XNamespace fo = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
+        string? size = styleName is not null && styles.TryGetValue(styleName, out XElement? style) ? (string?)style.Element(Style + "text-properties")?.Attribute(fo + "font-size") : null;
+        return size is not null && size.EndsWith("pt", StringComparison.Ordinal) && double.TryParse(size.Substring(0, size.Length - 2), NumberStyles.Float, CultureInfo.InvariantCulture, out double points) ? points : null;
+    }
+
+    /// <summary>Each text:p's size: its first span's text style, else the title element's chart style.</summary>
+    private static List<double?> LineSizes(XElement? title, Dictionary<string, XElement> styles)
+    {
+        double? own = SizeOf((string?)title?.Attribute(Chart + "style-name"), styles);
+        return title?.Elements(Text + "p").Select(p => SizeOf((string?)p.Descendants(Text + "span").FirstOrDefault()?.Attribute(Text + "style-name"), styles) ?? own).ToList() ?? new List<double?>();
+    }
+
+    private static XElement TextProperties(double size) => new("txPr", new XElement("p", new XElement("pPr", new XElement("defRPr", new XAttribute("sz", N(size * 100))))));
 
     private static XElement Solid(string color) => new("solidFill", new XElement("srgbClr", new XAttribute("val", color.TrimStart('#').ToUpperInvariant())));
 
