@@ -2143,3 +2143,21 @@ tlch); checked by the same test.
   needs that row, so the index pass records it (`RtfRandomAccessIndex.MergedRowBlocks` / `MergedRowCells`, by \cellx edge).
 - Borders: a cell's own border, else the row's (outer sides; \trbrdrh / v inside), else no line (Word draws none; \brdrtbl = none).
 - Fixtures: test-data/word-tables (make-tables-fixtures.ps1, Word 16); checks: `--tables` (part of `--fidelity`).
+
+## .doc tables: merges, nesting, cell borders (2026-11-10)
+
+- Row facts come from the row-end paragraph's PAPX: sprmTDefTable cell edges + TC80s (tcgrf: fFirstMerged / fMerged,
+  fVertMerge / fVertRestart, vertAlign; four Brc80), sprmTTableBorders (else sprmTTableBorders80) as the table's six borders,
+  sprmTSetBrc80 / sprmTSetBrc applied after the definition. LibreOffice ww8par2.cxx WW8TabBandDesc::ReadDef :1081-1187,
+  ProcessSprmTSetBRC :1208-1275, ProcessSprmTTableBorders :1277-1311, :1949-1967 (order), :2222-2246 (a TC border of type 0
+  takes the table's: outer on the first / last row and cell, else inside), :3116 (vertAlign); ww8struc.hxx WW8_TCell :526-555.
+  LibreOffice reads the merges and vertAlign from the TC only (not sprmTVertMerge / sprmTVertAlign); Word 16 writes both.
+- Nesting: sprmPItap (+ sprmPDtap) is a paragraph's depth; sprmPFInnerTableCell ends a nested cell, sprmPFInnerTtp a nested row
+  (and its cell, ww8par.cxx:3686 tdf#106799); only sprmPFTtp ends an outer row = a block. Nested tables are drawn inside their
+  cell when a shallower paragraph follows, as one table with rowspans.
+- Rows merged down: found at index time (`DocBinaryBlockIndex.MergedRowBlocks` / `MergedRowCells`, index format 10); first /
+  last row of a table from the block kinds around the row.
+- RTF: two nested tables with no paragraph between are ONE table in Word 16 (COM: Cell.Tables.Count = 1, 2 rows) - kept so.
+  A text box inside a nested row definition no longer overwrites it (the parser saves both definitions around a text box).
+- Live: vue-demo/playwright/tablesCheck.mjs (merged look, nesting depth, computed borders, vertical-align) on tables-v1.rtf / .doc.
+  Row height (	rrh / sprmTDyaRowHeight) is not drawn, so vertical alignment is checked as computed style only.

@@ -1331,11 +1331,17 @@ internal sealed class RtfParser
         _sink.TextBoxEnd();
     }
 
-    // A text box's own tables (\trowd ... \cellx inside {\shptxt}) must not replace the row definition of the table the shape sits in.
-    private (RtfCellDefinition[] cells, RtfBorder[] borders, RtfCellDefinition pending, bool rightToLeft, int left, byte alignment)? _outerRow;
+    // A text box's own tables (\trowd ... \cellx, {\*\nesttableprops} inside {\shptxt}) must not replace the row definitions -
+    // outer and nested - of the table the shape sits in, nor be read into a nested definition the shape sits inside.
+    private (RtfCellDefinition[] cells, RtfBorder[] borders, RtfCellDefinition pending, bool rightToLeft, int left, byte alignment,
+             RtfCellDefinition[] nestedCells, RtfBorder[] nestedBorders, RtfCellDefinition nestedPending, bool nestedRightToLeft, int nestedDepth)? _outerRow;
 
     private void SaveRowDefinition()
-        => _outerRow = (_cells.ToArray(), (RtfBorder[])_rowBorders.Clone(), _pendingCell, _isRowRightToLeft, _rowLeft, _rowAlignment);
+    {
+        _outerRow = (_cells.ToArray(), (RtfBorder[])_rowBorders.Clone(), _pendingCell, _isRowRightToLeft, _rowLeft, _rowAlignment,
+                     _nestedCells.ToArray(), (RtfBorder[])_nestedRowBorders.Clone(), _pendingNestedCell, _isNestedRowRightToLeft, _nestedTablePropertiesDepth);
+        _nestedTablePropertiesDepth = -1;              // the text box's own \trowd starts its own row, not the nested definition's
+    }
 
     private void RestoreRowDefinition()
     {
@@ -1343,6 +1349,9 @@ internal sealed class RtfParser
         _cells.Clear(); _cells.AddRange(row.cells);
         row.borders.CopyTo(_rowBorders, 0);
         (_pendingCell, _isRowRightToLeft, _rowLeft, _rowAlignment) = (row.pending, row.rightToLeft, row.left, row.alignment);
+        _nestedCells.Clear(); _nestedCells.AddRange(row.nestedCells);
+        row.nestedBorders.CopyTo(_nestedRowBorders, 0);
+        (_pendingNestedCell, _isNestedRowRightToLeft, _nestedTablePropertiesDepth) = (row.nestedPending, row.nestedRightToLeft, row.nestedDepth);
         _outerRow = null;
     }
 

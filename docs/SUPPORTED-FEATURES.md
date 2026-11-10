@@ -105,22 +105,22 @@ NOTES.md "List numbering" holds the audit of list number formats.
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Borders (table, cell; theme colours in docx) | yes | partial (T1) | yes | yes | n.a. | partial (2) |
+| Borders (table, cell; theme colours in docx) | yes | yes | yes | yes | n.a. | partial (2) |
 | Shading | yes | yes | yes | yes | n.a. | partial (2) |
 | Conditional table styles (first / last row and column, banding) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
-| Merged cells (horizontal and vertical) | yes | no | yes (T2) | yes | n.a. | yes |
-| Nested tables | yes | partial (T3) | yes | yes | n.a. | yes |
+| Merged cells (horizontal and vertical) | yes | yes (T2) | yes (T2) | yes | n.a. | yes |
+| Nested tables | yes | yes | yes | yes | n.a. | yes |
 | Widths (grid, cell, indent, cell margins) | yes | yes | yes | yes | n.a. | partial (2) |
 | Direction (bidiVisual / RTL rows) | yes | yes | yes | yes | n.a. | yes |
-| Vertical alignment in cells | yes | no | yes | yes | n.a. | partial (2) |
+| Vertical alignment in cells | yes | yes | yes | yes | n.a. | partial (2) |
 | Cell text direction (vertical text) | yes | no | no | no | n.a. | n.a. |
 | Big tables split into row blocks (windowed) | yes | yes | yes | yes | n.a. | yes |
 | Tracked row deletion hidden | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
 
-T1. .doc: the row's sprmTTableBorders border on every cell; per-cell borders are not read.
-T2. RTF: an outer row is one block, so a cell merged down (\clvmgf / \clvmrg) is drawn as cells without the line between
-    them (which cells go on below is found at index time), not as one rowspan cell; inside a nested table it is a rowspan.
-T3. .doc: an inner row end (sprmPFInnerTtp) closes a row; the inner table is not nested inside its cell.
+T2. RTF and .doc: an outer row is one block, so a cell merged down (\clvmgf / \clvmrg; .doc TC fVertRestart / fVertMerge) is
+    drawn as cells without the line between them (which cells go on below is found at index time), not as one rowspan cell;
+    inside a nested table it is a rowspan. While the index is still building, the last row known is drawn provisionally and
+    drawn again once the next row is indexed.
 
 ## Sections and pages
 
