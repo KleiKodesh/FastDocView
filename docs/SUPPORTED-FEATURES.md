@@ -105,7 +105,7 @@ NOTES.md "List numbering" holds the audit of list number formats.
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Borders (table, cell; theme colours in docx) | yes | yes | yes | yes | n.a. | partial (2) |
+| Borders (table, cell; theme colours in docx) | yes | yes (T3) | yes | yes | n.a. | partial (2) |
 | Shading | yes | yes | yes | yes | n.a. | partial (2) |
 | Conditional table styles (first / last row and column, banding) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
 | Merged cells (horizontal and vertical) | yes | yes (T2) | yes (T2) | yes | n.a. | yes |
@@ -113,6 +113,7 @@ NOTES.md "List numbering" holds the audit of list number formats.
 | Widths (grid, cell, indent, cell margins) | yes | yes | yes | yes | n.a. | partial (2) |
 | Direction (bidiVisual / RTL rows) | yes | yes | yes | yes | n.a. | yes |
 | Vertical alignment in cells | yes | yes | yes | yes | n.a. | partial (2) |
+| Row height (at least / exact, exact clips the cell) | yes | yes | yes | yes | n.a. | no |
 | Cell text direction (vertical text) | yes | no | no | no | n.a. | n.a. |
 | Big tables split into row blocks (windowed) | yes | yes | yes | yes | n.a. | yes |
 | Tracked row deletion hidden | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
@@ -121,6 +122,9 @@ T2. RTF and .doc: an outer row is one block, so a cell merged down (\clvmgf / \c
     drawn as cells without the line between them (which cells go on below is found at index time), not as one rowspan cell;
     inside a nested table it is a rowspan. While the index is still building, the last row known is drawn provisionally and
     drawn again once the next row is indexed.
+T3. Borders and colours as Word 16 shows them: a cell's explicit "no border" (brcNil) hides the table's line; .doc border
+    colours outside the 16-colour palette come from sprmTBrcTopCv / LeftCv / BottomCv / RightCv (LibreOffice ignores them);
+    two tables Word joined (no paragraph between) are one table: inside lines where they meet.
 
 ## Sections and pages
 

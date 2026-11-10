@@ -21,7 +21,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         public readonly List<NestedRow> PendingRows = new();
     }
 
-    private sealed record NestedRow(RtfCellDefinition[] Cells, RtfBorder[] RowBorders, bool IsRightToLeft, string[] Html);
+    private sealed record NestedRow(RtfCellDefinition[] Cells, RtfBorder[] RowBorders, bool IsRightToLeft, string[] Html, int HeightTwips);
 
     /// <summary>Where paragraphs go: the block (or a note body) and the paragraph being built.</summary>
     private sealed class Flow
@@ -840,7 +840,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (level > 1)
         {
             // Word writes the nested row's definition ({\*\nesttableprops}) right before its \nestrow
-            table.PendingRows.Add(new NestedRow(_parser.NestedCells.ToArray(), _parser.NestedRowBorders.ToArray(), _parser.IsNestedRowRightToLeft, cellsHtml));
+            table.PendingRows.Add(new NestedRow(_parser.NestedCells.ToArray(), _parser.NestedRowBorders.ToArray(), _parser.IsNestedRowRightToLeft, cellsHtml, _parser.NestedRowHeightTwips));
             return;
         }
         var html = new StringBuilder(256);
@@ -860,9 +860,9 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
                           _ => "margin-left:" + (rowLeft != 0 ? WordParagraphFormatting.TwipsToPt(rowLeft) + "pt" : "0") + ";margin-right:auto;",
                       });
         WordHtmlText.AppendOpenTag(html, "table", rowCss, "table-row", _parser.IsRowRightToLeft ? true : null);
-        html.Append("<tr>");
+        WordTableRowHeight.AppendRowOpen(html, _parser.RowHeightTwips);
         ulong mergedBelow = _flow == _bodyFlow ? _cellsMergedBelow : 0;
-        AppendRowCells(html, cells, _parser.RowBorders, cellsHtml, rowLeft, rowSpans: null, mergedBelow);
+        AppendRowCells(html, cells, _parser.RowBorders, cellsHtml, rowLeft, rowSpans: null, mergedBelow, _parser.RowHeightTwips);
         html.Append("</tr></table>");
         _flow.Output.Append(html);
     }
@@ -893,8 +893,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
                     span++;
                 rowSpans[i] = span;
             }
-            html.Append("<tr>");
-            AppendRowCells(html, cells, rows[row].RowBorders, rows[row].Html, 0, rowSpans, 0);
+            WordTableRowHeight.AppendRowOpen(html, rows[row].HeightTwips);
+            AppendRowCells(html, cells, rows[row].RowBorders, rows[row].Html, 0, rowSpans, 0, rows[row].HeightTwips);
             html.Append("</tr>");
         }
         html.Append("</table>");
@@ -907,7 +907,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     /// (\clbrdr*, else the row's \trbrdr*; none named = no line, as Word draws it).
     /// </summary>
     private void AppendRowCells(StringBuilder html, IReadOnlyList<RtfCellDefinition> cells, IReadOnlyList<RtfBorder> rowBorders, string[] cellsHtml,
-                                int rowLeft, int[]? rowSpans, ulong mergedBelow)
+                                int rowLeft, int[]? rowSpans, ulong mergedBelow, int rowHeightTwips)
     {
         int count = Math.Max(cells.Count, cellsHtml.Length);
         // a row that names no border at all keeps the stylesheet's cell lines (old writers save none; drawn as before)
@@ -941,7 +941,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             if (isCoveredBelow) html.Append(" class=\"merged-up\"");
             if (css.Length > 0) html.Append(" style=\"").Append(css).Append('"');
             html.Append('>');
-            if (!isCoveredBelow && i < cellsHtml.Length) html.Append(cellsHtml[i]);
+            if (!isCoveredBelow && i < cellsHtml.Length)
+                WordTableRowHeight.AppendCellContent(html, cellsHtml[i], rowHeightTwips, rowSpans is not null && i < rowSpans.Length ? rowSpans[i] : 1);
             html.Append("</td>");
         }
     }

@@ -48,7 +48,7 @@ public sealed class OdtStyleCascade
     [
         "style:width", "style:rel-width", "table:align", "style:writing-mode", "fo:margin-left", "fo:margin-right", "fo:background-color",
         "style:column-width", "style:rel-column-width", "fo:border", "fo:border-top", "fo:border-bottom", "fo:border-left", "fo:border-right",
-        "fo:padding", "fo:padding-top", "fo:padding-bottom", "fo:padding-left", "fo:padding-right", "style:vertical-align",
+        "fo:padding", "fo:padding-top", "fo:padding-bottom", "fo:padding-left", "fo:padding-right", "style:vertical-align", "style:row-height", "style:min-row-height",
     ];
 
     /// <summary>Attributes of style:graphic-properties (frames: pictures, text boxes) the frame renderer maps.</summary>
@@ -169,7 +169,7 @@ public sealed class OdtStyleCascade
                         {
                             "text-properties" => HandledTextProperties,
                             "paragraph-properties" => HandledParagraphProperties,
-                            "table-properties" or "table-cell-properties" or "table-column-properties" => HandledTableProperties,
+                            "table-properties" or "table-cell-properties" or "table-column-properties" or "table-row-properties" => HandledTableProperties,
                             "graphic-properties" => HandledGraphicProperties,
                             _ => null,
                         };
@@ -487,6 +487,19 @@ public sealed class OdtStyleCascade
     // ── tables ────────────────────────────────────────────────────────────────────────
 
     /// <summary>CSS for a table:table-cell's style: borders, padding, background, vertical alignment.</summary>
+    /// <summary>
+    /// A table row's height (style:table-row-properties): style:row-height is exact, style:min-row-height at least (LibreOffice
+    /// sw/source/filter/xml/xmlitemm.cxx:131-132: MID_FRMSIZE_FIX_HEIGHT / MID_FRMSIZE_MIN_HEIGHT) - twips, negative = exact,
+    /// 0 = none.
+    /// </summary>
+    public int RowHeightTwips(string? rowStyleName)
+    {
+        XElement? properties = StyleElement("table-row", rowStyleName)?.Element(Style + "table-row-properties");
+        if (properties is null) return 0;
+        if (Twips(properties.Attribute(Style + "row-height")) is > 0 and var exact) return -exact;
+        return Twips(properties.Attribute(Style + "min-row-height")) is > 0 and var least ? least : 0;
+    }
+
     public string CellCss(string? cellStyleName)
     {
         XElement? properties = StyleElement("table-cell", cellStyleName)?.Element(Style + "table-cell-properties");

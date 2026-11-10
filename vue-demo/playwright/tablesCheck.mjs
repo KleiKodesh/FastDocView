@@ -61,7 +61,7 @@ for (const path of process.argv.slice(2)) {
   check(r.redTop.style === 'solid' && r.redTop.color === 'rgb(255, 0, 0)' && r.redTop.width >= 2.5 && r.redLeft.style === 'none', `${path}: the cell's own red 2.25 pt top border, no left line`)
   check(r.blue.every(b => b.style === 'double' && b.color === 'rgb(0, 0, 255)'), `${path}: the double blue box on all four sides`)
   check(r.align[0].vertical !== 'middle' && r.align[0].vertical !== 'bottom' && r.align[1].vertical === 'middle' && r.align[2].vertical === 'bottom'
-        , `${path}: vertical alignment top / middle / bottom (computed; the 40 pt row height is not drawn yet, so the text sits at ${r.align.map(a => a.top.toFixed(1)).join(' / ')} px)`)
+        && r.align[0].top < r.align[1].top - 5 && r.align[1].top < r.align[2].top - 5, `${path}: vertical alignment top / middle / bottom in the 40 pt row (text at ${r.align.map(a => a.top.toFixed(1)).join(' / ')} px from the cell top)`)
 }
 check(errors.length === 0, `no console errors ${errors.join(' | ')}`)
 await browser.close()

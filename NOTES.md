@@ -2161,3 +2161,19 @@ tlch); checked by the same test.
   A text box inside a nested row definition no longer overwrites it (the parser saves both definitions around a text box).
 - Live: vue-demo/playwright/tablesCheck.mjs (merged look, nesting depth, computed borders, vertical-align) on tables-v1.rtf / .doc.
   Row height (	rrh / sprmTDyaRowHeight) is not drawn, so vertical alignment is checked as computed style only.
+
+## Table row heights, border colours, joined tables (2026-11-10)
+
+- Row height: .doc sprmTDyaRowHeight / RTF 	rrh (twips, > 0 at least, < 0 exact; LibreOffice ww8par2.cxx:3150-3162,
+  rtfdispatchvalue.cxx:437-451) and .odt style:row-height (exact) / style:min-row-height (LibreOffice xmlitemm.cxx:131-132),
+  drawn by WordTableRowHeight like .docx w:trHeight: the tr gets the height, an exact height clips single-row cells.
+  RTF index 17 (	rrh in the snapshot), .odt index 16 (row properties kept in the style sections).
+- .doc column order is sprmTFBiDi only (ww8par2.cxx:1871-1872), not the row-end paragraph's direction: Word 16 reports
+  tables-v1.doc tables 1, 2, 4, 5 left to right and 3 right to left (make-tables-extra-fixtures.ps1 -> tables-extra-word.txt).
+- Explicit no border: Word 16 saves brcNil (FF FF FF FF) in the TC and reports LineStyle 0 - no line, the table's border does
+  not show. LibreOffice falls back to the table border only for brcType 0 (ww8par2.cxx:2226); brcNil is drawn as none.
+- Colours outside the ico palette: Word 16 writes sprmTBrcTopCv / LeftCv / BottomCv / RightCv (0xD61A-0xD61D, a COLORREF per
+  cell) next to the TC's nearest ico; LibreOffice ignores them (ww8par6.cxx:6345-6348); Word shows the COLORREF, so we do.
+  Word 16 does not write sprmTSetBrc / sprmTSetBrc80; the test rewrites the Cv sprms of a copy into them.
+- Two tables with no paragraph between: Word 16 joins them (Tables.Count 3 -> 2, the joined table has 4 rows), so they are one
+  table here too: inside lines where they meet, each row with its own definition.

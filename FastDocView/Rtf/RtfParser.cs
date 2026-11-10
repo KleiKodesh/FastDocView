@@ -64,6 +64,8 @@ internal sealed class RtfParser
     private bool _isNestedRowRightToLeft;
     private bool _isRowRightToLeft;
     private int _rowLeft;          // \trleft: the row's leftmost edge from the column's, twips
+    private int _rowHeight;        // \trrh: twips, > 0 at least, < 0 exact, 0 auto (LibreOffice rtfdispatchvalue.cxx:437-451)
+    private int _nestedRowHeight;
     private byte _rowAlignment;    // \trql 0 / \trqc 1 / \trqr 2
 
     // pending 8-bit text (decoded in one go: double-byte code pages need the byte pairs together)
@@ -110,6 +112,10 @@ internal sealed class RtfParser
     public bool IsInTextBox => _textBoxDepth >= 0;
     public bool IsRowRightToLeft => _isRowRightToLeft;
     public int RowLeftTwips => _rowLeft;
+    /// <summary>\trrh of the outer row: twips, positive = at least, negative = exact, 0 = auto.</summary>
+    public int RowHeightTwips => _rowHeight;
+    /// <summary>\trrh of the last nested row definition.</summary>
+    public int NestedRowHeightTwips => _nestedRowHeight;
     /// <summary>0 left (\trql, the default), 1 centre (\trqc), 2 right (\trqr).</summary>
     public int RowAlignment => _rowAlignment;
     /// <summary>The row definition's cells (\cellx with what came before each).</summary>
@@ -167,7 +173,7 @@ internal sealed class RtfParser
     private static readonly int CellDefinitionSize = Marshal.SizeOf<RtfCellDefinition>();
     private static readonly int BorderSize = Marshal.SizeOf<RtfBorder>();
 
-    public int SnapshotSize => 4 + (_depth + 1) * RtfGroupState.Size + 4 * 4 + 1 + 4 + 1 + 6 * BorderSize + 4 + _cells.Count * CellDefinitionSize;
+    public int SnapshotSize => 4 + (_depth + 1) * RtfGroupState.Size + 4 * 4 + 1 + 4 + 4 + 1 + 6 * BorderSize + 4 + _cells.Count * CellDefinitionSize;
 
     /// <summary>Writes the snapshot into <paramref name="bytes"/> (at least <see cref="SnapshotSize"/> long).</summary>
     public void WriteSnapshot(Span<byte> bytes)
@@ -183,6 +189,7 @@ internal sealed class RtfParser
         WriteInt(bytes, ref at, _nestedTablePropertiesDepth);
         bytes[at++] = (byte)(_isRowRightToLeft ? 1 : 0);
         WriteInt(bytes, ref at, _rowLeft);
+        WriteInt(bytes, ref at, _rowHeight);
         bytes[at++] = _rowAlignment;
         MemoryMarshal.AsBytes(_rowBorders.AsSpan()).CopyTo(bytes.Slice(at));
         at += 6 * BorderSize;
@@ -209,6 +216,7 @@ internal sealed class RtfParser
         _nestedTablePropertiesDepth = ReadInt(bytes, ref at);
         _isRowRightToLeft = bytes[at++] != 0;
         _rowLeft = ReadInt(bytes, ref at);
+        _rowHeight = ReadInt(bytes, ref at);
         _rowAlignment = bytes[at++];
         MemoryMarshal.Cast<byte, RtfBorder>(bytes.AsSpan(at, 6 * BorderSize)).CopyTo(_rowBorders);
         at += 6 * BorderSize;
@@ -219,7 +227,7 @@ internal sealed class RtfParser
             _cells.Add(MemoryMarshal.Read<RtfCellDefinition>(bytes.AsSpan(at)));
             at += CellDefinitionSize;
         }
-        _nestedCells.Clear(); _pendingNestedCell = default; Array.Clear(_nestedRowBorders, 0, 6); _isNestedRowRightToLeft = false;
+        _nestedCells.Clear(); _pendingNestedCell = default; Array.Clear(_nestedRowBorders, 0, 6); _isNestedRowRightToLeft = false; _nestedRowHeight = 0;
         _isIgnorableNext = false;
         _skipCount = 0;
         _textByteCount = 0;
@@ -1004,10 +1012,11 @@ internal sealed class RtfParser
                 if (_nestedTablePropertiesDepth >= 0)
                 {
                     _nestedCells.Clear(); _pendingNestedCell = default; Array.Clear(_nestedRowBorders, 0, 6); _isNestedRowRightToLeft = false;
+                    _nestedRowHeight = 0;
                     return;
                 }
                 _cells.Clear(); _pendingCell = default; Array.Clear(_rowBorders, 0, 6); _isRowRightToLeft = false;
-                _rowLeft = 0; _rowAlignment = 0;
+                _rowLeft = 0; _rowAlignment = 0; _rowHeight = 0;
                 return;
             case RtfWord.CellBoundary:
             {
@@ -1046,6 +1055,10 @@ internal sealed class RtfParser
             case RtfWord.LeftToRightRow: if (_nestedTablePropertiesDepth >= 0) _isNestedRowRightToLeft = false; else _isRowRightToLeft = false; return;
             // \trleft = the table indent, \trql / \trqc / \trqr = its alignment (LibreOffice rtfdispatchvalue.cxx TRLEFT,
             // rtfdispatchflag.cxx TRQL / TRQC / TRQR -> tblInd / jc); a nested row definition keeps its own (not applied).
+            case RtfWord.RowHeight:
+                if (_nestedTablePropertiesDepth >= 0) _nestedRowHeight = hasParameter ? (int)Math.Max(-32767, Math.Min(32767, parameter)) : 0;
+                else _rowHeight = hasParameter ? (int)Math.Max(-32767, Math.Min(32767, parameter)) : 0;
+                return;
             case RtfWord.RowLeft: if (_nestedTablePropertiesDepth < 0) _rowLeft = (int)Math.Max(int.MinValue, Math.Min(int.MaxValue, parameter)); return;
             case RtfWord.RowAlignLeft: if (_nestedTablePropertiesDepth < 0) _rowAlignment = 0; return;
             case RtfWord.RowAlignCenter: if (_nestedTablePropertiesDepth < 0) _rowAlignment = 1; return;
@@ -1334,12 +1347,12 @@ internal sealed class RtfParser
     // A text box's own tables (\trowd ... \cellx, {\*\nesttableprops} inside {\shptxt}) must not replace the row definitions -
     // outer and nested - of the table the shape sits in, nor be read into a nested definition the shape sits inside.
     private (RtfCellDefinition[] cells, RtfBorder[] borders, RtfCellDefinition pending, bool rightToLeft, int left, byte alignment,
-             RtfCellDefinition[] nestedCells, RtfBorder[] nestedBorders, RtfCellDefinition nestedPending, bool nestedRightToLeft, int nestedDepth)? _outerRow;
+             RtfCellDefinition[] nestedCells, RtfBorder[] nestedBorders, RtfCellDefinition nestedPending, bool nestedRightToLeft, int nestedDepth, int height, int nestedHeight)? _outerRow;
 
     private void SaveRowDefinition()
     {
         _outerRow = (_cells.ToArray(), (RtfBorder[])_rowBorders.Clone(), _pendingCell, _isRowRightToLeft, _rowLeft, _rowAlignment,
-                     _nestedCells.ToArray(), (RtfBorder[])_nestedRowBorders.Clone(), _pendingNestedCell, _isNestedRowRightToLeft, _nestedTablePropertiesDepth);
+                     _nestedCells.ToArray(), (RtfBorder[])_nestedRowBorders.Clone(), _pendingNestedCell, _isNestedRowRightToLeft, _nestedTablePropertiesDepth, _rowHeight, _nestedRowHeight);
         _nestedTablePropertiesDepth = -1;              // the text box's own \trowd starts its own row, not the nested definition's
     }
 
@@ -1352,6 +1365,7 @@ internal sealed class RtfParser
         _nestedCells.Clear(); _nestedCells.AddRange(row.nestedCells);
         row.nestedBorders.CopyTo(_nestedRowBorders, 0);
         (_pendingNestedCell, _isNestedRowRightToLeft, _nestedTablePropertiesDepth) = (row.nestedPending, row.nestedRightToLeft, row.nestedDepth);
+        (_rowHeight, _nestedRowHeight) = (row.height, row.nestedHeight);
         _outerRow = null;
     }
 

@@ -31,7 +31,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
                                                      bool IsRightToLeft = false, string?[]? CellShadingHex = null, string?[]? DefaultBorders = null,
                                                      int Justification = 0, int? LeftEdgeTwips = null, int? RowWidthTwips = null,
                                                      int Depth = 1, bool IsInnerCellEnd = false, bool IsInnerRowEnd = false,
-                                                     int[]? CellEdgesTwips = null, DocBinaryTableCell[]? Cells = null);
+                                                     int[]? CellEdgesTwips = null, DocBinaryTableCell[]? Cells = null, int RowHeightTwips = 0);
 
     public DocBinaryParagraphHtmlRenderer(DocBinaryPieceTable pieces, DocBinaryFormattedDiskPages pages, DocBinaryStyleSheet styles,
                                           DocBinaryNoteReferences? notes = null)
@@ -135,6 +135,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
         string?[]? shading = null;
         string?[]? borders = null, borders80 = null;
         List<(byte[] grpprl, int at, int length, bool isBrc80)>? setBorders = null;
+        var borderColors = new (byte[] grpprl, int at, int length)?[4];
+        int rowHeight = 0;
         int justification = 0, gapHalf = 0;
         int? dxaLeft = null, firstCenter = null, lastCenter = null, preferredWidth = null;
         void ReadSprms(byte[] grpprl, int start, int length)
@@ -170,6 +172,13 @@ public sealed class DocBinaryParagraphHtmlRenderer
                     case 0xD612: shading = CellShading(grpprl, operandAt, operandLength); break;         // sprmTCellShd
                     case 0xD613: borders = TableBorders(grpprl, operandAt, operandLength, 8); break;     // sprmTTableBorders (Brc)
                     case 0xD605: borders80 = TableBorders(grpprl, operandAt, operandLength, 4); break;   // sprmTTableBorders80 (Brc80)
+                    case 0x9407: if (operandLength >= 2) rowHeight = BitConverter.ToInt16(grpprl, operandAt); break;      // sprmTDyaRowHeight: > 0 at least, < 0 exact (ww8par2.cxx:3150-3162)
+                    // sprmTBrcTopCv / LeftCv / BottomCv / RightCv: a COLORREF per cell for its TC border (Word writes them for colours
+                    // outside the 16-colour ico palette; LibreOffice ignores them - ww8par6.cxx:6345-6348 - Word 16 shows them)
+                    case 0xD61A: borderColors[DocBinaryTableCell.Top] = (grpprl, operandAt, operandLength); break;
+                    case 0xD61B: borderColors[DocBinaryTableCell.Left] = (grpprl, operandAt, operandLength); break;
+                    case 0xD61C: borderColors[DocBinaryTableCell.Bottom] = (grpprl, operandAt, operandLength); break;
+                    case 0xD61D: borderColors[DocBinaryTableCell.Right] = (grpprl, operandAt, operandLength); break;
                     case 0xD620: (setBorders ??= new()).Add((grpprl, operandAt, operandLength, true)); break;    // sprmTSetBrc80
                     case 0xD62F: (setBorders ??= new()).Add((grpprl, operandAt, operandLength, false)); break;   // sprmTSetBrc
                 }
@@ -181,6 +190,9 @@ public sealed class DocBinaryParagraphHtmlRenderer
             ReadSprms(grpprl, start, length);
         }
         if (PrmGrpprlOfParagraph(cpStart, cpEnd) is { } prm) ReadSprms(prm, 0, prm.Length);     // a Prm0 can carry sprmPFInTable / sprmPFTtp
+        if (cells is not null)
+            for (int side = 0; side < 4; side++)
+                if (borderColors[side] is { } colors) ApplyBorderColors(cells, side, colors.grpprl, colors.at, colors.length);
         if (cells is not null && setBorders is not null)
             foreach ((byte[] grpprl, int at, int length, bool isBrc80) in setBorders) SetCellBorders(cells, grpprl, at, length, isBrc80);
         // sprmTDxaLeft moves the row so its first cell boundary is dxaLeft - dxaGapHalf (LibreOffice ww8par2.cxx WW8TabDesc:
@@ -188,7 +200,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
         int? leftEdge = firstCenter is { } first ? (dxaLeft is { } left ? left - gapHalf : first) : null;
         int? rowWidth = preferredWidth ?? (firstCenter is { } a && lastCenter is { } b && b > a ? b - a : null);
         return new TableParagraphInfo(isInTable || isRowEnd || isInnerRowEnd, isRowEnd, widths, isRightToLeft, shading, borders ?? borders80, justification, leftEdge, rowWidth,
-                                      Math.Max(1, depth + depthChange), isInnerCellEnd, isInnerRowEnd, edges, cells);
+                                      Math.Max(1, depth + depthChange), isInnerCellEnd, isInnerRowEnd, edges, cells, rowHeight);
     }
 
     private DocBinaryFormattedDiskPages.PropertyRun? ParagraphRunOf(int cpStart, int cpEnd)
@@ -244,6 +256,19 @@ public sealed class DocBinaryParagraphHtmlRenderer
             cells[i] = cell;
         }
         return cells;
+    }
+
+    /// <summary>A sprmTBrc*Cv: per cell a COLORREF (r, g, b, fAuto/0xFF); a cell with its own line on that side takes the colour.</summary>
+    private static void ApplyBorderColors(DocBinaryTableCell[] cells, int side, byte[] grpprl, int at, int length)
+    {
+        for (int i = 0; i < cells.Length && (i + 1) * 4 <= length && at + i * 4 + 4 <= grpprl.Length; i++)
+        {
+            int color = at + i * 4;
+            if (grpprl[color + 3] != 0 || cells[i].Borders[side] is not { } css || css == "none") continue;   // auto / nil: keep the ico colour
+            int hash = css.LastIndexOf('#');
+            if (hash < 0) continue;
+            cells[i].Borders[side] = css.Substring(0, hash) + $"#{grpprl[color]:X2}{grpprl[color + 1]:X2}{grpprl[color + 2]:X2}";
+        }
     }
 
     /// <summary>
@@ -438,7 +463,6 @@ public sealed class DocBinaryParagraphHtmlRenderer
 
         (int lastStart, int lastEnd, _) = paragraphs[paragraphs.Count - 1];
         TableParagraphInfo rowInfo = ReadTableInfo(lastStart, lastEnd);
-        (WordParagraphFormatting rowFormatting, _) = ResolveParagraph(lastStart, lastEnd);
         int contentCount = rowInfo.IsRowEnd ? paragraphs.Count - 1 : paragraphs.Count;    // a row without its end mark: its last paragraph is content
 
         // Word 2000+ nesting (LibreOffice ww8par.cxx:2729-2733 TabRowSprm, :3686 tdf#106799): a paragraph's depth is sprmPItap;
@@ -478,8 +502,9 @@ public sealed class DocBinaryParagraphHtmlRenderer
         if (row.Cell.Length > 0) row.Cells.Add(row.Cell.ToString());
 
         var html = new StringBuilder(1024);
-        WordHtmlText.AppendOpenTag(html, "table", "table-layout:fixed;" + RowPlacementCss(rowInfo), "table-row", rowInfo.IsRightToLeft || rowFormatting.IsRightToLeft);
-        html.Append("<tr>");
+        // the column order is the table's (sprmTFBiDi - LibreOffice ww8par2.cxx:1871-1872 m_bIsBiDi), not the row-end paragraph's direction
+        WordHtmlText.AppendOpenTag(html, "table", "table-layout:fixed;" + RowPlacementCss(rowInfo), "table-row", rowInfo.IsRightToLeft);
+        WordTableRowHeight.AppendRowOpen(html, rowInfo.RowHeightTwips);
         AppendRowCells(html, rowInfo, row.Cells, null, cellsMergedBelow, isFirstRow, isLastRow);
         html.Append("</tr></table>");
         return html.ToString();
@@ -529,7 +554,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
                     spans[i] = span;
                 }
             }
-            html.Append("<tr>");
+            WordTableRowHeight.AppendRowOpen(html, info.RowHeightTwips);
             AppendRowCells(html, info, rows[r].Cells, covered, 0, r == 0, r == rows.Count - 1, spans);
             html.Append("</tr>");
         }
@@ -591,7 +616,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
             if (isMergedUp) html.Append(" class=\"merged-up\"");
             if (css.Length > 0) html.Append(" style=\"").Append(css).Append('"');
             html.Append('>');
-            if (!isMergedUp && i < cellsHtml.Count) html.Append(cellsHtml[i]);
+            if (!isMergedUp && i < cellsHtml.Count)
+                WordTableRowHeight.AppendCellContent(html, cellsHtml[i], row.RowHeightTwips, rowSpans is not null && i < rowSpans.Length ? rowSpans[i] : 1);
             html.Append("</td>");
         }
     }
