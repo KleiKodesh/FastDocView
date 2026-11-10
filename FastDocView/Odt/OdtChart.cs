@@ -545,6 +545,7 @@ internal static class OdtChart
         if (Grey((string?)light?.Attribute(dr3d + "diffuse-color")) is var diffuse && !double.IsNaN(diffuse)) view.SetAttributeValue("light", N(diffuse));
         if (Vector((string?)light?.Attribute(dr3d + "direction")) is { } lightDirection)
             view.SetAttributeValue("lightDirection", N(lightDirection.X) + " " + N(lightDirection.Y) + " " + N(lightDirection.Z));
+        if ((string?)plotArea?.Attribute(dr3d + "shade-mode") is { } shadeMode) view.SetAttributeValue("shadeMode", shadeMode);
         return view;
     }
 

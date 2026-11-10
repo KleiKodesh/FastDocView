@@ -1,4 +1,4 @@
-# Builds test-data/odt-charts/odt-charts-v4.odt (and, converted by LibreOffice, odt-charts-v4.docx) with LibreOffice itself (UNO): one Writer chart per chart type.
+# Builds test-data/odt-charts/odt-charts-v5.odt (and, converted by LibreOffice, odt-charts-v5.docx) with LibreOffice itself (UNO): one Writer chart per chart type.
 # Run with LibreOffice's python while soffice listens:  soffice --headless --accept="pipe,name=fdvcharts;urp;" (SAL_DISABLE_PRINTERLIST=1 SAL_DISABLE_DEFAULTPRINTER=1)
 import sys, time, uno
 from com.sun.star.beans import PropertyValue
@@ -39,6 +39,9 @@ def extras(name, chart):
             except Exception as e: print("curve", key, e)
     if name == "ChartWrapped":
         d.getXAxis().TextBreak = True
+    if name == "ChartLegendBottom":
+        chart.HasLegend = True
+        chart.Legend.Alignment = uno.Enum("com.sun.star.chart.ChartLegendPosition", "BOTTOM")
     if name == "ChartColumn3D":
         d.getFloor().FillColor = 0xCCE5FF
 
@@ -67,6 +70,11 @@ CHARTS = [
     ("ChartBar3DH", "com.sun.star.chart.BarDiagram", {"Dim3D": True, "Vertical": True}, "Bar Depth", ["Left", "Right"], ["Size"], [[3], [6]]),
     ("ChartCrowded", "com.sun.star.chart.BarDiagram", {}, "Crowded Axis", ["Categorylabel%02d" % i for i in range(1, 13)], ["Count"], [[i % 5 + 1] for i in range(12)]),
     ("ChartWrapped", "com.sun.star.chart.BarDiagram", {}, "Wrapped Labels", ["North east region", "South west region", "Central city area", "Outer ring towns", "Island and coast", "Mountain villages"], ["Count"], [[3], [5], [4], [6], [2], [5]]),
+    ("ChartLongLegend", "com.sun.star.chart.BarDiagram", {}, "Long Legend", ["P", "Q"], ["Northern hemisphere sales", "South", "Eastern markets combined"], [[3, 4, 5], [6, 2, 4]]),
+    ("ChartLegendBottom", "com.sun.star.chart.BarDiagram", {}, "Legend Below", ["P", "Q", "R"], ["One", "Two"], [[3, 4], [6, 2], [5, 5]]),
+    ("ChartWideValues", "com.sun.star.chart.BarDiagram", {}, "Wide Values", ["P", "Q"], ["Big"], [[125000], [380000]]),
+    ("ChartSmall", "com.sun.star.chart.BarDiagram", {}, "Small Chart", ["P", "Q"], ["Tiny", "Mini"], [[2, 3], [4, 1]]),
+    ("ChartManySeries", "com.sun.star.chart.BarDiagram", {}, "Many Series", ["P", "Q"], ["S1", "S2", "S3", "S4", "S5", "S6"], [[1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 2, 1]]),
     ("ChartCandle", "com.sun.star.chart.StockDiagram", {"UpDown": True}, "Candle Stock", ["D1", "D2", "D3"], ["Open", "Low", "High", "Close"], [[10, 8, 14, 13], [13, 11, 15, 12], [12, 9, 16, 15]]),
 ]
 for name, service, props, title, rows, cols, data in CHARTS:
@@ -75,6 +83,7 @@ for name, service, props, title, rows, cols, data in CHARTS:
     obj.CLSID = "12dcae26-281f-416f-a234-c3086127382e"
     obj.Name = name
     size = uno.createUnoStruct("com.sun.star.awt.Size"); size.Width = 12000; size.Height = 7000
+    if name == "ChartSmall": size.Width = 8000; size.Height = 5000
     obj.Size = size
     obj.AnchorType = uno.Enum("com.sun.star.text.TextContentAnchorType", "AS_CHARACTER")
     text.insertTextContent(cursor, obj, False)

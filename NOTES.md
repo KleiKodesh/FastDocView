@@ -2336,3 +2336,14 @@ Content-Location is the src (or ends with "/" + src) or whose Content-ID is a `c
   down (both Word and LibreOffice).
 - Measured (230 -> 292 texts, 24 charts): ODT vs LibreOffice median 0.4 pt x / 0.3 pt y; .docx vs Word median 1.9 / 1.0 pt (was
   2.6 / 2.4). The x gap left: Word's plot width and legend width (our legend width is a character estimate).
+
+## Chart: Word plot / legend widths, Gouraud pie rims (2026-11-10)
+
+- Word's horizontal auto layout, measured on Word's PDF of odt-charts-v5.docx (29 charts; new: long legend names, bottom legend,
+  wide values, a small chart, six series): legend text right-aligned near the chart edge, the plot 23 pt left of the legend text,
+  value labels 6.2 pt left of the plot. Text widths follow the chart's a:latin typeface: Arial-like class widths (the fixture's
+  charts are Arial), Calibri at 0.9 x those when the chart names none (from memory, unchecked). Result: .docx vs Word median
+  1.0 pt x / 0.9 pt y (was 1.9 / 1.0); ODT vs LibreOffice unchanged at 0.4 / 0.3.
+- Gouraud (ODF dr3d:shade-mode gouraud / phong): pie rims lit per vertex with the rim's turning normal and interpolated, as
+  drawinglayer's Gouraud path does (defaultprocessor3d.cxx:383-417), as an SVG linear gradient per band. Boxes and ribbons
+  have one normal per face, so smooth and flat shading are the same for them.

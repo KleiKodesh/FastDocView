@@ -24,7 +24,7 @@ internal sealed partial class DocxChart
     private sealed class View3D
     {
         public double RotX = 15, RotY = 20, Perspective = 30, DepthPercent = 100, GapDepth = 150;
-        public bool RightAngled;
+        public bool RightAngled, Smooth;
         public double Ambient = 0.8, Light = 0.4;
         public (double X, double Y, double Z) LightDirection = (0.2, 0.4, 1.0);
     }
@@ -41,6 +41,7 @@ internal sealed partial class DocxChart
         if (Number(view.Element("perspective")) is { } perspective) result.Perspective = perspective;
         if (Number(view.Element("depthPercent")) is { } depth) result.DepthPercent = Math.Max(20, Math.Min(2000, depth));
         result.RightAngled = Value(view.Element("rAngAx")) is "1" or "true";
+        result.Smooth = (string?)view.Attribute("shadeMode") is "gouraud" or "phong";
         if (double.TryParse((string?)view.Attribute("ambient"), NumberStyles.Float, CultureInfo.InvariantCulture, out double ambient)) result.Ambient = ambient;
         if (double.TryParse((string?)view.Attribute("light"), NumberStyles.Float, CultureInfo.InvariantCulture, out double light)) result.Light = light;
         // ODF dr3d:light dr3d:direction of the first enabled light (OdtChart passes it on), in view space like oox's (0.2, 0.4, 1)
@@ -312,6 +313,33 @@ internal sealed partial class DocxChart
     }
 
     /// <summary>
+    /// Gouraud shading of a pie rim (ODF dr3d:shade-mode gouraud): the colour is lit at the vertices with the rim's own normal there
+    /// (pointing out from the centre, so it turns along the arc) and interpolated between them, as drawinglayer's Gouraud path does
+    /// (defaultprocessor3d.cxx:383-417: per-vertex colours from the normals, interpolated across the polygon); here as a horizontal SVG
+    /// gradient over the band with a stop every sixth of the arc. Flat faces (boxes, ribbons) have one normal per face, so smooth and flat
+    /// shading draw them the same.
+    /// </summary>
+    private static void SmoothRim(StringBuilder svg, View3D view, List<(double X, double Y)> band, double fromDegrees, double toDegrees, string baseColor)
+    {
+        double minX = band.Min(p => p.X), maxX = band.Max(p => p.X);
+        if (maxX - minX < 0.01) { Polygon(svg, band, baseColor, baseColor, "word-chart-pie-side"); return; }
+        string d = string.Concat(band.Select((p, k) => (k == 0 ? "M" : "L") + N(p.X) + " " + N(p.Y)));
+        string id = "word-chart-rim-" + ((uint)d.GetHashCode()).ToString("x8", CultureInfo.InvariantCulture);
+        svg.Append("<defs><linearGradient id=\"").Append(id).Append("\" gradientUnits=\"userSpaceOnUse\" x1=\"").Append(N(minX)).Append("\" y1=\"0\" x2=\"").Append(N(maxX)).Append("\" y2=\"0\">");
+        // the band's first 25 points run along the arc (k / 24 of the way): a stop at every fourth, lit with the rim's normal there
+        // (x across the page, toward the viewer by the sine - the front half of the disc - and no vertical part)
+        var ordered = new List<(double Offset, string Color)>();
+        for (int k = 0; k <= 24 && k < band.Count; k += 4)
+        {
+            double angle = (fromDegrees + (toDegrees - fromDegrees) * k / 24) * Math.PI / 180;
+            ordered.Add(((band[k].X - minX) / (maxX - minX), Shade(baseColor, Lighting(view, (Math.Cos(angle), 0.0, Math.Sin(angle))))));
+        }
+        ordered.Sort((p, q) => p.Offset.CompareTo(q.Offset));
+        foreach (var stop in ordered) svg.Append("<stop offset=\"").Append(N(stop.Offset)).Append("\" stop-color=\"").Append(stop.Color).Append("\"/>");
+        svg.Append("</linearGradient></defs><path class=\"word-chart-pie-side word-chart-smooth\" d=\"").Append(d).Append("Z\" fill=\"url(#").Append(id).Append(")\" stroke=\"none\"/>");
+    }
+
+    /// <summary>
     /// A 3-D pie: the slices as a tilted disc of some thickness - the elevation from rotX (plotareaconverter.cxx:275-279: rotX 0..90 to
     /// rotX - 90, so 90 looks straight down and 0 edge on), the first slice from rotY; the visible rim below each slice darker, the tops
     /// lit, drawn rim first (front half only) then the tops.
@@ -354,7 +382,8 @@ internal sealed partial class DocxChart
                     for (int k = 0; k <= 24; k++) band.Add(At(frontFrom + (frontTo - frontFrom) * k / 24, 0));
                     for (int k = 24; k >= 0; k--) band.Add(At(frontFrom + (frontTo - frontFrom) * k / 24, thickness));
                     string rim = Shade(slice.Color, sideLight);
-                    Polygon(svg, band, rim, rim, "word-chart-pie-side");
+                    if (view.Smooth) SmoothRim(svg, view, band, frontFrom, frontTo, slice.Color);
+                    else Polygon(svg, band, rim, rim, "word-chart-pie-side");
                 }
                 a0 = turn + 360;
             }

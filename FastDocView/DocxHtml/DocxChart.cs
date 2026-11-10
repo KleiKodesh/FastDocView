@@ -82,7 +82,7 @@ internal sealed partial class DocxChart
     private (double X, double Y, double W, double H)? _plotLayout;
     private bool _plotLayoutInner;
     private List<double> _titleSizes = new();
-    private bool _libreOfficeLayout, _separateTitleLines;
+    private bool _libreOfficeLayout, _separateTitleLines, _chartFontIsArial;
     private double _legendSize = 9, _dataLabelSize = 9;
     private (double X, double Y)? _legendLayout;
     private bool _is3D;
@@ -102,6 +102,9 @@ internal sealed partial class DocxChart
         model._chartSpaceProperties = chartSpace.Element("spPr");
         // text sizes (a:defRPr / a:rPr sz in hundredths of a point): the element's own, else the chart's c:txPr; Office's defaults otherwise
         double? chartSize = FontSize(chartSpace.Element("txPr"));
+        // the chart's Latin font (a:latin typeface): Arial-like metrics unless it is Calibri or not given (Office's theme font)
+        string? typeface = chartSpace.Descendants().FirstOrDefault(e => e.Name.LocalName == "latin")?.Attribute("typeface")?.Value;
+        model._chartFontIsArial = typeface is not null && !typeface.StartsWith("Calibri", StringComparison.OrdinalIgnoreCase) && !typeface.StartsWith("+", StringComparison.Ordinal);
         // a chart read from OpenDocument is laid out by LibreOffice's rules (OdtChart marks it)
         model._libreOfficeLayout = (string?)chartSpace.Attribute("layoutRules") == "libreoffice";
         model._separateTitleLines = (string?)chart.Element("title")?.Attribute("separateLines") == "1";
@@ -489,14 +492,14 @@ internal sealed partial class DocxChart
                 foreach ((string text, string color, bool line) in legend)
                 {
                     LegendKey(svg, x, y, color, line); Text(svg, x + 14, y + 8, text, size, textColor, "start");
-                    if (row) x += text.Length * size * 0.55 + 22; else y += entryHeight;
+                    if (row) x += TextWidth(text, size) + 22; else y += entryHeight;
                 }
-                double legendWidth = row ? 0 : legend.Max(e => e.Text.Length) * size * 0.55 + 18;
+                double legendWidth = row ? 0 : legend.Max(e => TextWidth(e.Text, size)) + (_libreOfficeLayout ? 18 : 19.4);
                 if (_plotLayout is null && !row) { if (at.X < 0.5) left = Math.Max(left, at.X * width + legendWidth + 6); else right = Math.Min(right, at.X * width - 6); }
             }
             else if (_legendPosition is "r" or "l" or "tr")
             {
-                double legendWidth = Math.Min(width / 3, legend.Max(e => e.Text.Length) * size * 0.55 + 18);
+                double legendWidth = Math.Min(width / 3, legend.Max(e => TextWidth(e.Text, size)) + (_libreOfficeLayout ? 18 : 19.4));
                 double y = (top + bottom) / 2 - legend.Count * entryHeight / 2;
                 double x = _legendPosition == "l" ? left : right - legendWidth;
                 foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, textColor, "start"); y += entryHeight; }
@@ -504,9 +507,9 @@ internal sealed partial class DocxChart
             }
             else
             {
-                double total = legend.Sum(e => e.Text.Length * size * 0.55 + 22);
+                double total = legend.Sum(e => TextWidth(e.Text, size) + 22);
                 double x = Math.Max(left, width / 2 - total / 2), y = _legendPosition == "t" ? top : bottom - entryHeight;
-                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, textColor, "start"); x += text.Length * size * 0.55 + 22; }
+                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, textColor, "start"); x += TextWidth(text, size) + 22; }
                 if (_legendPosition == "t") top += entryHeight + 6; else bottom -= entryHeight + 6;
             }
         }
@@ -682,7 +685,7 @@ internal sealed partial class DocxChart
         var valueLabels = new List<(double Value, string Text)>();
         if (valueAxis is not { Deleted: true })
             foreach (double v in valueTicks) valueLabels.Add((v, FormatNumber(Math.Round(v, 10), valueFormat)));
-        double valueLabelWidth = valueLabels.Count == 0 ? 0 : valueLabels.Max(l => l.Text.Length) * labelSize * 0.55 + 4;
+        double valueLabelWidth = valueLabels.Count == 0 ? 0 : valueLabels.Max(l => TextWidth(l.Text, labelSize)) + (_libreOfficeLayout ? 4 : 8.2);   // Word: 6.2 pt from the label to the plot (measured)
         double sMin = 0, sMax = 1;
         var secondaryLabels = new List<(double Value, string Text)>();
         if (secondaryAxis is not null)
@@ -692,7 +695,7 @@ internal sealed partial class DocxChart
             string secondaryFormat = secondaryAxis.FormatCode ?? secondaryGroups[0].Series[0].FormatCode ?? "General";
             foreach (double v in secondaryTicks) secondaryLabels.Add((v, FormatNumber(Math.Round(v, 10), secondaryFormat)));
         }
-        double secondaryLabelWidth = secondaryLabels.Count == 0 ? 0 : secondaryLabels.Max(l => l.Text.Length) * labelSize * 0.55 + 4;
+        double secondaryLabelWidth = secondaryLabels.Count == 0 ? 0 : secondaryLabels.Max(l => TextWidth(l.Text, labelSize)) + 4;
         if (_plotLayout is not null && _plotLayoutInner)
         {
             // c:layoutTarget inner: the stored rectangle is the plot itself; the labels and titles go outside it
@@ -765,7 +768,7 @@ internal sealed partial class DocxChart
                 double y = bottom - t * plotHeight;
                 if (valueAxis?.Gridlines != false) svg.Append("<path d=\"M").Append(N(left)).Append(' ').Append(N(y)).Append('H').Append(N(right)).Append("\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
                 // LibreOffice centres the label's full text height on the tick (measured: baseline 0.08 x size above it); Word a third of the size below
-                Text(svg, left - (_libreOfficeLayout ? labelSize * 0.7 : 2), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, textColor, "end");
+                Text(svg, left - (_libreOfficeLayout ? labelSize * 0.7 : 6.2), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, textColor, "end");
             }
         }
         foreach ((double value, string text) in secondaryLabels)
@@ -825,7 +828,7 @@ internal sealed partial class DocxChart
     /// </summary>
     private CategoryLabelPlan PlanCategoryLabels(List<string> labels, double slot, double size, Axis? axis)
     {
-        double Width(string text) => text.Length * size * (_libreOfficeLayout ? 0.55 : 0.5);   // Liberation Sans vs Calibri average advance
+        double Width(string text) => TextWidth(text, size);
         double room = slot * 0.95;
         var single = labels.Select(l => new[] { l }).ToList();
         if (labels.All(l => Width(l) <= room)) return new CategoryLabelPlan(single, false, false, 1, size + 4);
@@ -854,7 +857,28 @@ internal sealed partial class DocxChart
         return new CategoryLabelPlan(single, false, true, rhythm, labels.Max(Width) * Math.Sqrt(0.5) + size + 4);
     }
 
-    private static double CategoryLabelWidth(List<string> categories, double labelSize) => categories.DefaultIfEmpty("").Max(c => c.Length) * labelSize * 0.55 + 6;
+    private double CategoryLabelWidth(List<string> categories, double labelSize) => categories.DefaultIfEmpty("").Max(c => TextWidth(c, labelSize)) + 6;
+
+    /// <summary>
+    /// A text's width. LibreOffice layouts keep the 0.55 x size per character they were measured with. Word's use the chart font's
+    /// advance widths by character class: Arial / Liberation Sans (Helvetica's metrics, from memory, checked against Word's PDF of the
+    /// fixture, whose charts are Arial: space and i j l . , 0.22-0.28, t f 0.28, r 0.33, digits 0.556, lower case 0.556, m 0.833, w 0.722,
+    /// upper case 0.667, M W 0.83-0.94, % 0.889) or Calibri, Office's theme font when the chart names none (from memory, unchecked:
+    /// about 0.9 x those).
+    /// </summary>
+    private double TextWidth(string text, double size)
+    {
+        if (_libreOfficeLayout) return text.Length * size * 0.55;
+        double em = 0;
+        foreach (char c in text)
+            em += c switch
+            {
+                ' ' or '.' or ',' or ':' or ';' or '!' or (char)0x27 or '|' => 0.278, 'i' or 'j' or 'l' => 0.222, 't' or 'f' or 'I' or '(' or ')' or '-' => 0.30, 'r' => 0.333,
+                'm' => 0.833, 'w' => 0.722, 'W' => 0.944, 'M' => 0.833, >= '0' and <= '9' => 0.556, '%' => 0.889,
+                >= 'A' and <= 'Z' => 0.667, _ => 0.556,
+            };
+        return em * size * (_chartFontIsArial ? 1 : 0.9);
+    }
 
     private static Func<double, double> ValueToAxisOf(Axis? axis, double min, double max) => AxisMap(axis, min, max);
 

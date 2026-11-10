@@ -4,7 +4,7 @@ using FastDocView;
 namespace FastDocView.Tests;
 
 /// <summary>
-/// .odt charts (--fidelity, seconds): test-data/odt-charts/odt-charts-v4.odt, made by LibreOffice itself through UNO
+/// .odt charts (--fidelity, seconds): test-data/odt-charts/odt-charts-v5.odt, made by LibreOffice itself through UNO
 /// (scripts/make-odt-charts.py: one Writer chart per class - column with subtitle, axis titles and value labels, stacked bars,
 /// percent columns, line, stacked area, pie, donut, scatter, radar, stock, bubble, 3-D column). Each chart is drawn as SVG from
 /// its "Object N" sub-document (not the preview picture), with the series colours LibreOffice wrote; the same file saved
@@ -14,12 +14,12 @@ public static class OdtChartsFidelityTest
 {
     private static readonly string[] Titles =
         ["Column Sales", "Stacked Bars", "Percent Columns", "Line Trend", "Area Stack", "Pie Share", "Donut Rings", "Scatter Points", "Radar Net", "Stock Prices", "Bubble Sizes", "Column Depth",
-         "Log Growth", "Two Axes", "Error Bars", "Trend Fit", "Pie Depth", "Range Errors", "Line Depth", "Area Depth", "Bar Depth", "Crowded Axis", "Wrapped Labels", "Candle Stock"];
+         "Log Growth", "Two Axes", "Error Bars", "Trend Fit", "Pie Depth", "Range Errors", "Line Depth", "Area Depth", "Bar Depth", "Crowded Axis", "Wrapped Labels", "Long Legend", "Legend Below", "Wide Values", "Small Chart", "Many Series", "Candle Stock"];
 
     public static void Run()
     {
         TestReport.Step("ODT charts: LibreOffice-made charts drawn from their sub-documents");
-        string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "odt-charts", "odt-charts-v4.odt");
+        string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "odt-charts", "odt-charts-v5.odt");
         TestReport.Check(File.Exists(path), "chart fixture exists");
         if (!File.Exists(path)) return;
         List<string> html = Render(path);
@@ -102,6 +102,8 @@ public static class OdtChartsFidelityTest
                          format + (wrapsInWord ? ": long category names wrapped at spaces (Word)" : ": long names with a word wider than the slot turned 45 degrees (LibreOffice gives up the line break)"));
         string pie3D = Block("Pie Depth");
         TestReport.Check(Regex.Matches(pie3D, "word-chart-pie-top").Count == 4 && pie3D.Contains("word-chart-pie-side"), format + ": 3-D pie: four tilted slices over a darker rim");
+        TestReport.Check(format == "docx" ? !pie3D.Contains("word-chart-smooth") : pie3D.Contains("word-chart-smooth") && pie3D.Contains("<linearGradient"),
+                         format + (format == "docx" ? ": 3-D pie rim flat shaded (Office's flat shade mode)" : ": 3-D pie rim Gouraud shaded (dr3d:shade-mode gouraud) with a gradient"));
         TestReport.Check(Regex.Matches(Block("Range Errors"), "word-chart-error-bar").Count == 3, format + ": error amounts from a cell range, one bar per point");
         string columnSales = Block("Column Sales");
         TestReport.Check(columnSales.Contains(format == "odt" || format == "fodt" ? ">50<" : ">45<"), format + ": automatic value scale as " + (format == "docx" ? "Word (5 % headroom: 40 -> 45)" : "LibreOffice (one more step near the top: 40 -> 50)"));
