@@ -319,12 +319,16 @@ internal sealed partial class DocxChart
     /// gradient over the band with a stop every sixth of the arc. Flat faces (boxes, ribbons) have one normal per face, so smooth and flat
     /// shading draw them the same.
     /// </summary>
-    private static void SmoothRim(StringBuilder svg, View3D view, List<(double X, double Y)> band, double fromDegrees, double toDegrees, string baseColor)
+    private static void SmoothRim(StringBuilder svg, View3D view, List<(double X, double Y)> band, double fromDegrees, double toDegrees, string baseColor, string flatColor)
     {
         double minX = band.Min(p => p.X), maxX = band.Max(p => p.X);
-        if (maxX - minX < 0.01) { Polygon(svg, band, baseColor, baseColor, "word-chart-pie-side"); return; }
+        if (maxX - minX < 0.01) { Polygon(svg, band, flatColor, flatColor, "word-chart-pie-side"); return; }
         string d = string.Concat(band.Select((p, k) => (k == 0 ? "M" : "L") + N(p.X) + " " + N(p.Y)));
-        string id = "word-chart-rim-" + ((uint)d.GetHashCode()).ToString("x8", CultureInfo.InvariantCulture);
+        // the id names the gradient's content (path, colour, light), with a stable FNV-1a hash: equal ids are equal gradients, so
+        // several charts on one page can share it harmlessly, and the output is the same in every process
+        uint hash = 2166136261;
+        foreach (char c in d + baseColor + N(view.Ambient) + N(view.Light) + N(view.LightDirection.X) + N(view.LightDirection.Y) + N(view.LightDirection.Z)) hash = (hash ^ c) * 16777619;
+        string id = "word-chart-rim-" + hash.ToString("x8", CultureInfo.InvariantCulture);
         svg.Append("<defs><linearGradient id=\"").Append(id).Append("\" gradientUnits=\"userSpaceOnUse\" x1=\"").Append(N(minX)).Append("\" y1=\"0\" x2=\"").Append(N(maxX)).Append("\" y2=\"0\">");
         // the band's first 25 points run along the arc (k / 24 of the way): a stop at every fourth, lit with the rim's normal there
         // (x across the page, toward the viewer by the sine - the front half of the disc - and no vertical part)
@@ -382,7 +386,7 @@ internal sealed partial class DocxChart
                     for (int k = 0; k <= 24; k++) band.Add(At(frontFrom + (frontTo - frontFrom) * k / 24, 0));
                     for (int k = 24; k >= 0; k--) band.Add(At(frontFrom + (frontTo - frontFrom) * k / 24, thickness));
                     string rim = Shade(slice.Color, sideLight);
-                    if (view.Smooth) SmoothRim(svg, view, band, frontFrom, frontTo, slice.Color);
+                    if (view.Smooth) SmoothRim(svg, view, band, frontFrom, frontTo, slice.Color, rim);
                     else Polygon(svg, band, rim, rim, "word-chart-pie-side");
                 }
                 a0 = turn + 360;
