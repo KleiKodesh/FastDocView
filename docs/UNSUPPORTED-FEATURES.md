@@ -94,7 +94,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
 | Picture cropping (a:srcRect, \piccrop, fo:clip) | docx, rtf, odt (doc: size only) | Crop is not applied: the whole picture is drawn in the frame | deferred |
-| Wrap on both sides of an object | all | CSS Shapes 1 s.2: no text on both sides of a float; floats to its side | won't do |
 | Through wrap (text over holes) | all | Holes cannot be laid out in CSS; drawn as tight | won't do |
 | Page / margin-relative vertical position | all | No page | planned (paged view) |
 | Pictures in web archives | mhtml | Shown as `[image]` (blocks carry no pictures yet) | deferred |
@@ -104,19 +103,18 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| 3-D shapes (scene3d / sp3d, bevels, true extrusion) | docx, doc, rtf (odt flat only) | Not read / browser has no 3-D text-and-shape pipeline in this renderer | deferred |
+| 3-D shapes (scene3d / sp3d, bevels, extrusion) | docx, doc, rtf | Not read (ODT extrusion is drawn) | deferred |
 | Connector routing (glue points) | docx, doc, rtf | Drawn as their saved geometry only | won't do |
 | .doc / RTF floating groups and shapes with text boxes | doc, rtf | Rendered inline after the anchor, not positioned | deferred |
 | .doc / RTF text boxes positioned | doc, rtf | Inline frame | deferred |
 | Blip / pattern fill inside a:path shapes | docx | Not drawn; the fill below stays | deferred |
-| Shape and text-box colours in dark mode | all | Not remapped (like pictures, as Word does) | won't do |
 | Shapes in web archives | mhtml | VML is not drawn | deferred |
 
 ## Charts, SmartArt, objects
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| Charts in .doc / RTF / ODT | doc, rtf, odt | Only docx chart parts are read; other formats show the saved preview picture where there is one | deferred |
+| Charts in .doc / RTF / ODT | doc, rtf, odt | No chart reader in DocBinary/, Rtf/, Odt/ (only docx chart parts are read); the saved preview picture shows where there is one | deferred |
 | chartex region map without a geography cache | docx | No map data; the saved fallback picture is shown | won't do |
 | SmartArt without a saved drawing part | docx | Layout engine not implemented; empty frame of the right size | deferred |
 | OLE objects as live content (embedded sheets, equations, media) | all | Only the saved preview picture is shown | won't do |

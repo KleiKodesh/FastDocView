@@ -165,10 +165,10 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 | Inline pictures (by id through the host's picture endpoint) | yes | yes | yes | yes | n.a. | no |
 | Floating pictures: square, tight, top-and-bottom wrap, offsets | yes | yes | yes | yes | n.a. | n.a. |
 | Contour wrap from the wrap polygon | yes | yes | yes | yes | n.a. | n.a. |
-| Two-sided wrap | partial (18) | partial (18) | partial (18) | partial (18) | n.a. | n.a. |
+| Two-sided wrap (floats flush to its nearer edge; contour as shape-outside) | yes (18) | yes (18) | yes (18) | yes (18) | n.a. | n.a. |
 | Cropping | no | partial (19) | no | no | n.a. | n.a. |
 
-18. CSS cannot wrap text on both sides of a float: the object floats flush to its side.
+18. CSS cannot put text on both sides of one float, so the object floats flush to the nearer edge of its section's text width (page / right-margin offsets converted first) and wraps one side, as a contour where it has one.
 19. .doc crops change the shown size only; the picture is not clipped.
 
 ## Shapes, WordArt, text boxes
@@ -181,24 +181,25 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 | Text boxes (linked chains shown in the first box) | yes | partial (21) | partial (21) | yes | n.a. | n.a. |
 | WordArt / Fontwork (text on outlines) | yes | yes | yes | yes | n.a. | n.a. |
 | Connectors | partial (22) | partial (22) | partial (22) | yes | n.a. | n.a. |
-| 3-D | no | no | no | partial (23) | n.a. | n.a. |
+| 3-D extrusion | no | no | no | yes (23) | n.a. | n.a. |
 
 20. A group, or a shape holding a text box, is not drawn as a floating object; its parts render inline.
 21. Rendered as an inline frame after the anchoring paragraph, not positioned.
 22. Drawn as the line / preset geometry saved; no connection routing.
-23. ODT `draw:extrude` is drawn flat with its extrusion colour (OdtExtrusion), not as true 3-D.
+23. ODT `draw:extrusion` is projected and lit as LibreOffice draws it (OdtExtrusion: faces back to front, parallel / perspective, lights).
 
 ## Charts, SmartArt, objects
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Charts (c:chart from cached values, as SVG) | yes | no | no | no | n.a. | n.a. |
+| Charts (c:chart from cached values, as SVG) | yes | partial (26) | partial (26) | partial (26) | n.a. | n.a. |
 | chartex (waterfall, treemap, sunburst, histogram, box, funnel, region map) | partial (24) | n.a. | n.a. | n.a. | n.a. | n.a. |
 | SmartArt (from its saved drawing part) | partial (25) | n.a. | n.a. | n.a. | n.a. | n.a. |
 | OLE objects (their saved preview picture) | partial | partial | partial | partial | n.a. | n.a. |
 
 24. A region map without a saved geography cache falls back to the saved picture.
 25. Without a drawing part the frame keeps its size and is empty.
+26. No chart reader for these formats (checked: no chart code in DocBinary/, Rtf/, Odt/); the chart's saved preview picture is shown when the file has one.
 
 ## Tracked changes, ruby, math
 
@@ -215,7 +216,7 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 | Windowed loading, streaming index, sidecar cache | yes | yes | yes | yes | yes | yes |
 | First open shows text from the partial index | yes | yes | yes | yes | yes | yes |
 | In-document search (byte-level; fields, notes, hidden text aware) | yes | yes | yes | yes | yes | yes |
-| Dark theme (colour rewrite; auto colour inherits) | yes | yes | yes | yes | yes | yes |
+| Dark theme (colour rewrite incl. shapes, text boxes, charts, SmartArt; pictures unchanged) | yes | yes | yes | yes | yes | yes |
 | Clear errors: encrypted, corrupt, online-only, not found, unsupported, access denied | yes | yes | yes | yes | yes | yes |
 | Malformed XML: content before the first error kept | yes | n.a. | n.a. | no | n.a. | n.a. |
 | A block that fails becomes a placeholder, reported once | yes | yes | yes | yes | yes | yes |
