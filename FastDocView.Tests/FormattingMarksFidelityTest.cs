@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Text;
 
 namespace FastDocView.Tests;
@@ -88,7 +89,7 @@ public static class FormattingMarksFidelityTest
         string rtl = Block(html, "rtlleft");
         TestReport.Check(rtl.Contains("border-inline-start:1pt solid #FF0000;") && !rtl.Contains("border-inline-end"), "\\brdrl in a right-to-left paragraph: the start side, as .docx w:left and .doc brcLeft [" + rtl + "]");
         TestReport.Check(Block(html, "halfshade").Contains("background-color:light-dark(#7F7FFF"), "\\shading5000 \\cfpat blue over \\cbpat white: 7F7FFF");
-        TestReport.Check(!Block(html, "cellpara").Contains("border"), "\\clbrdrt modifiers do not reach the paragraph");
+        TestReport.Check(Regex.Match(Block(html, "cellpara"), "<p[^>]*>").Value is { Length: > 0 } cellParagraph && !cellParagraph.Contains("border"), "\\clbrdrt modifiers do not reach the paragraph");
         string runs = Block(html, "inborder");
         TestReport.Check(runs.Contains("border:0.5pt solid #FF0000;"), "\\chbrdr without \\brdrw: 0.5 pt, red [" + runs + "]");
         TestReport.Check(runs.Contains("inborder</span>afterplain"), "\\plain ends the character border");

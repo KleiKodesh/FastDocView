@@ -2129,3 +2129,17 @@ tlch); checked by the same test.
   text positions in legacy-lists-v1.expected.txt) shows no tab after the label - the text starts at the furthest of the start indent,
   label start + legacyIndent and label end + legacySpace. Drawn as a label box min-width max(hanging, legacyIndent) whose label is padded
   by legacySpace (WordListLabelLegacy). Test: LegacyListsFidelityTest (in --list-bullets).
+
+## RTF tables: merges, nesting, cell borders (2026-11-10)
+
+- The row definition is a list of `RtfCellDefinition` (right edge, \clcbpat + \clshdng fill, \clmgf / \clmrg / \clvmgf / \clvmrg,
+  \clvertalt / c / b, \clbrdrt / l / b / r) plus the row's \trbrdrt / l / b / r / h / v; it is part of the parser snapshot
+  (index format 16). LibreOffice: rtfdispatchflag.cxx:702-730 (CLBRDR*, RTFBorderState::CELL), :804-845 (merges, CLVERTAL*),
+  rtfdispatchvalue.cxx:477 (CLSHDNG), :927 (CLCBPAT); LibreOffice does not read \trbrdr* - Word writes both, Word is the reference.
+- {\*\nesttableprops} fills its own nested row definition (LibreOffice rtfdispatchdestination.cxx:192-200 keeps it apart the same
+  way); Word writes it right before its \nestrow. Nested rows wait in their level and are drawn as one table (real rowspans) when
+  the cell around them goes on - all inside the outer row's block.
+- Outer rows stay one block each: a cell merged down is drawn without the line between rows. Which cells the next row continues
+  needs that row, so the index pass records it (`RtfRandomAccessIndex.MergedRowBlocks` / `MergedRowCells`, by \cellx edge).
+- Borders: a cell's own border, else the row's (outer sides; \trbrdrh / v inside), else no line (Word draws none; \brdrtbl = none).
+- Fixtures: test-data/word-tables (make-tables-fixtures.ps1, Word 16); checks: `--tables` (part of `--fidelity`).

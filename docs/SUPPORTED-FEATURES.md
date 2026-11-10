@@ -105,20 +105,21 @@ NOTES.md "List numbering" holds the audit of list number formats.
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Borders (table, cell; theme colours in docx) | yes | partial (T1) | partial (T2) | yes | n.a. | partial (2) |
+| Borders (table, cell; theme colours in docx) | yes | partial (T1) | yes | yes | n.a. | partial (2) |
 | Shading | yes | yes | yes | yes | n.a. | partial (2) |
 | Conditional table styles (first / last row and column, banding) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
-| Merged cells (horizontal and vertical) | yes | no | no | yes | n.a. | yes |
-| Nested tables | yes | partial (T3) | no | yes | n.a. | yes |
+| Merged cells (horizontal and vertical) | yes | no | yes (T2) | yes | n.a. | yes |
+| Nested tables | yes | partial (T3) | yes | yes | n.a. | yes |
 | Widths (grid, cell, indent, cell margins) | yes | yes | yes | yes | n.a. | partial (2) |
-| Direction (bidiVisual / RTL rows) | yes | yes | no | yes | n.a. | yes |
-| Vertical alignment in cells | yes | no | no | yes | n.a. | partial (2) |
+| Direction (bidiVisual / RTL rows) | yes | yes | yes | yes | n.a. | yes |
+| Vertical alignment in cells | yes | no | yes | yes | n.a. | partial (2) |
 | Cell text direction (vertical text) | yes | no | no | no | n.a. | n.a. |
 | Big tables split into row blocks (windowed) | yes | yes | yes | yes | n.a. | yes |
 | Tracked row deletion hidden | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
 
 T1. .doc: the row's sprmTTableBorders border on every cell; per-cell borders are not read.
-T2. RTF: cell / row borders (\clbrdr*, 	rbrdr*) are parsed but not drawn; widths and \clcbpat shading are.
+T2. RTF: an outer row is one block, so a cell merged down (\clvmgf / \clvmrg) is drawn as cells without the line between
+    them (which cells go on below is found at index time), not as one rowspan cell; inside a nested table it is a rowspan.
 T3. .doc: an inner row end (sprmPFInnerTtp) closes a row; the inner table is not nested inside its cell.
 
 ## Sections and pages
@@ -148,7 +149,8 @@ Headers / footers, columns and page layout are not shown (flow view): see UNSUPP
 | Notes pane (app: one windowed scroller of all notes, click lands the note), hover tooltip (book view's link tooltip) | yes | yes | yes | yes | yes | partial (17) |
 
 N1. docx: settings.xml numFmt per kind is read; numStart and numRestart are not.
-N3. Word does not allow notes in text boxes.
+N3. Word does not allow notes in text boxes: checked in Word 16 through COM (2026-11-10, test-data/word-tables/make-tables-fixtures.ps1):
+    Footnotes.Add and Endnotes.Add on a text box's range both fail (0x800A172F), as the Insert Footnote command is off there.
 N2. .doc: always decimal from 1 (the Dop's nfcFtnRef / nFtn are not read).
 16. Torat Emet note lines only.
 17. Word's own HTML note links and texts are passed through.

@@ -1,0 +1,2 @@
+footnote in text box: refused (HRESULT 0x800A172F)
+endnote in text box: refused (HRESULT 0x800A172F)

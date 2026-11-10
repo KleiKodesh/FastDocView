@@ -315,6 +315,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
                 ? new WordDocumentBookmarkTable(_bookmarkNames.Where((_, i) => _bookmarkBlocks[i] < known).ToArray(), _bookmarkBlocks.Where(block => block < known).ToArray())
                 : new WordDocumentBookmarkTable(_bookmarkNames.ToArray(), _bookmarkBlocks.Select(block => Math.Min(block, Math.Max(0, known - 1))).ToArray()),
             IndexEntries = _indexEntries.ToArray(),      // entries of the block being read too: an INDEX lists them as found so far
+            MergedRowBlocks = _mergedRowBlocks.Where(block => block < known).ToArray(),
+            MergedRowCells = _mergedRowCells.Where((_, i) => _mergedRowBlocks[i] < known).ToArray(),
         };
     }
 
@@ -592,6 +594,31 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         return _lists.Next(state.ListOverride, state.ListLevel);
     }
 
+    // rows merged down (index pass only): the previous outer row's cells, while rows follow each other
+    private RtfCellDefinition[]? _previousRowCells;
+    private readonly List<int> _mergedRowBlocks = new();
+    private readonly List<ulong> _mergedRowCells = new();
+
+    /// <summary>
+    /// This row continues cells of the row before it (\clvmrg, LibreOffice rtfdispatchflag.cxx:822 -> vMerge continue): the cell of
+    /// the row before with the same right edge (\cellx) is marked, so that row is drawn without its bottom line there.
+    /// </summary>
+    private void NoteCellsMergedDown()
+    {
+        RtfCellDefinition[]? previous = _previousRowCells;
+        if (previous is null || _starts.Count == 0 || _kinds[_kinds.Count - 1] != WordDocumentBlockKind.TableRow) return;
+        ulong mask = 0;
+        foreach (RtfCellDefinition cell in _parser.Cells)
+        {
+            if ((cell.Merge & RtfCellMerge.VerticalContinue) == 0) continue;
+            int above = Array.FindIndex(previous, candidate => candidate.Boundary == cell.Boundary);
+            if (above >= 0 && above < 64) mask |= 1UL << above;
+        }
+        if (mask == 0) return;
+        _mergedRowBlocks.Add(_starts.Count - 1);
+        _mergedRowCells.Add(mask);
+    }
+
     public override void CellEnd(in RtfGroupState state, bool isNested)
     {
         if (IsSearching) _search!.Separator();
@@ -609,7 +636,9 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         if (_parser.IsInFootnote || isNested) return;
         _hasContent = true;
         _isRow = true;
+        if (!_isSpanScan && !_parser.IsInTextBox) NoteCellsMergedDown();
         EndBlock(_parser.Position);
+        if (!_isSpanScan && !_parser.IsInTextBox) _previousRowCells = _parser.Cells.ToArray();
         if (_isSectionEndPending) { _isSectionEndPending = false; EndSection(); }
     }
 
