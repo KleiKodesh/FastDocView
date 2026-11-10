@@ -671,7 +671,8 @@ public sealed partial class OdtBlockHtmlRenderer
         }
         foreach (XElement row in Rows(table))
         {
-            html.Append("<tr>");
+            int rowHeight = _styles.RowHeightTwips((string?)row.Attribute(TableNs + "style-name"));
+            WordTableRowHeight.AppendRowOpen(html, rowHeight);
             foreach (XElement cell in row.Elements())
             {
                 if (cell.Name != TableNs + "table-cell") continue;          // table:covered-table-cell: part of a span
@@ -683,7 +684,9 @@ public sealed partial class OdtBlockHtmlRenderer
                 html.Append('>');
                 string? savedLabel = _listLabel; int savedLevel = _listLevel;
                 _listLabel = null; _listLevel = -1;
-                foreach (XElement child in cell.Elements()) RenderBlock(child, html, isTopLevel: false);
+                var content = new StringBuilder();
+                foreach (XElement child in cell.Elements()) RenderBlock(child, content, isTopLevel: false);
+                WordTableRowHeight.AppendCellContent(html, content.ToString(), rowHeight, (int?)cell.Attribute(TableNs + "number-rows-spanned") ?? 1);
                 _listLabel = savedLabel; _listLevel = savedLevel;
                 html.Append("</td>");
             }

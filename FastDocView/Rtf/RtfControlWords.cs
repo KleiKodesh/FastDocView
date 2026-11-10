@@ -32,7 +32,7 @@ internal enum RtfWord : ushort
     LeftIndent, RightIndent, StartIndent, EndIndent, FirstLineIndent, SpaceBefore, SpaceAfter, LineSpacing, LineSpacingMultiple,
     RightToLeftParagraph, LeftToRightParagraph, InTable, NestingLevel, PageBreakBefore, DropCapLines, DropCapType, FrameHorizontalDistance, ParagraphHyphenation,
     // ── table row ──
-    RowDefault, CellBoundary, CellShading, RightToLeftRow, LeftToRightRow, RowLeft, RowAlignLeft, RowAlignCenter, RowAlignRight,
+    RowDefault, CellBoundary, CellShading, RightToLeftRow, LeftToRightRow, RowLeft, RowHeight, RowAlignLeft, RowAlignCenter, RowAlignRight,
     CellMergeFirst, CellMergeContinue, CellVerticalMergeFirst, CellVerticalMergeContinue, CellAlignTop, CellAlignCenter, CellAlignBottom, CellShadingPercent,
     CellBorderTop, CellBorderLeft, CellBorderBottom, CellBorderRight, RowBorderTop, RowBorderLeft, RowBorderBottom, RowBorderRight, RowBorderHorizontal, RowBorderVertical,
     // ── character ──
@@ -135,7 +135,7 @@ internal static class RtfControlWords
         ("rtlpar", RtfWord.RightToLeftParagraph), ("ltrpar", RtfWord.LeftToRightParagraph), ("intbl", RtfWord.InTable), ("itap", RtfWord.NestingLevel),
         ("pagebb", RtfWord.PageBreakBefore), ("dropcapli", RtfWord.DropCapLines), ("dropcapt", RtfWord.DropCapType), ("dxfrtext", RtfWord.FrameHorizontalDistance), ("dfrmtxtx", RtfWord.FrameHorizontalDistance), ("hyphpar", RtfWord.ParagraphHyphenation), ("lang", RtfWord.Language),
         ("trowd", RtfWord.RowDefault), ("cellx", RtfWord.CellBoundary), ("clcbpat", RtfWord.CellShading), ("rtlrow", RtfWord.RightToLeftRow), ("ltrrow", RtfWord.LeftToRightRow),
-        ("trleft", RtfWord.RowLeft), ("trql", RtfWord.RowAlignLeft), ("trqc", RtfWord.RowAlignCenter), ("trqr", RtfWord.RowAlignRight),
+        ("trleft", RtfWord.RowLeft), ("trrh", RtfWord.RowHeight), ("trql", RtfWord.RowAlignLeft), ("trqc", RtfWord.RowAlignCenter), ("trqr", RtfWord.RowAlignRight),
         // cell merges, vertical alignment, shading percentage (LibreOffice rtfdispatchflag.cxx:804-845 CLMGF / CLMRG / CLVMGF / CLVMRG / CLVERTAL*,
         // rtfdispatchvalue.cxx:477 CLSHDNG)
         ("clmgf", RtfWord.CellMergeFirst), ("clmrg", RtfWord.CellMergeContinue), ("clvmgf", RtfWord.CellVerticalMergeFirst), ("clvmrg", RtfWord.CellVerticalMergeContinue),

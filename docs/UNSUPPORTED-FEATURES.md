@@ -52,7 +52,8 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Vertical cell text direction | doc, rtf, odt | Not drawn (docx w:textDirection is) | deferred |
 | Cells merged down drawn as one cell | rtf, doc | An outer row is one block (windowed): a cell merged down is cells without the line between them, not one rowspan cell (a nested table gets a real rowspan) | won't do (windowed rule) |
 | Repeat header row, row "can't split" | all | Page-bound | planned (paged view) |
-| Exact row heights as Word measures | all | No exact Word metrics in a flow view | won't do |
+| Row heights in .mhtml | mhtml | The page's own HTML heights are kept as written; no Word row-height rule is applied | won't do |
+| Exact row heights as Word measures | all | Row heights are drawn (at least / exact), but text heights are the browser's, not Word's metrics | won't do |
 
 ## Sections and pages
 

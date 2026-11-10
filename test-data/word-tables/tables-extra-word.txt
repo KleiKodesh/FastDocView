@@ -1,0 +1,9 @@
+tables before the touch: 3, after: 2
+after the touch, table 2 rows: 4
+reopened .doc: no-top-line cell top LineStyle 0, custom-colour cell top Color 0x563412
+reopened .doc: tables 2
+tables-v1.doc table 1 TableDirection 1 (0 rtl, 1 ltr) first cell: m11m12
+tables-v1.doc table 2 TableDirection 1 (0 rtl, 1 ltr) first cell: deep1deep2inner12inner21inner22
+tables-v1.doc table 3 TableDirection 0 (0 rtl, 1 ltr) first cell: first
+tables-v1.doc table 4 TableDirection 1 (0 rtl, 1 ltr) first cell: red-top
+tables-v1.doc table 5 TableDirection 1 (0 rtl, 1 ltr) first cell: top
