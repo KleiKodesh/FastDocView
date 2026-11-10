@@ -2194,7 +2194,7 @@ tlch); checked by the same test.
 - Windowed: the sub-document is read only when its block is rendered or searched (short shared open of the package, the
   last 16 charts kept). Search: block bytes holding a "prefix:object" tag are re-read after the batch's scan and their chart
   texts (title, axis titles, categories, legend, data labels) fed to the matcher; hits merge with the block's own.
-- Fixture: test-data/odt-charts/odt-charts-v1.odt made by LibreOffice through UNO (scripts/make-odt-charts.py); compared
+- Fixture: test-data/odt-charts/odt-charts-v2.odt made by LibreOffice through UNO (scripts/make-odt-charts.py); compared
   with LibreOffice's own PDF export of it. Layout and automatic scaling are DocxChart's (not chart2's), so positions differ
   from LibreOffice's; bars, slices, colours and texts match.
 - Harness: OdtChartsFidelityTest (--fidelity), the .odt and the LibreOffice-saved .fodt.
@@ -2204,3 +2204,25 @@ Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) a
 pipeline (id "mh:" + src, width/height from the tag). `ReadPicture` reads only part headers until the part whose
 Content-Location is the src (or ends with "/" + src) or whose Content-ID is a `cid:` src, then decodes that one body
 (RFC 2557). Test: `--mhtml-pictures` (in `--fidelity`), fixture test-data/word-mhtml/pictures-v1.mht from Word 16.
+
+## Chart parts: log scales, secondary axis, error bars, trend lines, stock marks, 3-D box, saved positions (2026-11-10)
+
+- One renderer (DocxChart) for .docx and ODT; OdtChart maps the ODF parts into DrawingML. Sources (LibreOffice master):
+  log scale ScaleAutomatism.cxx:294-330 (a tick per power of the base); error amounts StatisticsHelper.cxx:45-70, 179-187
+  (population variance; standard error = deviation / sqrt n), drawn at each point VSeriesPlotter.cxx:940-1010; trend R squared
+  = 1 - SSE / SST PolynomialRegressionCurveCalculator.cxx:81, the "R^2 = " line VSeriesPlotter.cxx:1536; candlestick white /
+  black boxes and range line CandleStickChart.cxx:226-260; ODF names PropertyMaps.cxx:93, 95, 204-229, 302-307 (LibreOffice
+  reads the positive error from chart:error-lower-limit - kept), SchXMLSeries2Context.cxx:334, 735, SchXMLRegressionCurveObjectContext.cxx:81-136,
+  SchXMLPlotAreaContext.cxx:467-489.
+- Positions: ODT charts follow chart:coordinate-region (the plot without its labels; c:layoutTarget inner) or chart:plot-area,
+  and the legend's svg:x / svg:y; .docx follows c:manualLayout with its layoutTarget (inner was read as outer before). Measured on
+  odt-charts-v2: the first chart's plot left edge is 55.0 pt, LibreOffice's 55.0 pt (harness check, tolerance 0.6 pt). The
+  LibreOffice-written .docx has no c:manualLayout, so Word and this library both lay it out automatically; compared by eye with
+  Word's PDF export (COM ExportAsFixedFormat) - same bars, scales, error bars, boxes; label positions are ours.
+- 3-D: no projection; a back wall, side wall and floor box around the 2-D drawing (depth 8 % of the plot), floor colour from
+  c:floor / chart:floor.
+- Trend lines span the data's x range (no forward / backward extrapolation); equations read "y = " (.docx, as Word) or
+  "f(x) = " (ODT, as LibreOffice).
+- Fixture odt-charts-v2.odt (17 charts; scripts/make-odt-charts.py, LibreOffice UNO; the equation is written into the chart XML
+  because UNO's equation properties are not reachable from Python) and odt-charts-v2.docx (LibreOffice's own .docx export of it).
+- Fix: the ODT chart cache is cleared and the read refused (WordDocumentSourceChangedException) when the file was replaced.

@@ -214,7 +214,7 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Charts (as SVG: .docx c:chart from cached values; ODT chart:chart from its embedded sub-document) | yes | partial (26) | partial (26) | yes (27) | n.a. | n.a. |
+| Charts (as SVG: .docx c:chart from cached values; ODT chart:chart from its embedded sub-document) | yes (28) | partial (26) | partial (26) | yes (27, 28) | n.a. | n.a. |
 | chartex (waterfall, treemap, sunburst, histogram, box, funnel, region map) | partial (24) | n.a. | n.a. | n.a. | n.a. | n.a. |
 | SmartArt (from its saved drawing part) | partial (25) | n.a. | n.a. | n.a. | n.a. | n.a. |
 | OLE objects (their saved preview picture) | partial | partial | partial | partial | n.a. | n.a. |
@@ -222,7 +222,8 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 24. A region map without a saved geography cache falls back to the saved picture.
 25. Without a drawing part the frame keeps its size and is empty.
 26. No chart reader for .doc / RTF (checked: no chart code in DocBinary/, Rtf/); the chart's saved preview picture is shown when the file has one.
-27. Bar / column, line, area, pie, donut, scatter, radar, stock (as lines), bubble, 3-D drawn as 2-D; stacked and percent; gap and overlap; titles, subtitle, axis titles, scales, legend, value / percent / category / series labels, wall fill, series and point colours. Read only when the block is rendered or searched; chart text is found by search. Not drawn: floor, logarithmic scales, secondary axes, error bars, trend lines, stock up/down bars.
+27. Bar / column, line, area, pie, donut, scatter, radar, stock, bubble; stacked and percent; gap and overlap; titles, subtitle, axis titles, scales, legend, value / percent / category / series labels, wall fill, series and point colours. Read only when the block is rendered or searched; chart text is found by search.
+28. Both formats (one renderer): logarithmic value axes, secondary value axis (labelled on the right), error bars (fixed, percent, standard deviation / error, custom; y and scatter x), trend lines (linear, exponential, logarithmic, power, polynomial, moving average) with equation and R squared, stock high-low lines and open-close boxes, 3-D charts drawn with a back wall, side wall and floor (no perspective), the saved plot-area and legend positions (.docx c:manualLayout inner / outer; ODT chart:coordinate-region, chart:plot-area, legend svg:x / svg:y).
 
 ## Tracked changes, ruby, math
 

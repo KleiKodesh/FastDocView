@@ -4,7 +4,7 @@ using FastDocView;
 namespace FastDocView.Tests;
 
 /// <summary>
-/// .odt charts (--fidelity, seconds): test-data/odt-charts/odt-charts-v1.odt, made by LibreOffice itself through UNO
+/// .odt charts (--fidelity, seconds): test-data/odt-charts/odt-charts-v2.odt, made by LibreOffice itself through UNO
 /// (scripts/make-odt-charts.py: one Writer chart per class - column with subtitle, axis titles and value labels, stacked bars,
 /// percent columns, line, stacked area, pie, donut, scatter, radar, stock, bubble, 3-D column). Each chart is drawn as SVG from
 /// its "Object N" sub-document (not the preview picture), with the series colours LibreOffice wrote; the same file saved
@@ -13,12 +13,13 @@ namespace FastDocView.Tests;
 public static class OdtChartsFidelityTest
 {
     private static readonly string[] Titles =
-        ["Column Sales", "Stacked Bars", "Percent Columns", "Line Trend", "Area Stack", "Pie Share", "Donut Rings", "Scatter Points", "Radar Net", "Stock Prices", "Bubble Sizes", "Column Depth"];
+        ["Column Sales", "Stacked Bars", "Percent Columns", "Line Trend", "Area Stack", "Pie Share", "Donut Rings", "Scatter Points", "Radar Net", "Stock Prices", "Bubble Sizes", "Column Depth",
+         "Log Growth", "Two Axes", "Error Bars", "Trend Fit", "Candle Stock"];
 
     public static void Run()
     {
         TestReport.Step("ODT charts: LibreOffice-made charts drawn from their sub-documents");
-        string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "odt-charts", "odt-charts-v1.odt");
+        string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "odt-charts", "odt-charts-v2.odt");
         TestReport.Check(File.Exists(path), "chart fixture exists");
         if (!File.Exists(path)) return;
         List<string> html = Render(path);
@@ -26,6 +27,18 @@ public static class OdtChartsFidelityTest
         TestReport.Check(SearchCount(path, "Quarter Axis") == 1 && SearchCount(path, "Sub Heading") == 1 && SearchCount(path, "Speed") == 1 && SearchCount(path, "Bubble Sizes") == 1,
                          "search: axis title, subtitle, a radar category, a title - each found once, in its chart's block");
         TestReport.Check(SearchCount(path, "ChartPie paragraph") == 1, "search: the paragraph's own text still found");
+
+        CheckParts(html, "odt");
+
+        TestReport.Step("ODT charts: the same charts saved as .docx by LibreOffice (DrawingML), drawn by the same renderer");
+        string docx = Path.ChangeExtension(path, ".docx");
+        if (File.Exists(docx))
+        {
+            List<string> word = Render(docx);
+            int drawn = Regex.Matches(string.Concat(word), "<svg class=\"word-chart\"").Count;
+            TestReport.Check(drawn == Titles.Length, "docx: every chart drawn (" + drawn + ")");
+            CheckParts(word, "docx", layout: false);
+        }
 
         TestReport.Step("ODT charts: the same document saved flat (.fodt)");
         if (LibreOfficeConversion.Convert(path, ".fodt", "fodt") is { } fodt)
@@ -54,6 +67,34 @@ public static class OdtChartsFidelityTest
                          format + ": pie slices with the data points' colours, category legend");
         TestReport.Check(!all.Contains("ObjectReplacements") || charts == Titles.Length, format + ": no preview picture where the chart is drawn");
         TestReport.Check(Block("Scatter Points").Contains("<circle") && Block("Radar Net").Contains(">Speed<"), format + ": scatter points, radar categories");
+    }
+
+    /// <summary>The chart parts beyond series: log scale ticks, secondary axis, error bars, trend line with equation and R squared, stock boxes, 3-D floor, the stored plot position.</summary>
+    private static void CheckParts(List<string> html, string format, bool layout = true)
+    {
+        string Block(string marker) => html.FirstOrDefault(h => h.Contains(">" + marker + "<")) ?? "";
+        string log = Block("Log Growth");
+        TestReport.Check(log.Contains(">1<") && log.Contains(">10<") && log.Contains(">100<") && log.Contains(">1000<") && !log.Contains(">500<"), format + ": logarithmic axis, a tick per power of ten");
+        string two = Block("Two Axes");
+        TestReport.Check(Regex.IsMatch(two, "text-anchor=\"start\">0[.][89]<"), format + ": secondary axis labelled on the right");
+        string errors = Block("Error Bars");
+        TestReport.Check(Regex.Matches(errors, "word-chart-error-bar").Count == 3, format + ": an error bar per point (" + Regex.Matches(errors, "word-chart-error-bar").Count + ")");
+        string trend = Block("Trend Fit");
+        TestReport.Check(trend.Contains("word-chart-trendline") && trend.Contains("R&#178; = 1<") && Regex.IsMatch(trend, ">(f[(]x[)]|y) = "), format + ": trend line with its equation and R squared (" + string.Join(" | ", Regex.Matches(trend, ">([^<]*= [^<]*)<").Cast<Match>().Select(m => m.Groups[1].Value)) + ")");
+        string candle = Block("Candle Stock");
+        TestReport.Check(Regex.Matches(candle, "word-chart-hilow").Count == 3 && Regex.Matches(candle, "word-chart-updown").Count == 3, format + ": stock high-low lines and open-close boxes");
+        TestReport.Check(candle.Contains("word-chart-updown\" x=") && candle.Contains("#FFFFFF") , format + ": a rising day is a white box");
+        string depth = Block("Column Depth");
+        TestReport.Check(depth.Contains("word-chart-floor"), format + ": 3-D column chart drawn with wall and floor");
+        if (layout)
+        {
+            TestReport.Check(depth.Contains("fill=\"#CCE5FF\""), format + ": the floor's own colour");
+            // chart:coordinate-region of the first chart: x 1.94 cm of 11.999 cm; the frame is 4.7244 in = 340.16 pt wide -> 55.0 pt
+            string column = Block("Column Sales");
+            var lefts = Regex.Matches(column, "<path d=\"M([0-9.]+) [0-9.]+H").Cast<Match>().Select(m => double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToList();
+            double left = lefts.Count > 0 ? lefts.Min() : -1;
+            TestReport.Check(Math.Abs(left - 1.94 / 11.999 * 340.16) < 0.6, format + ": plot area where LibreOffice put it (left " + left + " pt, LibreOffice " + Math.Round(1.94 / 11.999 * 340.16, 1) + ")");
+        }
     }
 
     private static List<string> Render(string path)

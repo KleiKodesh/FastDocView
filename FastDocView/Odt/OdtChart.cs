@@ -158,7 +158,10 @@ internal static class OdtChart
             string seriesClass = Local((string?)series.Attribute(Chart + "class")) ?? chartClass;
             if (chartClass == "stock") seriesClass = "stock";
             if (seriesClass == "surface") seriesClass = "bar";
-            if (!groups.TryGetValue(seriesClass, out XElement? group)) { group = Group(seriesClass, plotArea, axes, Flag, ChartProperty); groups[seriesClass] = group; plot.Add(group); }
+            // chart:attached-axis secondary-y (SchXMLSeries2Context.cxx:334): the series goes in a group on the secondary value axis
+            bool onSecondary = (string?)series.Attribute(Chart + "attached-axis") == "secondary-y";
+            string groupKey = onSecondary ? seriesClass + "#2" : seriesClass;
+            if (!groups.TryGetValue(groupKey, out XElement? group)) { group = Group(seriesClass, plotArea, axes, Flag, ChartProperty); groups[groupKey] = group; plot.Add(group); }
 
             var element = new XElement("ser", new XElement("idx", Val(index)), new XElement("order", Val(index)));
             string? labelAddress = (string?)series.Attribute(Chart + "label-cell-address");
@@ -214,10 +217,17 @@ internal static class OdtChart
                 if (symbol is null or "none") element.Add(new XElement("marker", new XElement("symbol", new XAttribute("val", "none"))));
                 if (ChartProperty(plotArea, "interpolation") is "cubic-spline" or "b-spline") element.Add(new XElement("smooth", new XAttribute("val", "1")));
             }
+            AddErrorBars(element, series, styles);
+            AddTrendlines(element, series, styles);
             group.Add(element);
             index++;
         }
-        foreach (XElement group in groups.Values) group.Add(new XElement("axId", Val(1)), new XElement("axId", Val(2)));
+        foreach (KeyValuePair<string, XElement> entry in groups)
+        {
+            XElement group = entry.Value;
+            group.Add(new XElement("axId", Val(1)), new XElement("axId", Val(entry.Key.EndsWith("#2", StringComparison.Ordinal) ? 3 : 2)));
+            if (group.Name.LocalName == "stockChart") AddStockParts(group, plotArea, GraphicProperty);
+        }
 
         bool radialOnly = groups.Count > 0 && groups.Keys.All(k => k is "circle" or "ring");
         if (!radialOnly)
@@ -225,6 +235,13 @@ internal static class OdtChart
             bool scatter = groups.Keys.Any(k => k is "scatter" or "bubble");
             plot.Add(Axis(xAxis, scatter ? "valAx" : "catAx", 1, 2, ChartProperty, styles));
             plot.Add(Axis(yAxis, "valAx", 2, 1, ChartProperty, styles));
+            if (groups.Keys.Any(k => k.EndsWith("#2", StringComparison.Ordinal)))
+            {
+                XElement? secondary = axes.FirstOrDefault(a => (string?)a.Attribute(Chart + "dimension") == "y" && (string?)a.Attribute(Chart + "name") == "secondary-y");
+                XElement axis = Axis(secondary, "valAx", 3, 1, ChartProperty, styles);
+                axis.Add(new XElement("axPos", new XAttribute("val", "r")));
+                plot.Add(axis);
+            }
         }
         // chart:wall: the plot area's fill
         if (plotArea?.Element(Chart + "wall") is { } wall)
@@ -233,6 +250,20 @@ internal static class OdtChart
             string? color = GraphicProperty(wall, Draw, "fill-color");
             plot.Add(new XElement("spPr", fill == "none" ? new XElement("noFill") : color is not null ? Solid(color) : new XElement("noFill")));
         }
+        // chart:coordinate-region (the plot rectangle without its axis labels, as LibreOffice placed it) - else chart:plot-area's own
+        // rectangle with them - as fractions of chart:chart's size, so the plot sits where LibreOffice prints it
+        double chartWidth = Length((string?)chart.Attribute(Svg + "width")), chartHeight = Length((string?)chart.Attribute(Svg + "height"));
+        XElement? region = plotArea?.Element(Chart + "coordinate-region");
+        XElement? placed = region ?? plotArea;
+        if (chartWidth > 0 && chartHeight > 0 && placed?.Attribute(Svg + "width") is not null && placed.Attribute(Svg + "height") is not null)
+        {
+            double Fraction(string name, double size) => Length((string?)placed.Attribute(Svg + name)) / size;
+            plot.Element("layout")!.Add(new XElement("manualLayout",
+                new XElement("layoutTarget", new XAttribute("val", region is not null ? "inner" : "outer")),
+                new XElement("xMode", new XAttribute("val", "edge")), new XElement("yMode", new XAttribute("val", "edge")),
+                new XElement("x", new XAttribute("val", N(Fraction("x", chartWidth)))), new XElement("y", new XAttribute("val", N(Fraction("y", chartHeight)))),
+                new XElement("w", new XAttribute("val", N(Fraction("width", chartWidth)))), new XElement("h", new XAttribute("val", N(Fraction("height", chartHeight))))));
+        }
 
         var chartElement = new XElement("chart");
         string? title = TitleText(chart.Element(Chart + "title"));
@@ -240,6 +271,16 @@ internal static class OdtChart
         string? heading = title is null ? subtitle : subtitle is null ? title : title + "\n" + subtitle;
         if (heading is not null) chartElement.Add(RichTitle(heading));
         else chartElement.Add(new XElement("autoTitleDeleted", new XAttribute("val", "1")));
+        // 3-D: chart:three-dimensional on the plot area (PropertyMaps.cxx:95): the wall and chart:floor (SchXMLPlotAreaContext.cxx:467-471) give the box look
+        if (Flag("three-dimensional"))
+        {
+            chartElement.Add(new XElement("view3D"));
+            foreach (XElement group in plot.Elements().Where(e => e.Name.LocalName is "barChart" or "lineChart" or "areaChart" or "pieChart").ToList())
+                group.Name = group.Name.LocalName.Replace("Chart", "3DChart");
+            if (plot.Element("spPr") is { } wallFill) chartElement.Add(new XElement("backWall", new XElement(wallFill)));
+            if (plotArea?.Element(Chart + "floor") is { } floor && GraphicProperty(floor, Draw, "fill") != "none" && GraphicProperty(floor, Draw, "fill-color") is { } floorColor)
+                chartElement.Add(new XElement("floor", new XElement("spPr", Solid(floorColor))));
+        }
         chartElement.Add(plot);
         if (chart.Element(Chart + "legend") is { } legend)
         {
@@ -247,7 +288,13 @@ internal static class OdtChart
             {
                 "start" => "l", "top" => "t", "bottom" => "b", "top-end" => "tr", _ => "r",
             };
-            chartElement.Add(new XElement("legend", new XElement("legendPos", new XAttribute("val", position))));
+            var legendElement = new XElement("legend", new XElement("legendPos", new XAttribute("val", position)));
+            if (chartWidth > 0 && chartHeight > 0 && legend.Attribute(Svg + "x") is not null && legend.Attribute(Svg + "y") is not null)
+                legendElement.Add(new XElement("layout", new XElement("manualLayout",
+                    new XElement("xMode", new XAttribute("val", "edge")), new XElement("yMode", new XAttribute("val", "edge")),
+                    new XElement("x", new XAttribute("val", N(Length((string?)legend.Attribute(Svg + "x")) / chartWidth))),
+                    new XElement("y", new XAttribute("val", N(Length((string?)legend.Attribute(Svg + "y")) / chartHeight))))));
+            chartElement.Add(legendElement);
         }
         var space = new XElement("chartSpace", chartElement);
         // the chart area: chart:chart's own style fill (LibreOffice writes a white area as draw:fill-color)
@@ -292,6 +339,7 @@ internal static class OdtChart
         if (chartProperty(axis, "reverse-direction") == "true") scaling.Add(new XElement("orientation", new XAttribute("val", "maxMin")));
         if (chartProperty(axis, "maximum") is { } max) scaling.Add(new XElement("max", new XAttribute("val", max)));
         if (chartProperty(axis, "minimum") is { } min) scaling.Add(new XElement("min", new XAttribute("val", min)));
+        if (chartProperty(axis, "logarithmic") == "true") scaling.AddFirst(new XElement("logBase", new XAttribute("val", "10")));
         var element = new XElement(kind, new XElement("axId", Val(id)), scaling,
                                    new XElement("delete", Val(axis is null || chartProperty(axis, "display-label") == "false" && axis.Element(Chart + "title") is null ? 1 : 0)));
         if (axis?.Elements(Chart + "grid").Any(g => (string?)g.Attribute(Chart + "class") is null or "major") == true) element.Add(new XElement("majorGridlines"));
@@ -333,6 +381,112 @@ internal static class OdtChart
             Show("showVal", number is "value" or "value-and-percentage"), Show("showPercent", number is "percentage" or "value-and-percentage"),
             Show("showCatName", text == "true"), Show("showSerName", series == "true"));
     }
+
+    /// <summary>
+    /// chart:error-indicator (SchXMLSeries2Context.cxx:735) and the series style's error properties (PropertyMaps.cxx:204-210):
+    /// chart:error-category constant / percentage / standard-deviation / standard-error / error-margin (PropertyMaps.cxx:302-307);
+    /// LibreOffice reads the positive amount from chart:error-lower-limit and the negative one from chart:error-upper-limit
+    /// (PropertyMaps.cxx:205-206, kept as it is); chart:error-upper-indicator / lower-indicator choose the sides.
+    /// </summary>
+    private static void AddErrorBars(XElement element, XElement series, Dictionary<string, XElement> styles)
+    {
+        var sources = series.Elements(Chart + "error-indicator").Select(e => ((string?)e.Attribute(Chart + "style-name"), (string?)e.Attribute(Chart + "dimension") ?? "y")).ToList();
+        if (sources.Count == 0) sources.Add(((string?)series.Attribute(Chart + "style-name"), "y"));
+        foreach ((string? styleName, string dimension) in sources)
+        {
+            if (styleName is null || !styles.TryGetValue(styleName, out XElement? style) || style.Element(Style + "chart-properties") is not { } properties) continue;
+            string? category = (string?)properties.Attribute(Chart + "error-category");
+            if (category is null or "none" or "cell-range") continue;
+            double Amount(string name) => double.TryParse((string?)properties.Attribute(Chart + name), NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : 0;
+            bool upper = (string?)properties.Attribute(Chart + "error-upper-indicator") == "true", lower = (string?)properties.Attribute(Chart + "error-lower-indicator") == "true";
+            if (!upper && !lower) continue;
+            string type = upper && lower ? "both" : upper ? "plus" : "minus";
+            var bars = new XElement("errBars", new XElement("errDir", new XAttribute("val", dimension == "x" ? "x" : "y")), new XElement("errBarType", new XAttribute("val", type)));
+            switch (category)
+            {
+                case "percentage": bars.Add(new XElement("errValType", new XAttribute("val", "percentage")), new XElement("val", new XAttribute("val", N(Amount("error-percentage"))))); break;
+                case "error-margin":
+                    // LibreOffice: the percentage of the series' largest value, the same at every point (VSeriesPlotter.cxx:824-842)
+                    double largest = (element.Element("val") ?? element.Element("yVal"))?.Descendants("v").Select(v => double.TryParse(v.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? d : double.NegativeInfinity).DefaultIfEmpty(0).Max() ?? 0;
+                    double margin = double.IsInfinity(largest) ? 0 : largest * Amount("error-margin") / 100;
+                    bars.Add(new XElement("errValType", new XAttribute("val", "cust")), Constant("plus", margin), Constant("minus", margin));
+                    break;
+                case "standard-deviation": bars.Add(new XElement("errValType", new XAttribute("val", "stdDev")), new XElement("val", new XAttribute("val", "1"))); break;
+                case "standard-error": bars.Add(new XElement("errValType", new XAttribute("val", "stdErr"))); break;
+                default:
+                    bars.Add(new XElement("errValType", new XAttribute("val", "cust")), Constant("plus", Amount("error-lower-limit")), Constant("minus", Amount("error-upper-limit")));
+                    break;
+            }
+            if (style.Element(Style + "graphic-properties")?.Attribute(Svg + "stroke-color") is { } stroke)
+                bars.Add(new XElement("spPr", new XElement("ln", Solid(stroke.Value))));
+            element.Add(bars);
+        }
+    }
+
+    /// <summary>A constant error amount for every point (a c:numLit of one value, repeated by the reader per point).</summary>
+    private static XElement Constant(string name, double value)
+        => new(name, new XElement("numLit", new XElement("ptCount", Val(1)), new XElement("pt", new XAttribute("idx", 0), new XElement("v", value.ToString("R", CultureInfo.InvariantCulture)))), new XAttribute("constant", "1"));
+
+    /// <summary>
+    /// chart:regression-curve (SchXMLRegressionCurveObjectContext.cxx): chart:regression-type linear / logarithmic / exponential / power /
+    /// polynomial / moving-average, the degree and period (chart: or loext: regression-max-degree / regression-period, PropertyMaps.cxx:213-229),
+    /// chart:equation chart:display-equation / display-r-square (:133-136); LibreOffice writes its equations as "f(x) = ..." (VSeriesPlotter.cxx:1475-1540).
+    /// </summary>
+    private static void AddTrendlines(XElement element, XElement series, Dictionary<string, XElement> styles)
+    {
+        XNamespace loext = "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0";
+        foreach (XElement curve in series.Elements(Chart + "regression-curve"))
+        {
+            XElement? style = (string?)curve.Attribute(Chart + "style-name") is { } name && styles.TryGetValue(name, out XElement? found) ? found : null;
+            XElement? properties = style?.Element(Style + "chart-properties");
+            string? Property(string attribute) => (string?)properties?.Attribute(Chart + attribute) ?? (string?)properties?.Attribute(loext + attribute);
+            string? type = Property("regression-type") switch
+            {
+                "linear" => "linear", "logarithmic" => "log", "exponential" => "exp", "power" => "power", "polynomial" => "poly", "moving-average" => "movingAvg", _ => null,
+            };
+            if (type is null) continue;
+            var trend = new XElement("trendline", new XAttribute("equationPrefix", "f(x) = "));
+            if (style?.Element(Style + "graphic-properties")?.Attribute(Svg + "stroke-color") is { } stroke) trend.Add(new XElement("spPr", new XElement("ln", Solid(stroke.Value))));
+            trend.Add(new XElement("trendlineType", new XAttribute("val", type)));
+            if (type == "poly") trend.Add(new XElement("order", new XAttribute("val", Property("regression-max-degree") ?? "2")));
+            if (type == "movingAvg") trend.Add(new XElement("period", new XAttribute("val", Property("regression-period") ?? "2")));
+            XElement? equation = curve.Element(Chart + "equation");
+            trend.Add(new XElement("dispRSqr", Val((string?)equation?.Attribute(Chart + "display-r-square") == "true" ? 1 : 0)),
+                      new XElement("dispEq", Val((string?)equation?.Attribute(Chart + "display-equation") == "true" ? 1 : 0)));
+            element.Add(trend);
+        }
+    }
+
+    /// <summary>
+    /// Stock parts (SchXMLPlotAreaContext.cxx:481-489): chart:stock-range-line = the high-low line; chart:stock-gain-marker / loss-marker =
+    /// the open-close boxes (their fills), drawn when the series include an opening value (four series; chart:japanese-candle-stick,
+    /// PropertyMaps.cxx:93). LibreOffice draws the stock series only as these marks (CandleStickChart.cxx:226-260), so the series lines go.
+    /// </summary>
+    private static void AddStockParts(XElement group, XElement? plotArea, Func<XElement?, XNamespace, string, string?> graphic)
+    {
+        foreach (XElement series in group.Elements("ser"))
+        {
+            series.Element("spPr")?.Remove();
+            series.Add(new XElement("spPr", new XElement("ln", new XElement("noFill"))));
+        }
+        var hiLow = new XElement("hiLowLines");
+        if (graphic(plotArea?.Element(Chart + "stock-range-line"), Svg, "stroke-color") is { } rangeColor) hiLow.Add(new XElement("spPr", new XElement("ln", Solid(rangeColor))));
+        group.Add(hiLow);
+        if (group.Elements("ser").Count() >= 4)
+        {
+            XElement Bars(string name, string marker)
+            {
+                var bars = new XElement(name);
+                if (graphic(plotArea?.Element(Chart + marker), Draw, "fill-color") is { } fill) bars.Add(new XElement("spPr", Solid(fill)));
+                return bars;
+            }
+            group.Add(new XElement("upDownBars", new XElement("gapWidth", Val(150)), Bars("upBars", "stock-gain-marker"), Bars("downBars", "stock-loss-marker")));
+        }
+    }
+
+    private static double Length(string? value) => value is not null && OdtStyleCascade.Twips(value) is { } twips ? twips / 20.0 : 0;
+
+    private static string N(double value) => Math.Round(value, 6).ToString("0.######", CultureInfo.InvariantCulture);
 
     private static XElement Numbers(string name, List<(double? Number, string Text)> cells)
     {

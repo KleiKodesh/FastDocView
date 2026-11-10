@@ -361,6 +361,12 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         if (folder.Length == 0 || folder.Contains("..")) return null;
         lock (_readLock)
         {
+            // a replaced file: its charts are stale, so the cache goes and the host reopens (as for every other read)
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged)
+            {
+                _charts.Clear();
+                throw new WordDocumentSourceChangedException(FilePath);
+            }
             if (_charts.TryGetValue(folder, out DocxHtml.DocxChart? known)) return known;
             DocxHtml.DocxChart? chart = null;
             // a damaged sub-document (bad zip entry, malformed XML) shows the preview picture instead of failing the block or the search

@@ -1,7 +1,7 @@
-// Live check of .odt charts in the app's FastDocView page: open test-data/odt-charts/odt-charts-v1.odt, check every chart
+// Live check of .odt charts in the app's FastDocView page: open test-data/odt-charts/odt-charts-v2.odt, check every chart
 // is drawn as SVG filling its frame (not the preview picture), titles and series colours show, no console errors.
 // Chart search is checked by the harness (OdtChartsFidelityTest). DOM only, no screenshots.
-//   node playwright/odtChartsCheck.mjs <path to odt-charts-v1.odt>
+//   node playwright/odtChartsCheck.mjs <path to odt-charts-v2.odt>
 import { chromium } from 'playwright'
 
 const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? `http://localhost:${process.env.FASTDOCVIEW_DEMO_PORT ?? 5189}/`
@@ -27,6 +27,11 @@ check(charts.length >= 3 && charts.every(c => c.sw > 100 && Math.abs(c.sw - c.fw
 check(charts[0].text.includes('Column Sales') && charts[0].text.includes('Quarter Axis') && charts[0].text.includes('Alpha'), 'first chart: title, axis title, legend')
 check(charts[0].fills.some(f => f.includes('#004586')) && charts[0].fills.some(f => f.includes('#FF420E')), 'first chart: LibreOffice series colours ' + [...new Set(charts[0].fills)].join(' '))
 check(await page.evaluate(() => ![...document.querySelectorAll('img')].some(i => (i.getAttribute('src') ?? '').includes('ObjectReplacements'))), 'no preview picture for drawn charts')
+await page.evaluate(() => document.querySelector('.windowed-scroller-viewport')?.scrollTo(0, 1e7))
+await page.waitForFunction(() => document.querySelectorAll('.word-chart-updown').length >= 3, null, { timeout: 60_000 }).catch(() => {})
+const parts = await page.evaluate(() => ({ updown: document.querySelectorAll('.word-chart-updown').length, hilow: document.querySelectorAll('.word-chart-hilow').length, trend: document.querySelectorAll('.word-chart-trendline').length, errors: document.querySelectorAll('.word-chart-error-bar').length }))
+check(parts.updown >= 3 && parts.hilow >= 3, `stock boxes and high-low lines drawn (${parts.updown}, ${parts.hilow})`)
+check(parts.trend >= 1, `trend line drawn (${parts.trend})`)
 check(errors.length === 0, `no console errors ${errors.join(' | ')}`)
 await browser.close()
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL PASSED')

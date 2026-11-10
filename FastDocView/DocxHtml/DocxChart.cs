@@ -39,6 +39,7 @@ internal sealed class DocxChart
         public Dictionary<int, XElement> PointProperties = new();
         public XElement? Labels;
         public bool Smooth, NoMarker;
+        public List<XElement> ErrorBars = new(), Trendlines = new();
     }
 
     private sealed class Group
@@ -51,6 +52,9 @@ internal sealed class DocxChart
         public string? ScatterStyle;
         public List<Series> Series = new();
         public XElement? Labels;
+        public List<string> AxisIds = new();
+        public XElement? HiLowLines, UpDownBars;
+        public bool IsStock;
     }
 
     private sealed class Axis
@@ -62,6 +66,8 @@ internal sealed class DocxChart
         public string? Title;
         public string? FormatCode;
         public bool Reversed;
+        public double? LogBase;
+        public string? Position;
     }
 
     private readonly List<Group> _groups = new();
@@ -72,6 +78,10 @@ internal sealed class DocxChart
     private int _style = 2;
     private XElement? _chartSpaceProperties, _plotAreaProperties;
     private (double X, double Y, double W, double H)? _plotLayout;
+    private bool _plotLayoutInner;
+    private (double X, double Y)? _legendLayout;
+    private bool _is3D;
+    private XElement? _floorProperties, _backWallProperties;
     private readonly DocxTheme? _theme;
 
     private DocxChart(DocxTheme? theme) => _theme = theme;
@@ -89,7 +99,15 @@ internal sealed class DocxChart
         XElement? plotArea = chart.Element("plotArea");
         model._plotAreaProperties = plotArea?.Element("spPr");
         if (plotArea?.Element("layout")?.Element("manualLayout") is { } manual && Number(manual.Element("w")) is { } w && Number(manual.Element("h")) is { } h)
+        {
             model._plotLayout = (Number(manual.Element("x")) ?? 0, Number(manual.Element("y")) ?? 0, w, h);
+            // c:layoutTarget (21.2.2.101): inner = the plot rectangle without tick labels; outer (the default) = with them
+            model._plotLayoutInner = Value(manual.Element("layoutTarget")) == "inner";
+        }
+        // 3-D: c:view3D, c:floor, c:backWall (21.2.2.228, 21.2.2.69, 21.2.2.11)
+        model._is3D = plotArea?.Elements().Any(e => e.Name.LocalName.EndsWith("3DChart", StringComparison.Ordinal)) == true;   // c:view3D alone is written for 2-D charts too
+        model._floorProperties = chart.Element("floor")?.Element("spPr");
+        model._backWallProperties = chart.Element("backWall")?.Element("spPr");
         foreach (XElement element in plotArea?.Elements() ?? [])
         {
             string name = element.Name.LocalName;
@@ -103,6 +121,7 @@ internal sealed class DocxChart
                     Title = element.Element("title") is { } axisTitle ? TitleText(axisTitle) : null,
                     FormatCode = (string?)element.Element("numFmt")?.Attribute("formatCode"),
                     Reversed = Value(element.Element("scaling")?.Element("orientation")) == "maxMin",
+                    LogBase = Number(element.Element("scaling")?.Element("logBase")), Position = Value(element.Element("axPos")),
                 };
                 model._axes[axis.Id] = axis;
                 continue;
@@ -123,6 +142,11 @@ internal sealed class DocxChart
                 ScatterStyle = Value(element.Element("scatterStyle")), Labels = element.Element("dLbls"),
             };
             if (name is "stockChart" or "surfaceChart" or "surface3DChart") group.Grouping = "standard";
+            group.AxisIds = element.Elements("axId").Select(a => Value(a) ?? "").ToList();
+            // stock: c:hiLowLines and c:upDownBars (21.2.2.80, 21.2.2.218)
+            group.IsStock = name == "stockChart";
+            group.HiLowLines = element.Element("hiLowLines");
+            group.UpDownBars = element.Element("upDownBars");
             foreach (XElement series in element.Elements("ser")) group.Series.Add(ReadSeries(series));
             group.Series.Sort((a, b) => a.Order.CompareTo(b.Order));
             if (group.Series.Count > 0) model._groups.Add(group);
@@ -130,6 +154,10 @@ internal sealed class DocxChart
         if (chart.Element("legend") is { } legend)
         {
             model._legendPosition = Value(legend.Element("legendPos")) ?? "r";
+            // only an edge-mode position (c:xMode / c:yMode edge, 21.2.2.233 / 21.2.2.235); the default factor mode is an offset from the automatic place
+            if (legend.Element("layout")?.Element("manualLayout") is { } legendManual && Value(legendManual.Element("xMode")) == "edge" && Value(legendManual.Element("yMode")) == "edge"
+                && Number(legendManual.Element("x")) is { } lx && Number(legendManual.Element("y")) is { } ly)
+                model._legendLayout = (lx, ly);
             foreach (XElement entry in legend.Elements("legendEntry"))
                 if (Value(entry.Element("delete")) is "1" or "true" && int.TryParse(Value(entry.Element("idx")), out int deleted)) model._deletedLegendEntries.Add(deleted);
         }
@@ -152,6 +180,8 @@ internal sealed class DocxChart
         (series.Values, series.FormatCode) = Numbers(element.Element("val") ?? element.Element("yVal"));
         (series.XValues, _) = Numbers(element.Element("xVal"));
         (series.BubbleSizes, _) = Numbers(element.Element("bubbleSize"));
+        series.ErrorBars = element.Elements("errBars").ToList();
+        series.Trendlines = element.Elements("trendline").ToList();
         foreach (XElement point in element.Elements("dPt"))
             if (int.TryParse(Value(point.Element("idx")), out int pointIndex) && point.Element("spPr") is { } properties) series.PointProperties[pointIndex] = properties;
         return series;
@@ -418,7 +448,20 @@ internal sealed class DocxChart
         if (legend.Count > 0)
         {
             const double entryHeight = 13, size = 9;
-            if (_legendPosition is "r" or "l" or "tr")
+            if (_legendLayout is { } at)
+            {
+                // c:legend c:manualLayout (21.2.2.95): the legend's top left corner where it was saved; the plot area keeps its room
+                double x = at.X * width, y = at.Y * height;
+                bool row = _legendPosition is "t" or "b";
+                foreach ((string text, string color, bool line) in legend)
+                {
+                    LegendKey(svg, x, y, color, line); Text(svg, x + 14, y + 8, text, size, textColor, "start");
+                    if (row) x += text.Length * size * 0.55 + 22; else y += entryHeight;
+                }
+                double legendWidth = row ? 0 : legend.Max(e => e.Text.Length) * size * 0.55 + 18;
+                if (_plotLayout is null && !row) { if (at.X < 0.5) left = Math.Max(left, at.X * width + legendWidth + 6); else right = Math.Min(right, at.X * width - 6); }
+            }
+            else if (_legendPosition is "r" or "l" or "tr")
             {
                 double legendWidth = Math.Min(width / 3, legend.Max(e => e.Text.Length) * size * 0.55 + 18);
                 double y = (top + bottom) / 2 - legend.Count * entryHeight / 2;
@@ -478,17 +521,11 @@ internal sealed class DocxChart
         return (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10) * magnitude;
     }
 
-    private void DrawAxes(StringBuilder svg, double left, double top, double right, double bottom, string textColor)
+    /// <summary>The value range of a set of groups over the categories (stacked groups by their sums), and the smallest positive value (a logarithmic axis starts below it).</summary>
+    private static (double Min, double Max, double PositiveMin) DataRange(IEnumerable<Group> groups, int categoryCount)
     {
-        Axis? valueAxis = ValueAxis(), categoryAxis = CategoryAxis();
-        bool horizontal = _groups.Any(g => g.Kind == Kind.Bar && g.Horizontal);
-        bool xy = _groups[0].Kind is Kind.Scatter or Kind.Bubble;
-        bool percent = _groups.Any(g => g.Grouping == "percentStacked");
-        List<string> categories = CategoryLabels();
-        int categoryCount = Math.Max(1, _groups.Max(g => g.Series.Max(s => s.Values.Count)));
-        // value range over every group (stacked groups by their sums)
-        double dataMin = 0, dataMax = 0;
-        foreach (Group group in _groups)
+        double dataMin = 0, dataMax = 0, positiveMin = double.MaxValue;
+        foreach (Group group in groups)
         {
             bool stacked = group.Grouping is "stacked";
             for (int i = 0; i < categoryCount; i++)
@@ -497,13 +534,63 @@ internal sealed class DocxChart
                 foreach (Series series in group.Series)
                 {
                     double value = i < series.Values.Count ? series.Values[i] ?? 0 : 0;
+                    if (value > 0) positiveMin = Math.Min(positiveMin, value);
                     if (stacked) { if (value >= 0) positive += value; else negative += value; }
                     else { dataMax = Math.Max(dataMax, value); dataMin = Math.Min(dataMin, value); }
                 }
                 if (stacked) { dataMax = Math.Max(dataMax, positive); dataMin = Math.Min(dataMin, negative); }
             }
         }
-        (double vMin, double vMax, double vStep) = Scale(dataMin, dataMax, valueAxis, percent);
+        return (dataMin, dataMax, positiveMin == double.MaxValue ? 1 : positiveMin);
+    }
+
+    /// <summary>
+    /// A value axis' scale and its tick values. Logarithmic (c:logBase; ODF chart:logarithmic): from the base's power at or below the
+    /// smallest positive value to the one at or above the largest, a tick per power - LibreOffice's automatic logarithmic scale works on
+    /// the logarithms the same way (chart2/source/view/axes/ScaleAutomatism.cxx:294-330, calculateExplicitIncrementAndScaleForLogarithmic).
+    /// </summary>
+    private static (double Min, double Max, List<double> Ticks) AxisScale(double dataMin, double dataMax, double positiveMin, Axis? axis, bool percent)
+    {
+        var ticks = new List<double>();
+        if (axis?.LogBase is { } logBase && logBase >= 2 && logBase <= 1000 && !percent)   // c:logBase range 2..1000 (21.2.2.100)
+        {
+            double Log(double v) => Math.Log(v) / Math.Log(logBase);
+            double low = axis.Min is > 0 ? axis.Min.Value : Math.Pow(logBase, Math.Floor(Log(positiveMin) + 1e-9));
+            double high = axis.Max is > 0 ? axis.Max.Value : Math.Pow(logBase, Math.Ceiling(Log(Math.Max(dataMax, low)) - 1e-9));
+            if (high <= low) high = low * logBase;
+            for (double v = low; v <= high * (1 + 1e-9); v *= logBase) ticks.Add(v);
+            return (low, high, ticks);
+        }
+        (double min, double max, double step) = Scale(dataMin, dataMax, axis, percent);
+        for (double v = min; v <= max + step / 1000; v += step) ticks.Add(v);
+        return (min, max, ticks);
+    }
+
+    /// <summary>The value axis of the groups not on the first value axis (c:axId of a valAx no other group uses; ODF chart:attached-axis secondary-y), or null.</summary>
+    private Axis? SecondaryValueAxis(Axis? primary)
+    {
+        foreach (Group group in _groups)
+            foreach (string id in group.AxisIds)
+                if (_axes.TryGetValue(id, out Axis? axis) && !axis.IsCategory && axis != primary && !axis.Deleted) return axis;
+        return null;
+    }
+
+    private void DrawAxes(StringBuilder svg, double left, double top, double right, double bottom, string textColor)
+    {
+        Axis? valueAxis = ValueAxis(), categoryAxis = CategoryAxis();
+        bool horizontal = _groups.Any(g => g.Kind == Kind.Bar && g.Horizontal);
+        bool xy = _groups[0].Kind is Kind.Scatter or Kind.Bubble;
+        bool percent = _groups.Any(g => g.Grouping == "percentStacked");
+        List<string> categories = CategoryLabels();
+        int categoryCount = Math.Max(1, _groups.Max(g => g.Series.Max(s => s.Values.Count)));
+        // secondary value axis: the groups attached to it get their own scale, labelled on the right
+        Axis? secondaryAxis = xy || horizontal ? null : SecondaryValueAxis(valueAxis);
+        List<Group> secondaryGroups = secondaryAxis is null ? new() : _groups.Where(g => g.AxisIds.Contains(secondaryAxis.Id)).ToList();
+        List<Group> primaryGroups = _groups.Except(secondaryGroups).ToList();
+        if (primaryGroups.Count == 0) { primaryGroups = secondaryGroups; secondaryGroups = new(); secondaryAxis = null; }
+        percent = primaryGroups.Any(g => g.Grouping == "percentStacked");
+        (double dataMin, double dataMax, double positiveMin) = DataRange(primaryGroups, categoryCount);
+        (double vMin, double vMax, List<double> valueTicks) = AxisScale(dataMin, dataMax, positiveMin, valueAxis, percent);
         // x range for scatter / bubble
         double xMin = 0, xMax = categoryCount, xStep = 1;
         if (xy)
@@ -518,17 +605,52 @@ internal sealed class DocxChart
         string valueFormat = valueAxis?.FormatCode ?? (percent ? "0%" : _groups[0].Series[0].FormatCode ?? "General");
         var valueLabels = new List<(double Value, string Text)>();
         if (valueAxis is not { Deleted: true })
-            for (double v = vMin; v <= vMax + vStep / 1000; v += vStep) valueLabels.Add((v, FormatNumber(Math.Round(v, 10), valueFormat)));
+            foreach (double v in valueTicks) valueLabels.Add((v, FormatNumber(Math.Round(v, 10), valueFormat)));
         double valueLabelWidth = valueLabels.Count == 0 ? 0 : valueLabels.Max(l => l.Text.Length) * labelSize * 0.55 + 4;
+        double sMin = 0, sMax = 1;
+        var secondaryLabels = new List<(double Value, string Text)>();
+        if (secondaryAxis is not null)
+        {
+            (double sDataMin, double sDataMax, double sPositiveMin) = DataRange(secondaryGroups, categoryCount);
+            (sMin, sMax, List<double> secondaryTicks) = AxisScale(sDataMin, sDataMax, sPositiveMin, secondaryAxis, secondaryGroups.Any(g => g.Grouping == "percentStacked"));
+            string secondaryFormat = secondaryAxis.FormatCode ?? secondaryGroups[0].Series[0].FormatCode ?? "General";
+            foreach (double v in secondaryTicks) secondaryLabels.Add((v, FormatNumber(Math.Round(v, 10), secondaryFormat)));
+        }
+        double secondaryLabelWidth = secondaryLabels.Count == 0 ? 0 : secondaryLabels.Max(l => l.Text.Length) * labelSize * 0.55 + 4;
+        if (_plotLayout is not null && _plotLayoutInner)
+        {
+            // c:layoutTarget inner: the stored rectangle is the plot itself; the labels and titles go outside it
+            double catLabelWidth = Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize));
+            left -= (valueAxis?.Title is not null && !horizontal ? 14 : 0) + (categoryAxis?.Title is not null && !categoryAxis.Deleted && horizontal ? 14 : 0)
+                    + (horizontal ? (categoryAxis is { Deleted: true } ? 0 : catLabelWidth) : valueLabelWidth);
+            bottom += (valueAxis?.Title is not null && horizontal ? 14 : 0) + (categoryAxis?.Title is not null && !categoryAxis.Deleted && !horizontal ? 14 : 0)
+                      + (horizontal ? labelSize + 4 : categoryAxis is { Deleted: true } ? 0 : labelSize + 4);
+            right += secondaryLabelWidth + (secondaryAxis?.Title is not null ? 14 : 0);
+        }
         if (valueAxis?.Title is { } valueTitle) { if (horizontal) bottom -= 14; else left += 14; Text(svg, horizontal ? (left + right) / 2 : left - 6, horizontal ? bottom + 12 : (top + bottom) / 2, valueTitle, 10, textColor, "middle", horizontal ? 0 : -90); }
         if (categoryAxis?.Title is { } categoryTitle && !categoryAxis.Deleted) { if (horizontal) left += 14; else bottom -= 14; Text(svg, horizontal ? left - 6 : (left + right) / 2, horizontal ? (top + bottom) / 2 : bottom + 12, categoryTitle, 10, textColor, "middle", horizontal ? -90 : 0); }
-        if (horizontal) { bottom -= labelSize + 4; left += categoryAxis is { Deleted: true } ? 0 : Math.Min((right - left) / 3, categories.DefaultIfEmpty("").Max(c => c.Length) * labelSize * 0.55 + 6); }
+        if (secondaryAxis?.Title is { } secondaryTitle) { right -= 14; Text(svg, right + 6, (top + bottom) / 2, secondaryTitle, 10, textColor, "middle", 90); }
+        right -= secondaryLabelWidth;
+        if (horizontal) { bottom -= labelSize + 4; left += categoryAxis is { Deleted: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
         else { left += valueLabelWidth; bottom -= categoryAxis is { Deleted: true } ? 0 : labelSize + 4; }
         double plotWidth = Math.Max(1, right - left), plotHeight = Math.Max(1, bottom - top);
-        string? plotFill = PropertiesFill(_plotAreaProperties, null);
-        if (plotFill is not null) svg.Append("<rect x=\"").Append(N(left)).Append("\" y=\"").Append(N(top)).Append("\" width=\"").Append(N(plotWidth)).Append("\" height=\"").Append(N(plotHeight)).Append("\" fill=\"").Append(plotFill).Append("\"/>");
         string gridColor = DocxDrawingColor.Css(new XElement("c", new XElement("schemeClr", new XAttribute("val", "tx1"), new XElement("lumMod", new XAttribute("val", "15000")), new XElement("lumOff", new XAttribute("val", "85000")))), _theme) ?? "#D9D9D9";
-        double ValueToAxis(double value) => (value - vMin) / (vMax - vMin);
+        string? plotFill = PropertiesFill(_plotAreaProperties, null);
+        if (_is3D && !horizontal)
+        {
+            // the 3-D look: back wall, side wall and floor as a box seen from the front right; the data stand on the front plane
+            double depth = Math.Min(plotWidth, plotHeight) * 0.08;
+            string wallFill = PropertiesFill(_backWallProperties, plotFill) ?? "none";
+            string floorFill = PropertiesFill(_floorProperties, plotFill) ?? "none";
+            svg.Append("<path d=\"M").Append(N(left + depth)).Append(' ').Append(N(top)).Append('H').Append(N(right)).Append('V').Append(N(bottom - depth)).Append('H').Append(N(left + depth)).Append("Z\" fill=\"").Append(wallFill).Append("\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
+            svg.Append("<path d=\"M").Append(N(left)).Append(' ').Append(N(top + depth)).Append('L').Append(N(left + depth)).Append(' ').Append(N(top)).Append('V').Append(N(bottom - depth)).Append('L').Append(N(left)).Append(' ').Append(N(bottom)).Append("Z\" fill=\"").Append(wallFill).Append("\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
+            svg.Append("<path class=\"word-chart-floor\" d=\"M").Append(N(left)).Append(' ').Append(N(bottom)).Append('L').Append(N(left + depth)).Append(' ').Append(N(bottom - depth)).Append('H').Append(N(right)).Append('L').Append(N(right - depth)).Append(' ').Append(N(bottom)).Append("Z\" fill=\"").Append(floorFill).Append("\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
+            top += depth; right -= depth;
+            plotWidth = Math.Max(1, right - left); plotHeight = Math.Max(1, bottom - top);
+        }
+        else if (plotFill is not null) svg.Append("<rect x=\"").Append(N(left)).Append("\" y=\"").Append(N(top)).Append("\" width=\"").Append(N(plotWidth)).Append("\" height=\"").Append(N(plotHeight)).Append("\" fill=\"").Append(plotFill).Append("\"/>");
+        Func<double, double> ValueToAxis = AxisMap(valueAxis, vMin, vMax);
+        Func<double, double> SecondaryToAxis = AxisMap(secondaryAxis, sMin, sMax);
         // gridlines and value labels
         foreach ((double value, string text) in valueLabels)
         {
@@ -546,6 +668,8 @@ internal sealed class DocxChart
                 Text(svg, left - 4, y + labelSize / 3, text, labelSize, textColor, "end");
             }
         }
+        foreach ((double value, string text) in secondaryLabels)
+            Text(svg, right + 4, bottom - SecondaryToAxis(value) * plotHeight + labelSize / 3, text, labelSize, textColor, "start");
         // category labels
         if (!xy && categoryAxis is not { Deleted: true })
             for (int i = 0; i < categoryCount; i++)
@@ -561,16 +685,212 @@ internal sealed class DocxChart
         int totalSeries = _groups.Sum(g => g.Series.Count);
         foreach (Group group in _groups)
         {
+            Func<double, double> axis = secondaryGroups.Contains(group) ? SecondaryToAxis : ValueToAxis;
+            (double gMin, double gMax) = secondaryGroups.Contains(group) ? (sMin, sMax) : (vMin, vMax);
             switch (group.Kind)
             {
-                case Kind.Bar: DrawBars(svg, group, categoryCount, left, top, plotWidth, plotHeight, ValueToAxis, totalSeries, textColor); break;
-                case Kind.Line or Kind.Area: DrawLines(svg, group, categoryCount, left, top, plotWidth, plotHeight, ValueToAxis, totalSeries, textColor, vMin, vMax); break;
-                case Kind.Scatter or Kind.Bubble: DrawScatter(svg, group, left, top, plotWidth, plotHeight, ValueToAxis, x => (x - xMin) / (xMax - xMin), totalSeries, textColor); break;
+                case Kind.Bar: DrawBars(svg, group, categoryCount, left, top, plotWidth, plotHeight, axis, totalSeries, textColor); break;
+                case Kind.Line or Kind.Area: DrawLines(svg, group, categoryCount, left, top, plotWidth, plotHeight, axis, totalSeries, textColor, gMin, gMax); break;
+                case Kind.Scatter or Kind.Bubble: DrawScatter(svg, group, left, top, plotWidth, plotHeight, axis, x => (x - xMin) / (xMax - xMin), totalSeries, textColor); break;
             }
         }
         // axis lines
         string axisColor = gridColor;
         svg.Append("<path d=\"M").Append(N(left)).Append(' ').Append(N(bottom)).Append('H').Append(N(right)).Append("\" stroke=\"").Append(axisColor).Append("\" stroke-width=\"0.75\"/>");
+    }
+
+    private static double CategoryLabelWidth(List<string> categories, double labelSize) => categories.DefaultIfEmpty("").Max(c => c.Length) * labelSize * 0.55 + 6;
+
+    /// <summary>Value to its place on an axis (0 = start, 1 = end): linear, or logarithmic (values at or below the start sit on it).</summary>
+    private static Func<double, double> AxisMap(Axis? axis, double min, double max)
+    {
+        if (axis?.LogBase is >= 2 and <= 1000 && min > 0)
+        {
+            double low = Math.Log(min), span = Math.Log(max) - low;
+            return value => value <= min ? 0 : (Math.Log(value) - low) / span;
+        }
+        return value => (value - min) / (max - min);
+    }
+
+    // ── error bars and trend lines (per series, after its points are drawn) ──
+
+    /// <summary>
+    /// A series' c:errBars (21.2.2.55): direction (y, or x for scatter), plus / minus / both, the amount by c:errValType - fixedVal,
+    /// percentage of the value, stdDev x val and stdErr over the series' values (LibreOffice: population variance,
+    /// chart2/source/tools/StatisticsHelper.cxx:45-70, 179-187; drawn at each point, VSeriesPlotter.cxx:940-1010), cust (c:plus / c:minus);
+    /// end caps unless c:noEndCap. And its c:trendline (21.2.2.209): linear, exp, log, power, poly (c:order), movingAvg (c:period), fitted
+    /// by least squares over (x, value) - category charts use x = 1..n as Office and LibreOffice do - drawn across the points' x range;
+    /// c:dispEq / c:dispRSqr add the equation and R squared (1 - SSE / SST, PolynomialRegressionCurveCalculator.cxx:81; the "R^2 = " text,
+    /// VSeriesPlotter.cxx:1536).
+    /// </summary>
+    private void DrawSeriesExtras(StringBuilder svg, Series series, List<(double Px, double Py, double X, double Y, int Index)> points, Func<double, double> toPy, Func<double, double> toPx, string color, string textColor, bool stacked = false)
+    {
+        // stacked groups: the error bars sit on each stacked top; no trend lines (Word and LibreOffice offer none on stacked charts)
+        if (points.Count == 0) return;
+        foreach (XElement bars in series.ErrorBars)
+        {
+            string direction = Value(bars.Element("errDir")) ?? "y";
+            string type = Value(bars.Element("errBarType")) ?? "both";
+            string valueType = Value(bars.Element("errValType")) ?? "fixedVal";
+            double amount = Number(bars.Element("val")) ?? 0;
+            bool caps = Value(bars.Element("noEndCap")) is not ("1" or "true");
+            string barColor = bars.Element("spPr")?.Element("ln")?.Element("solidFill") is { } solid ? DocxDrawingColor.Css(solid, _theme) ?? "#000000" : "#000000";
+            var values = (direction == "x" ? points.Select(p => p.X) : points.Select(p => p.Y)).ToList();
+            double mean = values.Average(), deviation = Math.Sqrt(values.Sum(v => (v - mean) * (v - mean)) / values.Count);
+            (List<double?> plus, _) = Numbers(bars.Element("plus"));
+            (List<double?> minus, _) = Numbers(bars.Element("minus"));
+            foreach (var p in points)
+            {
+                double basis = direction == "x" ? p.X : p.Y;
+                double up = valueType switch
+                {
+                    "percentage" => Math.Abs(basis) * amount / 100, "stdDev" => deviation * amount, "stdErr" => deviation / Math.Sqrt(values.Count),
+                    "cust" => Custom(plus, bars.Element("plus"), p.Index), _ => amount,
+                };
+                double down = valueType == "cust" ? Custom(minus, bars.Element("minus"), p.Index) : up;
+                double high = type is "both" or "plus" ? basis + up : basis, low = type is "both" or "minus" ? basis - down : basis;
+                if (direction == "x")
+                {
+                    double x1 = toPx(low), x2 = toPx(high);
+                    svg.Append("<path class=\"word-chart-error-bar\" d=\"M").Append(N(x1)).Append(' ').Append(N(p.Py)).Append('H').Append(N(x2));
+                    if (caps) svg.Append("M").Append(N(x1)).Append(' ').Append(N(p.Py - 3)).Append("v6M").Append(N(x2)).Append(' ').Append(N(p.Py - 3)).Append("v6");
+                }
+                else
+                {
+                    double y1 = toPy(low), y2 = toPy(high);
+                    svg.Append("<path class=\"word-chart-error-bar\" d=\"M").Append(N(p.Px)).Append(' ').Append(N(y1)).Append('V').Append(N(y2));
+                    if (caps) svg.Append("M").Append(N(p.Px - 3)).Append(' ').Append(N(y1)).Append("h6M").Append(N(p.Px - 3)).Append(' ').Append(N(y2)).Append("h6");
+                }
+                svg.Append("\" fill=\"none\" stroke=\"").Append(barColor).Append("\" stroke-width=\"0.75\"/>");
+            }
+        }
+        foreach (XElement trend in stacked ? new List<XElement>() : series.Trendlines)
+        {
+            string type = Value(trend.Element("trendlineType")) ?? "linear";
+            var xs = points.Select(p => p.X).ToList();
+            var ys = points.Select(p => p.Y).ToList();
+            string lineColor = trend.Element("spPr")?.Element("ln")?.Element("solidFill") is { } solid ? DocxDrawingColor.Css(solid, _theme) ?? color : color;
+            var path = new StringBuilder();
+            double xLow = xs.Min(), xHigh = xs.Max();
+            if (type == "movingAvg")
+            {
+                int period = Math.Max(2, (int)(Number(trend.Element("period")) ?? 2));
+                for (int i = period - 1; i < points.Count; i++)
+                    path.Append(path.Length == 0 ? 'M' : 'L').Append(N(points[i].Px)).Append(' ').Append(N(toPy(ys.Skip(i - period + 1).Take(period).Average())));
+            }
+            else if (Fit(type, (int)(Number(trend.Element("order")) ?? 2), xs, ys) is { } fit)
+            {
+                for (int k = 0; k <= 40; k++)
+                {
+                    double x = xLow + (xHigh - xLow) * k / 40, y = fit.Evaluate(x);
+                    if (double.IsNaN(y) || double.IsInfinity(y)) continue;
+                    path.Append(path.Length == 0 ? 'M' : 'L').Append(N(toPx(x))).Append(' ').Append(N(toPy(y)));
+                }
+                var lines = new List<string>();
+                string prefix = (string?)trend.Attribute("equationPrefix") ?? "y = ";
+                if (Value(trend.Element("dispEq")) is "1" or "true") lines.Add(prefix + fit.Equation);
+                if (Value(trend.Element("dispRSqr")) is "1" or "true") lines.Add("R² = " + Math.Round(fit.RSquared, 4).ToString("0.####", CultureInfo.InvariantCulture));
+                for (int i = 0; i < lines.Count; i++)
+                    Text(svg, toPx(xHigh) - 2, toPy(fit.Evaluate(xHigh)) - 6 - (lines.Count - 1 - i) * 11, lines[i], 9, textColor, "end");
+            }
+            if (path.Length > 0)
+                svg.Append("<path class=\"word-chart-trendline\" d=\"").Append(path).Append("\" fill=\"none\" stroke=\"").Append(lineColor).Append("\" stroke-width=\"1.5\"/>");
+        }
+    }
+
+    /// <summary>A custom error amount of a point: its own, or the one value of a constant list (an ODF constant error, constant="1"), else 0.</summary>
+    private static double Custom(List<double?> amounts, XElement? source, int index)
+        => (string?)source?.Attribute("constant") == "1" && amounts.Count > 0 ? amounts[0] ?? 0 : index < amounts.Count ? amounts[index] ?? 0 : 0;
+
+    /// <summary>A least-squares trend: its function, equation text and R squared.</summary>
+    private sealed record TrendFit(Func<double, double> Evaluate, string Equation, double RSquared);
+
+    private static TrendFit? Fit(string type, int order, List<double> xs, List<double> ys)
+    {
+        // linearised forms: y = a + b x (linear), ln y = ln a + b x (exp), y = a + b ln x (log), ln y = ln a + b ln x (power)
+        bool logX = type is "log" or "power", logY = type is "exp" or "power";
+        var pairs = xs.Zip(ys, (x, y) => (x, y)).Where(p => (!logX || p.x > 0) && (!logY || p.y > 0)).ToList();
+        int degree = type == "poly" ? Math.Max(2, Math.Min(6, order)) : 1;
+        if (pairs.Count <= degree) return null;
+        double[] u = pairs.Select(p => logX ? Math.Log(p.x) : p.x).ToArray(), v = pairs.Select(p => logY ? Math.Log(p.y) : p.y).ToArray();
+        double[]? c = PolynomialLeastSquares(u, v, degree);
+        if (c is null) return null;
+        double Poly(double t) { double r = 0; for (int i = degree; i >= 0; i--) r = r * t + c[i]; return r; }
+        Func<double, double> evaluate = type switch
+        {
+            "exp" => x => Math.Exp(Poly(x)), "log" => x => x > 0 ? Poly(Math.Log(x)) : double.NaN,
+            "power" => x => x > 0 ? Math.Exp(Poly(Math.Log(x))) : double.NaN, _ => Poly,
+        };
+        double mean = pairs.Average(p => p.y), total = pairs.Sum(p => (p.y - mean) * (p.y - mean)), error = pairs.Sum(p => Math.Pow(p.y - evaluate(p.x), 2));
+        double rSquared = total > 0 ? 1 - error / total : 1;
+        string F(double value) => Math.Round(value, 4).ToString("0.####", CultureInfo.InvariantCulture);
+        string Signed(double value) => (value < 0 ? " - " : " + ") + F(Math.Abs(value));
+        string equation = type switch
+        {
+            "exp" => F(Math.Exp(c[0])) + "e^(" + F(c[1]) + "x)",
+            "log" => F(c[1]) + " ln(x)" + Signed(c[0]),
+            "power" => F(Math.Exp(c[0])) + "x^" + F(c[1]),
+            _ => string.Concat(Enumerable.Range(1, degree).Reverse().Select((power, k) => (k == 0 ? F(c[power]) : Signed(c[power])) + (power == 1 ? "x" : "x^" + power))) + Signed(c[0]),
+        };
+        return new TrendFit(evaluate, equation, rSquared);
+    }
+
+    /// <summary>Coefficients c[0..degree] of the least-squares polynomial (normal equations, Gaussian elimination with partial pivoting); null when singular.</summary>
+    private static double[]? PolynomialLeastSquares(double[] x, double[] y, int degree)
+    {
+        int n = degree + 1;
+        var a = new double[n, n + 1];
+        for (int row = 0; row < n; row++)
+        {
+            for (int column = 0; column < n; column++) a[row, column] = x.Sum(t => Math.Pow(t, row + column));
+            a[row, n] = x.Select((t, i) => Math.Pow(t, row) * y[i]).Sum();
+        }
+        for (int pivot = 0; pivot < n; pivot++)
+        {
+            int best = pivot;
+            for (int row = pivot + 1; row < n; row++) if (Math.Abs(a[row, pivot]) > Math.Abs(a[best, pivot])) best = row;
+            if (Math.Abs(a[best, pivot]) < 1e-12) return null;
+            for (int column = 0; column <= n; column++) (a[pivot, column], a[best, column]) = (a[best, column], a[pivot, column]);
+            for (int row = 0; row < n; row++)
+            {
+                if (row == pivot) continue;
+                double factor = a[row, pivot] / a[pivot, pivot];
+                for (int column = pivot; column <= n; column++) a[row, column] -= factor * a[pivot, column];
+            }
+        }
+        return Enumerable.Range(0, n).Select(i => a[i, n] / a[i, i]).ToArray();
+    }
+
+    /// <summary>
+    /// Stock charts: c:hiLowLines = a line from each category's lowest to highest series value; c:upDownBars = a box from the first
+    /// series (open) to the last (close), white when it closes higher and black when lower unless c:upBars / c:downBars give a fill,
+    /// c:gapWidth between boxes (default 150) - LibreOffice draws the same boxes (chart2/source/view/charttypes/CandleStickChart.cxx:226-245,
+    /// white and black boxes, the range line from minimum to maximum).
+    /// </summary>
+    private void DrawStock(StringBuilder svg, Group group, int categories, double left, double top, double width, double height, Func<double, double> axis)
+    {
+        string lineColor = group.HiLowLines?.Element("spPr")?.Element("ln")?.Element("solidFill") is { } solid ? DocxDrawingColor.Css(solid, _theme) ?? "#000000" : "#000000";
+        double gap = Number(group.UpDownBars?.Element("gapWidth")) ?? 150;
+        double slot = width / categories, boxWidth = slot / (1 + gap / 100);
+        for (int i = 0; i < categories; i++)
+        {
+            var values = group.Series.Select(s => i < s.Values.Count ? s.Values[i] : null).ToList();
+            var present = values.Where(v => v is not null).Select(v => v!.Value).ToList();
+            if (present.Count == 0) continue;
+            double x = left + (i + 0.5) * slot;
+            if (group.HiLowLines is not null)
+                svg.Append("<path class=\"word-chart-hilow\" d=\"M").Append(N(x)).Append(' ').Append(N(top + height - axis(present.Min()) * height)).Append('V').Append(N(top + height - axis(present.Max()) * height))
+                   .Append("\" stroke=\"").Append(lineColor).Append("\" stroke-width=\"0.75\"/>");
+            if (group.UpDownBars is not null && group.Series.Count >= 4 && values[0] is { } open && values[values.Count - 1] is { } close)
+            {
+                bool up = close >= open;
+                XElement? bar = group.UpDownBars.Element(up ? "upBars" : "downBars")?.Element("spPr");
+                string fill = PropertiesFill(bar, up ? "#FFFFFF" : "#000000") ?? "none";
+                double y1 = top + height - axis(Math.Max(open, close)) * height, y2 = top + height - axis(Math.Min(open, close)) * height;
+                svg.Append("<rect class=\"word-chart-updown\" x=\"").Append(N(x - boxWidth / 2)).Append("\" y=\"").Append(N(y1)).Append("\" width=\"").Append(N(boxWidth)).Append("\" height=\"").Append(N(Math.Max(1, y2 - y1)))
+                   .Append("\" fill=\"").Append(fill).Append("\" stroke=\"").Append(lineColor).Append("\" stroke-width=\"0.75\"/>");
+            }
+        }
     }
 
     private void DrawBars(StringBuilder svg, Group group, int categories, double left, double top, double width, double height, Func<double, double> axis, int totalSeries, string textColor)
@@ -581,6 +901,7 @@ internal sealed class DocxChart
         // bar width b: count bars overlapping by overlap * b, plus a gap of gap * b, fill the category slot
         double bars = stacked ? 1 : count - (count - 1) * overlap;
         double barWidth = slot / (bars + gap);
+        var extras = new Dictionary<Series, List<(double Px, double Py, double X, double Y, int Index)>>();
         for (int i = 0; i < categories; i++)
         {
             double positive = 0, negative = 0, total = group.Series.Sum(s => Math.Abs(i < s.Values.Count ? s.Values[i] ?? 0 : 0));
@@ -602,18 +923,27 @@ internal sealed class DocxChart
                    .Append("\" fill=\"").Append(fill.Css).Append('"').Append(fill.Opacity < 1 ? " fill-opacity=\"" + N(fill.Opacity) + "\"" : "").Append("/>");
                 if (LabelText(group, series, i) is { } label)
                     Text(svg, group.Horizontal ? x + w + 2 : x + w / 2, group.Horizontal ? y + h / 2 + 3 : y - 2, label, 9, textColor, group.Horizontal ? "start" : "middle");
+                if (!group.Horizontal && (series.ErrorBars.Count > 0 || series.Trendlines.Count > 0 && !stacked))
+                {
+                    if (!extras.TryGetValue(series, out var list)) extras[series] = list = new();
+                    list.Add((x + w / 2, top + height - axis(to) * height, i + 1, to, i));
+                }
             }
         }
+        foreach (KeyValuePair<Series, List<(double Px, double Py, double X, double Y, int Index)>> entry in extras)
+            DrawSeriesExtras(svg, entry.Key, entry.Value, v => top + height - axis(v) * height, x => left + (x - 0.5) / categories * width, FillOf(group, entry.Key, -1, totalSeries).Css, textColor, stacked);
     }
 
     private void DrawLines(StringBuilder svg, Group group, int categories, double left, double top, double width, double height, Func<double, double> axis, int totalSeries, string textColor, double vMin, double vMax)
     {
         bool stacked = group.Grouping is "stacked" or "percentStacked", percent = group.Grouping == "percentStacked";
         var baseline = new double[categories];
+        if (group.IsStock && (group.HiLowLines is not null || group.UpDownBars is not null)) DrawStock(svg, group, categories, left, top, width, height, axis);
         for (int s = 0; s < group.Series.Count; s++)
         {
             Series series = group.Series[s];
             var points = new List<(double X, double Y, int Index)>();
+            var pointValues = new List<double>();
             var lower = new List<(double X, double Y)>();
             for (int i = 0; i < categories && i < series.Values.Count; i++)
             {
@@ -625,6 +955,7 @@ internal sealed class DocxChart
                 if (stacked) baseline[i] = to;
                 double x = left + (i + 0.5) / categories * width;
                 points.Add((x, top + height - axis(to) * height, i));
+                pointValues.Add(to);
                 lower.Add((x, top + height - axis(from) * height));
             }
             if (points.Count == 0) continue;
@@ -650,6 +981,10 @@ internal sealed class DocxChart
             }
             foreach (var p in points)
                 if (LabelText(group, series, p.Index) is { } label) Text(svg, p.X, p.Y - 4, label, 9, textColor, "middle");
+            if (series.ErrorBars.Count > 0 || series.Trendlines.Count > 0)
+                DrawSeriesExtras(svg, series, points.Select((p, k) => (p.X, p.Y, (double)(p.Index + 1), pointValues[k], p.Index)).ToList(),
+                                 v => top + height - axis(v) * height, x => left + (x - 0.5) / categories * width,
+                                 group.Kind == Kind.Area ? FillOf(group, series, -1, totalSeries).Css : LineOf(series, totalSeries).Css, textColor, stacked);
         }
     }
 
@@ -661,11 +996,13 @@ internal sealed class DocxChart
         {
             (string css, double lineWidth, bool none) = LineOf(series, totalSeries);
             var points = new List<(double X, double Y, int Index)>();
+            var data = new List<(double X, double Y)>();
             for (int i = 0; i < series.Values.Count; i++)
             {
                 if (series.Values[i] is not { } y) continue;
                 double x = i < series.XValues.Count && series.XValues[i] is { } xv ? xv : i + 1;
                 points.Add((left + axisX(x) * width, top + height - axisY(y) * height, i));
+                data.Add((x, y));
             }
             if (group.Kind == Kind.Bubble)
             {
@@ -690,6 +1027,9 @@ internal sealed class DocxChart
             }
             foreach (var p in points)
                 if (LabelText(group, series, p.Index) is { } label) Text(svg, p.X, p.Y - 4, label, 9, textColor, "middle");
+            if (series.ErrorBars.Count > 0 || series.Trendlines.Count > 0)
+                DrawSeriesExtras(svg, series, points.Select((p, k) => (p.X, p.Y, data[k].X, data[k].Y, p.Index)).ToList(),
+                                 v => top + height - axisY(v) * height, x => left + axisX(x) * width, css == "none" ? AutomaticColor(series.Index, totalSeries) : css, textColor);
         }
     }
 

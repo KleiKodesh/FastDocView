@@ -119,7 +119,9 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
 | Charts in .doc / RTF | doc, rtf | No chart reader in DocBinary/, Rtf/ (docx and ODT charts are read); the saved preview picture shows where there is one | deferred |
-| ODT chart parts: floor, logarithmic scale, secondary axes, error bars, trend lines, stock up/down bars, 3-D perspective | odt | Not in the shared chart renderer (DocxChart); the rest of the chart is drawn | deferred |
+| Chart 3-D perspective and rotation (c:view3D rotX / rotY / perspective; ODT dr3d:scene) | docx, odt | 3-D charts are drawn as their 2-D kind inside a wall-and-floor box; a real projection is not implemented | deferred |
+| Chart trend line extrapolation, forced intercept; error bars from cell ranges | docx, odt | The line spans the data only; cell-range error amounts are not read | deferred |
+| Chart text sizes and automatic label layout as LibreOffice / Word lay them out | docx, odt | Positions of titles and tick labels are this library's own; the plot area and legend follow the saved positions | deferred |
 | chartex region map without a geography cache | docx | No map data; the saved fallback picture is shown | won't do |
 | SmartArt without a saved drawing part | docx | Layout engine not implemented; empty frame of the right size | deferred |
 | OLE objects as live content (embedded sheets, equations, media) | all | Only the saved preview picture is shown | won't do |
