@@ -9,6 +9,15 @@ namespace FastDocView.Tests;
 /// </summary>
 public static class LibreOfficeConversion
 {
+    /// <summary>LibreOffice asks Windows for the printer list and the default printer even headless; an offline
+    /// default printer stalls the conversion. Both lookups are switched off by environment (vcl/source/gdi/print.cxx:372
+    /// SAL_DISABLE_PRINTERLIST, :424 SAL_DISABLE_DEFAULTPRINTER). Every soffice start goes through here.</summary>
+    internal static void WithoutPrinters(ProcessStartInfo start)
+    {
+        start.Environment["SAL_DISABLE_PRINTERLIST"] = "1";
+        start.Environment["SAL_DISABLE_DEFAULTPRINTER"] = "1";
+    }
+
     private const string SofficePath = @"C:\Program Files\LibreOffice\program\soffice.exe";
 
     public static List<string> ConvertToOdt(IEnumerable<string> docxPaths)
@@ -29,6 +38,7 @@ public static class LibreOfficeConversion
                     // a private profile so a running LibreOffice of the user is neither used nor disturbed
                     Arguments = $"-env:UserInstallation=file:///{outputDirectory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --norestore --convert-to odt --outdir \"{outputDirectory}\" \"{Path.GetFullPath(docx)}\"",
                 };
+                LibreOfficeConversion.WithoutPrinters(start);
                 using Process process = Process.Start(start)!;
                 try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (InvalidOperationException) { }
                 if (!process.WaitForExit(600_000)) { process.Kill(); TestReport.Check(false, "LibreOffice conversion finished within 10 minutes"); continue; }
@@ -56,6 +66,7 @@ public static class LibreOfficeConversion
             UseShellExecute = false, CreateNoWindow = true,
             Arguments = $"-env:UserInstallation=file:///{outputDirectory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --norestore --convert-to \"{filter}\" --outdir \"{outputDirectory}\" \"{Path.GetFullPath(source)}\"",
         };
+        LibreOfficeConversion.WithoutPrinters(start);
         using Process process = Process.Start(start)!;
         try { process.PriorityClass = ProcessPriorityClass.Idle; } catch (InvalidOperationException) { }
         if (!process.WaitForExit(300_000)) { process.Kill(); return null; }

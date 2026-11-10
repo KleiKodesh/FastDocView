@@ -31,6 +31,7 @@ public static class DocBinaryLinksTest
                 UseShellExecute = false, CreateNoWindow = true,
                 Arguments = $"-env:UserInstallation=file:///{directory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --norestore --convert-to doc --outdir \"{directory}\" \"{odt}\"",
             };
+            LibreOfficeConversion.WithoutPrinters(start);
             using Process process = Process.Start(start)!;
             try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (InvalidOperationException) { }
             if (!process.WaitForExit(180_000)) { process.Kill(); TestReport.Check(false, "LibreOffice wrote the .doc within 3 minutes"); return; }
