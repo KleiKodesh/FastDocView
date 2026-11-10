@@ -162,11 +162,18 @@ public sealed class DocxNumberingDefinitions
 
     private static LevelDefinition ReadLevel(XElement level, int levelIndex)
     {
-        // A custom number format is written as mc:AlternateContent (Choice: numFmt val="custom", Fallback: a plain numFmt);
-        // the fallback is what every reader without that extension uses.
+        // A custom number format is written as mc:AlternateContent (Choice Requires="w14": numFmt val="custom" w:format="...",
+        // Fallback: a plain numFmt). Word's own custom formats (Greek, Turkish, Bulgarian, 001...: WordListNumberScripts) are
+        // drawn as Word draws them; any other w:format takes the fallback (LibreOffice: ConversionHelper.cxx:643 reads only 001..00001).
+        XElement? alternateContent = level.Elements().FirstOrDefault(e => e.Name.LocalName == "AlternateContent");
+        XElement? customNumFmt = alternateContent?.Elements().Where(e => e.Name.LocalName == "Choice").Elements(W + "numFmt")
+            .FirstOrDefault(e => (string?)e.Attribute(W + "val") == "custom");
+        string? customFormat = customNumFmt?.Attribute(W + "format") is { } customText ? Html.WordListNumberScripts.CustomPrefix + customText.Value : null;
         XElement? numFmt = level.Element(W + "numFmt")
-            ?? level.Elements().Where(e => e.Name.LocalName == "AlternateContent").Elements().Where(e => e.Name.LocalName == "Fallback").Elements(W + "numFmt").FirstOrDefault();
-        string format = (string?)numFmt?.Attribute(W + "val") ?? "decimal";
+            ?? alternateContent?.Elements().Where(e => e.Name.LocalName == "Fallback").Elements(W + "numFmt").FirstOrDefault();
+        string format = customFormat is not null && Array.IndexOf(Html.WordListNumberScripts.CustomFormatsByCode, customFormat) >= 0
+            ? customFormat
+            : (string?)numFmt?.Attribute(W + "val") ?? "decimal";
         string text = (string?)level.Element(W + "lvlText")?.Attribute(W + "val") ?? "%" + (levelIndex + 1) + ".";
         int start = DocxStyleCascade.TwipsAttribute(level.Element(W + "start"), "val") ?? 1;
         int? restart = DocxStyleCascade.TwipsAttribute(level.Element(W + "lvlRestart"), "val");
@@ -373,7 +380,7 @@ public sealed class DocxNumberingDefinitions
         "thaiLetters" => RepeatedLetters(value, ThaiLetters, toUpper: false),
         "arabicAlpha" => RepeatedLetters(value, ArabicAlphaLetters, toUpper: false, joinerAfter: (char)0x200C),
         "arabicAbjad" => RepeatedLetters(value, ArabicAbjadLetters, toUpper: false, joinerBefore: (char)0x200C),
-        _ => value.ToString(),
+        _ => Html.WordListNumberScripts.Format(value, format) ?? value.ToString(),
     };
 
     // Word 16 (ListString): 10 = U+4E00 U+3007, 1234 = one two three four - each decimal digit as an ideograph

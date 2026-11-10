@@ -489,6 +489,17 @@ public sealed class OdtListStyle
         "I" => DocxNumberingDefinitions.FormatNumber(value, "upperRoman"),
         _ when format.StartsWith("א, י", StringComparison.Ordinal) => DocxNumberingDefinitions.FormatNumber(value, "hebrew1"),
         _ when format.StartsWith("א, ב", StringComparison.Ordinal) => DocxNumberingDefinitions.FormatNumber(value, "hebrew2"),
+        // LibreOffice names these by their first three labels (defaultnumberingprovider.cxx:1160 makeNumberingIdentifier; :1154-1155
+        // ARABIC_ZERO3 / 4 with fixed names); its kana / Hangul tables and cycling are Word's (WordListNumberScripts)
+        "001, 002, 003, ..." => Html.WordListNumberScripts.Format(value, Html.WordListNumberScripts.CustomZero3)!,
+        "0001, 0002, 0003, ..." => Html.WordListNumberScripts.Format(value, Html.WordListNumberScripts.CustomZero4)!,
+        "00001, 00002, 00003, ..." => Html.WordListNumberScripts.Format(value, Html.WordListNumberScripts.CustomZero5)!,
+        "\uFF71, \uFF72, \uFF73, ..." => Html.WordListNumberScripts.Format(value, "aiueo")!,
+        "\u30A2, \u30A4, \u30A6, ..." => Html.WordListNumberScripts.Format(value, "aiueoFullWidth")!,
+        "\uFF72, \uFF9B, \uFF8A, ..." => Html.WordListNumberScripts.Format(value, "iroha")!,
+        "\u30A4, \u30ED, \u30CF, ..." => Html.WordListNumberScripts.Format(value, "irohaFullWidth")!,
+        "\uAC00, \uB098, \uB2E4, ..." => Html.WordListNumberScripts.Format(value, "ganada")!,
+        "\u3131, \u3134, \u3137, ..." => Html.WordListNumberScripts.Format(value, "chosung")!,
         _ => value.ToString(CultureInfo.InvariantCulture),
     };
 }

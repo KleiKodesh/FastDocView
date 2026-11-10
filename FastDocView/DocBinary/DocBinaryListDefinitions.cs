@@ -176,7 +176,8 @@ public sealed class DocBinaryListDefinitions
     /// <summary>
     /// MSONFC ([MS-OSHARED] 2.2.1.3; the same numbers as Word's WdListNumberStyle) to ECMA-376 ST_NumberFormat names: the
     /// .docx numFmt Word 16 writes for each code (test-data/word-lists: each code saved as .docx). 49 / 50 Word saves and
-    /// draws as hebrew1 / hebrew2. Codes past 59 are Word's custom formats (Greek, Turkish, Bulgarian letters, 001...).
+    /// draws as hebrew1 / hebrew2. Codes past 59 are Word's custom formats (Greek, Turkish, Bulgarian letters, 001...): Word 16
+    /// saves them in .doc and RTF as decimal (nfc 0; reopened, Word itself shows 1., 2. - list-formats-v1-b), so only .docx keeps them.
     /// </summary>
     private static readonly string[] NumberFormatNames =
     [

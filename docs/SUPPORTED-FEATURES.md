@@ -79,6 +79,7 @@ separate paged view, which is not built yet.
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
 | Number formats (decimal, letters, roman, hebrew1 / hebrew2, ordinal and more, Word-verified) | yes | yes | yes | yes | n.a. | yes (10) |
+| Script number formats: Japanese / Chinese / Korean / Thai / Vietnamese / Hindi counting, kana (aiueo, iroha), Korean letters and digits, Word's custom formats (Greek, Turkish, Bulgarian, 001), Word-verified | yes | yes (14) | yes (14) | partial (15) | n.a. | yes (10) |
 | Start value | yes | yes | yes | yes | n.a. | yes (10) |
 | Restart after a higher level / never | yes | yes | partial (11) | yes | n.a. | n.a. |
 | Overrides (startOverride, LFOLVL, lfolevel, start-value) | yes | yes | partial (11) | yes | n.a. | n.a. |
@@ -95,8 +96,10 @@ separate paged view, which is not built yet.
 11. RTF: `\levelnorestart` yes, but no restart-limit level; a level replaced by an override is not read (start-at is).
 12. Torat Emet line marks.
 13. Counted RTF labels and ODT bullets take the label formatting rules, not a separate bullet colour / size.
+14. Word saves its custom formats (Greek, Turkish, Bulgarian, 001) in .doc and RTF as decimal and shows them so itself.
+15. ODT: kana, Korean letters and 001 / 0001 / 00001; LibreOffice's CJK counting, Greek and Bulgarian names show as decimal.
 
-List number formats are under active work (Fields/ and the numbering files); NOTES.md "List numbering" holds the audit.
+NOTES.md "List numbering" holds the audit of list number formats.
 
 ## Tables
 

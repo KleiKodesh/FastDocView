@@ -42,7 +42,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Style-linked numbering | rtf | Not read | deferred |
 | Separate bullet colour / size | rtf (counted labels), odt | Labels take the general label formatting | deferred |
 | ApplyParagraphMarkFormatToNumbering setting | docx | Not read (LibreOffice writes it only for Word imports) | won't do |
-| Number formats still being verified | docx, doc, rtf, odt | Active work in Fields/ and the numbering files | planned |
+| LibreOffice's CJK counting, Greek and Bulgarian num-format names | odt | LibreOffice's own algorithms differ from Word's; shown as decimal | deferred |
 
 ## Tables
 

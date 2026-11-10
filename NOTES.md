@@ -2005,8 +2005,24 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   with Word's ZWNJ after / before each letter). Word repeats the letter past the end of an alphabet (aa, bb), LibreOffice counts (aa, ab): Word wins.
   hebrew2 in a list is Word's field algorithm (one tav per full 22, then the letter: 27 = tav he), not a repeated letter; Word's ListString starts it
   with U+200F, which is not drawn. MSONFC -> name is one table (`DocBinaryListDefinitions.NumberFormatName`), the .docx numFmt Word 16 writes for
-  each code; RTF uses it too, with 8 / 9 = none (rtfdispatchvalue.cxx:39-50 getNumberFormat). Still decimal: counting words (Japanese, Chinese,
-  Korean, Thai, Vietnamese, Hindi), kana orders (aiueo, iroha), ganada / chosung, koreanDigital, Word's custom formats (numFmt custom, MSONFC 60+).
+  each code; RTF uses it too, with 8 / 9 = none (rtfdispatchvalue.cxx:39-50 getNumberFormat).
+- **Script formats** (`Html/WordListNumberScripts`, 2026-11-10): counting words (japaneseCounting / Legal, chineseCounting / Thousand /
+  LegalSimplified, taiwaneseCounting / Thousand, ideographLegalTraditional, koreanCounting / Legal, thaiCounting, vietnameseCounting,
+  hindiCounting), kana orders (aiueo, iroha, half and full width), ganada / chosung, koreanDigital and Word's custom formats (.docx
+  numFmt custom w:format: Greek numerals, Turkish / Bulgarian letters, 001 / 0001 / 00001) now match Word. Tables from LibreOffice
+  (bullet.h kana / Hangul, numberchar.h CJK digits + multipliers, defaultnumberingprovider.cxx Korean legal words, Greek gr_smallNum,
+  Bulgarian letters); the rules from Word 16's ListString (make-list-formats-words.ps1: values 1..129 + large starts per format), since
+  LibreOffice draws all six counting formats as one NUMBER_LOWER_ZH (ConversionHelper.cxx:592-598) and has no Thai / Vietnamese / Hindi
+  counting. Word's rules: "one" before ten / hundred is dropped in Japanese / Korean counting (before thousand only in the leading four
+  digits; Korean also before a lone myriad: 10000 = man), only for 10..19 in Chinese / Taiwanese counting, never in the legal formats;
+  zero runs are written once in the Chinese "thousand" and legal formats (U+96F6, U+3007 in chineseCountingThousand); chinese /
+  taiwaneseCounting go digit by digit with U+25CB from 100; chineseLegalSimplified's myriad is U+842C; Greek thousands take a comma
+  (LibreOffice U+0375) and the upper koppa is U+03DE; Word's Bulgarian has 29 letters (LibreOffice's table lacks the short i); the
+  Hindi words are Word's own 1..99 (CLDR differs at 6, 15...). Word refuses start values past 1000 (Vietnamese) / 9999 (Hindi, Greek);
+  beyond those the words recurse (unverified - Word can only reach them by counting). Word saves its custom formats in .doc / RTF as
+  decimal (nfc 0, \pntext 1.) and shows 1. itself on reopening, so only .docx keeps them. .odt: LibreOffice's num-format names for the
+  kana / Hangul / zero-padded orders map to the same tables; its CJK counting, Greek and Bulgarian names are LibreOffice's own
+  algorithms and stay decimal here.
 - **Symbol-font bullets** (`WordSymbolFontBullet`): Symbol is recoded with LibreOffice's Adobe Symbol table (unotools fontcvt.cxx:707
   aAdobeSymbolToAppleSymbolTab) and drawn in the text's font; Wingdings / Wingdings 2 / 3 / Webdings keep their U+F0xx code and their font, as Word
   draws them and as w:sym already did - LibreOffice's tables for those fonts (fontcvt.cxx:185-482) target OpenSymbol's private-use area (197 of 224
