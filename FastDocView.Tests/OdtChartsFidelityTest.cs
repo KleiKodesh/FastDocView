@@ -42,6 +42,17 @@ public static class OdtChartsFidelityTest
             CheckParts(word, "docx", layout: false);
         }
 
+        TestReport.Step("Word-made charts in Calibri, Cambria and Times New Roman (text widths from the fonts' own advance widths)");
+        string wordFonts = Path.Combine(Path.GetDirectoryName(path)!, "word-chart-fonts-v1.docx");
+        if (File.Exists(wordFonts))
+        {
+            List<string> fonts = Render(wordFonts);
+            File.WriteAllText(Path.Combine(TestReport.OutputDirectory, "charts-word-fonts.html"), string.Concat(fonts));
+            string allFonts = string.Concat(fonts);
+            TestReport.Check(Regex.Matches(allFonts, "<svg class=\"word-chart\"").Count == 4 && allFonts.Contains(">Calibri Chart<") && allFonts.Contains(">Cambria Chart<") && allFonts.Contains(">Times Chart<"),
+                             "Word-made charts: all four drawn with their titles");
+        }
+
         TestReport.Step("ODT charts: the same document saved flat (.fodt)");
         if (LibreOfficeConversion.Convert(path, ".fodt", "fodt") is { } fodt)
         {

@@ -82,7 +82,8 @@ internal sealed partial class DocxChart
     private (double X, double Y, double W, double H)? _plotLayout;
     private bool _plotLayoutInner;
     private List<double> _titleSizes = new();
-    private bool _libreOfficeLayout, _separateTitleLines, _chartFontIsArial;
+    private bool _libreOfficeLayout, _separateTitleLines;
+    private int _chartFont;
     private double _legendSize = 9, _dataLabelSize = 9;
     private (double X, double Y)? _legendLayout;
     private bool _is3D;
@@ -102,9 +103,9 @@ internal sealed partial class DocxChart
         model._chartSpaceProperties = chartSpace.Element("spPr");
         // text sizes (a:defRPr / a:rPr sz in hundredths of a point): the element's own, else the chart's c:txPr; Office's defaults otherwise
         double? chartSize = FontSize(chartSpace.Element("txPr"));
-        // the chart's Latin font (a:latin typeface): Arial-like metrics unless it is Calibri or not given (Office's theme font)
+        // the chart's Latin font (a:latin typeface), for text widths
         string? typeface = chartSpace.Descendants().FirstOrDefault(e => e.Name.LocalName == "latin")?.Attribute("typeface")?.Value;
-        model._chartFontIsArial = typeface is not null && !typeface.StartsWith("Calibri", StringComparison.OrdinalIgnoreCase) && !typeface.StartsWith("+", StringComparison.Ordinal);
+        model._chartFont = ChartFontIndex(typeface);
         // a chart read from OpenDocument is laid out by LibreOffice's rules (OdtChart marks it)
         model._libreOfficeLayout = (string?)chartSpace.Attribute("layoutRules") == "libreoffice";
         model._separateTitleLines = (string?)chart.Element("title")?.Attribute("separateLines") == "1";
@@ -860,24 +861,27 @@ internal sealed partial class DocxChart
     private double CategoryLabelWidth(List<string> categories, double labelSize) => categories.DefaultIfEmpty("").Max(c => TextWidth(c, labelSize)) + 6;
 
     /// <summary>
-    /// A text's width. LibreOffice layouts keep the 0.55 x size per character they were measured with. Word's use the chart font's
-    /// advance widths by character class: Arial / Liberation Sans (Helvetica's metrics, from memory, checked against Word's PDF of the
-    /// fixture, whose charts are Arial: space and i j l . , 0.22-0.28, t f 0.28, r 0.33, digits 0.556, lower case 0.556, m 0.833, w 0.722,
-    /// upper case 0.667, M W 0.83-0.94, % 0.889) or Calibri, Office's theme font when the chart names none (from memory, unchecked:
-    /// about 0.9 x those).
+    /// A text's width. LibreOffice layouts keep the 0.55 x size per character they were measured with. Word's use the chart font's own
+    /// advance widths (DocxChartFontWidths: the hmtx tables of Calibri, Cambria, Times New Roman and Arial; metric-compatible fonts map
+    /// to them); characters outside ASCII take the font's average width.
     /// </summary>
     private double TextWidth(string text, double size)
     {
         if (_libreOfficeLayout) return text.Length * size * 0.55;
+        var font = DocxChartFontWidths.Fonts[_chartFont];
         double em = 0;
-        foreach (char c in text)
-            em += c switch
-            {
-                ' ' or '.' or ',' or ':' or ';' or '!' or (char)0x27 or '|' => 0.278, 'i' or 'j' or 'l' => 0.222, 't' or 'f' or 'I' or '(' or ')' or '-' => 0.30, 'r' => 0.333,
-                'm' => 0.833, 'w' => 0.722, 'W' => 0.944, 'M' => 0.833, >= '0' and <= '9' => 0.556, '%' => 0.889,
-                >= 'A' and <= 'Z' => 0.667, _ => 0.556,
-            };
-        return em * size * (_chartFontIsArial ? 1 : 0.9);
+        foreach (char c in text) em += c >= ' ' && c <= '~' ? font.Widths[c - ' '] : font.Average;
+        return em * size;
+    }
+
+    /// <summary>The width table of a typeface: Calibri (Office's theme font, also when the chart names none or a theme font "+mn-lt"), Cambria, Times New Roman / Liberation Serif / Tinos, Arial / Liberation Sans / Arimo / Helvetica.</summary>
+    private static int ChartFontIndex(string? typeface)
+    {
+        string name = (typeface ?? "").ToLowerInvariant();
+        if (name.StartsWith("cambria", StringComparison.Ordinal)) return 1;
+        if (name.StartsWith("times", StringComparison.Ordinal) || name.Contains("liberation serif") || name.StartsWith("tinos", StringComparison.Ordinal)) return 2;
+        if (name.StartsWith("arial", StringComparison.Ordinal) || name.Contains("liberation sans") || name.StartsWith("arimo", StringComparison.Ordinal) || name.StartsWith("helvetica", StringComparison.Ordinal)) return 3;
+        return 0;
     }
 
     private static Func<double, double> ValueToAxisOf(Axis? axis, double min, double max) => AxisMap(axis, min, max);
