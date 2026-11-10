@@ -2378,3 +2378,14 @@ Content-Location is the src (or ends with "/" + src) or whose Content-ID is a `c
   lines), median 1.9 pt x / 0.4 pt y (Calibri 1.9, Cambria 2.3, Times 1.8 pt, a constant offset of the value labels: Word's own
   charts sit the labels about 2 pt further left than the LibreOffice-written ones the gaps were measured on). The 29-chart
   LibreOffice-written .docx: median 1.0 / 0.9 pt (unchanged).
+
+## Chart value labels without tick marks; right-to-left names (2026-11-10)
+
+- Word puts value labels 8.2 pt from the plot when the axis has no tick marks (c:majorTickMark none, Word's own charts) and 6.2 pt
+  with outside ticks (the LibreOffice-written ones) - measured on both PDFs; this was the 2 pt offset on Word-made charts.
+- A chart text whose first strong character is right-to-left is drawn with direction rtl (Word's PDF puts the trailing number of a
+  Hebrew name at its left end), keeping its anchor's physical edge. Hebrew widths come from Arial's hmtx (Word draws the Hebrew
+  names in ArialMT: Office's default complex-script font), generated with the other tables by scripts/chart-font-widths.py.
+- The comparison builds PDF lines from x-sorted characters and matches texts by their sorted characters, so right-to-left names
+  match whatever their order. Word-made fixture (Hebrew Word default data): all texts median 0.3 pt x / 0.6 pt y; the 28
+  right-to-left names 0.9 / 0.6 pt; the LibreOffice-written .docx 1.0 / 0.9 pt.

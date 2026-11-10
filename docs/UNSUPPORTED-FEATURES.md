@@ -119,7 +119,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
 | Charts in .doc / RTF | doc, rtf | No chart reader in DocBinary/, Rtf/ (docx and ODT charts are read); the saved preview picture shows where there is one | deferred |
-| Exact chart layout for Word-made charts | docx | Text widths come from the fonts' own advance widths (Calibri, Cambria, Times New Roman, Arial); measured: Word-made charts median 1.9 pt (x) / 0.4 pt (y) from Word's PDF (value labels about 2 pt off), LibreOffice-written .docx 1.0 / 0.9 pt, ODT vs LibreOffice 0.4 / 0.3 pt | deferred |
+| Exact chart layout for Word-made charts | docx | Text widths come from the fonts' own advance widths (Calibri, Cambria, Times New Roman, Arial); measured: Word-made charts median 0.3 pt (x) / 0.6 pt (y) from Word's PDF (right-to-left names 0.9 / 0.6 pt), LibreOffice-written .docx 1.0 / 0.9 pt, ODT vs LibreOffice 0.4 / 0.3 pt | deferred |
 | chartex region map without a geography cache | docx | No map data; the saved fallback picture is shown | won't do |
 | SmartArt without a saved drawing part | docx | Layout engine not implemented; empty frame of the right size | deferred |
 | OLE objects as live content (embedded sheets, media; MathType / Equation 3.0 equations) | all | Only the saved preview picture is shown (Office Math and LibreOffice formulas are drawn as MathML, see the supported list) | won't do |

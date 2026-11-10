@@ -65,7 +65,7 @@ internal sealed partial class DocxChart
         public bool Gridlines;
         public string? Title;
         public double TitleSize = 10, LabelSize = 9;
-        public bool MidCategory, LineBreak = true, TryStaggeringFirst;
+        public bool MidCategory, LineBreak = true, TryStaggeringFirst, NoTickMarks;
         public string? FormatCode;
         public bool Reversed;
         public double? LogBase;
@@ -142,6 +142,7 @@ internal sealed partial class DocxChart
                     MajorUnit = Number(element.Element("majorUnit")), Gridlines = element.Element("majorGridlines") is not null,
                     Title = element.Element("title") is { } axisTitle ? TitleText(axisTitle) : null,
                     MidCategory = Value(element.Element("crossBetween")) == "midCat",
+                    NoTickMarks = Value(element.Element("majorTickMark")) is "none" or "in",
                     LineBreak = (string?)element.Attribute("lineBreak") != "0", TryStaggeringFirst = (string?)element.Attribute("tryStaggeringFirst") == "1",
                     TitleSize = FontSize(element.Element("title")) ?? (chartSize is { } c10 ? c10 : 10), LabelSize = FontSize(element.Element("txPr")) ?? chartSize ?? 9,
                     FormatCode = (string?)element.Element("numFmt")?.Attribute("formatCode"),
@@ -531,12 +532,31 @@ internal sealed partial class DocxChart
         else svg.Append("<rect x=\"").Append(N(x + 2)).Append("\" y=\"").Append(N(y + 1)).Append("\" width=\"7\" height=\"7\" fill=\"").Append(color).Append("\"/>");
     }
 
+    /// <summary>
+    /// A chart text. One whose first strong character is right-to-left (Hebrew, Arabic) is laid out right to left (direction rtl), as
+    /// Word draws it (its PDF puts a Hebrew name's trailing number at the left end); the anchor keeps the same physical edge, since
+    /// text-anchor start / end follow the text's direction (SVG 1.1 10.9.1).
+    /// </summary>
     private static void Text(StringBuilder svg, double x, double y, string text, double size, string color, string anchor, double rotate = 0)
     {
+        bool rightToLeft = IsRightToLeftText(text);
+        if (rightToLeft) anchor = anchor switch { "start" => "end", "end" => "start", _ => anchor };
         svg.Append("<text x=\"").Append(N(x)).Append("\" y=\"").Append(N(y)).Append("\" font-size=\"").Append(N(size)).Append("\" fill=\"").Append(color)
            .Append("\" text-anchor=\"").Append(anchor).Append('"');
+        if (rightToLeft) svg.Append(" direction=\"rtl\" unicode-bidi=\"embed\"");
         if (rotate != 0) svg.Append(" transform=\"rotate(").Append(N(rotate)).Append(' ').Append(N(x)).Append(' ').Append(N(y)).Append(")\"");
         svg.Append('>').Append(WordHtmlText.Encode(text)).Append("</text>");
+    }
+
+    /// <summary>True when the first strong character is right-to-left (Hebrew U+0590-08FF and presentation forms U+FB1D-FDFF, U+FE70-FEFF).</summary>
+    private static bool IsRightToLeftText(string text)
+    {
+        foreach (char c in text)
+        {
+            if (c is >= '\u0590' and <= '\u08FF' or >= '\uFB1D' and <= '\uFDFF' or >= '\uFE70' and <= '\uFEFF') return true;
+            if (char.IsLetter(c)) return false;
+        }
+        return false;
     }
 
     /// <summary>An axis scale: the axis' own min / max / major unit, else 0 (or below the data when it is negative) to a 1 / 2 / 5 x 10^n step above the data, about 5 steps.</summary>
@@ -769,7 +789,9 @@ internal sealed partial class DocxChart
                 double y = bottom - t * plotHeight;
                 if (valueAxis?.Gridlines != false) svg.Append("<path d=\"M").Append(N(left)).Append(' ').Append(N(y)).Append('H').Append(N(right)).Append("\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
                 // LibreOffice centres the label's full text height on the tick (measured: baseline 0.08 x size above it); Word a third of the size below
-                Text(svg, left - (_libreOfficeLayout ? labelSize * 0.7 : 6.2), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, textColor, "end");
+                // Word: 6.2 pt from the plot with outside tick marks (the LibreOffice-written charts), 8.2 pt without (Word's own charts,
+                // c:majorTickMark none) - both measured on Word's PDFs
+                Text(svg, left - (_libreOfficeLayout ? labelSize * 0.7 : valueAxis?.NoTickMarks == true ? 8.2 : 6.2), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, textColor, "end");
             }
         }
         foreach ((double value, string text) in secondaryLabels)
@@ -870,7 +892,7 @@ internal sealed partial class DocxChart
         if (_libreOfficeLayout) return text.Length * size * 0.55;
         var font = DocxChartFontWidths.Fonts[_chartFont];
         double em = 0;
-        foreach (char c in text) em += c >= ' ' && c <= '~' ? font.Widths[c - ' '] : font.Average;
+        foreach (char c in text) em += c >= ' ' && c <= '~' ? font.Widths[c - ' '] : c >= '֐' && c <= '׿' ? DocxChartFontWidths.Hebrew[c - '֐'] : font.Average;
         return em * size;
     }
 

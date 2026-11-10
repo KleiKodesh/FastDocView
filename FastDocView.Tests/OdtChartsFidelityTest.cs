@@ -51,6 +51,8 @@ public static class OdtChartsFidelityTest
             string allFonts = string.Concat(fonts);
             TestReport.Check(Regex.Matches(allFonts, "<svg class=\"word-chart\"").Count == 4 && allFonts.Contains(">Calibri Chart<") && allFonts.Contains(">Cambria Chart<") && allFonts.Contains(">Times Chart<"),
                              "Word-made charts: all four drawn with their titles");
+            // Word's default data in a Hebrew Word: right-to-left category and series names, drawn right to left as Word draws them
+            TestReport.Check(Regex.Matches(allFonts, "direction=\"rtl\"").Count >= 20, "Word-made charts: right-to-left names drawn right to left (" + Regex.Matches(allFonts, "direction=\"rtl\"").Count + ")");
         }
 
         TestReport.Step("ODT charts: the same document saved flat (.fodt)");

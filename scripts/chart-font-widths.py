@@ -16,4 +16,10 @@ for name, path, index in FONTS:
     widths = [hmtx[cmap[c]][0] / upem if c in cmap else 0.5 for c in range(32, 127)]
     average = font["OS/2"].xAvgCharWidth / upem
     print('        ("%s", %.4f, [%s]),' % (name, average, ", ".join("%.4f" % w for w in widths)))
-print("    ];\n}")
+print("    ];\n")
+# Hebrew (U+0590-05FF) is drawn by Word in the complex-script font; with Office's theme defaults that is Arial (Word's PDF of the
+# Word-made fixture draws its Hebrew names in ArialMT)
+arial = TTFont(r"C:\Windows\Fonts\arial.ttf"); upem = arial["head"].unitsPerEm; cmap = arial.getBestCmap(); hmtx = arial["hmtx"]
+print("    /// <summary>Arial's advance widths (em) of U+0590-05FF: Hebrew in Word charts with Office's default complex-script font.</summary>")
+print("    public static readonly double[] Hebrew = [%s];" % ", ".join("%.4f" % (hmtx[cmap[c]][0] / upem if c in cmap else 0.0) for c in range(0x590, 0x600)))
+print("}")
