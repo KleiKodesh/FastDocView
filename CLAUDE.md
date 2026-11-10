@@ -42,6 +42,12 @@ view over SQLite.
   adopted only when they fit index-time or render-time-per-block; whole-document DOM passes are
   rejected or rewritten as per-block resolvers + caches.
 
+## Scope: what prints (user, 2026-11-10)
+
+Only what shows in the printed document (Word's print or PDF output) is in scope. Comments,
+tracked-changes markup and anything else that doesn't print are out of scope for now. List them
+as "won't do (not printed)" in docs/UNSUPPORTED-FEATURES.md, and don't build them.
+
 ## Direction (user, 2026-10-28)
 
 - **Full multiplatform library**: net48 host (VSTO), native AOT service, **WASM**. Core is
