@@ -31,6 +31,14 @@ internal sealed class DocBinaryBlockScanner
     public List<string> ListContexts { get; } = new();
     private readonly Dictionary<string, int> _listContextIds = new();
     public List<WordDocumentHeading> Headings { get; } = new();
+    /// <summary>
+    /// Outer rows whose cells the next row continues (fVertMerge without fVertRestart below, at the same right edge): the row's
+    /// block and a bit per cell. A row is one block, so a cell merged down is drawn as cells without the line between them;
+    /// which cell goes on below needs the next row, so it is found here, at index time.
+    /// </summary>
+    public List<int> MergedRowBlocks { get; } = new();
+    public List<ulong> MergedRowCells { get; } = new();
+    private DocBinaryParagraphHtmlRenderer.TableParagraphInfo? _previousRow;      // the row block just added, while rows follow each other
     /// <summary>The CP every block of the scan so far ends at (the next block's start) - the last block's end once <see cref="Finish"/> ran.</summary>
     public int ScannedEndCp => _paragraphStart;
     public int BlockCount => BlockStartCps.Count;
@@ -81,7 +89,27 @@ internal sealed class DocBinaryBlockScanner
     /// </summary>
     public void CloseOpenRow()
     {
-        if (_rowStart >= 0) { AddBlock(_rowStart, _paragraphStart, WordDocumentBlockKind.TableRow); _rowStart = -1; }
+        if (_rowStart >= 0) { AddBlock(_rowStart, _paragraphStart, WordDocumentBlockKind.TableRow); _rowStart = -1; _previousRow = null; }
+    }
+
+    /// <summary>
+    /// This row continues cells of the row before it (fVertMerge without fVertRestart - LibreOffice ww8par2.cxx:2582-2620): the cell
+    /// of the row before at the same right edge (within 3 twips, ww8struc.hxx:536) is marked, so that row is drawn without its
+    /// bottom line there.
+    /// </summary>
+    private void NoteCellsMergedDown(in DocBinaryParagraphHtmlRenderer.TableParagraphInfo row)
+    {
+        if (_previousRow is not { Cells: { } aboveCells, CellEdgesTwips: { } aboveEdges } || row.Cells is not { } cells || row.CellEdgesTwips is not { } edges) return;
+        ulong mask = 0;
+        for (int i = 0; i < cells.Length && i + 1 < edges.Length; i++)
+        {
+            if (!cells[i].ContinuesAbove) continue;
+            for (int j = 0; j < aboveCells.Length && j + 1 < aboveEdges.Length && j < 64; j++)
+                if (aboveCells[j].IsVerticallyMerged && Math.Abs(aboveEdges[j + 1] - edges[i + 1]) <= 3) { mask |= 1UL << j; break; }
+        }
+        if (mask == 0) return;
+        MergedRowBlocks.Add(BlockStartCps.Count - 2);
+        MergedRowCells.Add(mask);
     }
 
     private void AddBlock(int start, int end, WordDocumentBlockKind kind)
@@ -120,10 +148,17 @@ internal sealed class DocBinaryBlockScanner
         if (table.IsInTable || mark == '\u0007')
         {
             if (_rowStart < 0) _rowStart = start;
-            if (table.IsRowEnd) { AddBlock(_rowStart, end, WordDocumentBlockKind.TableRow); _rowStart = -1; }
+            if (table.IsRowEnd)
+            {
+                AddBlock(_rowStart, end, WordDocumentBlockKind.TableRow);
+                _rowStart = -1;
+                NoteCellsMergedDown(table);
+                _previousRow = table;
+            }
             return;                                    // a row is one block: its cell paragraphs' labels are not shown yet
         }
         if (_rowStart >= 0) { AddBlock(_rowStart, start, WordDocumentBlockKind.TableRow); _rowStart = -1; }   // a row without its end mark
+        _previousRow = null;
         AddBlock(start, end, WordDocumentBlockKind.Paragraph);
         if (label is { Length: > 0 }) SetListLabel(label);
         if (context is not null) SetListContext(context);

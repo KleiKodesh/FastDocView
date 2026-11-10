@@ -158,7 +158,7 @@ public static class DocBinaryPropertyModifiers
     }
 
     /// <summary>Brc80 ([MS-DOC] §2.9.17): dptLineWidth (eighths of a point), brcType, ico, then spacing/flags.</summary>
-    private static string? Brc80Css(byte[] grpprl, int at)
+    internal static string? Brc80Css(byte[] grpprl, int at)
     {
         if (at + 4 > grpprl.Length) return null;
         byte width = grpprl[at], type = grpprl[at + 1], ico = grpprl[at + 2];
@@ -168,7 +168,7 @@ public static class DocBinaryPropertyModifiers
     }
 
     /// <summary>Brc ([MS-DOC] §2.9.16): cv (COLORREF), dptLineWidth, brcType, then spacing/flags. Sprms() already consumed the operand's cb.</summary>
-    private static string? BrcCss(byte[] grpprl, int at, int operandLength)
+    internal static string? BrcCss(byte[] grpprl, int at, int operandLength)
     {
         if (operandLength < 8 || at + 8 > grpprl.Length) return null;
         byte width = grpprl[at + 4], type = grpprl[at + 5];

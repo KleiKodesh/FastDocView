@@ -479,7 +479,11 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             carried = _renderer.PendingDropCap ?? _renderer.IncomingDropCap;     // an initial before a table runs on to the next paragraph
             if (carried is { } last && blockIndex == _index.BlockCount - 1)
                 html += "<p>" + last.html + "</p>";                                   // nothing follows: the initial stays a paragraph
-            result.Add(new WordDocumentBlockHtml(blockIndex, _table.BlockKindOf(blockIndex), html, notes, _fieldContext.UsedIncompleteIndex));
+            WordDocumentBlockKind kind = _table.BlockKindOf(blockIndex);
+            // the last row known while the index builds: whether the next row continues its cells (no bottom line there) is noted
+            // when that row is indexed, so it is drawn again once the index is complete
+            bool isRowAwaitingNext = kind == WordDocumentBlockKind.TableRow && _builder is not null && blockIndex == _index.BlockCount - 1;
+            result.Add(new WordDocumentBlockHtml(blockIndex, kind, html, notes, _fieldContext.UsedIncompleteIndex || isRowAwaitingNext));
         }
         return result;
     }

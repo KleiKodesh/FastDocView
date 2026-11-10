@@ -56,6 +56,87 @@ public static class WordTablesFidelityTest
                          && Cell(Row("bottom"), "bottom").Contains("vertical-align:bottom"), "RTF: \\clvertalt / c / b");
 
         HandWritten();
+        RowAwaitingNextIsProvisional();
+        Doc();
+    }
+
+    /// <summary>
+    /// .doc tables from the same Word 16 fixture (tables-v1.doc): TC merges (fVertMerge / fVertRestart) with the rows merged down
+    /// found at index time, nesting by sprmPItap drawn inside the cell, per-cell borders (TC brc*) over the table's
+    /// (sprmTTableBorders), TC vertAlign. Word 16 never saves fFirstMerged / fMerged, so a copy with those bits set on row 2 checks
+    /// the horizontal merge.
+    /// </summary>
+    private static void Doc()
+    {
+        TestReport.Step("Tables: .doc merges, nesting, cell borders, vertical alignment");
+        string path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-tables", "tables-v1.doc"));
+        if (!File.Exists(path)) { TestReport.Check(false, "test-data/word-tables/tables-v1.doc present"); return; }
+        List<string> blocks = Render(path, "tables-doc");
+        string Row(string text) => blocks.FirstOrDefault(block => block.Contains(">" + text + "<", StringComparison.Ordinal)) ?? "";
+        string Cell(string row, string text)
+        {
+            int at = row.IndexOf(">" + text + "<", StringComparison.Ordinal);
+            int open = at < 0 ? -1 : row.LastIndexOf("<td", at, StringComparison.Ordinal);
+            return open < 0 ? "" : row.Substring(open, row.IndexOf('>', open) - open + 1);
+        }
+
+        TestReport.Check(Regex.Matches(Row("m11"), "<td").Count == 2 && Row("m11").Contains(">m12<"), ".doc: A1:B1 merged across is one cell (Word saves one wide cell)");
+        TestReport.Check(Cell(Row("m21"), "m23").Contains("border-bottom:none") && Row("m21").Contains(">m33<"), ".doc: the cell merged down (fVertRestart) has no bottom line and holds the text Word moved there");
+        TestReport.Check(Regex.IsMatch(Row("m31"), "class=\"merged-up\" style=\"[^\"]*border-top:none"), ".doc: the continued cell (fVertMerge) is drawn empty with no top line");
+        TestReport.Check(!Cell(Row("m22"), "m22").Contains("border-bottom:none") && Cell(Row("m22"), "m22").Contains("border-top:0.5pt solid #000"), ".doc: other cells keep the table's lines (sprmTTableBorders)");
+
+        string nested = Row("outer2");
+        TestReport.Check(Regex.Matches(nested, "<table class=\"nested-table\"").Count == 2 && Regex.Matches(nested, "<tr>").Count == 4,
+                         ".doc: tables nested 3 deep are drawn nested (2 nested tables, the inner one with its 2 rows)");
+        TestReport.Check(nested.IndexOf("deep1", StringComparison.Ordinal) > nested.IndexOf("nested-table", StringComparison.Ordinal)
+                         && nested.IndexOf("inner21", StringComparison.Ordinal) > nested.IndexOf("inner12", StringComparison.Ordinal)
+                         && blocks.Count(block => block.Contains("inner21") || block.Contains("deep1")) == 1, ".doc: inner rows are not blocks of their own");
+
+        TestReport.Check(Cell(Row("red-top"), "red-top").Contains("border-top:2.25pt solid #FF0000") && Cell(Row("red-top"), "red-top").Contains("border-left:none"),
+                         ".doc: a cell's own top border (2.25 pt red) and no line where none is set");
+        string box = Cell(Row("blue-box"), "blue-box");
+        TestReport.Check(new[] { "top", "bottom", "left", "right" }.All(side => box.Contains("border-" + side + ":0.75pt double #0000FF")), ".doc: a cell boxed by double blue lines");
+        TestReport.Check(Cell(Row("yellow"), "yellow").Contains("#FFFF00"), ".doc: cell fill (sprmTDefTableShd)");
+        TestReport.Check(!Cell(Row("top"), "top").Contains("vertical-align") && Cell(Row("center"), "center").Contains("vertical-align:middle")
+                         && Cell(Row("bottom"), "bottom").Contains("vertical-align:bottom"), ".doc: TC vertAlign top / centre / bottom");
+
+        // fFirstMerged / fMerged: a copy of the fixture with row 2's first two cells merged across
+        byte[] bytes = File.ReadAllBytes(path);
+        byte[] rowTwo = [0x03, 0x05, 0x00, 0xD5, 0x0A, 0xA6, 0x15, 0x77, 0x20];
+        int at = -1;
+        for (int i = 0; i + 60 < bytes.Length && at < 0; i++)
+            if (bytes.AsSpan(i, rowTwo.Length).SequenceEqual(rowTwo) && bytes[i + 49] == 0x60) at = i;
+        TestReport.Check(at >= 0, ".doc: row 2's sprmTDefTable found in the fixture");
+        if (at < 0) return;
+        bytes[at + 9] |= 0x01;                           // TC 0: fFirstMerged
+        bytes[at + 29] |= 0x02;                          // TC 1: fMerged
+        string merged = Path.Combine(TestReport.OutputDirectory, "tables-merged-across-v1.doc");
+        File.WriteAllBytes(merged, bytes);
+        string row = Render(merged, "tables-doc-merged").FirstOrDefault(block => block.Contains(">m21<")) ?? "";
+        TestReport.Check(row.Contains("colspan=\"2\"") && !row.Contains(">m22<") && Regex.Matches(row, "<td").Count == 2 && Regex.IsMatch(row, "colspan=\"2\" style=\"width:276.9pt"),
+                         ".doc: fFirstMerged + fMerged draw one cell spanning both widths; the merged cell's text is dropped");
+    }
+
+    /// <summary>While the index builds, the last row known is provisional: whether the next row continues its cells is not known yet.</summary>
+    private static void RowAwaitingNextIsProvisional()
+    {
+        var rtf = new StringBuilder(@"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}" + "\r\n");
+        rtf.Append(@"\trowd\trbrdrb\brdrs\brdrw10\clvmgf\cellx2000\cellx4000\pard\intbl top\cell b\cell\row" + "\r\n");
+        for (int i = 0; i < 20_000; i++) rtf.Append(@"\trowd\trbrdrb\brdrs\brdrw10\clvmrg\cellx2000\cellx4000\pard\intbl \cell c").Append(i).Append(@"\cell\row").Append("\r\n");
+        rtf.Append('}');
+        string path = Path.Combine(TestReport.OutputDirectory, "tables-provisional-v3.rtf");
+        File.WriteAllText(path, rtf.ToString(), Encoding.ASCII);
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-tables-provisional"), ForcedMode = WordIndexMode.Sidecar, IndexesOnDemand = true };
+        if (File.Exists(policy.IndexPathFor(path))) File.Delete(policy.IndexPathFor(path));
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+        int last = document.KnownBlockCount - 1;
+        WordDocumentBlockHtml early = document.RenderBlocks(last, 1)[0];
+        TestReport.Check(!document.IsIndexComplete && early.IsProvisional && !early.Html.Contains("border-bottom:none") && !document.RenderBlocks(0, 1)[0].IsProvisional,
+                         $"RTF: the last row known while the index builds is provisional, rows before it are not (block {last}, provisional={early.IsProvisional})");
+        while (!document.IsIndexComplete) document.ScanAhead(5_000);
+        WordDocumentBlockHtml final = document.RenderBlocks(last, 1)[0];
+        TestReport.Check(!final.IsProvisional && final.Html.Contains("border-bottom:none"),
+                         "RTF: once the index is complete the row is final and its cell merged down has no bottom line");
     }
 
     /// <summary>What Word does not save itself: \clmgf + \clmrg, \clshdng over a fill, \trbrdr* without cell borders, a nested table merged down.</summary>
@@ -78,6 +159,20 @@ public static class WordTablesFidelityTest
         TestReport.Check(Regex.IsMatch(row, ">wide<.*?</td>", RegexOptions.Singleline) && row.Contains("border-top:0.5pt solid #000") && row.Contains("border-right:0.5pt solid #000"), "RTF: row borders (\\trbrdr*) where the cells name none");
         string nested = blocks.FirstOrDefault(block => block.Contains(">outer<")) ?? "";
         TestReport.Check(nested.Contains("rowspan=\"2\"") && nested.Contains(">a1<") && Regex.Matches(nested, "<td").Count == 5, "RTF: a nested cell merged down is one rowspan cell (3 nested cells + 2 outer)");
+
+        // two nested tables with no paragraph between: Word 16 opens them as ONE table of 2 rows (Cell.Tables.Count = 1, checked by COM)
+        // and a text box inside a nested row definition (with its own table) leaves the definition alone
+        const string twoTables = @"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}
+\pard\intbl\itap1
+\pard\intbl\itap2 a1\nestcell a2\nestcell{\*\nesttableprops\trowd\cellx1000\cellx2000{\shp{\*\shpinst{\shptxt \trowd\cellx500\cellx900\cellx1300\pard\intbl x\cell y\cell z\cell\row}}}\nestrow}
+\pard\intbl\itap2 b1\nestcell b2\nestcell b3\nestcell{\*\nesttableprops\trowd\cellx700\cellx1400\cellx2100\nestrow}
+\pard\intbl\itap1 \cell\trowd\cellx3000\row
+\pard after\par}";
+        string twoPath = Path.Combine(TestReport.OutputDirectory, "tables-two-nested-v1.rtf");
+        File.WriteAllText(twoPath, twoTables, Encoding.ASCII);
+        string two = Render(twoPath, "tables-two-nested").FirstOrDefault(block => block.Contains(">a1<")) ?? "";
+        TestReport.Check(Regex.Matches(two, "<table class=\"nested-table\"").Count == 1 && two.Contains(">b3<"), "RTF: two nested tables with no paragraph between are one table, as Word 16 opens them");
+        TestReport.Check(Regex.IsMatch(two, "<td style=\"width:50pt[^>]*>(<[^>]+>)*a1<"), "RTF: a text box's table inside a nested row definition does not replace it (a1 keeps its 1000-twip width)");
     }
 
     private static List<string> Render(string path, string cache)

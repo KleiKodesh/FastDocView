@@ -14,7 +14,7 @@ namespace FastDocView.DocBinary;
 public sealed class DocBinaryBlockIndex
 {
     private const string Magic = "KHDOCIDX";
-    private const int FormatVersion = 9;        // 9: list labels in every Word number format + raw symbol-font bullets; 8: gutter placement (right-to-left / at top) in section widths; 5: compact per-block tables; 6: no per-block tables — span anchors + list counter state, Elias-Fano lists; 7: section first blocks
+    private const int FormatVersion = 10;       // 10: rows merged down (vertically merged cells); 9: list labels in every Word number format + raw symbol-font bullets; 8: gutter placement (right-to-left / at top) in section widths; 5: compact per-block tables; 6: no per-block tables — span anchors + list counter state, Elias-Fano lists; 7: section first blocks
     /// <summary>Characters between span anchors (256 KB of UTF-16 text): a random block rescans at most this much of the piece text.</summary>
     public const int AnchorSpanCharacters = 128 << 10;
 
@@ -30,6 +30,16 @@ public sealed class DocBinaryBlockIndex
     public int[] NoteReferenceBlocks { get; }
     /// <summary>The block every section starts in, in the order of <see cref="DocBinarySectionTable.ReadStartCps"/> - a reopen rescans no span for them.</summary>
     public int[] SectionFirstBlocks { get; }
+    /// <summary>Outer table rows whose cells the next row continues (vertically merged): the row's block and a bit per cell (by its TC order).</summary>
+    public int[] MergedRowBlocks { get; private init; } = [];
+    public ulong[] MergedRowCells { get; private init; } = [];
+
+    /// <summary>The cells of row <paramref name="blockIndex"/> that the next row continues (bit i = cell i); 0 when none.</summary>
+    public ulong CellsMergedBelow(int blockIndex)
+    {
+        int at = Array.BinarySearch(MergedRowBlocks, blockIndex);
+        return at >= 0 ? MergedRowCells[at] : 0;
+    }
     private readonly WordListCounterState.DeltaChain _listStates;
 
     private DocBinaryBlockIndex(long sourceFileLength, long sourceLastWriteTicksUtc, int mainTextCharacterCount, int blockCount,
@@ -100,7 +110,11 @@ public sealed class DocBinaryBlockIndex
         var sectionBlocks = new int[sectionStartCps.Count];
         for (int i = 0; i < sectionBlocks.Length; i++) sectionBlocks[i] = BlockAt(starts, Math.Min(sectionStartCps[i], mainTextCharacterCount));
         return new DocBinaryBlockIndex(sourceLength, sourceLastWriteTicksUtc, mainTextCharacterCount, starts.Count, anchors,
-                                       WordIndexTextLengthGroups.Totals(lengths), scanner.Headings.ToArray(), noteBlocks, sectionBlocks);
+                                       WordIndexTextLengthGroups.Totals(lengths), scanner.Headings.ToArray(), noteBlocks, sectionBlocks)
+        {
+            MergedRowBlocks = scanner.MergedRowBlocks.ToArray(),
+            MergedRowCells = scanner.MergedRowCells.ToArray(),
+        };
     }
 
     /// <summary>The block containing a CP, among sorted block starts.</summary>
@@ -159,6 +173,9 @@ public sealed class DocBinaryBlockIndex
         Section($"note references ({NoteReferenceBlocks.Length})");
         new EliasFanoSequence(SectionFirstBlocks).Write(writer);
         Section($"section first blocks ({SectionFirstBlocks.Length})");
+        IndexBinaryArrays.WriteDeltaVarints(writer, MergedRowBlocks);
+        foreach (ulong cells in MergedRowCells) writer.Write(cells);
+        Section($"rows merged down ({MergedRowBlocks.Length})");
         writer.Flush();
     }
 
@@ -185,7 +202,15 @@ public sealed class DocBinaryBlockIndex
         if (noteBlocks.Any(block => block >= Math.Max(1, blockCount))) throw new InvalidDataException(".doc index: note references do not match the blocks.");
         int[] sectionBlocks = EliasFanoSequence.Read(reader).ToArray();
         if (sectionBlocks.Any(block => block >= Math.Max(1, blockCount))) throw new InvalidDataException(".doc index: section starts do not match the blocks.");
-        return new DocBinaryBlockIndex(length, ticks, mainText, blockCount, anchors, groupTotals, headings, noteBlocks, sectionBlocks);
+        int[] mergedRowBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
+        if (mergedRowBlocks.Any(block => (uint)block >= (uint)blockCount)) throw new InvalidDataException(".doc index: merged rows do not match the blocks.");
+        var mergedRowCells = new ulong[mergedRowBlocks.Length];
+        for (int i = 0; i < mergedRowCells.Length; i++) mergedRowCells[i] = reader.ReadUInt64();
+        return new DocBinaryBlockIndex(length, ticks, mainText, blockCount, anchors, groupTotals, headings, noteBlocks, sectionBlocks)
+        {
+            MergedRowBlocks = mergedRowBlocks,
+            MergedRowCells = mergedRowCells,
+        };
     }
 
     /// <summary>Saves the sidecar atomically with its record (<see cref="WordDocumentIndexCache.Save"/>); a failure leaves the old one or none - it is a cache.</summary>

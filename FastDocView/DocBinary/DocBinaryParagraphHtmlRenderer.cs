@@ -22,12 +22,16 @@ public sealed class DocBinaryParagraphHtmlRenderer
     private readonly DocBinaryNoteReferences? _notes;
 
     /// <summary>
-    /// Table facts of a paragraph's PAPX: inside a table, ends a row, and — on a row end — the
-    /// column widths (twips), right-to-left column order, per-cell shading and the row's border.
+    /// Table facts of a paragraph's PAPX: inside a table, its depth (sprmPItap), whether it ends an outer row (sprmPFTtp), a
+    /// nested cell (sprmPFInnerTableCell) or a nested row (sprmPFInnerTtp), and — on a row end — the cell edges and widths
+    /// (twips), the cells (merges, vertical alignment, own borders), right-to-left column order, per-cell shading and the
+    /// table's six default borders (top, left, bottom, right, inside horizontal, inside vertical; sprmTTableBorders).
     /// </summary>
     public readonly record struct TableParagraphInfo(bool IsInTable, bool IsRowEnd, int[]? CellWidthsTwips,
-                                                     bool IsRightToLeft = false, string?[]? CellShadingHex = null, string? BorderCss = null,
-                                                     int Justification = 0, int? LeftEdgeTwips = null, int? RowWidthTwips = null);
+                                                     bool IsRightToLeft = false, string?[]? CellShadingHex = null, string?[]? DefaultBorders = null,
+                                                     int Justification = 0, int? LeftEdgeTwips = null, int? RowWidthTwips = null,
+                                                     int Depth = 1, bool IsInnerCellEnd = false, bool IsInnerRowEnd = false,
+                                                     int[]? CellEdgesTwips = null, DocBinaryTableCell[]? Cells = null);
 
     public DocBinaryParagraphHtmlRenderer(DocBinaryPieceTable pieces, DocBinaryFormattedDiskPages pages, DocBinaryStyleSheet styles,
                                           DocBinaryNoteReferences? notes = null)
@@ -116,14 +120,21 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// <summary>The Prm grpprl of the piece holding the paragraph mark, or null (the common case).</summary>
     private byte[]? PrmGrpprlOfParagraph(int cpStart, int cpEnd) => _pieces.PieceOf(Math.Max(cpStart, cpEnd - 1)).PrmGrpprl;
 
-    /// <summary>sprmPFInTable / sprmPFTtp / sprmPFInnerTtp and sprmTDefTable of the paragraph ending at cpEnd.</summary>
+    /// <summary>
+    /// sprmPFInTable / sprmPFTtp / sprmPItap / sprmPFInnerTableCell / sprmPFInnerTtp and the row's table sprms of the paragraph
+    /// ending at cpEnd. As LibreOffice (ww8par2.cxx:1949-1967): sprmTTableBorders (Word 2000+) wins over sprmTTableBorders80, and
+    /// the sprmTSetBrc80 / sprmTSetBrc are applied after sprmTDefTable, in file order.
+    /// </summary>
     public TableParagraphInfo ReadTableInfo(int cpStart, int cpEnd)
     {
         DocBinaryFormattedDiskPages.PropertyRun? run = ParagraphRunOf(cpStart, cpEnd);
-        bool isInTable = false, isRowEnd = false, isRightToLeft = false;
-        int[]? widths = null;
+        bool isInTable = false, isRowEnd = false, isRightToLeft = false, isInnerCellEnd = false, isInnerRowEnd = false;
+        int depth = 1, depthChange = 0;
+        int[]? widths = null, edges = null;
+        DocBinaryTableCell[]? cells = null;
         string?[]? shading = null;
-        string? border = null;
+        string?[]? borders = null, borders80 = null;
+        List<(byte[] grpprl, int at, int length, bool isBrc80)>? setBorders = null;
         int justification = 0, gapHalf = 0;
         int? dxaLeft = null, firstCenter = null, lastCenter = null, preferredWidth = null;
         void ReadSprms(byte[] grpprl, int start, int length)
@@ -133,13 +144,20 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 switch (opcode)
                 {
                     case 0x2416: isInTable = grpprl[operandAt] != 0; break;                     // sprmPFInTable
-                    case 0x2417: case 0x244C: isRowEnd = grpprl[operandAt] != 0; break;         // sprmPFTtp / sprmPFInnerTtp
+                    case 0x2417: isRowEnd = grpprl[operandAt] != 0; break;                      // sprmPFTtp
+                    case 0x244C: isInnerRowEnd = grpprl[operandAt] != 0; break;                 // sprmPFInnerTtp
+                    case 0x244B: isInnerCellEnd = grpprl[operandAt] != 0; break;                // sprmPFInnerTableCell
+                    case 0x6649: if (operandLength >= 4) depth = BitConverter.ToInt32(grpprl, operandAt); break;          // sprmPItap
+                    case 0x664A: if (operandLength >= 4) depthChange += BitConverter.ToInt32(grpprl, operandAt); break;   // sprmPDtap
                     case 0xD608:                                                                // sprmTDefTable
                         widths = CellWidths(grpprl, operandAt, operandLength);
                         if (widths is not null)
                         {
                             firstCenter = BitConverter.ToInt16(grpprl, operandAt + 1);
                             lastCenter = BitConverter.ToInt16(grpprl, operandAt + 1 + widths.Length * 2);
+                            edges = new int[widths.Length + 1];
+                            for (int i = 0; i < edges.Length; i++) edges[i] = BitConverter.ToInt16(grpprl, operandAt + 1 + i * 2);
+                            cells = ReadCells(grpprl, operandAt, operandLength, widths.Length);
                         }
                         break;
                     case 0x548A: case 0x5400: justification = grpprl[operandAt] & 0x3; break;   // sprmTJc / sprmTJc90
@@ -150,7 +168,10 @@ public sealed class DocBinaryParagraphHtmlRenderer
                         break;
                     case 0x560B: isRightToLeft = BitConverter.ToUInt16(grpprl, operandAt) != 0; break;   // sprmTFBiDi
                     case 0xD612: shading = CellShading(grpprl, operandAt, operandLength); break;         // sprmTCellShd
-                    case 0xD613: border = TableBorder(grpprl, operandAt, operandLength); break;          // sprmTTableBorders
+                    case 0xD613: borders = TableBorders(grpprl, operandAt, operandLength, 8); break;     // sprmTTableBorders (Brc)
+                    case 0xD605: borders80 = TableBorders(grpprl, operandAt, operandLength, 4); break;   // sprmTTableBorders80 (Brc80)
+                    case 0xD620: (setBorders ??= new()).Add((grpprl, operandAt, operandLength, true)); break;    // sprmTSetBrc80
+                    case 0xD62F: (setBorders ??= new()).Add((grpprl, operandAt, operandLength, false)); break;   // sprmTSetBrc
                 }
             }
         }
@@ -160,11 +181,14 @@ public sealed class DocBinaryParagraphHtmlRenderer
             ReadSprms(grpprl, start, length);
         }
         if (PrmGrpprlOfParagraph(cpStart, cpEnd) is { } prm) ReadSprms(prm, 0, prm.Length);     // a Prm0 can carry sprmPFInTable / sprmPFTtp
+        if (cells is not null && setBorders is not null)
+            foreach ((byte[] grpprl, int at, int length, bool isBrc80) in setBorders) SetCellBorders(cells, grpprl, at, length, isBrc80);
         // sprmTDxaLeft moves the row so its first cell boundary is dxaLeft - dxaGapHalf (LibreOffice ww8par2.cxx WW8TabDesc:
         // "Use sprmTDxaLeft to adjust the left indent ... Use dxaGapHalf during calculation").
         int? leftEdge = firstCenter is { } first ? (dxaLeft is { } left ? left - gapHalf : first) : null;
         int? rowWidth = preferredWidth ?? (firstCenter is { } a && lastCenter is { } b && b > a ? b - a : null);
-        return new TableParagraphInfo(isInTable || isRowEnd, isRowEnd, widths, isRightToLeft, shading, border, justification, leftEdge, rowWidth);
+        return new TableParagraphInfo(isInTable || isRowEnd || isInnerRowEnd, isRowEnd, widths, isRightToLeft, shading, borders ?? borders80, justification, leftEdge, rowWidth,
+                                      Math.Max(1, depth + depthChange), isInnerCellEnd, isInnerRowEnd, edges, cells);
     }
 
     private DocBinaryFormattedDiskPages.PropertyRun? ParagraphRunOf(int cpStart, int cpEnd)
@@ -184,15 +208,58 @@ public sealed class DocBinaryParagraphHtmlRenderer
         return shading;
     }
 
-    /// <summary>sprmTTableBorders: six Brc (8 bytes: cv, width in eighths of a point, type) — the top one stands for the row.</summary>
-    private static string? TableBorder(byte[] grpprl, int operandAt, int operandLength)
+    /// <summary>sprmTTableBorders(80): six Brc (8 bytes) / Brc80 (4 bytes) - top, left, bottom, right, inside horizontal, inside vertical (LibreOffice ww8par2.cxx ProcessSprmTTableBorders, :1277-1311).</summary>
+    private static string?[]? TableBorders(byte[] grpprl, int operandAt, int operandLength, int size)
     {
-        if (operandLength < 8) return null;
-        byte type = grpprl[operandAt + 5];
-        if (type is 0 or 0xFF) return "none";
-        double width = Math.Max(0.25, grpprl[operandAt + 4] / 8.0);
-        string color = grpprl[operandAt + 3] == 0xFF ? "#000" : $"#{grpprl[operandAt]:X2}{grpprl[operandAt + 1]:X2}{grpprl[operandAt + 2]:X2}";
-        return $"{width.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}pt {(type == 3 ? "double" : "solid")} {color}";
+        if (operandLength < 6 * size) return null;
+        var borders = new string?[6];
+        for (int i = 0; i < 6; i++) borders[i] = BorderCssOf(grpprl, operandAt + i * size, size) ?? "none";
+        return borders;
+    }
+
+    /// <summary>A Brc80 (4 bytes) or Brc (8 bytes) as CSS; null for brcType 0 (not set: LibreOffice ww8par2.cxx:2222-2246 takes the table's border then).</summary>
+    private static string? BorderCssOf(byte[] grpprl, int at, int size)
+    {
+        if (at + size > grpprl.Length) return null;
+        byte type = grpprl[at + (size == 4 ? 1 : 5)];
+        if (type == 0) return null;
+        return size == 4 ? DocBinaryPropertyModifiers.Brc80Css(grpprl, at) : DocBinaryPropertyModifiers.BrcCss(grpprl, at, 8);
+    }
+
+    /// <summary>The TC80s after the cell edges of a TDefTableOperand (20 bytes each: tcgrf, wWidth, brcTop / Left / Bottom / Right as Brc80); cells not saved stay empty (LibreOffice ReadDef: nFileCols).</summary>
+    private static DocBinaryTableCell[] ReadCells(byte[] grpprl, int operandAt, int operandLength, int cellCount)
+    {
+        var cells = new DocBinaryTableCell[cellCount];
+        int first = operandAt + 1 + (cellCount + 1) * 2;
+        int saved = Math.Max(0, (operandLength - 1 - (cellCount + 1) * 2) / 20);
+        for (int i = 0; i < cellCount; i++)
+        {
+            var cell = new DocBinaryTableCell();
+            int at = first + i * 20;
+            if (i < saved && at + 20 <= grpprl.Length)
+            {
+                cell.Flags = BitConverter.ToUInt16(grpprl, at);
+                for (int side = 0; side < 4; side++) cell.Borders[side] = BorderCssOf(grpprl, at + 4 + side * 4, 4);
+            }
+            cells[i] = cell;
+        }
+        return cells;
+    }
+
+    /// <summary>
+    /// sprmTSetBrc80 / sprmTSetBrc: itcFirst, itcLim, the sides (bit 0 top, 1 left, 2 bottom, 3 right), then a Brc80 / Brc put on
+    /// cells itcFirst..itcLim-1 (LibreOffice ww8par2.cxx ProcessSprmTSetBRC, :1208-1275).
+    /// </summary>
+    private static void SetCellBorders(DocBinaryTableCell[] cells, byte[] grpprl, int at, int length, bool isBrc80)
+    {
+        int size = isBrc80 ? 4 : 8;
+        if (length < 3 + size) return;
+        int firstCell = grpprl[at], limit = Math.Min((int)grpprl[at + 1], cells.Length);
+        int sides = grpprl[at + 2];
+        string? css = BorderCssOf(grpprl, at + 3, size);         // brcType 0 clears the side back to the table border (ww8par2.cxx:2226)
+        for (int i = firstCell; i < limit; i++)
+            for (int side = 0; side < 4; side++)
+                if ((sides & (1 << side)) != 0) cells[i].Borders[side] = css;
     }
 
     /// <summary>TDefTableOperand: itcMac, then itcMac + 1 cell boundaries (rgdxaCenter) → widths.</summary>
@@ -329,24 +396,42 @@ public sealed class DocBinaryParagraphHtmlRenderer
         return index < _pictureBullets.Count ? _pictureBullets[index] : null;
     }
 
-    /// <summary>One table row: cells end at cell marks, the row at its row-end mark (the last paragraph).</summary>
-    public string RenderRow(int cpStart, int cpEnd)
+    /// <summary>
+    /// One outer table row (one block): cells end at cell marks, the row at its row-end mark (the last paragraph). Nested
+    /// tables (sprmPItap &gt; 1) are drawn inside their cell, each a whole &lt;table&gt; with rowspans.
+    /// <paramref name="cellsMergedBelow"/> (bit i = cell i, from the index) are the cells the next row continues, drawn without
+    /// their bottom line; <paramref name="isFirstRow"/> / <paramref name="isLastRow"/> pick the table's outer or inside
+    /// horizontal border (LibreOffice ww8par2.cxx:2226-2246).
+    /// </summary>
+    public string RenderRow(int cpStart, int cpEnd, ulong cellsMergedBelow = 0, bool isFirstRow = true, bool isLastRow = true)
     {
         DocBinaryFieldReader? outer = _fields;
         if (_textBoxDepth == 0) _fields = NewFieldReader(cpStart, restore: true);
-        try { return RenderRowWithFields(cpStart, cpEnd); }
+        try { return RenderRowWithFields(cpStart, cpEnd, cellsMergedBelow, isFirstRow, isLastRow); }
         finally { if (_textBoxDepth == 0) _fields = outer; }
     }
 
-    private string RenderRowWithFields(int cpStart, int cpEnd)
+    /// <summary>A nested table's row while its table is read: the row-end paragraph's facts and its cells' HTML.</summary>
+    private readonly record struct NestedRow(TableParagraphInfo Info, List<string> Cells);
+
+    /// <summary>One table depth while a row is read: the cell being filled, the cells of its row so far, its finished rows (nested).</summary>
+    private sealed class TableDepth
+    {
+        public readonly StringBuilder Cell = new();
+        public readonly List<string> Cells = new();
+        public readonly List<NestedRow> Rows = new();
+        public string? PreviousStyleKey;
+    }
+
+    private string RenderRowWithFields(int cpStart, int cpEnd, ulong cellsMergedBelow, bool isFirstRow, bool isLastRow)
     {
         string text = _pieces.ReadText(cpStart, cpEnd);
-        var paragraphs = new List<(int start, int end, bool endsCell)>();
+        var paragraphs = new List<(int start, int end, char mark)>();
         int paragraphStart = cpStart;
         for (int i = 0; i < text.Length; i++)
         {
             if (text[i] is not ('\r' or CellOrRowMark)) continue;
-            paragraphs.Add((paragraphStart, cpStart + i + 1, text[i] == CellOrRowMark));
+            paragraphs.Add((paragraphStart, cpStart + i + 1, text[i]));
             paragraphStart = cpStart + i + 1;
         }
         if (paragraphs.Count == 0) return Render(cpStart, cpEnd);
@@ -354,36 +439,161 @@ public sealed class DocBinaryParagraphHtmlRenderer
         (int lastStart, int lastEnd, _) = paragraphs[paragraphs.Count - 1];
         TableParagraphInfo rowInfo = ReadTableInfo(lastStart, lastEnd);
         (WordParagraphFormatting rowFormatting, _) = ResolveParagraph(lastStart, lastEnd);
+        int contentCount = rowInfo.IsRowEnd ? paragraphs.Count - 1 : paragraphs.Count;    // a row without its end mark: its last paragraph is content
+
+        // Word 2000+ nesting (LibreOffice ww8par.cxx:2729-2733 TabRowSprm, :3686 tdf#106799): a paragraph's depth is sprmPItap;
+        // a nested cell ends at sprmPFInnerTableCell, a nested row at sprmPFInnerTtp (which also ends its cell); an outer cell at
+        // its cell mark. A nested table is complete when a paragraph of a shallower depth follows.
+        var depths = new List<TableDepth> { new() };
+        TableDepth DepthOf(int depth) { while (depths.Count < depth) depths.Add(new TableDepth()); return depths[depth - 1]; }
+        void FlushDeeperThan(int depth)
+        {
+            for (int level = depths.Count; level > depth; level--)
+            {
+                TableDepth table = depths[level - 1];
+                if (table.Cell.Length > 0 || table.Cells.Count > 0) CloseNestedRow(table, null);
+                if (table.Rows.Count == 0) continue;
+                var nested = new StringBuilder(256);
+                AppendNestedTable(nested, table.Rows);
+                table.Rows.Clear();
+                TableDepth holder = depths[level - 2];
+                holder.Cell.Append(nested);
+                holder.PreviousStyleKey = null;
+            }
+        }
+        for (int i = 0; i < contentCount; i++)          // the last paragraph is the row-end mark itself
+        {
+            (int start, int end, char mark) = paragraphs[i];
+            TableParagraphInfo info = ReadTableInfo(start, end);
+            int depth = info.IsInTable || mark == CellOrRowMark ? info.Depth : 1;
+            FlushDeeperThan(depth);
+            TableDepth table = DepthOf(depth);
+            if (depth > 1 && info.IsInnerRowEnd) { CloseNestedRow(table, info); continue; }
+            table.PreviousStyleKey = AppendParagraph(table.Cell, start, end, table.PreviousStyleKey, null);
+            bool endsCell = depth > 1 ? info.IsInnerCellEnd : mark == CellOrRowMark;
+            if (endsCell) { table.Cells.Add(table.Cell.ToString()); table.Cell.Clear(); table.PreviousStyleKey = null; }
+        }
+        FlushDeeperThan(1);
+        TableDepth row = depths[0];
+        if (row.Cell.Length > 0) row.Cells.Add(row.Cell.ToString());
 
         var html = new StringBuilder(1024);
         WordHtmlText.AppendOpenTag(html, "table", "table-layout:fixed;" + RowPlacementCss(rowInfo), "table-row", rowInfo.IsRightToLeft || rowFormatting.IsRightToLeft);
         html.Append("<tr>");
-        int cellIndex = 0;
-        bool isCellOpen = false;
-        string? previousStyleKey = null;
-        for (int i = 0; i < paragraphs.Count - 1; i++)          // the last paragraph is the row-end mark itself
-        {
-            (int start, int end, bool endsCell) = paragraphs[i];
-            if (!isCellOpen)
-            {
-                var cellCss = new StringBuilder();
-                if (rowInfo.CellWidthsTwips is { } widths && cellIndex < widths.Length && widths[cellIndex] > 0)
-                    cellCss.Append("width:").Append(WordParagraphFormatting.TwipsToPt(widths[cellIndex])).Append("pt;");
-                if (rowInfo.CellShadingHex is { } shading && cellIndex < shading.Length && shading[cellIndex] is { } fill)
-                    cellCss.Append("background:").Append(WordHtmlColor.Css(fill)).Append(';');
-                if (rowInfo.BorderCss is { } border) cellCss.Append("border:").Append(border).Append(';');
-                html.Append("<td");
-                if (cellCss.Length > 0) html.Append(" style=\"").Append(cellCss).Append('"');
-                html.Append('>');
-                isCellOpen = true;
-                previousStyleKey = null;
-            }
-            previousStyleKey = AppendParagraph(html, start, end, previousStyleKey, null);
-            if (endsCell) { html.Append("</td>"); isCellOpen = false; cellIndex++; }
-        }
-        if (isCellOpen) html.Append("</td>");
+        AppendRowCells(html, rowInfo, row.Cells, null, cellsMergedBelow, isFirstRow, isLastRow);
         html.Append("</tr></table>");
         return html.ToString();
+    }
+
+    /// <summary>A nested row ends: its open cell is closed (a row-end mark ends its cell too) and the row waits for the rest of its table.</summary>
+    private static void CloseNestedRow(TableDepth table, TableParagraphInfo? info)
+    {
+        if (table.Cell.Length > 0) { table.Cells.Add(table.Cell.ToString()); table.Cell.Clear(); }
+        table.Rows.Add(new NestedRow(info ?? default, new List<string>(table.Cells)));
+        table.Cells.Clear();
+        table.PreviousStyleKey = null;
+    }
+
+    /// <summary>Cell right edges within Word's tolerance: "corresponding entries in rgdxaCenter ... differ by at most 3" (ww8struc.hxx WW8_TCell, :536).</summary>
+    private static bool IsSameEdge(int a, int b) => Math.Abs(a - b) <= 3;
+
+    /// <summary>The right edge of cell i of a row, or null without a definition.</summary>
+    private static int? RightEdge(in TableParagraphInfo row, int i) => row.CellEdgesTwips is { } edges && i + 1 < edges.Length ? edges[i + 1] : null;
+
+    /// <summary>
+    /// A nested table, all its rows read: one &lt;table&gt;, a cell merged down (fVertRestart, then fVertMerge cells at the same
+    /// right edge below; LibreOffice ww8par2.cxx:2582-2620) as one rowspan cell.
+    /// </summary>
+    private void AppendNestedTable(StringBuilder html, List<NestedRow> rows)
+    {
+        WordHtmlText.AppendOpenTag(html, "table", "table-layout:fixed;", "nested-table", rows[0].Info.IsRightToLeft ? true : null);
+        bool IsContinued(int rowIndex, int edge) => rowIndex < rows.Count && rows[rowIndex].Info.Cells is { } cells
+                                                     && Enumerable.Range(0, cells.Length).Any(i => cells[i].ContinuesAbove && RightEdge(rows[rowIndex].Info, i) is { } e && IsSameEdge(e, edge));
+        bool HasAbove(int rowIndex, int edge) => rowIndex > 0 && rows[rowIndex - 1].Info.Cells is { } cells
+                                                  && Enumerable.Range(0, cells.Length).Any(i => cells[i].IsVerticallyMerged && RightEdge(rows[rowIndex - 1].Info, i) is { } e && IsSameEdge(e, edge));
+        for (int r = 0; r < rows.Count; r++)
+        {
+            TableParagraphInfo info = rows[r].Info;
+            int[]? spans = null;
+            var covered = new bool[info.Cells?.Length ?? 0];
+            if (info.Cells is { } cells)
+            {
+                spans = new int[cells.Length];
+                for (int i = 0; i < cells.Length; i++)
+                {
+                    if (RightEdge(info, i) is not { } edge) continue;
+                    // a continued cell with no merge above it (a table that starts mid-merge) is an ordinary cell
+                    if (cells[i].ContinuesAbove && HasAbove(r, edge)) { covered[i] = true; continue; }
+                    int span = 1;
+                    if (cells[i].IsVerticallyMerged) while (IsContinued(r + span, edge)) span++;
+                    spans[i] = span;
+                }
+            }
+            html.Append("<tr>");
+            AppendRowCells(html, info, rows[r].Cells, covered, 0, r == 0, r == rows.Count - 1, spans);
+            html.Append("</tr>");
+        }
+        html.Append("</table>");
+    }
+
+    /// <summary>
+    /// The &lt;td&gt;s of one row from its definition (LibreOffice ww8par2.cxx WW8TabDesc): widths from the cell edges, fFirstMerged +
+    /// fMerged as a colspan (the merged cells' text dropped), fill (sprmTCellShd), vertical alignment (TC vertAlign, :3116-3130),
+    /// borders: the cell's own (TC brc*, sprmTSetBrc), else the table's for that side - outer top / bottom on the table's first /
+    /// last row, else inside horizontal; outer left / right on the first / last cell, else inside vertical (:2222-2246).
+    /// Outer rows draw a cell merged into the one above (fVertMerge) empty, without its top line (class merged-up); nested
+    /// tables skip it under the rowspan (<paramref name="covered"/>).
+    /// </summary>
+    private void AppendRowCells(StringBuilder html, in TableParagraphInfo row, List<string> cellsHtml, bool[]? covered, ulong cellsMergedBelow,
+                                bool isFirstRow, bool isLastRow, int[]? rowSpans = null)
+    {
+        DocBinaryTableCell[]? cells = row.Cells;
+        int count = Math.Max(cells?.Length ?? 0, cellsHtml.Count);
+        // a row that names no border keeps the stylesheet's cell lines (as before)
+        bool hasBorders = row.DefaultBorders is not null || cellsMergedBelow != 0
+                          || (cells?.Any(cell => cell.IsVerticallyMerged || cell.Borders.Any(border => border is not null)) ?? false);
+        for (int i = 0; i < count; i++)
+        {
+            DocBinaryTableCell? cell = cells is not null && i < cells.Length ? cells[i] : null;
+            if (cell is { ContinuesBefore: true } && i > 0) continue;                                          // drawn by the first cell
+            if (covered is not null && rowSpans is not null && i < covered.Length && covered[i]) continue;      // under a rowspan
+            bool isMergedUp = rowSpans is null && cell is { ContinuesAbove: true };
+            int span = 1;
+            while (cells is not null && i + span < cells.Length && cells[i + span].ContinuesBefore) span++;
+            int last = i + span - 1;
+            var css = new StringBuilder();
+            if (row.CellEdgesTwips is { } edges && last + 1 < edges.Length)
+            {
+                int width = Math.Abs(edges[last + 1] - edges[i]);
+                if (width > 0) css.Append("width:").Append(WordParagraphFormatting.TwipsToPt(width)).Append("pt;");
+            }
+            else if (row.CellWidthsTwips is { } widths && i < widths.Length && widths[i] > 0)
+                css.Append("width:").Append(WordParagraphFormatting.TwipsToPt(widths[i])).Append("pt;");
+            if (row.CellShadingHex is { } shading && i < shading.Length && shading[i] is { } fill)
+                css.Append("background:").Append(WordHtmlColor.Css(fill)).Append(';');
+            if (cell is { VerticalAlignment: 1 or 2 } aligned) css.Append("vertical-align:").Append(aligned.VerticalAlignment == 1 ? "middle" : "bottom").Append(';');
+            if (hasBorders)
+            {
+                string?[] table = row.DefaultBorders ?? new string?[6];
+                DocBinaryTableCell? lastCell = cells is not null && last < cells.Length ? cells[last] : cell;
+                bool isFirstCell = i == 0, isLastCell = last >= count - 1;
+                bool isMergedBelow = i < 64 && (cellsMergedBelow & (1UL << i)) != 0;
+                string Side(string? own, string? fallback) => own ?? fallback ?? "none";
+                css.Append("border-top:").Append(isMergedUp ? "none" : Side(cell?.Borders[DocBinaryTableCell.Top], isFirstRow ? table[0] : table[4])).Append(';');
+                css.Append("border-bottom:").Append(isMergedBelow ? "none" : Side(cell?.Borders[DocBinaryTableCell.Bottom], isLastRow ? table[2] : table[4])).Append(';');
+                css.Append("border-left:").Append(Side(cell?.Borders[DocBinaryTableCell.Left], isFirstCell ? table[1] : table[5])).Append(';');
+                css.Append("border-right:").Append(Side(lastCell?.Borders[DocBinaryTableCell.Right], isLastCell ? table[3] : table[5])).Append(';');
+            }
+            html.Append("<td");
+            if (span > 1) html.Append(" colspan=\"").Append(span.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append('"');
+            if (rowSpans is not null && i < rowSpans.Length && rowSpans[i] > 1)
+                html.Append(" rowspan=\"").Append(rowSpans[i].ToString(System.Globalization.CultureInfo.InvariantCulture)).Append('"');
+            if (isMergedUp) html.Append(" class=\"merged-up\"");
+            if (css.Length > 0) html.Append(" style=\"").Append(css).Append('"');
+            html.Append('>');
+            if (!isMergedUp && i < cellsHtml.Count) html.Append(cellsHtml[i]);
+            html.Append("</td>");
+        }
     }
 
     /// <summary>

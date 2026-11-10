@@ -443,7 +443,14 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
             _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             string html;
             IReadOnlyList<WordDocumentNoteHtml> notes;
-            if (kind == WordDocumentBlockKind.TableRow) { html = _renderer.RenderRow(start, end); notes = RenderNotesIn(start, end); }
+            if (kind == WordDocumentBlockKind.TableRow)
+            {
+                // the table's outer top / bottom border on its first / last row (the block kinds around it, from the index)
+                bool isFirstRow = blockIndex == 0 || _table.BlockKindOf(blockIndex - 1) != WordDocumentBlockKind.TableRow;
+                bool isLastRow = blockIndex + 1 >= BlockCount || _table.BlockKindOf(blockIndex + 1) != WordDocumentBlockKind.TableRow;
+                html = _renderer.RenderRow(start, end, _index.CellsMergedBelow(blockIndex), isFirstRow, isLastRow);
+                notes = RenderNotesIn(start, end);
+            }
             else if (IsDropCapJoiningNext(blockIndex)) { html = ""; notes = []; }      // drawn, with its notes, by the next paragraph
             else
             {
