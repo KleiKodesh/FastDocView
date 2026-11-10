@@ -355,6 +355,11 @@ internal static class OdtChart
         if (axis?.Elements(Chart + "grid").Any(g => (string?)g.Attribute(Chart + "class") is null or "major") == true) element.Add(new XElement("majorGridlines"));
         if (TitleText(axis?.Element(Chart + "title")) is { } title) element.Add(RichTitle(title, LineSizes(axis!.Element(Chart + "title"), styles)));
         if (SizeOf((string?)axis?.Attribute(Chart + "style-name"), styles) is { } labelSize) element.Add(TextProperties(labelSize));
+        // label wrapping and staggering preferences of the axis style (text:line-break, loext:try-staggering-first; VCartesianAxis.cxx:513-575)
+        XNamespace textNs = "urn:oasis:names:tc:opendocument:xmlns:text:1.0", loext = "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0";
+        XElement? axisChartProperties = (string?)axis?.Attribute(Chart + "style-name") is { } axisStyle && styles.TryGetValue(axisStyle, out XElement? axisStyleElement) ? axisStyleElement.Element(Style + "chart-properties") : null;
+        element.SetAttributeValue("lineBreak", (string?)axisChartProperties?.Attribute(textNs + "line-break") == "true" ? "1" : "0");
+        element.SetAttributeValue("tryStaggeringFirst", (string?)axisChartProperties?.Attribute(loext + "try-staggering-first") == "true" ? "1" : "0");
         if (chartProperty(axis, "interval-major") is { } step) element.Add(new XElement("majorUnit", new XAttribute("val", step)));
         element.Add(new XElement("crossAx", Val(crossId)));
         return element;
@@ -538,6 +543,8 @@ internal static class OdtChart
         if (Grey((string?)plotArea?.Attribute(dr3d + "ambient-color")) is var ambient && !double.IsNaN(ambient)) view.SetAttributeValue("ambient", N(ambient));
         XElement? light = plotArea?.Elements(dr3d + "light").FirstOrDefault(l => (string?)l.Attribute(dr3d + "enabled") == "true");
         if (Grey((string?)light?.Attribute(dr3d + "diffuse-color")) is var diffuse && !double.IsNaN(diffuse)) view.SetAttributeValue("light", N(diffuse));
+        if (Vector((string?)light?.Attribute(dr3d + "direction")) is { } lightDirection)
+            view.SetAttributeValue("lightDirection", N(lightDirection.X) + " " + N(lightDirection.Y) + " " + N(lightDirection.Z));
         return view;
     }
 

@@ -65,7 +65,7 @@ internal sealed partial class DocxChart
         public bool Gridlines;
         public string? Title;
         public double TitleSize = 10, LabelSize = 9;
-        public bool MidCategory;
+        public bool MidCategory, LineBreak = true, TryStaggeringFirst;
         public string? FormatCode;
         public bool Reversed;
         public double? LogBase;
@@ -138,6 +138,7 @@ internal sealed partial class DocxChart
                     MajorUnit = Number(element.Element("majorUnit")), Gridlines = element.Element("majorGridlines") is not null,
                     Title = element.Element("title") is { } axisTitle ? TitleText(axisTitle) : null,
                     MidCategory = Value(element.Element("crossBetween")) == "midCat",
+                    LineBreak = (string?)element.Attribute("lineBreak") != "0", TryStaggeringFirst = (string?)element.Attribute("tryStaggeringFirst") == "1",
                     TitleSize = FontSize(element.Element("title")) ?? (chartSize is { } c10 ? c10 : 10), LabelSize = FontSize(element.Element("txPr")) ?? chartSize ?? 9,
                     FormatCode = (string?)element.Element("numFmt")?.Attribute("formatCode"),
                     Reversed = Value(element.Element("scaling")?.Element("orientation")) == "maxMin",
@@ -353,6 +354,8 @@ internal sealed partial class DocxChart
                 position += 1;
                 continue;
             }
+            // stacked columns list their series top down, as they are stacked (both Word's and LibreOffice's PDFs of the fixture: the last series first)
+            int groupStart = entries.Count;
             foreach (Series series in group.Series)
             {
                 if (!_deletedLegendEntries.Contains(position))
@@ -360,6 +363,7 @@ internal sealed partial class DocxChart
                                  group.Kind is Kind.Line or Kind.Scatter or Kind.Radar));
                 position++;
             }
+            if (group.Kind == Kind.Bar && !group.Horizontal && group.Grouping is "stacked" or "percentStacked") entries.Reverse(groupStart, entries.Count - groupStart);
         }
         return entries;
     }
@@ -457,7 +461,7 @@ internal sealed partial class DocxChart
         svg.Append("<rect width=\"").Append(N(width)).Append("\" height=\"").Append(N(height)).Append("\" fill=\"").Append(chartFill).Append('"')
            .Append(chartLine is null ? " stroke=\"none\"" : " stroke=\"" + chartLine + "\" stroke-width=\"0.75\"").Append("/>");
         string textColor = DocxDrawingColor.Css(new XElement("c", new XElement("schemeClr", new XAttribute("val", "tx1"), new XElement("lumMod", new XAttribute("val", "65000")), new XElement("lumOff", new XAttribute("val", "35000")))), _theme) ?? "#595959";
-        double top = 6, bottom = height - 6, left = 6, right = width - 6;
+        double top = 6, bottom = height - (_libreOfficeLayout ? 6 : 10.8), left = 6, right = width - 6;   // Word: 10.8 pt to the bottom edge (measured)
         if (_title is not null)
         {
             // each line at its own size, 1.2 x the size apart, the first baseline one size below the top
@@ -471,7 +475,7 @@ internal sealed partial class DocxChart
                 Text(svg, width / 2, y + size, lines[i], size, textColor, "middle");
                 y += size * 1.2;
             }
-            top = y + 8;
+            top = y + 8 + (_libreOfficeLayout ? 0 : TitleSize(0) * 0.35);   // Word leaves about a third of the title size more below it (measured on its PDFs: the top tick 18-19 pt below the title baseline)
         }
         List<(string Text, string Color, bool Line)> legend = LegendEntries();
         if (legend.Count > 0)
@@ -495,14 +499,14 @@ internal sealed partial class DocxChart
                 double legendWidth = Math.Min(width / 3, legend.Max(e => e.Text.Length) * size * 0.55 + 18);
                 double y = (top + bottom) / 2 - legend.Count * entryHeight / 2;
                 double x = _legendPosition == "l" ? left : right - legendWidth;
-                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14, y + 8, text, size, textColor, "start"); y += entryHeight; }
+                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, textColor, "start"); y += entryHeight; }
                 if (_legendPosition == "l") left += legendWidth + 6; else right -= legendWidth + 6;
             }
             else
             {
                 double total = legend.Sum(e => e.Text.Length * size * 0.55 + 22);
                 double x = Math.Max(left, width / 2 - total / 2), y = _legendPosition == "t" ? top : bottom - entryHeight;
-                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14, y + 8, text, size, textColor, "start"); x += text.Length * size * 0.55 + 22; }
+                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, textColor, "start"); x += text.Length * size * 0.55 + 22; }
                 if (_legendPosition == "t") top += entryHeight + 6; else bottom -= entryHeight + 6;
             }
         }
@@ -598,7 +602,7 @@ internal sealed partial class DocxChart
         }
         min = axis?.Min ?? min; max = axis?.Max ?? max;
         if (max <= min) max = min + 1;
-        int count = Math.Max(2, Math.Min(10, (int)(axisLength / Math.Max(1, labelSize * 1.2))));
+        int count = Math.Max(2, Math.Min(10, (int)(axisLength / Math.Max(1, labelSize * (_libreOfficeLayout ? 1.2 : 1.0)))));   // LibreOffice: the text height; Word: one size (measured: 45 / 5 over 107 pt at 10 pt)
         double step = axis?.MajorUnit is { } unit && unit > (max - min) / 1000 ? unit : NiceStep((max - min) / count);
         double low = axis?.Min ?? Math.Floor(min / step + 1e-9) * step, high = axis?.Max ?? Math.Ceiling(max / step - 1e-9) * step;
         if (_libreOfficeLayout && axis?.Max is null && high != 0 && (dataMax - low) / (high - low) > 20.0 / 21.0) high += step;
@@ -704,13 +708,31 @@ internal sealed partial class DocxChart
         if (secondaryAxis?.Title is { } secondaryTitle) { right -= 14; Text(svg, right + 6, (top + bottom) / 2, secondaryTitle, 10, textColor, "middle", 90); }
         right -= secondaryLabelWidth;
         if (horizontal) { bottom -= labelSize + 4; left += categoryAxis is { Deleted: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
-        else { left += valueLabelWidth; bottom -= categoryAxis is { Deleted: true } ? 0 : labelSize + 4; }
+        CategoryLabelPlan? categoryPlan = null;
+        if (!horizontal)
+        {
+            left += valueLabelWidth;
+            bool drawnIn3D = _is3D && _groups.Count == 1 && _groups[0].Kind is Kind.Bar or Kind.Line or Kind.Area;   // the 3-D paths place their own labels
+            if (!xy && !drawnIn3D && categoryAxis is not { Deleted: true })
+            {
+                int slots = MidCategory() ? Math.Max(1, categoryCount - 1) : categoryCount;
+                categoryPlan = PlanCategoryLabels(Enumerable.Range(0, categoryCount).Select(i => i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture)).ToList(),
+                                                  Math.Max(1, right - left) / slots, labelSize, categoryAxis);
+                bottom -= categoryPlan.Height;
+            }
+            else bottom -= categoryAxis is { Deleted: true } ? 0 : labelSize + 4;
+        }
         double plotWidth = Math.Max(1, right - left), plotHeight = Math.Max(1, bottom - top);
         string gridColor = DocxDrawingColor.Css(new XElement("c", new XElement("schemeClr", new XAttribute("val", "tx1"), new XElement("lumMod", new XAttribute("val", "15000")), new XElement("lumOff", new XAttribute("val", "85000")))), _theme) ?? "#D9D9D9";
         string? plotFill = PropertiesFill(_plotAreaProperties, null);
-        if (_is3D && !horizontal && !xy && _groups.Count == 1 && _groups[0].Kind == Kind.Bar)
+        if (_is3D && !xy && _groups.Count == 1 && _groups[0].Kind == Kind.Bar)
         {
-            Draw3DColumns(svg, categoryCount, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { Deleted: true }, textColor, gridColor, plotFill);
+            Draw3DColumns(svg, categoryCount, horizontal, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { Deleted: true }, textColor, gridColor, plotFill, labelSize);
+            return;
+        }
+        if (_is3D && !xy && !horizontal && _groups.Count == 1 && _groups[0].Kind is Kind.Line or Kind.Area)
+        {
+            Draw3DRows(svg, categoryCount, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { Deleted: true }, textColor, gridColor, plotFill, labelSize);
             return;
         }
         if (_is3D && !horizontal)
@@ -743,7 +765,7 @@ internal sealed partial class DocxChart
                 double y = bottom - t * plotHeight;
                 if (valueAxis?.Gridlines != false) svg.Append("<path d=\"M").Append(N(left)).Append(' ').Append(N(y)).Append('H').Append(N(right)).Append("\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
                 // LibreOffice centres the label's full text height on the tick (measured: baseline 0.08 x size above it); Word a third of the size below
-                Text(svg, left - (_libreOfficeLayout ? labelSize * 0.7 : 4), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, textColor, "end");
+                Text(svg, left - (_libreOfficeLayout ? labelSize * 0.7 : 2), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, textColor, "end");
             }
         }
         foreach ((double value, string text) in secondaryLabels)
@@ -755,6 +777,17 @@ internal sealed partial class DocxChart
                 string label = i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture);
                 double centre = MidCategory() ? (categoryCount == 1 ? 0.5 : (double)i / (categoryCount - 1)) : (i + 0.5) / categoryCount;
                 if (horizontal) Text(svg, left - 4, bottom - centre * plotHeight + labelSize / 3, label, labelSize, textColor, "end");
+                else if (categoryPlan is { } plan)
+                {
+                    if (i % plan.Rhythm != 0) continue;
+                    double x = left + centre * plotWidth;
+                    if (plan.Rotated) Text(svg, x, bottom + labelSize, label, labelSize, textColor, "end", -45);
+                    else
+                    {
+                        double y = bottom + labelSize + 2 + (_libreOfficeLayout ? 0 : labelSize / 3) + (plan.Staggered && i % 2 == 1 ? labelSize * 1.2 : 0);   // Word: a third of the size lower (measured)
+                        foreach (string line in plan.Lines[i]) { Text(svg, x, y, line, labelSize, textColor, "middle"); y += labelSize * 1.2; }
+                    }
+                }
                 else Text(svg, left + centre * plotWidth, bottom + labelSize + 2, label, labelSize, textColor, "middle");
             }
         if (xy)
@@ -779,6 +812,47 @@ internal sealed partial class DocxChart
 
     /// <summary>c:crossBetween midCat (21.2.2.33): the value axis crosses at the categories, so points and labels sit on the category ticks, first and last at the plot's edges (only when no bars share the plot).</summary>
     private bool MidCategory() => ValueAxis() is { MidCategory: true } && _groups.All(g => g.Kind is Kind.Line or Kind.Area);
+
+    /// <summary>How a horizontal category axis shows its labels when they do not fit side by side.</summary>
+    private sealed record CategoryLabelPlan(List<string[]> Lines, bool Staggered, bool Rotated, int Rhythm, double Height);
+
+    /// <summary>
+    /// Crowded category labels, as LibreOffice decides (chart2 VCartesianAxis.cxx:513-575, 720-960): line breaks first where allowed
+    /// (ODF text:line-break; the text wrapped into the tick distance less 5 %, given up when a single word does not fit), then, when
+    /// labels still overlap, staggering (only with loext:try-staggering-first) or a 45-degree rotation, then showing every n-th label
+    /// (the "rhythm") until they no longer overlap. Word wraps category text at spaces into its slot the same way and otherwise turns
+    /// the labels 45 degrees (measured on Word's PDF of the crowded fixture chart). Text widths are estimated at 0.55 x the size per character.
+    /// </summary>
+    private CategoryLabelPlan PlanCategoryLabels(List<string> labels, double slot, double size, Axis? axis)
+    {
+        double Width(string text) => text.Length * size * (_libreOfficeLayout ? 0.55 : 0.5);   // Liberation Sans vs Calibri average advance
+        double room = slot * 0.95;
+        var single = labels.Select(l => new[] { l }).ToList();
+        if (labels.All(l => Width(l) <= room)) return new CategoryLabelPlan(single, false, false, 1, size + 4);
+        bool wrapAllowed = axis?.LineBreak != false;
+        if (wrapAllowed && labels.All(l => l.Split(' ').All(word => Width(word) <= room)))
+        {
+            var wrapped = labels.Select(label =>
+            {
+                var lines = new List<string>();
+                string current = "";
+                foreach (string word in label.Split(' '))
+                {
+                    string candidate = current.Length == 0 ? word : current + " " + word;
+                    if (Width(candidate) <= room || current.Length == 0) current = candidate;
+                    else { lines.Add(current); current = word; }
+                }
+                if (current.Length > 0) lines.Add(current);
+                return lines.ToArray();
+            }).ToList();
+            return new CategoryLabelPlan(wrapped, false, false, 1, wrapped.Max(l => l.Length) * size * 1.2 + 4);
+        }
+        if (_libreOfficeLayout && axis?.TryStaggeringFirst == true && labels.All(l => Width(l) <= room * 2))
+            return new CategoryLabelPlan(single, true, false, 1, size * 2.4 + 4);
+        // turned 45 degrees: neighbours overlap when the text height along the axis (size x sqrt 2) exceeds the slot
+        int rhythm = Math.Max(1, (int)Math.Ceiling(size * Math.Sqrt(2) / Math.Max(1e-6, slot)));
+        return new CategoryLabelPlan(single, false, true, rhythm, labels.Max(Width) * Math.Sqrt(0.5) + size + 4);
+    }
 
     private static double CategoryLabelWidth(List<string> categories, double labelSize) => categories.DefaultIfEmpty("").Max(c => c.Length) * labelSize * 0.55 + 6;
 
@@ -1023,7 +1097,7 @@ internal sealed partial class DocxChart
                 svg.Append("<rect x=\"").Append(N(x)).Append("\" y=\"").Append(N(y)).Append("\" width=\"").Append(N(Math.Max(0, w))).Append("\" height=\"").Append(N(Math.Max(0, h)))
                    .Append("\" fill=\"").Append(fill.Css).Append('"').Append(fill.Opacity < 1 ? " fill-opacity=\"" + N(fill.Opacity) + "\"" : "").Append("/>");
                 if (LabelText(group, series, i) is { } label)
-                    Text(svg, group.Horizontal ? x + w + 2 : x + w / 2, group.Horizontal ? y + h / 2 + 3 : y - 2 - (_libreOfficeLayout ? 0.7 * _dataLabelSize : 0), label, _dataLabelSize, textColor, group.Horizontal ? "start" : "middle");
+                    Text(svg, group.Horizontal ? x + w + 2 : x + w / 2, group.Horizontal ? y + h / 2 + 3 : y - 2 + (_libreOfficeLayout ? -0.7 : 0.23) * _dataLabelSize, label, _dataLabelSize, textColor, group.Horizontal ? "start" : "middle");
                 if (!group.Horizontal && (series.ErrorBars.Count > 0 || series.Trendlines.Count > 0 && !stacked))
                 {
                     if (!extras.TryGetValue(series, out var list)) extras[series] = list = new();

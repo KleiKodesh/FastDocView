@@ -1,4 +1,4 @@
-# Builds test-data/odt-charts/odt-charts-v3.odt (and, converted by LibreOffice, odt-charts-v3.docx) with LibreOffice itself (UNO): one Writer chart per chart type.
+# Builds test-data/odt-charts/odt-charts-v4.odt (and, converted by LibreOffice, odt-charts-v4.docx) with LibreOffice itself (UNO): one Writer chart per chart type.
 # Run with LibreOffice's python while soffice listens:  soffice --headless --accept="pipe,name=fdvcharts;urp;" (SAL_DISABLE_PRINTERLIST=1 SAL_DISABLE_DEFAULTPRINTER=1)
 import sys, time, uno
 from com.sun.star.beans import PropertyValue
@@ -37,6 +37,8 @@ def extras(name, chart):
         for key, value in (("ExtrapolateForward", 1.0), ("ExtrapolateBackward", 0.5), ("ForceIntercept", True), ("InterceptValue", 0.0)):
             try: added.setPropertyValue(key, value)
             except Exception as e: print("curve", key, e)
+    if name == "ChartWrapped":
+        d.getXAxis().TextBreak = True
     if name == "ChartColumn3D":
         d.getFloor().FillColor = 0xCCE5FF
 
@@ -60,6 +62,11 @@ CHARTS = [
     ("ChartTrend", "com.sun.star.chart.XYDiagram", {}, "Trend Fit", ["1", "2", "3", "4"], ["X", "Obs"], [[1, 2], [2, 4.5], [3, 5.5], [4, 8]]),
     ("ChartPie3D", "com.sun.star.chart.PieDiagram", {"Dim3D": True}, "Pie Depth", ["North", "South", "East", "West"], ["Share"], [[40], [30], [20], [10]]),
     ("ChartRangeErrors", "com.sun.star.chart.BarDiagram", {}, "Range Errors", ["R1", "R2", "R3"], ["Level"], [[2], [3], [4]]),
+    ("ChartLine3D", "com.sun.star.chart.LineDiagram", {"Dim3D": True}, "Line Depth", ["A", "B", "C", "D"], ["Front", "Back"], [[2, 4], [5, 3], [3, 6], [6, 5]]),
+    ("ChartArea3D", "com.sun.star.chart.AreaDiagram", {"Dim3D": True}, "Area Depth", ["A", "B", "C"], ["Low", "High"], [[2, 5], [4, 7], [3, 6]]),
+    ("ChartBar3DH", "com.sun.star.chart.BarDiagram", {"Dim3D": True, "Vertical": True}, "Bar Depth", ["Left", "Right"], ["Size"], [[3], [6]]),
+    ("ChartCrowded", "com.sun.star.chart.BarDiagram", {}, "Crowded Axis", ["Categorylabel%02d" % i for i in range(1, 13)], ["Count"], [[i % 5 + 1] for i in range(12)]),
+    ("ChartWrapped", "com.sun.star.chart.BarDiagram", {}, "Wrapped Labels", ["North east region", "South west region", "Central city area", "Outer ring towns", "Island and coast", "Mountain villages"], ["Count"], [[3], [5], [4], [6], [2], [5]]),
     ("ChartCandle", "com.sun.star.chart.StockDiagram", {"UpDown": True}, "Candle Stock", ["D1", "D2", "D3"], ["Open", "Low", "High", "Close"], [[10, 8, 14, 13], [13, 11, 15, 12], [12, 9, 16, 15]]),
 ]
 for name, service, props, title, rows, cols, data in CHARTS:

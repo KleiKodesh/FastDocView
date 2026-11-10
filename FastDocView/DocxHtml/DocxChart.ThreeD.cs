@@ -43,6 +43,13 @@ internal sealed partial class DocxChart
         result.RightAngled = Value(view.Element("rAngAx")) is "1" or "true";
         if (double.TryParse((string?)view.Attribute("ambient"), NumberStyles.Float, CultureInfo.InvariantCulture, out double ambient)) result.Ambient = ambient;
         if (double.TryParse((string?)view.Attribute("light"), NumberStyles.Float, CultureInfo.InvariantCulture, out double light)) result.Light = light;
+        // ODF dr3d:light dr3d:direction of the first enabled light (OdtChart passes it on), in view space like oox's (0.2, 0.4, 1)
+        string[] direction = ((string?)view.Attribute("lightDirection") ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (direction.Length == 3 && direction.All(d => double.TryParse(d, NumberStyles.Float, CultureInfo.InvariantCulture, out _)))
+        {
+            var v = direction.Select(d => double.Parse(d, NumberStyles.Float, CultureInfo.InvariantCulture)).ToArray();
+            if (v[0] != 0 || v[1] != 0 || v[2] != 0) result.LightDirection = (v[0], v[1], v[2]);
+        }
         return result;
     }
 
@@ -114,6 +121,21 @@ internal sealed partial class DocxChart
         }
 
         public double DepthOf(double x, double y, double z) => Raw(x, y, z).Depth;
+
+        /// <summary>
+        /// Whether a face (outward normal, a point on it) is seen: right-angled axes show the front, the top or bottom by the sign of rotX
+        /// and a side by the sign of rotY; otherwise the eye (the camera point, or the direction toward the viewer in a parallel view) is
+        /// on the face's outer side - tested against the face itself, so faces near the edges are right under strong perspective.
+        /// </summary>
+        public bool FacesViewer((double X, double Y, double Z) normal, (double X, double Y, double Z) point)
+        {
+            // right-angled (oblique) view: seen when the normal points against the depth direction drawn (sinY |cosX|, sinX, away)
+            if (_view.RightAngled) return normal.X * _sinY * Math.Abs(_cosX) + normal.Y * _sinX - normal.Z > 1e-12;
+            var n = Turn(normal);
+            if (double.IsInfinity(_distance)) return n.Z > 1e-9;
+            var p = Turn((point.X - _cx, point.Y - _cy, point.Z - _cz));
+            return -n.X * p.X - n.Y * p.Y + n.Z * (_distance - p.Z) > 1e-12;
+        }
     }
 
     private static string Shade(string css, double factor)
@@ -140,38 +162,60 @@ internal sealed partial class DocxChart
         svg.Append("Z\" fill=\"").Append(fill).Append("\" stroke=\"").Append(stroke).Append("\" stroke-width=\"0.5\" stroke-linejoin=\"round\"/>");
     }
 
-    /// <summary>3-D columns: walls, floor, gridlines, value and category labels and every bar as a shaded box, far to near.</summary>
-    private void Draw3DColumns(StringBuilder svg, int categoryCount, double left, double top, double right, double bottom, Func<double, double> valueToAxis,
-                               List<(double Value, string Text)> valueLabels, List<string> categories, bool showCategories, string textColor, string gridColor, string? plotFill)
+    /// <summary>The scene box with its walls, floor, gridlines and axis labels; returns the projection and the scene's size for the data.</summary>
+    private (Projection Projection, double Width, double Height, double Depth, double Slot, double RowDepth) Draw3DFrame(StringBuilder svg, int categoryCount, int rows, bool horizontal,
+        double left, double top, double right, double bottom, Func<double, double> valueToAxis, List<(double Value, string Text)> valueLabels, List<string> categories,
+        bool showCategories, string textColor, string gridColor, string? plotFill, double labelSize, bool midCategory = false)
     {
         View3D view = _view3D ?? new View3D();
-        Group group = _groups[0];
-        bool standard = group.Grouping == "standard";
-        int rows = standard ? group.Series.Count : 1;
         double width = 1, height = Math.Max(0.2, (bottom - top) / Math.Max(1, right - left));
-        double slot = width / categoryCount, rowDepth = slot * view.DepthPercent / 100, depth = rowDepth * rows;
+        double slot = (horizontal ? height : width) / categoryCount, rowDepth = slot * view.DepthPercent / 100, depth = rowDepth * rows;
         var projection = new Projection(view, width, height, depth);
         projection.Fit(width, height, depth, left, top, right, bottom);
         string wallFill = PropertiesFill(_backWallProperties, plotFill) ?? "none", floorFill = PropertiesFill(_floorProperties, plotFill) ?? "none";
-        // walls (back, left) and floor, then gridlines on the walls
         Polygon(svg, new[] { projection.Point(0, 0, depth), projection.Point(width, 0, depth), projection.Point(width, height, depth), projection.Point(0, height, depth) }, wallFill, gridColor, "word-chart-wall");
         Polygon(svg, new[] { projection.Point(0, 0, 0), projection.Point(0, 0, depth), projection.Point(0, height, depth), projection.Point(0, height, 0) }, wallFill, gridColor, "word-chart-wall");
         Polygon(svg, new[] { projection.Point(0, 0, 0), projection.Point(width, 0, 0), projection.Point(width, 0, depth), projection.Point(0, 0, depth) }, floorFill, gridColor, "word-chart-floor");
         foreach ((double value, string text) in valueLabels)
         {
-            double y = valueToAxis(value) * height;
-            var a = projection.Point(0, y, 0); var b = projection.Point(0, y, depth); var c = projection.Point(width, y, depth);
+            double t = valueToAxis(value);
+            (double X, double Y) a, b, c;
+            if (horizontal) { a = projection.Point(t * width, 0, 0); b = projection.Point(t * width, 0, depth); c = projection.Point(t * width, height, depth); }
+            else { a = projection.Point(0, t * height, 0); b = projection.Point(0, t * height, depth); c = projection.Point(width, t * height, depth); }
             svg.Append("<path d=\"M").Append(N(a.X)).Append(' ').Append(N(a.Y)).Append('L').Append(N(b.X)).Append(' ').Append(N(b.Y)).Append('L').Append(N(c.X)).Append(' ').Append(N(c.Y))
                .Append("\" fill=\"none\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
-            Text(svg, a.X - 4, a.Y + 3, text, 9, textColor, "end");
+            if (horizontal) Text(svg, a.X, a.Y + labelSize + 2, text, labelSize, textColor, "middle");
+            else Text(svg, a.X - 4, a.Y + labelSize / 3, text, labelSize, textColor, "end");
         }
         if (showCategories)
             for (int i = 0; i < categoryCount; i++)
             {
-                var p = projection.Point((i + 0.5) * slot, 0, 0);
-                Text(svg, p.X, p.Y + 11, i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture), 9, textColor, "middle");
+                string label = i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture);
+                if (horizontal) { var p = projection.Point(0, (i + 0.5) * slot, 0); Text(svg, p.X - 4, p.Y + labelSize / 3, label, labelSize, textColor, "end"); }
+                else { var p = projection.Point(midCategory ? (categoryCount == 1 ? 0.5 * slot : i * width / (categoryCount - 1)) : (i + 0.5) * slot, 0, 0); Text(svg, p.X, p.Y + labelSize + 2, label, labelSize, textColor, "middle"); }
             }
-        // the boxes
+        return (projection, width, height, depth, slot, rowDepth);
+    }
+
+    /// <summary>One flat-shaded scene face, culled when it faces away from the camera.</summary>
+    private static void Face(StringBuilder svg, View3D view, Projection projection, (double X, double Y, double Z) normal, (double X, double Y, double Z)[] corners, string baseColor, string className)
+    {
+        var centre = (corners.Average(c => c.X), corners.Average(c => c.Y), corners.Average(c => c.Z));
+        if (!projection.FacesViewer(normal, centre)) return;
+        string color = Shade(baseColor, Lighting(view, projection.Turn(normal)));
+        Polygon(svg, corners.Select(c => projection.Point(c.X, c.Y, c.Z)), color, color, className);
+    }
+
+    /// <summary>3-D bars (columns, or horizontal bars with the value along x): the frame, then every bar as a shaded box, far to near.</summary>
+    private void Draw3DColumns(StringBuilder svg, int categoryCount, bool horizontal, double left, double top, double right, double bottom, Func<double, double> valueToAxis,
+                               List<(double Value, string Text)> valueLabels, List<string> categories, bool showCategories, string textColor, string gridColor, string? plotFill, double labelSize)
+    {
+        View3D view = _view3D ?? new View3D();
+        Group group = _groups[0];
+        bool standard = group.Grouping == "standard";
+        int rows = standard ? group.Series.Count : 1;
+        var (projection, width, height, _, slot, rowDepth) = Draw3DFrame(svg, categoryCount, rows, horizontal, left, top, right, bottom, valueToAxis, valueLabels, categories, showCategories, textColor, gridColor, plotFill, labelSize);
+        double valueExtent = horizontal ? width : height;
         bool stacked = group.Grouping is "stacked" or "percentStacked", percent = group.Grouping == "percentStacked";
         int count = group.Series.Count, totalSeries = _groups.Sum(g => g.Series.Count);
         double gap = group.GapWidth / 100, overlap = group.Overlap / 100;
@@ -189,43 +233,80 @@ internal sealed partial class DocxChart
                 double from, to;
                 if (stacked) { if (value >= 0) { from = positive; positive += value; to = positive; } else { from = negative; negative += value; to = negative; } }
                 else { from = 0; to = value; }
-                double x0 = i * slot + gap * barWidth / 2 + (stacked || standard ? 0 : s * barWidth * (1 - overlap));
+                double c0 = i * slot + gap * barWidth / 2 + (stacked || standard ? 0 : s * barWidth * (1 - overlap));
                 double z0 = (standard ? s : 0) * rowDepth + (rowDepth - barDepth) / 2;
-                double y0 = Math.Max(0, Math.Min(1, valueToAxis(Math.Min(from, to)))) * height, y1 = Math.Max(0, Math.Min(1, valueToAxis(Math.Max(from, to)))) * height;
+                double v0 = Math.Max(0, Math.Min(1, valueToAxis(Math.Min(from, to)))) * valueExtent, v1 = Math.Max(0, Math.Min(1, valueToAxis(Math.Max(from, to)))) * valueExtent;
                 DocxResolvedColor fill = FillOf(group, series, group.VaryColors && count == 1 ? i : -1, group.VaryColors && count == 1 ? categoryCount : totalSeries);
-                boxes.Add((x0, x0 + barWidth, y0, y1, z0, z0 + barDepth, fill.Css, LabelText(group, series, i)));
+                if (horizontal) boxes.Add((v0, v1, c0, c0 + barWidth, z0, z0 + barDepth, fill.Css, LabelText(group, series, i)));
+                else boxes.Add((c0, c0 + barWidth, v0, v1, z0, z0 + barDepth, fill.Css, LabelText(group, series, i)));
             }
         }
-        // far to near: by the projected depth of each box's centre
-        // ties (right-angled axes: one row shares its depth) - lower boxes first when seen from above, and the boxes away from the
-        // side the viewer looks from first, so a box's top and side faces never cover its neighbour's front
+        // far to near; ties (right-angled axes: one row shares its depth) - lower boxes first when seen from above, and the boxes away
+        // from the side the viewer looks from first, so a box's top and side faces never cover its neighbour's front
         var ordered = boxes.OrderByDescending(b => Math.Round(projection.DepthOf((b.X0 + b.X1) / 2, (b.Y0 + b.Y1) / 2, (b.Z0 + b.Z1) / 2), 9))
                            .ThenBy(b => view.RotX >= 0 ? b.Y0 : -b.Y1)
                            .ThenBy(b => view.RotY >= 0 ? b.X0 : -b.X1).ToList();
         foreach (var box in ordered)
         {
-            var faces = new (double X, double Y, double Z, (double, double, double)[] Corners)[]
-            {
-                (0, 0, -1, new[] { (box.X0, box.Y0, box.Z0), (box.X1, box.Y0, box.Z0), (box.X1, box.Y1, box.Z0), (box.X0, box.Y1, box.Z0) }),   // front
-                (0, 1, 0, new[] { (box.X0, box.Y1, box.Z0), (box.X1, box.Y1, box.Z0), (box.X1, box.Y1, box.Z1), (box.X0, box.Y1, box.Z1) }),    // top
-                (1, 0, 0, new[] { (box.X1, box.Y0, box.Z0), (box.X1, box.Y0, box.Z1), (box.X1, box.Y1, box.Z1), (box.X1, box.Y1, box.Z0) }),    // right
-                (-1, 0, 0, new[] { (box.X0, box.Y0, box.Z0), (box.X0, box.Y0, box.Z1), (box.X0, box.Y1, box.Z1), (box.X0, box.Y1, box.Z0) }),   // left
-                (0, -1, 0, new[] { (box.X0, box.Y0, box.Z0), (box.X1, box.Y0, box.Z0), (box.X1, box.Y0, box.Z1), (box.X0, box.Y0, box.Z1) }),   // bottom
-            };
-            foreach (var face in faces)
-            {
-                var turned = projection.Turn((face.X, face.Y, face.Z));
-                bool visible = view.RightAngled
-                    ? face.Z < 0 || face.Y > 0 && view.RotX > 0 || face.Y < 0 && view.RotX < 0 || face.X > 0 && view.RotY > 0 || face.X < 0 && view.RotY < 0
-                    : turned.Z > 1e-9;
-                if (!visible) continue;
-                string color = Shade(box.Color, Lighting(view, view.RightAngled ? projection.Turn((face.X, face.Y, face.Z)) : turned));
-                Polygon(svg, face.Corners.Select(c => projection.Point(c.Item1, c.Item2, c.Item3)), color, color, "word-chart-box");
-            }
+            Face(svg, view, projection, (0, 0, -1), new[] { (box.X0, box.Y0, box.Z0), (box.X1, box.Y0, box.Z0), (box.X1, box.Y1, box.Z0), (box.X0, box.Y1, box.Z0) }, box.Color, "word-chart-box");
+            Face(svg, view, projection, (0, 1, 0), new[] { (box.X0, box.Y1, box.Z0), (box.X1, box.Y1, box.Z0), (box.X1, box.Y1, box.Z1), (box.X0, box.Y1, box.Z1) }, box.Color, "word-chart-box");
+            Face(svg, view, projection, (1, 0, 0), new[] { (box.X1, box.Y0, box.Z0), (box.X1, box.Y0, box.Z1), (box.X1, box.Y1, box.Z1), (box.X1, box.Y1, box.Z0) }, box.Color, "word-chart-box");
+            Face(svg, view, projection, (-1, 0, 0), new[] { (box.X0, box.Y0, box.Z0), (box.X0, box.Y0, box.Z1), (box.X0, box.Y1, box.Z1), (box.X0, box.Y1, box.Z0) }, box.Color, "word-chart-box");
+            Face(svg, view, projection, (0, -1, 0), new[] { (box.X0, box.Y0, box.Z0), (box.X1, box.Y0, box.Z0), (box.X1, box.Y0, box.Z1), (box.X0, box.Y0, box.Z1) }, box.Color, "word-chart-box");
             if (box.Label is { } label)
             {
-                var p = projection.Point((box.X0 + box.X1) / 2, box.Y1, box.Z0);
-                Text(svg, p.X, p.Y - 3, label, _dataLabelSize, textColor, "middle");
+                var p = horizontal ? projection.Point(box.X1, (box.Y0 + box.Y1) / 2, box.Z0) : projection.Point((box.X0 + box.X1) / 2, box.Y1, box.Z0);
+                if (horizontal) Text(svg, p.X + 3, p.Y + 3, label, _dataLabelSize, textColor, "start");
+                else Text(svg, p.X, p.Y - 3, label, _dataLabelSize, textColor, "middle");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 3-D lines and areas: each series a row in depth (the back series first), a line as a ribbon (its top strips between the points across
+    /// the row's depth), an area as a slab (front polygon down to the floor, top strips, end faces) - the shapes chart2 builds for 3-D line
+    /// and area series (VSeriesPlotter / AreaChart: a polygon extruded along the depth of its row); each face flat shaded and culled.
+    /// </summary>
+    private void Draw3DRows(StringBuilder svg, int categoryCount, double left, double top, double right, double bottom, Func<double, double> valueToAxis,
+                            List<(double Value, string Text)> valueLabels, List<string> categories, bool showCategories, string textColor, string gridColor, string? plotFill, double labelSize)
+    {
+        View3D view = _view3D ?? new View3D();
+        Group group = _groups[0];
+        int rows = group.Series.Count, totalSeries = rows;
+        bool area = group.Kind == Kind.Area;
+        var (projection, _, height, _, slot, rowDepth) = Draw3DFrame(svg, categoryCount, rows, false, left, top, right, bottom, valueToAxis, valueLabels, categories, showCategories, textColor, gridColor, plotFill, labelSize, MidCategory());
+        double thickness = rowDepth / (1 + view.GapDepth / 100);
+        for (int s = rows - 1; s >= 0; s--)
+        {
+            Series series = group.Series[s];
+            string color = area ? FillOf(group, series, -1, totalSeries).Css : LineOf(series, totalSeries).Css is { } line && line != "none" ? line : AutomaticColor(series.Index, totalSeries);
+            double z0 = s * rowDepth + (rowDepth - thickness) / 2, z1 = z0 + thickness;
+            var points = new List<(double X, double Y)>();
+            for (int i = 0; i < categoryCount && i < series.Values.Count; i++)
+                if (series.Values[i] is { } value)
+                    points.Add((MidCategory() ? (categoryCount == 1 ? 0.5 * slot : i * slot * categoryCount / (categoryCount - 1)) : (i + 0.5) * slot, Math.Max(0, Math.Min(1, valueToAxis(value))) * height));
+            if (points.Count == 0) continue;
+            if (area)
+            {
+                var front = new List<(double, double, double)> { (points[0].X, 0, z0) };
+                front.AddRange(points.Select(p => (p.X, p.Y, z0)));
+                front.Add((points[points.Count - 1].X, 0, z0));
+                Face(svg, view, projection, (0, 0, -1), front.ToArray(), color, "word-chart-area3d");
+                Face(svg, view, projection, (-1, 0, 0), new[] { (points[0].X, 0.0, z0), (points[0].X, 0.0, z1), (points[0].X, points[0].Y, z1), (points[0].X, points[0].Y, z0) }, color, "word-chart-area3d");
+                Face(svg, view, projection, (1, 0, 0), new[] { (points[points.Count - 1].X, 0.0, z0), (points[points.Count - 1].X, 0.0, z1), (points[points.Count - 1].X, points[points.Count - 1].Y, z1), (points[points.Count - 1].X, points[points.Count - 1].Y, z0) }, color, "word-chart-area3d");
+            }
+            for (int k = 0; k + 1 < points.Count; k++)
+            {
+                var a = points[k]; var b = points[k + 1];
+                // the strip's normal: perpendicular to the segment, pointing up
+                double dx = b.X - a.X, dy = b.Y - a.Y, length = Math.Sqrt(dx * dx + dy * dy);
+                var normal = length > 0 ? (-dy / length, dx / length, 0.0) : (0.0, 1.0, 0.0);
+                Face(svg, view, projection, normal, new[] { (a.X, a.Y, z0), (b.X, b.Y, z0), (b.X, b.Y, z1), (a.X, a.Y, z1) }, color, area ? "word-chart-area3d" : "word-chart-ribbon");
+                if (!area)
+                {
+                    // the ribbon seen from below when the line falls away: its other side
+                    Face(svg, view, projection, (-normal.Item1, -normal.Item2, 0.0), new[] { (a.X, a.Y, z0), (b.X, b.Y, z0), (b.X, b.Y, z1), (a.X, a.Y, z1) }, color, "word-chart-ribbon");
+                }
             }
         }
     }

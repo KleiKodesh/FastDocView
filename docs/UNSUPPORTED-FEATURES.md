@@ -119,8 +119,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
 | Charts in .doc / RTF | doc, rtf | No chart reader in DocBinary/, Rtf/ (docx and ODT charts are read); the saved preview picture shows where there is one | deferred |
-| 3-D line, area and bar (horizontal) charts in projection; Gouraud shading; ODT light directions | docx, odt | Columns and pies are projected and shaded; these keep the flat wall-and-floor drawing, one light from Word's default direction | deferred |
-| Word's automatic plot-area layout; rotated / staggered / wrapped crowded category labels | docx, odt | Measured over the 19-chart fixture: ODT texts median 0.4 pt (x) / 0.3 pt (y) from LibreOffice's PDF; .docx without a saved layout median 2.6 / 2.4 pt from Word's PDF (largest gaps where Word sizes the plot area itself) | deferred |
+| Word's automatic plot-area width; Gouraud shading of 3-D charts | docx, odt | Measured over the 24-chart fixture: ODT texts median 0.4 pt (x) / 0.3 pt (y) from LibreOffice's PDF; .docx without a saved layout median 1.9 / 1.0 pt from Word's PDF (the vertical layout follows Word's measured gaps; the plot's width and the legend width are still estimated). 3-D faces are flat-shaded (dr3d:shade-mode gouraud is drawn flat) | deferred |
 | chartex region map without a geography cache | docx | No map data; the saved fallback picture is shown | won't do |
 | SmartArt without a saved drawing part | docx | Layout engine not implemented; empty frame of the right size | deferred |
 | OLE objects as live content (embedded sheets, media; MathType / Equation 3.0 equations) | all | Only the saved preview picture is shown (Office Math and LibreOffice formulas are drawn as MathML, see the supported list) | won't do |

@@ -4,7 +4,7 @@ using FastDocView;
 namespace FastDocView.Tests;
 
 /// <summary>
-/// .odt charts (--fidelity, seconds): test-data/odt-charts/odt-charts-v3.odt, made by LibreOffice itself through UNO
+/// .odt charts (--fidelity, seconds): test-data/odt-charts/odt-charts-v4.odt, made by LibreOffice itself through UNO
 /// (scripts/make-odt-charts.py: one Writer chart per class - column with subtitle, axis titles and value labels, stacked bars,
 /// percent columns, line, stacked area, pie, donut, scatter, radar, stock, bubble, 3-D column). Each chart is drawn as SVG from
 /// its "Object N" sub-document (not the preview picture), with the series colours LibreOffice wrote; the same file saved
@@ -14,12 +14,12 @@ public static class OdtChartsFidelityTest
 {
     private static readonly string[] Titles =
         ["Column Sales", "Stacked Bars", "Percent Columns", "Line Trend", "Area Stack", "Pie Share", "Donut Rings", "Scatter Points", "Radar Net", "Stock Prices", "Bubble Sizes", "Column Depth",
-         "Log Growth", "Two Axes", "Error Bars", "Trend Fit", "Pie Depth", "Range Errors", "Candle Stock"];
+         "Log Growth", "Two Axes", "Error Bars", "Trend Fit", "Pie Depth", "Range Errors", "Line Depth", "Area Depth", "Bar Depth", "Crowded Axis", "Wrapped Labels", "Candle Stock"];
 
     public static void Run()
     {
         TestReport.Step("ODT charts: LibreOffice-made charts drawn from their sub-documents");
-        string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "odt-charts", "odt-charts-v3.odt");
+        string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "odt-charts", "odt-charts-v4.odt");
         TestReport.Check(File.Exists(path), "chart fixture exists");
         if (!File.Exists(path)) return;
         List<string> html = Render(path);
@@ -92,6 +92,14 @@ public static class OdtChartsFidelityTest
         string depth = Block("Column Depth");
         var boxFills = Regex.Matches(depth, "class=\"word-chart-box\" d=\"[^\"]*\" fill=\"(#[0-9A-F]{6})\"").Cast<Match>().Select(m => m.Groups[1].Value).ToList();
         TestReport.Check(boxFills.Count >= 4 && boxFills.Distinct().Count() >= 2, format + ": 3-D columns as projected boxes, faces shaded differently (" + boxFills.Count + " faces, " + boxFills.Distinct().Count() + " shades)");
+        TestReport.Check(Block("Line Depth").Contains("word-chart-ribbon") && Block("Area Depth").Contains("word-chart-area3d") && Block("Bar Depth").Contains("word-chart-box"),
+                         format + ": 3-D line ribbons, area slabs and horizontal bar boxes");
+        string crowded = Block("Crowded Axis");
+        TestReport.Check(Regex.Matches(crowded, "rotate[(]-45 ").Count >= 6, format + ": crowded category labels turned 45 degrees (" + Regex.Matches(crowded, "rotate[(]-45 ").Count + ")");
+        string wrappedLabels = Block("Wrapped Labels");
+        bool wrapsInWord = format == "docx";
+        TestReport.Check(wrapsInWord ? wrappedLabels.Contains(">region<") && !wrappedLabels.Contains("rotate(-45") : Regex.Matches(wrappedLabels, "rotate[(]-45 ").Count == 6,
+                         format + (wrapsInWord ? ": long category names wrapped at spaces (Word)" : ": long names with a word wider than the slot turned 45 degrees (LibreOffice gives up the line break)"));
         string pie3D = Block("Pie Depth");
         TestReport.Check(Regex.Matches(pie3D, "word-chart-pie-top").Count == 4 && pie3D.Contains("word-chart-pie-side"), format + ": 3-D pie: four tilted slices over a darker rim");
         TestReport.Check(Regex.Matches(Block("Range Errors"), "word-chart-error-bar").Count == 3, format + ": error amounts from a cell range, one bar per point");

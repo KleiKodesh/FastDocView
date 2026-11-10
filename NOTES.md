@@ -2301,3 +2301,20 @@ Content-Location is the src (or ends with "/" + src) or whose Content-ID is a `c
   ODT vs LibreOffice median 0.4 pt x / 0.3 pt y (mean 7.0 / 2.6; outliers are legend keys and horizontal-bar labels); .docx vs Word
   median 2.6 / 2.4 pt (mean 7.4 / 4.4) - the LibreOffice-written .docx has no c:manualLayout and Word sizes the plot itself.
 - Fixture odt-charts-v3 (19 charts: + 3-D pie, cell-range errors; trend line extended 1 forward / 0.5 back through 0).
+
+## Chart: 3-D lines / areas / horizontal bars, ODT light, crowded labels, Word's automatic layout (2026-11-10)
+
+- 3-D lines are ribbons and areas slabs, one depth row per series (back first); horizontal 3-D bars are boxes with the value along x.
+  Face culling is tested against the camera point for each face (Projection.FacesViewer), not only the turned normal, so faces near
+  the frame edges are right under strong perspective. The ODT scene's first enabled dr3d:light direction shades the faces; its
+  dr3d:shade-mode gouraud is drawn flat.
+- Crowded category labels (chart2 VCartesianAxis.cxx:513-575, 720-960): line breaks where allowed (ODF text:line-break; Word always)
+  into the tick distance less 5 %, given up when one word does not fit; then staggering (only with loext:try-staggering-first) or a
+  45-degree turn; then every n-th label. In the fixture LibreOffice turned the "Wrapped Labels" chart (the word "Mountain" is wider
+  than its slot) while Word wrapped them - both reproduced. Text widths: 0.55 x size per character (Liberation Sans), 0.5 (Calibri).
+- Word's automatic layout, measured on Word's PDF of odt-charts-v4.docx (no c:manualLayout): about a third of the title size more
+  below the title, 10.8 pt to the bottom edge, ticks one label size apart, value labels 2 pt from the axis, category labels a third
+  of the size lower, data labels 0.23 x size lower, legend text 1.4 pt right and 1.3 pt lower; stacked columns list the legend top
+  down (both Word and LibreOffice).
+- Measured (230 -> 292 texts, 24 charts): ODT vs LibreOffice median 0.4 pt x / 0.3 pt y; .docx vs Word median 1.9 / 1.0 pt (was
+  2.6 / 2.4). The x gap left: Word's plot width and legend width (our legend width is a character estimate).
