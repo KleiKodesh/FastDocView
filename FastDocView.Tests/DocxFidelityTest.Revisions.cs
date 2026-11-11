@@ -58,14 +58,23 @@ public static partial class DocxFidelityTest
         string note = $"<w:footnote w:id=\"1\"><w:p><w:r><w:footnoteRef/></w:r><w:moveFrom {Move.Replace("7", "9")}><w:r><w:t>notemoved</w:t></w:r></w:moveFrom>{ruby.Replace("basetext", "notebase").Replace("guidetext", "noteguide")}</w:p></w:footnote>";
         var notes = new List<string>();
         int Hits(IWordWindowedDocument document, string query) => document.Search(query, WordDocumentSearchOptions.Default, 0, 100).HitCounts.Sum();
+        // The notes are searched apart from the text (SearchNotes), over the note as it is rendered.
+        int NoteHits(IWordWindowedDocument document, string query) => document.SearchNotes(query, WordDocumentSearchOptions.Default, 0, 100).HitCounts.Sum();
         var found = new Dictionary<string, int>();
+        var foundInNotes = new Dictionary<string, int>();
         List<string> html = RenderAll("movefrom-ruby", body, footnotes: note, noteHtml: notes,
-            inspect: document => { foreach (string q in new[] { "movedaway", "movedhere", "basetext", "guidetext", "kept basetext", "notemoved", "notebase", "noteguide" }) found[q] = Hits(document, q); });
+            inspect: document =>
+            {
+                foreach (string q in new[] { "movedaway", "movedhere", "basetext", "guidetext", "kept basetext", "notemoved", "notebase", "noteguide" }) found[q] = Hits(document, q);
+                foreach (string q in new[] { "notemoved", "notebase", "basetext" }) foundInNotes[q] = NoteHits(document, q);
+            });
         TestReport.Check(!html[0].Contains("movedaway") && html[1].Contains("movedhere"), "moveFrom hidden, moveTo shown");
         TestReport.Check(found["movedaway"] == 0 && found["movedhere"] == 1, $"search: moveFrom not found, moveTo found ({found["movedaway"]}, {found["movedhere"]})");
         TestReport.Check(html[0].Contains("<ruby>") && html[0].Contains("basetext") && html[0].Contains("<rt>") && html[0].Contains("guidetext"), "a ruby renders its base with its guide text (HTML ruby)");
         TestReport.Check(found["basetext"] == 1 && found["kept basetext"] == 1 && found["guidetext"] == 0, $"search: the ruby base is found in line, the guide is not ({found["basetext"]}, {found["kept basetext"]}, {found["guidetext"]})");
         TestReport.Check(notes.Count == 1 && !notes[0].Contains("notemoved") && notes[0].Contains("<ruby>") && notes[0].Contains("noteguide"), "in a note: moveFrom hidden, ruby rendered");
-        TestReport.Check(found["notemoved"] == 0 && found["notebase"] == 1 && found["noteguide"] == 0, $"search in a note: the same rules ({found["notemoved"]}, {found["notebase"]}, {found["noteguide"]})");
+        TestReport.Check(found["notemoved"] == 0 && found["notebase"] == 0 && found["noteguide"] == 0, $"search: a note's text is never a hit on the text ({found["notemoved"]}, {found["notebase"]}, {found["noteguide"]})");
+        TestReport.Check(foundInNotes["notemoved"] == 0 && foundInNotes["notebase"] == 1 && foundInNotes["basetext"] == 0,
+                         $"notes search: moveFrom not found, the ruby base found, the text's words not ({foundInNotes["notemoved"]}, {foundInNotes["notebase"]}, {foundInNotes["basetext"]})");
     }
 }
