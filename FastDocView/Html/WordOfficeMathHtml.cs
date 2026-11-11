@@ -81,7 +81,7 @@ public sealed class WordOfficeMathHtml
     /// <summary>For brkBinSub "+-" a broken minus ends its line as a plus (the minus starts the next line); null: unchanged.</summary>
     private string? LineEndOperator(string op) => op is "-" or "−" && _settings.BreakBinarySubtraction == "+-" ? "+" : null;
 
-    private static string Points(double points) => points.ToString("0.##", CultureInfo.InvariantCulture);
+    private static string Points(double points) => points.ToString("0.###", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// A display equation that can break like Word's: Word breaks a display equation too long for the line at a binary or
@@ -441,40 +441,32 @@ public sealed class WordOfficeMathHtml
     }
 
     /// <summary>
-    /// A stretched operator at Word's width. Word draws a grown delimiter or n-ary operator with the font's OpenType MATH size
-    /// variants (MathVariants), and a variant of Cambria Math is barely wider than the base glyph (math-v2.pdf: "(" around a
-    /// two-row matrix 5.9 pt against 5.0 unstretched; a growing integral 9.7 pt). LibreOffice Math does not use variants at all:
-    /// it scales the glyph's height and keeps its width (starmath/source/node.cxx SmMathSymbolNode::AdaptToY: "we only want to
-    /// scale the height"). Chromium's stretched Cambria Math glyphs are much wider (measured in the live rig at 12 pt: "(" 9.0 pt
-    /// against 5.3 unstretched, "{" 8.3 / 4.5, an integral 15.8 / 9.8, a sum 34.5 / 15.8), so the stretched operator is given
-    /// Word's width - its unstretched width, 1.11 times for a delimiter as Word's "(" - in an mpadded centred on the glyph (an
-    /// mpadded around an operator is still the embellished operator that stretches). Only for Cambria Math, which these
-    /// measurements are of. The table holds one measurement (a two-row matrix, a fraction): Chromium's widths did not change
-    /// with the stretched height between 1 em and 3 em, but a much taller operator could take a wider variant.
+    /// A stretched operator drawn at the width of the glyph Word picks. Word draws a grown delimiter or n-ary operator with the
+    /// font's OpenType MATH vertical size variants, else its glyph assembly (MathVariants); Chromium stretches with the same
+    /// table but its stretched glyph box is wider (measured: Cambria Math "(" 9.0 pt against Word's 7.3 around three rows).
+    /// LibreOffice Math uses neither: SmMathSymbolNode::AdaptToY (starmath/source/node.cxx) scales the glyph height and keeps
+    /// its width. So the operator carries the font's variants (height:width em, then the widest assembly
+    /// part; Html/WordMathFontVariants.cs, generated from the fonts' MATH tables) and the page (the app's fastDocViewMath.ts)
+    /// narrows it (negative margins, centred on the glyph) to the variant Word picks for the height the browser stretched it to. A font
+    /// without a table there keeps the browser's own width.
     /// </summary>
     private void AppendStretched(StringBuilder html, string mo, string character, bool stretches)
     {
-        if (!stretches || _settings.Font is { } face && !face.Equals("Cambria Math", StringComparison.OrdinalIgnoreCase)
-            || !ChromiumCambriaStretch.TryGetValue(character, out (double stretched, double unstretched, bool isLarge) widths))
+        string font = _settings.Font ?? "Cambria Math";
+        if (!stretches || !WordMathFontVariants.Fonts.TryGetValue(font, out var table) || !table.TryGetValue(character, out var variants))
         {
             html.Append(mo);
             return;
         }
-        double target = widths.isLarge ? widths.unstretched : widths.unstretched * 1.11;
-        if (target >= widths.stretched) { html.Append(mo); return; }
-        html.Append("<mpadded width=\"").Append(Points(target)).Append("em\" lspace=\"-").Append(Points((widths.stretched - target) / 2)).Append("em\">").Append(mo).Append("</mpadded>");
+        // on the mo itself: Chromium stops stretching an operator wrapped in an mpadded (measured: a "(" around ten rows stayed
+        // one line tall); the page narrows the mo with negative margins instead
+        bool isLarge = character.Length == 1 && character[0] is >= '∀' and <= '⋿' or >= '⨀' and <= '⫿';
+        var data = new StringBuilder(" class=\"omath-stretch\"").Append(isLarge ? " data-stretch=\"nary\"" : "").Append(" data-variants=\"");
+        for (int i = 0; i < variants.heights.Length; i++)
+            data.Append(i > 0 ? " " : "").Append(Points(variants.heights[i])).Append(':').Append(Points(variants.widths[i]));
+        data.Append('|').Append(Points(variants.assemblyWidth)).Append('"');
+        html.Append(mo.Insert(3, data.ToString()));
     }
-
-    /// <summary>Chromium's widths (em) of a stretched / unstretched Cambria Math operator (measured at 12 pt, see AppendStretched).</summary>
-    private static readonly Dictionary<string, (double stretched, double unstretched, bool isLarge)> ChromiumCambriaStretch = new(StringComparer.Ordinal)
-    {
-        ["("] = (0.75, 0.442, false), [")"] = (0.75, 0.442, false), ["{"] = (0.692, 0.375, false), ["}"] = (0.692, 0.375, false),
-        ["["] = (0.442, 0.375, false), ["]"] = (0.442, 0.375, false), ["|"] = (0.375, 0.317, false), ["\u2016"] = (0.692, 0.5, false),
-        ["\u27E8"] = (0.442, 0.375, false), ["\u27E9"] = (0.442, 0.375, false), ["\u2308"] = (0.442, 0.375, false), ["\u2309"] = (0.442, 0.375, false),
-        ["\u230A"] = (0.442, 0.375, false), ["\u230B"] = (0.442, 0.375, false),
-        ["\u222B"] = (1.317, 0.817, true), ["\u222C"] = (1.567, 1.192, true), ["\u222E"] = (1.067, 0.817, true),
-        ["\u2211"] = (2.875, 1.317, true), ["\u220F"] = (2.942, 1.5, true),
-    };
 
     /// <summary>Whether rendered MathML stacks vertically (fractions, limits, tables, radicals, scripts): taller than a text line.</summary>
     private static bool IsTallerThanALine(string mathMl)

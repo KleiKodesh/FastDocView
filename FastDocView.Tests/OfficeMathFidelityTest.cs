@@ -31,6 +31,26 @@ public static class OfficeMathFidelityTest
         RtfFieldEquations();
         ArgumentSize(Path.Combine(folder, "math-base.docx"));
         MathSettings(Path.Combine(folder, "math-v2.rtf"));
+        NestedEquationArrays(Path.Combine(folder, "eqarr-nested-v1.docx"));
+    }
+
+    /// <summary>
+    /// '&' in nested elements of an equation array row (Word 16, eqarr-nested-v1.pdf): Word shows it as text and aligns each
+    /// array only at its own rows' top-level '&' - an array inside an array row keeps its own alignment.
+    /// </summary>
+    private static void NestedEquationArrays(string path)
+    {
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-math-eqarr") };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+        List<string> html = document.RenderBlocks(0, document.BlockCount).Select(b => System.Net.WebUtility.HtmlDecode(b.Html).Replace(" style=\"font-family:'Cambria Math';\"", "")).ToList();
+        string Block(string label) => html.FirstOrDefault(b => Strip(b).Contains("case " + label + ":", StringComparison.Ordinal)) ?? "";
+        TestReport.Check(Block("delim").Contains("<mi>a</mi><mo>&amp;</mo><mi>b</mi>", StringComparison.Ordinal) || Block("delim").Contains("<mi>a</mi><mo>&</mo><mi>b</mi>", StringComparison.Ordinal), "eqArr: '&' inside a nested delimiter is text, as Word shows it");
+        TestReport.Check(Block("sup").Contains("<mi>z</mi><mo>&", StringComparison.Ordinal), "eqArr: '&' inside a superscript base is text");
+        string nested = Block("nested");
+        TestReport.Check(nested.Split(new[] { "<mtable class=\"omath-eqarr\">" }, StringSplitOptions.None).Length == 3
+            && nested.Contains("<mtd style=\"text-align:right;padding:0\"><mrow><mi>q</mi><mi>q</mi></mrow></mtd>", StringComparison.Ordinal), "eqArr inside an eqArr row: aligned at its own '&'");
+        TestReport.Check(document.Search("a&b", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length > 0 && document.Search("qq=2", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length > 0,
+            "search: a nested '&' is text, an inner array's own '&' is not");
     }
 
     private static readonly System.Xml.Linq.XNamespace MathNs = Html.WordOfficeMathHtml.MathNamespace;

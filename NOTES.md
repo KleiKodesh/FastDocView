@@ -2288,6 +2288,22 @@ tlch); checked by the same test.
   paragraph its pieces flowed from the right. Live check: vue-demo/playwright/mathBreaksCheck.mjs on math-settings-v1.docx
   (scripts/make-math-settings-docx.py).
 
+### Equations, fifth pass: MATH-table variants, nested arrays, one-pass page layout (2026-11-11)
+
+- Html/WordMathFontVariants.cs is generated (scripts/generate-math-font-variants.py, fontTools) from the OpenType MATH
+  table (MathVariants: vertical size variants with their advance heights / widths, and the widest assembly part) of the math
+  fonts Word offers here: Cambria Math (cambria.ttc) and DejaVu Math TeX Gyre. A stretched delimiter / n-ary operator mo
+  carries its font's variants (data-variants); the page (fastDocViewMath.ts) reads the height the browser stretched it to
+  and narrows it with equal negative margins to the variant Word picks: the smallest at least 1.2 x that height for a
+  delimiter, 0.7 x for an n-ary operator, else the assembly. The factors are fitted to Word 16's PDFs of 3-, 5- and 10-row
+  brackets ( [ { | and growing integrals in both fonts (test-data/word-math/brackets-*-v1, make-math-brackets.ps1).
+  An mpadded around the mo is not usable: Chromium then stops stretching it (a "(" around ten rows stayed one line tall).
+- Nested equation arrays (Word 16, eqarr-nested-v1.pdf): '&' inside a nested element (a delimiter, a script base) is shown
+  as text; an array inside an array row aligns at its own marks. The renderer already did exactly this; now tested.
+- The page directive measures once per render: writes that change what is measured (reset, every repeat copy shown),
+  one read pass over all stretched operators and equation pieces, then the writes; line breaks are simulated from the
+  measured piece widths (greedy fill), so showing repeated operators needs no second measurement.
+
 ## Web archive pictures (2026-11-10)
 Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) and an `<img>` fallback inside
 `<![if !vml]>`, which is what a browser shows. The renderer skips the VML copy and draws the `<img>` through the picture
