@@ -696,8 +696,12 @@ public sealed class DocBinaryParagraphHtmlRenderer
             if (c >= ' ') matcher.Feed(c);
             else if (c == '\t') matcher.Feed(' ');
             else if (c is '\r' or '\u0007' or '\u000B' or '\u000C') matcher.Separator();
-            else if (c == '\u0001' && DataLocationAt(cpStart + i) is { } location && EquationOf(location) is { } equation)
-                FeedEquationText(equation, matcher);     // a picture of an equation: its text is shown (AppendPicture), so searched
+            else if (c == '\u0001' && DataLocationAt(cpStart + i) is { } location)
+            {
+                if (EquationOf(location) is { } equation) FeedEquationText(equation, matcher);     // a picture of an equation: its text is shown (AppendPicture), so searched
+                else if (ObjectIdBefore(cpStart + i) is { } objectId && Charts?.Invoke(objectId) is { } chart)
+                    foreach (string chartText in chart.Texts()) { matcher.Separator(); matcher.Feed(chartText.AsSpan()); matcher.Separator(); }
+            }
         }
     }
 
@@ -739,15 +743,38 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// a form field's 0x01 carries sprmCFData with the location of its FFData (LibreOffice ww8par3.cxx:2063-2080 reads the
     /// location the same way, sprm 0x6A03, for form fields); null when none.
     /// </summary>
-    internal uint? DataLocationAt(int cp)
+    internal uint? DataLocationAt(int cp) => CharacterLocationAt(cp, 0x6A03, requiresObject: false);
+
+    /// <summary>
+    /// The ObjectPool storage id of an embedded object whose preview picture is the 0x01 at <paramref name="cp"/>: the field
+    /// separator 0x14 just before it (Word writes EMBED fields so: 0x13 code 0x14 0x01 0x15) carries sprmCFOle2 and a
+    /// sprmCPicLocation that is the storage id (checked on Word 16's .doc: 0x6A03 = 1855890659 = "_1855890659"); LibreOffice
+    /// keeps that location as the object's when fOle2 is set (ww8par6.cxx:2951-2989 Read_Obj / Read_PicLoc) and opens
+    /// "_" + it (ww8par4.cxx:342). Null when there is none.
+    /// </summary>
+    internal uint? ObjectIdBefore(int cp)
+    {
+        if (cp <= 0 || Charts is null || _pieces.ReadText(cp - 1, cp) != "\u0014") return null;
+        return CharacterLocationAt(cp - 1, 0x6A03, requiresObject: true);
+    }
+
+    private uint? CharacterLocationAt(int cp, ushort sprm, bool requiresObject)
     {
         foreach ((DocBinaryPieceTable.Piece piece, int segmentStart, _) in _pieces.SegmentsOf(cp, cp + 1))
         {
             uint? location = null;
+            bool isObject = false;
             if (_pages.CharacterRunAt(piece.FileOffsetOf(segmentStart)) is { GrpprlLength: > 0 } direct)
-                location = DocBinaryPropertyModifiers.PictureCharacterIn(direct.Page, direct.GrpprlStart, direct.GrpprlLength).pictureLocation;
-            if (piece.PrmGrpprl is { } prm && DocBinaryPropertyModifiers.PictureCharacterIn(prm, 0, prm.Length).pictureLocation is { } prmLocation) location = prmLocation;
-            return location;
+            {
+                location = DocBinaryPropertyModifiers.LocationIn(direct.Page, direct.GrpprlStart, direct.GrpprlLength, sprm);
+                isObject = DocBinaryPropertyModifiers.PictureCharacterIn(direct.Page, direct.GrpprlStart, direct.GrpprlLength).isObject;
+            }
+            if (piece.PrmGrpprl is { } prm)
+            {
+                if (DocBinaryPropertyModifiers.LocationIn(prm, 0, prm.Length, sprm) is { } prmLocation) location = prmLocation;
+                isObject |= DocBinaryPropertyModifiers.PictureCharacterIn(prm, 0, prm.Length).isObject;
+            }
+            return requiresObject && !isObject ? null : location;
         }
         return null;
     }
@@ -878,7 +905,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 case '\u0001' when isSpecial && fieldState.IsInShapeResult && !(i + 1 < text.Length && text[i + 1] == '\u0001'): continue;
                 case '\u0001' when isSpecial && picture is { } location:
                     Flush();
-                    if (!formatting.IsHidden) AppendPicture(html, location);   // hidden text (sprmCFVanish): e.g. the "_PictureBullets" pictures
+                    if (!formatting.IsHidden) AppendPicture(html, location, runCp + i);   // hidden text (sprmCFVanish): e.g. the "_PictureBullets" pictures
                     continue;
                 case '\u0008' when isSpecial && _textBoxDepth == 0 && FloatingPictures?.At(runCp + i) is { } floating:
                     Flush();
@@ -1009,14 +1036,29 @@ public sealed class DocBinaryParagraphHtmlRenderer
     /// An inline picture (a .doc 0x01 picture is always in the line: LibreOffice ww8par.cxx imports it FLY_AS_CHAR) at its PICF
     /// size; its id is the PICF offset (<see cref="IWordWindowedDocument.ReadPicture"/>). A picture we cannot show keeps a box.
     /// </summary>
-    private void AppendPicture(StringBuilder html, uint location)
+    private void AppendPicture(StringBuilder html, uint location, int cp = -1)
     {
         if (EquationOf(location) is { } equation) { WordOfficeMathHtml.Append(html, equation, WordOfficeMathHtml.RunColorCss); return; }   // Word's picture of an equation: the equation itself
+        if (ObjectIdBefore(cp) is { } objectId && Charts?.Invoke(objectId) is { } chart && Pictures.Locate(location) is { } box)
+        {
+            // an embedded Excel chart object: drawn from its chart records at the preview picture's size (the preview is not shown)
+            WordShapeHtml.OpenFrame(html, new WordPictureLayout(box.widthPt, box.heightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0), growsWithText: false);
+            html.Append(chart.Svg(box.widthPt, box.heightPt));
+            WordShapeHtml.CloseFrame(html);
+            return;
+        }
         if (Pictures.Locate(location) is { } picture)
             WordPictureHtml.Append(html, new WordPictureLayout(picture.widthPt, picture.heightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0),
                                    location.ToString(System.Globalization.CultureInfo.InvariantCulture));
         else html.Append("<span class=\"unsupported\">[image]</span>");
     }
+
+    /// <summary>
+    /// The chart of an OLE object's 0x01 (sprmCFOle2 with sprmCPicLocation = its ObjectPool storage id, LibreOffice
+    /// ww8par6.cxx:2950-2990 Read_Obj / Read_PicLoc, ww8par4.cxx:342): an embedded Excel chart read on demand; null when the
+    /// object is not one (its preview picture is shown).
+    /// </summary>
+    internal Func<uint, DocxHtml.DocxChart?>? Charts { get; set; }
 
     /// <summary>The m:oMathPara / m:oMath of a picture's equationXML (<see cref="DocBinaryPictures.EquationXml"/>); null: none or unreadable.</summary>
     internal System.Xml.Linq.XElement? EquationOf(uint location)

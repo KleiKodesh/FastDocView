@@ -118,7 +118,9 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| Charts in .doc / RTF | doc, rtf | No chart reader in DocBinary/, Rtf/ (docx and ODT charts are read); the saved preview picture shows where there is one | deferred |
+| Exact chart layout for .doc / RTF charts (embedded Excel 97-2003 chart objects) | doc, rtf | Drawn by the .docx renderer with Word's automatic layout; the BIFF8 frame positions (plot, legend) are not applied yet. Measured vs Word's PDF (24 texts, 6 charts): median 6.6 pt (x) / 3.2 pt (y) | deferred |
+| Chart parts in .doc / RTF chart objects: number formats, per-point data labels, trend lines, error bars, text colours | doc, rtf | Not read from the BIFF8 records yet | deferred |
+| Non-chart OLE objects in RTF | rtf | The \result preview picture is not drawn; a placeholder shows | deferred |
 | Exact chart layout for Word-made charts | docx | Text widths come from the fonts' own advance widths (Calibri, Cambria, Times New Roman, Arial); measured: Word-made charts median 0.3 pt (x) / 0.6 pt (y) from Word's PDF (right-to-left names 0.9 / 0.6 pt), LibreOffice-written .docx 1.0 / 0.9 pt, ODT vs LibreOffice 0.4 / 0.3 pt | deferred |
 | chartex region map without a geography cache | docx | No map data; the saved fallback picture is shown | won't do |
 | SmartArt without a saved drawing part | docx | Layout engine not implemented; empty frame of the right size | deferred |

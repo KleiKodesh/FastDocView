@@ -36,7 +36,7 @@ public static class LibreOfficeConversion
                 {
                     UseShellExecute = false, CreateNoWindow = true,
                     // a private profile so a running LibreOffice of the user is neither used nor disturbed
-                    Arguments = $"-env:UserInstallation=file:///{outputDirectory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --norestore --convert-to odt --outdir \"{outputDirectory}\" \"{Path.GetFullPath(docx)}\"",
+                    Arguments = $"-env:UserInstallation=file:///{outputDirectory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --invisible --nologo --norestore --convert-to odt --outdir \"{outputDirectory}\" \"{Path.GetFullPath(docx)}\"",
                 };
                 LibreOfficeConversion.WithoutPrinters(start);
                 using Process process = Process.Start(start)!;
@@ -64,7 +64,7 @@ public static class LibreOfficeConversion
         var start = new ProcessStartInfo(SofficePath)
         {
             UseShellExecute = false, CreateNoWindow = true,
-            Arguments = $"-env:UserInstallation=file:///{outputDirectory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --norestore --convert-to \"{filter}\" --outdir \"{outputDirectory}\" \"{Path.GetFullPath(source)}\"",
+            Arguments = $"-env:UserInstallation=file:///{outputDirectory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --invisible --nologo --norestore --convert-to \"{filter}\" --outdir \"{outputDirectory}\" \"{Path.GetFullPath(source)}\"",
         };
         LibreOfficeConversion.WithoutPrinters(start);
         using Process process = Process.Start(start)!;

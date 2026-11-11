@@ -526,6 +526,16 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         Embedded(RtfEmbeddedKind.Equation, state);
     }
 
+    /// <summary>A span search reads an embedded chart's texts (as RtfSearchTextSink); the block counts it as the index pass did (an embedded object).</summary>
+    public override bool WantsObjects => IsSearching;
+
+    public override void Object(byte[] group, in RtfGroupState state)
+    {
+        if (!_parser.IsInListText && (_fields.IsIdle || _fields.Shows("x".AsSpan())) && RtfObjectChart.Read(group) is { } found)
+            foreach (string text in found.Chart.Texts()) { _search!.Separator(); _search.Text(text.AsSpan(), _parser); _search.Separator(); }
+        Embedded(RtfEmbeddedKind.Object, state);
+    }
+
     public override void Break(RtfWord word, in RtfGroupState state)
     {
         if (IsSearching) _search!.Separator();

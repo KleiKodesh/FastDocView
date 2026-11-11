@@ -456,6 +456,20 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     public override bool WantsMath => true;
 
+    public override bool WantsObjects => true;
+
+    /// <summary>An {\object}: an embedded Excel chart drawn as SVG at the object's size (the \result preview is not shown); anything else stays a placeholder.</summary>
+    public override void Object(byte[] group, in RtfGroupState state)
+    {
+        if (RtfObjectChart.Read(group) is not { } found) { Embedded(RtfEmbeddedKind.Object, state); return; }
+        FlushRun();
+        StringBuilder html = _listTextTarget ?? _flow.Inline;
+        WordShapeHtml.OpenFrame(html, new WordPictureLayout(found.WidthPt, found.HeightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0), growsWithText: false);
+        html.Append(found.Chart.Svg(found.WidthPt, found.HeightPt));
+        WordShapeHtml.CloseFrame(html);
+        _flow.HasInline = true;
+    }
+
     private WordOfficeMathSettings? _mathSettings;     // the document's {\mmathPr} (header tables)
 
     /// <summary>An equation ({\mmath}) as MathML; one that cannot be read keeps the equation mark.</summary>

@@ -140,6 +140,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         _renderer.FormFieldData = FormFieldData;
         _renderer.HeadingPositions = () => _index is null || _table is null ? [] : Headings.Select(heading => (_table.BlockStartCp(heading.BlockIndex), heading.Level));
         _renderer.Pictures = new DocBinaryPictures(_dataStream);
+        _renderer.Charts = ReadChart;
         _renderer.FloatingPictures = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock);
         HeaderDrawings = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock, isHeader: true);
 
@@ -268,6 +269,21 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     /// A password-protected .docx/.docm is an OLE compound file holding EncryptionInfo and
     /// EncryptedPackage streams ([MS-OFFCRYPTO] §2.3.4 / §2.3.4.4), often with a decoy WordDocument stream.
     /// </summary>
+    // ── embedded chart objects: read when their block is rendered or searched, a few kept ──
+
+    private const int ChartCacheSize = 16;
+    private readonly Dictionary<uint, DocxHtml.DocxChart?> _charts = new();
+
+    /// <summary>The Excel chart in ObjectPool/_<paramref name="objectId"/> (<see cref="DocxHtml.ExcelBinaryChart"/>); null when there is none.</summary>
+    private DocxHtml.DocxChart? ReadChart(uint objectId)
+    {
+        if (_charts.TryGetValue(objectId, out DocxHtml.DocxChart? cached)) return cached;
+        DocxHtml.DocxChart? chart = DocxHtml.ExcelBinaryChart.FromObjectPool(_compoundFile, objectId);
+        if (_charts.Count >= ChartCacheSize) _charts.Clear();
+        _charts[objectId] = chart;
+        return chart;
+    }
+
     internal static void ThrowWhenEncryptedPackage(CompoundFileReader compoundFile)
     {
         if (compoundFile.HasRootStream("EncryptedPackage") && compoundFile.HasRootStream("EncryptionInfo"))

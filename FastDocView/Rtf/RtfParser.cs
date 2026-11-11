@@ -889,6 +889,7 @@ internal sealed class RtfParser
                 SkipGroup(name);
                 return;
             case RtfWord.ObjectGroup:
+                if (IsTextDestination(state) && _sink.WantsObjects) { _sink.Object(CaptureGroup(name), state); return; }
                 if (IsTextDestination(state)) _sink.Embedded(RtfEmbeddedKind.Object, state);
                 SkipGroup(name);
                 return;

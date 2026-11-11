@@ -36,6 +36,10 @@ internal abstract class RtfSink
     public virtual bool WantsMath => false;
     /// <summary>An equation: its {\mmath} group's bytes (RtfOfficeMath turns them into OMML).</summary>
     public virtual void Equation(byte[] group, in RtfGroupState state) { }
+    /// <summary>Whether {\object} groups are read (<see cref="Object"/>) instead of skipped as an object.</summary>
+    public virtual bool WantsObjects => false;
+    /// <summary>An embedded object: its {\object} group's bytes (<see cref="RtfObjectChart"/> reads a chart from them).</summary>
+    public virtual void Object(byte[] group, in RtfGroupState state) { }
     /// <summary>True: the parser reads \pict and \shp groups into <see cref="Picture"/> (the HTML renderer); false: a placeholder (index, search).</summary>
     public virtual bool WantsPictures => false;
     /// <summary>True: <see cref="RtfPicture.Data"/> is decoded (reading one picture's bytes); false: only its size and type.</summary>

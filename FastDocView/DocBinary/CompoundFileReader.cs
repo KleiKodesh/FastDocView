@@ -80,12 +80,33 @@ public sealed class CompoundFileReader : IDisposable
 
     public bool HasRootStream(string name) => FindRootChild(name) is not null;
 
-    private DirectoryEntry? FindRootChild(string name)
+    /// <summary>
+    /// Opens a stream below nested storages (an embedded object: "ObjectPool", "_1234", "Workbook"); null when a part of the
+    /// path is missing or the last part is not a stream (type 2, [MS-CFB] 2.6.1).
+    /// </summary>
+    public Stream? OpenStream(params string[] path)
     {
-        // The root's children form a red-black tree; an iterative walk over left/right/child is enough.
+        if (_entries.Count == 0 || path.Length == 0) return null;
+        DirectoryEntry? entry = _entries[0];
+        foreach (string name in path)
+        {
+            entry = FindChild(entry!, name);
+            if (entry is null) return null;
+        }
+        if (entry!.Type != 2) return null;
+        if (entry.Size < _miniStreamCutoff)
+            return new SectorChainStream(_miniStream, _miniSectorSize, ChainOf(_miniFat, entry.StartSector), entry.Size, sector => (long)sector * _miniSectorSize);
+        return new SectorChainStream(_file, _sectorSize, ChainOf(_fat, entry.StartSector), entry.Size, SectorOffset);
+    }
+
+    private DirectoryEntry? FindRootChild(string name) => _entries.Count == 0 ? null : FindChild(_entries[0], name);
+
+    /// <summary>A direct child of a storage by its exact name.</summary>
+    private DirectoryEntry? FindChild(DirectoryEntry storage, string name)
+    {
+        // The storage's children form a red-black tree; an iterative walk over left/right is enough.
         var pending = new Stack<int>();
-        if (_entries.Count == 0) return null;
-        pending.Push(_entries[0].Child);
+        pending.Push(storage.Child);
         int visited = 0;
         while (pending.Count > 0 && visited++ < _entries.Count * 2)
         {
