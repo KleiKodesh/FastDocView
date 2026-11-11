@@ -32,9 +32,16 @@ public static class TestReport
     {
         get
         {
-            string directory = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TestOutput");
+            // The FastDocView repo root is the folder holding FastDocView.Tests; found by walking up so
+            // any output depth (rid, publish, worktree) lands in its gitignored TestOutput.
+            DirectoryInfo? folder = new DirectoryInfo(AppContext.BaseDirectory);
+            while (folder != null && !Directory.Exists(Path.Combine(folder.FullName, "FastDocView.Tests")))
+                folder = folder.Parent;
+            if (folder == null)
+                throw new InvalidOperationException($"FastDocView repo root not found above {AppContext.BaseDirectory}");
+            string directory = Path.Combine(folder.FullName, "TestOutput");
             Directory.CreateDirectory(directory);
-            return Path.GetFullPath(directory);
+            return directory;
         }
     }
 }
