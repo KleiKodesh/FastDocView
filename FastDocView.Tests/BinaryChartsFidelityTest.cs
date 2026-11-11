@@ -67,6 +67,17 @@ public static class BinaryChartsFidelityTest
         }
     }
 
+    /// <summary>RTF objects that are not charts (Apache Tika's testRTFEmbeddedFiles.rtf: Word-made embedded files) show their \result preview picture, not a placeholder.</summary>
+    public static void RunObjectPreviews()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "apache-tika", "testRTFEmbeddedFiles.rtf");
+        if (!File.Exists(path)) { TestReport.Check(false, "rtf: embedded-files fixture exists"); return; }
+        string all = string.Concat(Render(path));
+        // the previews are EMF (shown as the picture placeholder, as every EMF picture is): no object placeholder is left
+        int pictures = Regex.Matches(all, "class=\"word-picture\"").Count + Regex.Matches(all, ">[[]image[]]<").Count, placeholders = Regex.Matches(all, ">[[]object[]]<").Count;
+        TestReport.Check(pictures >= 14 && placeholders == 0, "rtf: the 14 non-chart objects drawn as their preview pictures (" + pictures + " pictures, " + placeholders + " object placeholders)");
+    }
+
     private static List<string> Render(string path)
     {
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
