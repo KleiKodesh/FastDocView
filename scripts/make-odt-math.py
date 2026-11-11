@@ -1,6 +1,6 @@
 # Builds test-data/odt-math/odt-math-v1.odt (+ .fodt, + LibreOffice's .pdf of it) with LibreOffice itself (UNO): one
 # Writer formula object (Math, MathML in "Object N/content.xml"; inline in the .fodt) per paragraph.
-# Run with LibreOffice's python while soffice listens:  soffice --headless --accept="pipe,name=fdvmath;urp;" (SAL_DISABLE_PRINTERLIST=1 SAL_DISABLE_DEFAULTPRINTER=1)
+# Run with LibreOffice's python while soffice listens (SAL_DISABLE_PRINTERLIST=1 SAL_DISABLE_DEFAULTPRINTER=1 set): soffice --headless --invisible --norestore -env:UserInstallation=file:///<private profile> --accept="pipe,name=fdvmath;urp;"
 import sys, time, uno
 from com.sun.star.beans import PropertyValue
 

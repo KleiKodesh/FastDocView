@@ -30,4 +30,4 @@ try {
     $d.SaveAs2("$dir\math-v2.doc", 0)   # last: saving as .doc turns the open document's equations into pictures
     $d.Close(0)
 }
-finally { $w.Quit() }
+finally { $w.Quit(0) }   # 0: do not save (no dialog)

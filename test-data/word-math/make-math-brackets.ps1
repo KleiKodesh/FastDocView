@@ -16,4 +16,4 @@ try {
         $d.Close(0)
     }
 }
-finally { $w.Quit() }
+finally { $w.Quit(0) }   # 0: do not save (no dialog)
