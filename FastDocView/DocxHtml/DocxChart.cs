@@ -80,7 +80,6 @@ internal sealed partial class DocxChart
     private readonly Dictionary<string, Axis> _axes = new(StringComparer.Ordinal);
     private string? _title;
     private string? _titleColor;
-    private bool _rightToLeftLanguage;
     private string? _legendColor;
     private string? _legendPosition;
     private readonly HashSet<int> _deletedLegendEntries = new();
@@ -108,8 +107,6 @@ internal sealed partial class DocxChart
         if (Value(chartSpace.Element("style")) is { } style && int.TryParse(style, out int styleIndex)) model._style = styleIndex;
         else if (chartSpace.Element("AlternateContent")?.Element("Fallback")?.Element("style") is { } fallbackStyle && int.TryParse(Value(fallbackStyle), out int fallbackIndex)) model._style = fallbackIndex;
         model._chartSpaceProperties = chartSpace.Element("spPr");
-        // c:lang (21.2.2.86): the chart's editing language; a right-to-left one mirrors the legend row
-        model._rightToLeftLanguage = Value(chartSpace.Element("lang")) is { } language && language.Split('-')[0].ToLowerInvariant() is "he" or "ar" or "fa" or "ur" or "yi";
         // text sizes (a:defRPr / a:rPr sz in hundredths of a point): the element's own, else the chart's c:txPr; Office's defaults otherwise
         double? chartSize = FontSize(chartSpace.Element("txPr"));
         // the chart's Latin font (a:latin typeface), for text widths
@@ -389,6 +386,9 @@ internal sealed partial class DocxChart
                 position++;
             }
             if (group.Kind == Kind.Bar && !group.Horizontal && group.Grouping is "stacked" or "percentStacked") entries.Reverse(groupStart, entries.Count - groupStart);
+            // horizontal bars list their series in the order they stand from the top, the last series first (Word's PDF of
+            // word-charts-binary-v3: West, South, North for a clustered bar chart of North, South, West)
+            else if (group.Kind == Kind.Bar && group.Horizontal && group.Grouping == "clustered") entries.Reverse(groupStart, entries.Count - groupStart);   // stacked bars keep their order (Word's PDF of odt-charts-v5)
         }
         return entries;
     }
@@ -505,9 +505,6 @@ internal sealed partial class DocxChart
             top = y + 8 + (_libreOfficeLayout ? 0 : TitleSize(0) * 0.35);   // Word leaves about a third of the title size more below it (measured on its PDFs: the top tick 18-19 pt below the title baseline)
         }
         List<(string Text, string Color, bool Line)> legend = LegendEntries();
-        // a right-to-left chart (c:lang he / ar / fa / ur / yi): Word runs a legend row from right to left (measured on Word's PDF:
-        // the first series rightmost), wherever the row sits
-        if (_rightToLeftLanguage && _legendPosition is "t" or "b") legend.Reverse();
         if (legend.Count > 0)
         {
             double size = _legendSize, entryHeight = size * 13 / 9;
@@ -534,9 +531,18 @@ internal sealed partial class DocxChart
             }
             else
             {
-                double total = legend.Sum(e => TextWidth(e.Text, size) + 22);
-                double x = Math.Max(left, width / 2 - total / 2), y = _legendPosition == "t" ? top : bottom - entryHeight;
-                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, _legendColor ?? textColor, "start"); x += TextWidth(text, size) + 22; }
+                // a legend row. Word (measured on its PDF of word-charts-binary-v3, three bottom legends): the name 10.7 pt after
+                // the entry's start, the next entry 14.4 pt after the name, the row 1.8 pt lower; LibreOffice: 14 pt and 22 pt
+                double nameAt = _libreOfficeLayout ? 14 : 10.7, advance = _libreOfficeLayout ? 22 : 14.4;
+                double total = legend.Sum(e => TextWidth(e.Text, size) + advance) - (_libreOfficeLayout ? 0 : advance - nameAt);
+                double rowShift = _libreOfficeLayout || _legendPosition == "t" ? 0 : 1.8;
+                double x = Math.Max(left, width / 2 - total / 2), y = (_legendPosition == "t" ? top : bottom - entryHeight) + rowShift;
+                foreach ((string text, string color, bool line) in legend)
+                {
+                    LegendKey(svg, _libreOfficeLayout ? x : x + nameAt - 10.7, y, color, line);
+                    Text(svg, x + nameAt, y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, _legendColor ?? textColor, "start");
+                    x += TextWidth(text, size) + advance;
+                }
                 if (_legendPosition == "t") top += entryHeight + 6; else bottom -= entryHeight + 6;
             }
         }
@@ -761,6 +767,15 @@ internal sealed partial class DocxChart
         if (categoryAxis?.Title is { } categoryTitle && !categoryAxis.Deleted) { double room = categoryTitleSize + 4; if (horizontal) left += room; else bottom -= room; Text(svg, horizontal ? left - 6 : (left + right) / 2, horizontal ? (top + bottom) / 2 : bottom + categoryTitleSize + 2 + (_libreOfficeLayout ? categoryTitleSize * 0.5 : 0), categoryTitle, categoryTitleSize, textColor, "middle", horizontal ? -90 : 0); }
         if (secondaryAxis?.Title is { } secondaryTitle) { right -= 14; Text(svg, right + 6, (top + bottom) / 2, secondaryTitle, 10, textColor, "middle", 90); }
         right -= secondaryLabelWidth;
+        // Word: a tick label centred on the plot's right edge (the last value of a horizontal bar chart's value axis, the last category
+        // of an axis with the points on the ticks) stays 10.8 pt plus half its width from the chart's edge (measured on Word's PDF of
+        // word-charts-binary-v3: the bar chart's "6" and the area chart's "Q4", both 4.8 pt further in than the plain 6 pt margin)
+        if (!_libreOfficeLayout && _plotLayout is null && secondaryAxis is null && _legendPosition is not ("r" or "tr") && !xy)
+        {
+            string? edgeLabel = horizontal ? (valueLabels.Count > 0 ? valueLabels[valueLabels.Count - 1].Text : null)
+                              : MidCategory() && categoryAxis is not { NoLabels: true } && categories.Count > 0 ? categories[categories.Count - 1] : null;
+            if (edgeLabel is { Length: > 0 }) right -= 10.8 - 6 + TextWidth(edgeLabel, labelSize) / 2;   // the right edge so far is the chart edge less 6 pt
+        }
         if (horizontal) { bottom -= valueAxis is { NoLabels: true } ? 0 : labelSize + 4; left += categoryAxis is { NoLabels: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
         CategoryLabelPlan? categoryPlan = null;
         if (!horizontal)

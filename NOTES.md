@@ -4903,3 +4903,20 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   series has custom plus x bars and fixed both-way y bars (8 bars drawn).
 - .doc search: hidden-text check resolves the whole paragraph (fast-saved files take the Prm of the piece with the mark).
 
+## Chart layout: bottom legends, right-edge labels, horizontal-bar legend order (2026-11-11)
+
+- scripts/compare-chart-text-positions.py now compares every text at its anchor (start / end edges, not only centred ones)
+  and pairs only spans inside the chart's own box. Word PDFs: test-data/word-charts-binary/word-charts-binary-v3.pdf, and
+  for the older fixtures Word's PDFs of odt-charts-v5.docx and word-chart-fonts-v1.docx (kept outside the repo).
+- What carried the v3 gap (Word-made charts, bottom legends; the older fixtures have right legends): (1) the legend row -
+  Word puts the name 10.7 pt after the entry's start and the next entry 14.4 pt after the name (we used 15.4 / 22) and the
+  row 1.8 pt lower; (2) a tick label centred on the plot's right edge (a horizontal bar chart's last value, an area chart's
+  last category) keeps 10.8 pt plus half its width to the chart edge; (3) clustered horizontal bars list their series last
+  first (stacked ones do not: odt-charts-v5). The right-to-left legend reversal of the previous pass was wrong (it was this
+  bar-chart rule) and is removed; c:lang is still read but not used.
+- Medians (x / y): v3 .docx 2.44 / 1.84 -> 1.21 / 1.42, .doc 2.08 / 1.31 -> 1.40 / 1.31, RTF 2.09 / 1.36 -> 1.42 / 1.36;
+  odt-charts-v5.docx 0.73 / 0.40 and word-chart-fonts-v1 0.68 / 0.16 unchanged. Left: vertical charts with a bottom legend
+  sit about 4 pt lower in ours (an extra gap above Word's legend that the LibreOffice-written v5 chart does not have - not
+  understood yet), 3-D value axes (Depth Column Chart: ticks spread up to 30 pt), the scatter x axis over text x values (Word
+  0..6, ours 0..4), and Word's trend line legend entry ("Linear (North)", localized) that shifts the row.
+
