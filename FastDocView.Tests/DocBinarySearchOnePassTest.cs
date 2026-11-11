@@ -6,8 +6,7 @@ namespace FastDocView.Tests;
 /// <summary>
 /// The .doc search's one pass (block boundaries and matcher text from the same characters) against the old path it
 /// replaced (block ranges from the compact table, each block's text read again): every batch must give the same hit
-/// blocks, counts, next block and end - Hebrew plain and pointed, English, mixed, match case on and off, notes on and
-/// off, sequential batches of several sizes and batches that start anywhere. Hebrew is written as \u escapes.
+/// blocks, counts, next block and end - Hebrew plain and pointed, English, mixed, match case on and off, sequential batches of several sizes and batches that start anywhere. Hebrew is written as \u escapes.
 /// </summary>
 public static class DocBinarySearchOnePassTest
 {
@@ -69,11 +68,9 @@ public static class DocBinarySearchOnePassTest
         var random = new Random(20261103);
         foreach (string query in Queries)
             foreach (bool matchCase in new[] { true, false })
-                foreach (bool notes in new[] { true, false })
                 {
-                    if (!notes && !matchCase) continue;
-                    var options = new WordDocumentSearchOptions(MatchCase: matchCase, IncludeNotes: notes);
-                    int[] sizes = query == Queries[0] && matchCase && notes ? [500, 37, 1] : [500];
+                    var options = new WordDocumentSearchOptions(MatchCase: matchCase);
+                    int[] sizes = query == Queries[0] && matchCase ? [500, 37, 1] : [500];
                     foreach (int size in sizes)
                         for (int from = 0, run = 0; ; run++)
                         {

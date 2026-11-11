@@ -3,13 +3,12 @@ namespace FastDocView.Rtf;
 /// <summary>
 /// The search's sink over the same <see cref="RtfParser"/> the renderer uses, so a block is read exactly as it renders:
 /// its text goes to the matcher (no HTML), paragraph / cell / row / line ends are separators, \listtext labels are
-/// skipped, text-box text ({\shptxt}) is fed once between separators, and footnote groups are fed (between separators) only when the search includes notes.
+/// skipped, text-box text ({\shptxt}) is fed once between separators, and footnote groups are skipped (the block shows only their mark).
 /// </summary>
 internal sealed class RtfSearchTextSink : RtfSink
 {
     private readonly RtfParser _parser;
     private WordDocumentSearchMatcher? _matcher;
-    private bool _includeNotes;
     private readonly RtfFieldTracker _fields;
 
     public RtfSearchTextSink(RtfDocumentTables tables, Fields.WordFieldContext? fieldContext = null)
@@ -18,10 +17,9 @@ internal sealed class RtfSearchTextSink : RtfSink
         _fields = new RtfFieldTracker(fieldContext, counts: true);
     }
 
-    public void Feed(Stream file, RtfCompactBlockTable table, int blockIndex, WordDocumentSearchMatcher matcher, bool includeNotes)
+    public void Feed(Stream file, RtfCompactBlockTable table, int blockIndex, WordDocumentSearchMatcher matcher)
     {
         _matcher = matcher;
-        _includeNotes = includeNotes;
         _parser.RestoreSnapshot(table.SnapshotOf(blockIndex));
         _fields.Restore(table.FieldStateOf(blockIndex));
         _parser.Run(file, table.BlockStartOffset(blockIndex), table.BlockEndOffset(blockIndex));
@@ -30,7 +28,7 @@ internal sealed class RtfSearchTextSink : RtfSink
 
     public override void Text(ReadOnlySpan<char> text, in RtfGroupState state)
     {
-        if (_parser.IsInListText || (_parser.IsInFootnote && !_includeNotes)) return;
+        if (_parser.IsInListText || _parser.IsInFootnote) return;
         if (!_fields.IsIdle && !_fields.Shows(text)) return;
         foreach (char c in text)
         {
@@ -50,7 +48,7 @@ internal sealed class RtfSearchTextSink : RtfSink
 
     private void Feed(Fields.WordFieldOutput output)
     {
-        if (output is not { Text: { } text, IsSearchable: true } || _parser.IsInListText || (_parser.IsInFootnote && !_includeNotes)) return;
+        if (output is not { Text: { } text, IsSearchable: true } || _parser.IsInListText || _parser.IsInFootnote) return;
         _matcher!.Feed(text.AsSpan());
     }
 
@@ -59,7 +57,7 @@ internal sealed class RtfSearchTextSink : RtfSink
     /// <summary>An equation's text, as the renderer shows it (RtfBlockHtmlRenderer.Equation).</summary>
     public override void Equation(byte[] group, in RtfGroupState state)
     {
-        if (_parser.IsInListText || (_parser.IsInFootnote && !_includeNotes)) return;
+        if (_parser.IsInListText || _parser.IsInFootnote) return;
         if (!_fields.IsIdle && !_fields.Shows("x".AsSpan())) return;     // inside a code or a replaced result: not shown
         if (RtfOfficeMath.ToOmml(group, state.CodePage, _ => null) is { } equation) DocBinary.DocBinaryParagraphHtmlRenderer.FeedEquationText(equation, _matcher!);
     }
@@ -69,7 +67,7 @@ internal sealed class RtfSearchTextSink : RtfSink
     /// <summary>An embedded chart's texts, as the renderer draws them (RtfBlockHtmlRenderer.Object).</summary>
     public override void Object(byte[] group, in RtfGroupState state)
     {
-        if (_parser.IsInListText || (_parser.IsInFootnote && !_includeNotes)) return;
+        if (_parser.IsInListText || _parser.IsInFootnote) return;
         if (!_fields.IsIdle && !_fields.Shows("x".AsSpan())) return;
         if (RtfObjectChart.Read(group) is not { } found) return;
         foreach (string text in found.Chart.Texts()) { _matcher!.Separator(); _matcher.Feed(text.AsSpan()); _matcher.Separator(); }

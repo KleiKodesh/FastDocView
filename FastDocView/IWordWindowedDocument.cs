@@ -123,9 +123,25 @@ public interface IWordWindowedDocument : IDisposable
     /// but the hit indexes and their match counts - with the app's book-view search normalisation (<see cref="WordDocumentSearchMatcher"/>).
     /// While an on-demand index is building the scan extends it as far as asked (as <see cref="RenderBlocks"/> does), so
     /// the caller just continues from <see cref="WordDocumentSearchBatch.NextBlock"/> until
-    /// <see cref="WordDocumentSearchBatch.ReachedEnd"/>. A match never spans two paragraphs, cells or blocks.
+    /// <see cref="WordDocumentSearchBatch.ReachedEnd"/>. A match never spans two paragraphs, cells or blocks. A block's
+    /// count is its OWN text only - exactly what its HTML shows: a footnote / endnote body is never counted with the block
+    /// that references it (search notes with <see cref="SearchNotes"/>, as the app's book view keeps its lines search and
+    /// its commentary search apart).
     /// </summary>
     WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan);
+
+    /// <summary>
+    /// One bounded step of the notes search, separate from <see cref="Search"/>: scans notes [fromNote, fromNote +
+    /// maxNotesToScan) of <see cref="NoteReferences"/> (body order - the index the notes pane rows use), each counted in
+    /// exactly the text the notes pane shows (its <see cref="WordWindowedDocumentHostExtensions.RenderNotesForDisplay"/>
+    /// HTML: tags skipped, an entity one character, the same normalisation and non-overlapping count as
+    /// <see cref="Search"/>, paragraphs separated). <see cref="WordDocumentSearchBatch.HitBlocks"/> = matching note
+    /// indexes, <see cref="WordDocumentSearchBatch.HitCounts"/> = occurrences in each note,
+    /// <see cref="WordDocumentSearchBatch.NextBlock"/> = the note to continue from; -1 with
+    /// <see cref="WordDocumentSearchBatch.ReachedEnd"/> once the index is complete and every note was scanned (while an
+    /// on-demand index builds: the notes known so far). Only the scanned notes are read.
+    /// </summary>
+    WordDocumentSearchBatch SearchNotes(string query, WordDocumentSearchOptions options, int fromNote, int maxNotesToScan);
 
     /// <summary>
     /// One picture's bytes by the id a rendered block carries (<c>data-word-picture</c> on its &lt;img&gt;): a windowed read

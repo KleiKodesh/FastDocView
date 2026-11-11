@@ -360,8 +360,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     /// <summary>
     /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan): one pass over the piece characters gives both the block
     /// boundaries and the text the matcher reads (<see cref="DocBinarySearchCursor"/> - no FKP formatting, no rendering, no
-    /// span rescan, no second read), and with <see cref="WordDocumentSearchOptions.IncludeNotes"/> the bodies of the notes a
-    /// block references. A batch that starts where the previous one ended continues its cursor. The index of a .doc is always complete.
+    /// span rescan, no second read). Note bodies live in their own subdocument, outside the main text, so a block counts only
+    /// its own text (the reference mark is all its HTML shows of a note). A batch that starts where the previous one ended continues its cursor. The index of a .doc is always complete.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
         => SearchBlocks(query, options, fromBlock, maxBlocksToScan, onePass: true);
@@ -371,6 +371,10 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         => SearchBlocks(query, options, fromBlock, maxBlocksToScan, onePass: false);
 
     private DocBinarySearchCursor? _searchCursor;
+
+    /// <summary>The notes search, apart from the blocks' (see <see cref="IWordWindowedDocument.SearchNotes"/>).</summary>
+    public WordDocumentSearchBatch SearchNotes(string query, WordDocumentSearchOptions options, int fromNote, int maxNotesToScan)
+        => WordDocumentNoteSearch.Search(this, query, options, fromNote, maxNotesToScan);
 
     private WordDocumentSearchBatch SearchBlocks(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan, bool onePass)
     {
@@ -417,12 +421,6 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
                             matcher.Separator();
                             if (text.Literal is { } literal) DocBinaryParagraphHtmlRenderer.FeedLiteralSearchCharacters(literal.AsSpan(), matcher);
                             else _renderer.FeedSearchText(text.Start, text.End, matcher);
-                        }
-                    if (options.IncludeNotes)
-                        foreach (DocBinaryNoteReferences.NoteReference reference in _notes.InRange(start, blockEnd))
-                        {
-                            matcher.Separator();
-                            _renderer.FeedSearchText(reference.TextStartCp, reference.TextEndCp, matcher);
                         }
                     if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                 }

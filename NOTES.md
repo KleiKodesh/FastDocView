@@ -1022,12 +1022,19 @@ The caller loops from `NextBlock` until `ReachedEnd` (`NextBlock` = -1).
   w:br/w:cr, ODF line breaks, RTF \line and .doc vertical tab are separators too; w:pPr/w:rPr and mc:Fallback skipped (no match across them). ODF: text:p/text:h content, text:s = its count of
   spaces, note-citation / annotation / tracked-changes skipped. .doc: field codes hidden, results kept.
   RTF: \listtext labels skipped.
-- **Notes** (`IncludeNotes`, default true): a note body holding the query makes the referencing block a hit
-  (docx/doc read the note on demand; ODF/RTF notes are inline in the block).
+- **Notes are searched apart (2026-11-11)**: a block's count is its own text only - what its HTML shows (the note's
+  mark, never its body). Mixing note matches into the block (the old `IncludeNotes`, removed) left the page unable to
+  land on an occurrence that lived in a note. ODF text:note-body and RTF footnote groups (inline in the block) are
+  skipped by every scanner; .docx / .doc notes are in their own part / subdocument and are not read. Notes have their
+  own search, `SearchNotes(query, options, fromNote, maxNotesToScan)` (`WordDocumentNoteSearch`, one implementation for
+  every format): note index = position in `NoteReferences` (the notes pane rows), counted in the note's
+  `RenderNotesForDisplay` HTML walked as the app's highlighter walks it (tags skipped, an entity one character),
+  paragraph tags separators; only the scanned notes are rendered. Check: `--search` (`DocumentSearchTest` per format,
+  `NoteSearchTest` on POI files with notes).
 - **Hit positions are not returned**: offsets in the plain text would not line up with the rendered HTML (list
   labels, field results, note marks), so the page highlights client-side with the app's highlighter, as the book
   view does. The `--search` check confirms on the samples' first 3000 blocks that hit blocks = blocks whose rendered
-  HTML (+ notes) holds the query walked the app's way (0 differences, .doc and .docx).
+  HTML holds the query walked the app's way (0 differences, .doc and .docx).
 - Timings (`--search <files>`, Release, 500 blocks per batch, cached index): .docx 87 MB body, 123,007 blocks:
   full scan 1.7-2.3 s (absent word), 2.3-4.2 s (word in 31,718 blocks), first hit 22-32 ms, avg batch 7-17 ms.
   .doc 40 MB, 106,442 blocks: full scan 0.4-0.7 s, first hit 6-12 ms, avg batch 1-3 ms. Cold on-demand .docx:
@@ -1097,20 +1104,13 @@ or resume point reads per-block ranges up to the next anchor. `FeedOdf` stays as
   hits before k only when the scanner's numbering is verified - block k and every hit block before it start where the
   index says (`WordSearchPiece.FallBackBlock`, one span scan, failure path only); otherwise the whole piece is read
   again from per-block ranges. Same for .docx.
-- **Bounded buffers**: the search read buffer (both formats) and the .docx note buffer drop back after a batch that grew
+- **Bounded buffers**: the search read buffer (both formats) drops back after a batch that grew
   them past 4 MB (`WordSearchPiece.NormalBufferBytes`); growth by doubling stops at that cap.
 
-### .docx note bodies from bytes (2026-11-03)
+### .docx note bodies from bytes (2026-11-03) - removed 2026-11-11
 
-Notes were read per search as XElement (range from the notes index, parsed whole). Now `DocxNoteSearchTextScanner`
-reads the same range's raw bytes into one reused buffer (`DocxNoteXmlReader.ReadBytes`) with the reference's rules
-(`FeedOoxml(XElement)`): per w:p its w:t text, whitespace-only text nodes dropped unless xml:space="preserve" (the parser
-ignores whitespace), w:tab inside a run a space, w:br / w:cr / paragraph end separators. It declines - matcher rolled
-back, the note parsed as before - a paragraph inside a paragraph (text box: the reference reads it twice), w:drawing /
-w:pict / w:object (stripped before parsing), whitespace written only as references, malformed XML. .odt notes are inline
-and already go through the body scan.
-- Synthetic 100,000-footnote docx (`--search notes-heavy`): 8 queries x match case identical to the parsed path
-  (blocks + counts); full scan with notes 8.5 s -> 1.0 s (body alone 0.1 s), same conditions as above.
+`DocxNoteSearchTextScanner` fed note bodies into the block search from raw bytes; removed with the notes-in-blocks
+search (see "Notes are searched apart" above).
 ## Bookmarks and in-document links in every format (branch work/bookmarks-all, 2026-10-29)
 
 `IWordWindowedDocument.FindBookmark(name)` returns the block a bookmark marks; links render as
@@ -3462,12 +3462,19 @@ The caller loops from `NextBlock` until `ReachedEnd` (`NextBlock` = -1).
   w:br/w:cr, ODF line breaks, RTF \line and .doc vertical tab are separators too; w:pPr/w:rPr and mc:Fallback skipped (no match across them). ODF: text:p/text:h content, text:s = its count of
   spaces, note-citation / annotation / tracked-changes skipped. .doc: field codes hidden, results kept.
   RTF: \listtext labels skipped.
-- **Notes** (`IncludeNotes`, default true): a note body holding the query makes the referencing block a hit
-  (docx/doc read the note on demand; ODF/RTF notes are inline in the block).
+- **Notes are searched apart (2026-11-11)**: a block's count is its own text only - what its HTML shows (the note's
+  mark, never its body). Mixing note matches into the block (the old `IncludeNotes`, removed) left the page unable to
+  land on an occurrence that lived in a note. ODF text:note-body and RTF footnote groups (inline in the block) are
+  skipped by every scanner; .docx / .doc notes are in their own part / subdocument and are not read. Notes have their
+  own search, `SearchNotes(query, options, fromNote, maxNotesToScan)` (`WordDocumentNoteSearch`, one implementation for
+  every format): note index = position in `NoteReferences` (the notes pane rows), counted in the note's
+  `RenderNotesForDisplay` HTML walked as the app's highlighter walks it (tags skipped, an entity one character),
+  paragraph tags separators; only the scanned notes are rendered. Check: `--search` (`DocumentSearchTest` per format,
+  `NoteSearchTest` on POI files with notes).
 - **Hit positions are not returned**: offsets in the plain text would not line up with the rendered HTML (list
   labels, field results, note marks), so the page highlights client-side with the app's highlighter, as the book
   view does. The `--search` check confirms on the samples' first 3000 blocks that hit blocks = blocks whose rendered
-  HTML (+ notes) holds the query walked the app's way (0 differences, .doc and .docx).
+  HTML holds the query walked the app's way (0 differences, .doc and .docx).
 - Timings (`--search <files>`, Release, 500 blocks per batch, cached index): .docx 87 MB body, 123,007 blocks:
   full scan 1.7-2.3 s (absent word), 2.3-4.2 s (word in 31,718 blocks), first hit 22-32 ms, avg batch 7-17 ms.
   .doc 40 MB, 106,442 blocks: full scan 0.4-0.7 s, first hit 6-12 ms, avg batch 1-3 ms. Cold on-demand .docx:
@@ -3537,7 +3544,7 @@ or resume point reads per-block ranges up to the next anchor. `FeedOdf` stays as
   hits before k only when the scanner's numbering is verified - block k and every hit block before it start where the
   index says (`WordSearchPiece.FallBackBlock`, one span scan, failure path only); otherwise the whole piece is read
   again from per-block ranges. Same for .docx.
-- **Bounded buffers**: the search read buffer (both formats) and the .docx note buffer drop back after a batch that grew
+- **Bounded buffers**: the search read buffer (both formats) drops back after a batch that grew
   them past 4 MB (`WordSearchPiece.NormalBufferBytes`); growth by doubling stops at that cap.
 
 ### .docx note bodies from bytes (2026-11-03)

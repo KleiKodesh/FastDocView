@@ -7,19 +7,21 @@ namespace FastDocView;
 /// <summary>
 /// In-document search options. <see cref="MatchCase"/> true (the default) compares letters exactly, as the app's
 /// book-view search does (Hebrew has no case); false folds both sides with <see cref="char.ToLowerInvariant"/>.
-/// <see cref="IncludeNotes"/>: a footnote / endnote body that holds the query makes the block that references it a hit.
+/// Footnotes / endnotes are never part of a block's search: a block counts only its own text (what its HTML shows - the
+/// note reference mark, not the note body); notes are searched on their own with <see cref="IWordWindowedDocument.SearchNotes"/>.
 /// </summary>
-public sealed record WordDocumentSearchOptions(bool MatchCase = true, bool IncludeNotes = true)
+public sealed record WordDocumentSearchOptions(bool MatchCase = true)
 {
     public static readonly WordDocumentSearchOptions Default = new();
 }
 
 /// <summary>
 /// One bounded step of an in-document search. <see cref="HitBlocks"/>: the blocks of the scanned range whose text holds
-/// the query, ascending; <see cref="HitCounts"/>, parallel to it: how many times the query occurs in each (the block's
-/// text first, then its notes when they are searched - the app's search steps match by match, as the book view does per
-/// line). Occurrences never overlap (leftmost first, as the app's highlighter marks them). <see cref="NextBlock"/>:
-/// where the next call continues; -1 once <see cref="ReachedEnd"/> (the index is complete and every block was scanned).
+/// the query, ascending; <see cref="HitCounts"/>, parallel to it: how many times the query occurs in each (the block's own
+/// text only - the app's search steps match by match, as the book view does per line). For
+/// <see cref="IWordWindowedDocument.SearchNotes"/> the "blocks" are note indexes (positions in
+/// <see cref="IWordWindowedDocument.NoteReferences"/>) and the counts are each note's own. Occurrences never overlap (leftmost first, as the app's highlighter marks them). <see cref="NextBlock"/>:
+/// where the next call continues; -1 once <see cref="ReachedEnd"/> (the index is complete and every block / note was scanned).
 /// Only numbers are produced - no text is kept.
 /// </summary>
 public sealed record WordDocumentSearchBatch(int[] HitBlocks, int[] HitCounts, int NextBlock, bool ReachedEnd)
@@ -168,7 +170,14 @@ public sealed class WordDocumentSearchMatcher
     /// An HTML fragment walked exactly as the app's search walks a line's HTML (SeforimDbLineTextScan.CountIn): tags
     /// skipped, a stray '>' dropped, a quote entity becomes its quote, any other entity one sentinel character.
     /// </summary>
-    public void FeedHtml(string html)
+    public void FeedHtml(string html) => FeedHtml(html, separatesParagraphs: false);
+
+    /// <summary>
+    /// <see cref="FeedHtml(string)"/>; with <paramref name="separatesParagraphs"/> a paragraph-level tag (p, div, li, td,
+    /// th, tr, table, h1-h6, br, blockquote, ul, ol) is a <see cref="Separator"/> - a match never joins two paragraphs,
+    /// as in the block search.
+    /// </summary>
+    public void FeedHtml(string html, bool separatesParagraphs)
     {
         int i = 0, length = html.Length;
         while (i < length)
@@ -178,6 +187,7 @@ public sealed class WordDocumentSearchMatcher
             {
                 int close = html.IndexOf('>', i + 1);
                 if (close < 0) break;
+                if (separatesParagraphs && IsParagraphTag(html, i + 1, close)) Separator();
                 i = close + 1;
                 continue;
             }
@@ -206,6 +216,59 @@ public sealed class WordDocumentSearchMatcher
             Feed(ch);
             i++;
         }
+    }
+
+    private static bool IsParagraphTag(string html, int start, int end)
+    {
+        if (start < end && html[start] == '/') start++;
+        int nameEnd = start;
+        while (nameEnd < end && char.IsLetterOrDigit(html[nameEnd])) nameEnd++;
+        switch (nameEnd - start)
+        {
+            case 1: return char.ToLowerInvariant(html[start]) == 'p';
+            case 2:
+                string two = html.Substring(start, 2).ToLowerInvariant();
+                return two is "li" or "td" or "th" or "tr" or "br" or "ul" or "ol" || (two[0] == 'h' && two[1] is >= '1' and <= '6');
+            case 3: return string.Compare(html, start, "div", 0, 3, StringComparison.OrdinalIgnoreCase) == 0;
+            case 5: return string.Compare(html, start, "table", 0, 5, StringComparison.OrdinalIgnoreCase) == 0;
+            case 10: return string.Compare(html, start, "blockquote", 0, 10, StringComparison.OrdinalIgnoreCase) == 0;
+            default: return false;
+        }
+    }
+}
+
+/// <summary>
+/// The notes search every format shares (<see cref="IWordWindowedDocument.SearchNotes"/>): each note's rendered HTML as
+/// the notes pane shows it (<see cref="WordWindowedDocumentHostExtensions.RenderNotesForDisplay"/>), walked as the app's
+/// highlighter walks it (tags skipped, an entity one character, Hebrew marks dropped) with paragraph tags as separators.
+/// Only the notes of the batch are rendered (a bounded page at a time), never all of them.
+/// </summary>
+internal static class WordDocumentNoteSearch
+{
+    private const int NotesPerRender = 50;
+
+    public static WordDocumentSearchBatch Search(IWordWindowedDocument document, string query, WordDocumentSearchOptions options, int fromNote, int maxNotesToScan)
+    {
+        var matcher = new WordDocumentSearchMatcher(query, options);
+        if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
+        fromNote = Math.Max(0, fromNote);
+        bool isIndexComplete = document.IsIndexComplete;       // read first: once complete, the note count below is final
+        int known = document.NoteReferences.Count;
+        int end = (int)Math.Min(known, (long)fromNote + Math.Max(1, maxNotesToScan));
+        var hits = new List<int>();
+        var counts = new List<int>();
+        for (int first = fromNote; first < end; first += NotesPerRender)
+        {
+            IReadOnlyList<WordDocumentNoteHtml> notes = document.RenderNotesForDisplay(first, Math.Min(NotesPerRender, end - first));
+            for (int i = 0; i < notes.Count; i++)
+            {
+                matcher.Reset();
+                matcher.FeedHtml(notes[i].Html, separatesParagraphs: true);
+                if (matcher.Count > 0) { hits.Add(first + i); counts.Add(matcher.Count); }
+            }
+            if (notes.Count == 0) break;
+        }
+        return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromNote), isIndexComplete, known);
     }
 }
 
@@ -434,103 +497,13 @@ internal sealed class WordXmlSearchText
 
     private static bool IsOn(string? value) => value is "1" or "true" or "on";
 
-    /// <summary>A .docx note body (already parsed by the note reader): its w:t text, paragraphs separated.</summary>
-    public static void FeedOoxml(XElement note, WordDocumentSearchMatcher matcher, Fields.WordFieldContext? fieldContext = null)
-    {
-        if (note.Descendants().Any(e => e.Name.LocalName is "fldChar" or "fldSimple" or "instrText"))
-        {
-            // fields: one pass in document order through the renderer's field stack (DocxBlockHtmlRenderer.RenderNote: fresh, no counters)
-            FeedFieldNodes(note, matcher, new Docx.DocxSearchFields(fieldContext, counts: false), new List<(XElement, bool)>());
-            return;
-        }
-        foreach (XElement paragraph in note.DescendantsAndSelf().Where(e => e.Name.LocalName == "p" && IsWordprocessing(e.Name.NamespaceName)))
-        {
-            foreach (XElement element in paragraph.Descendants())
-            {
-                if (element.Name.NamespaceName == Html.WordOfficeMathHtml.MathNamespace || element.Ancestors().TakeWhile(a => a != paragraph).Any(Html.WordOfficeMathHtml.IsMathZone))
-                {
-                    // an equation: its text as drawn, once (at its outermost zone)
-                    if (Html.WordOfficeMathHtml.IsMathZone(element) && !element.Ancestors().TakeWhile(a => a != paragraph).Any(Html.WordOfficeMathHtml.IsMathZone)
-                        && !element.Ancestors().TakeWhile(a => a != paragraph).Any(a => IsWordprocessing(a.Name.NamespaceName) && a.Name.LocalName is "moveFrom" or "del" or "rt"))
-                        matcher.Feed(Html.WordOfficeMathHtml.SearchText(element).AsSpan());
-                    continue;
-                }
-                if (!IsWordprocessing(element.Name.NamespaceName)) continue;
-                if (element.Ancestors().TakeWhile(a => a != paragraph).Any(a => IsWordprocessing(a.Name.NamespaceName) && a.Name.LocalName is "moveFrom" or "rt" or "del")) continue;   // not shown
-                if (element.Name.LocalName == "t") matcher.Feed(element.Value.AsSpan());
-                else if (element.Name.LocalName == "tab" && element.Parent?.Name.LocalName == "r") matcher.Feed(' ');
-                else if (element.Name.LocalName is "br" or "cr") matcher.Separator();
-                else if (element.Name.LocalName == "p") matcher.Separator();     // a nested paragraph (text box)
-            }
-            matcher.Separator();
-        }
-    }
-
-    /// <summary>A note's elements in document order with fields routed (the same rules as the byte reader's).</summary>
-    private static void FeedFieldNodes(XElement element, WordDocumentSearchMatcher matcher, Docx.DocxSearchFields fields, List<(XElement simple, bool separated)> simpleFields)
-    {
-        foreach (XElement child in element.Elements())
-        {
-            if (!IsWordprocessing(child.Name.NamespaceName))
-            {
-                if (Html.WordOfficeMathHtml.IsMathZone(child))
-                {
-                    string equation = Html.WordOfficeMathHtml.SearchText(child);     // an equation's text as drawn
-                    if (fields.IsIdle || fields.Shows(equation)) matcher.Feed(equation.AsSpan());
-                    continue;
-                }
-                if (child.Name.LocalName != "Fallback") FeedFieldNodes(child, matcher, fields, simpleFields);
-                continue;
-            }
-            string name = child.Name.LocalName;
-            if (name is "pPr" or "rPr" or "del" or "moveFrom" or "rt") continue;
-            if (simpleFields.Count > 0 && !simpleFields[simpleFields.Count - 1].separated && child.Parent == simpleFields[simpleFields.Count - 1].simple
-                && name is "r" or "hyperlink" or "fldSimple" or "smartTag" or "ins" or "sdt" or "customXml")
-            {
-                simpleFields[simpleFields.Count - 1] = (simpleFields[simpleFields.Count - 1].simple, true);
-                fields.Separate(matcher);
-            }
-            XNamespace w = child.Name.Namespace;
-            switch (name)
-            {
-                case "fldChar":
-                {
-                    string? type = (string?)child.Attribute(w + "fldCharType");
-                    if (type == "begin") fields.Begin(IsOn((string?)child.Attribute(w + "dirty")), IsOn((string?)child.Attribute(w + "fldLock")), DocxHtml.DocxBlockHtmlRenderer.FormFieldState(child));
-                    else if (type == "separate") fields.Separate(matcher);
-                    else if (type == "end") fields.End(matcher);
-                    continue;
-                }
-                case "instrText": fields.Instruction(child.Value); continue;
-                case "fldSimple":
-                    fields.Begin(IsOn((string?)child.Attribute(w + "dirty")), IsOn((string?)child.Attribute(w + "fldLock")), null);
-                    fields.Instruction((string?)child.Attribute(w + "instr") ?? "");
-                    simpleFields.Add((child, false));
-                    FeedFieldNodes(child, matcher, fields, simpleFields);
-                    simpleFields.RemoveAt(simpleFields.Count - 1);
-                    fields.End(matcher);
-                    continue;
-                case "txbxContent":
-                    fields.EnterTextBox(0);
-                    FeedFieldNodes(child, matcher, fields, simpleFields);
-                    fields.Closed(0);
-                    continue;
-                case "t": if (fields.IsIdle || fields.Shows(child.Value)) matcher.Feed(child.Value.AsSpan()); continue;
-                case "tab": if (child.Parent?.Name.LocalName == "r" && fields.Shows("\t")) matcher.Feed(' '); continue;
-                case "br" or "cr": if (fields.Shows(null)) matcher.Separator(); continue;
-            }
-            FeedFieldNodes(child, matcher, fields, simpleFields);
-            if (name == "p") matcher.Separator();
-        }
-    }
-
     /// <summary>
     /// An .odt / .fodt body block: character data inside text:p / text:h; text:s = its text:c spaces, text:tab a space,
     /// text:line-break and paragraph ends separators. Skipped: text:note-citation (the note's label), office:annotation
-    /// (comments), unless <paramref name="includeNotes"/> text:note-body, and what the renderer does not show
+    /// (comments), text:note-body (the note's text: the block's HTML shows only its mark), and what the renderer does not show
     /// (<see cref="IsHiddenOdf"/>: svg:title / svg:desc, shapes, images, other namespaces inside a paragraph...).
     /// </summary>
-    public void FeedOdf(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher, bool includeNotes)
+    public void FeedOdf(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher)
     {
         try
         {
@@ -568,7 +541,7 @@ internal sealed class WordXmlSearchText
                                 case "tab": matcher.Feed(' '); break;
                                 case "line-break": matcher.Separator(); break;
                                 case "note-citation" or "tracked-changes": reader.Skip(); skipped = true; continue;
-                                case "note-body" when !includeNotes:
+                                case "note-body":
                                     if (contexts.Count > 0 && contexts[contexts.Count - 1].depth == reader.Depth) contexts.RemoveAt(contexts.Count - 1);   // never closes: skipped whole
                                     reader.Skip(); skipped = true; continue;
                             }

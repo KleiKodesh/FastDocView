@@ -148,18 +148,16 @@ public static class DocxSearchBytesTest
         string profileQuery = GoldenQueries[0];
         var best = new Dictionary<string, long>();
         for (int round = 0; round < 3; round++)
-            foreach ((string label, SearchMode mode, bool notes) in new[]
+            foreach ((string label, SearchMode mode) in new[]
             {
-                ("read bytes only, index ranges (span scan)", SearchMode.ReadBytesOnly, false),
-                ("read bytes only, raw search read", SearchMode.ReadSearchBytesOnly, false),
-                ("reference XmlReader, no notes", SearchMode.ReferenceXmlReader, false),
-                ("reference XmlReader + notes", SearchMode.ReferenceXmlReader, true),
-                ("bytes, no notes", SearchMode.Bytes, false),
-                ("bytes + notes", SearchMode.Bytes, true),
+                ("read bytes only, index ranges (span scan)", SearchMode.ReadBytesOnly),
+                ("read bytes only, raw search read", SearchMode.ReadSearchBytesOnly),
+                ("reference XmlReader", SearchMode.ReferenceXmlReader),
+                ("bytes", SearchMode.Bytes),
             })
             {
                 var watch = Stopwatch.StartNew();
-                All(document, profileQuery, mode, new WordDocumentSearchOptions(IncludeNotes: notes));
+                All(document, profileQuery, mode, WordDocumentSearchOptions.Default);
                 long ms = watch.ElapsedMilliseconds;
                 best[label] = best.TryGetValue(label, out long previous) ? Math.Min(previous, ms) : ms;
                 Console.WriteLine($"   round {round + 1}: {label}: {ms} ms");

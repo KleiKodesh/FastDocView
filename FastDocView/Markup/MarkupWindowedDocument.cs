@@ -288,6 +288,10 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
         }
     }
 
+    /// <summary>The notes search, apart from the blocks' (see <see cref="IWordWindowedDocument.SearchNotes"/>).</summary>
+    public WordDocumentSearchBatch SearchNotes(string query, WordDocumentSearchOptions options, int fromNote, int maxNotesToScan)
+        => WordDocumentNoteSearch.Search(this, query, options, fromNote, maxNotesToScan);
+
     /// <summary>
     /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan) with one read of their bytes (an MHTML decode from the first
     /// block's resume point). A .txt line is matched as its characters; an MHTML block is HTML, walked exactly as the

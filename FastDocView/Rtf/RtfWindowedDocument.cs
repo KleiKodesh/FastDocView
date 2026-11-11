@@ -244,7 +244,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     /// <summary>
     /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan) in one parse: the span rescan that finds the block bounds feeds
     /// their text to the matcher as it goes (<see cref="RtfCompactBlockTable.Search"/>) - no HTML, no second parse.
-    /// Footnotes are groups inside the block, fed when <see cref="WordDocumentSearchOptions.IncludeNotes"/>.
+    /// Footnotes are groups inside the block and are skipped: the block's HTML shows only their reference mark.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
     {
@@ -258,7 +258,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
             try
             {
                 int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
-                var search = new RtfSpanSearch(matcher, options.IncludeNotes) { FieldContext = _fieldContext };
+                var search = new RtfSpanSearch(matcher) { FieldContext = _fieldContext };
                 _fieldContext.CurrentBlock = fromBlock;
                 if (fromBlock < end) _table.Search(fromBlock, end, search);
                 return WordDocumentSearchBatch.Finish(search.Hits, search.Counts, Math.Max(end, fromBlock), isIndexComplete: _builder is null, _index.BlockCount);
@@ -287,7 +287,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
                 {
                     matcher.Reset();
                     _fieldContext.CurrentBlock = blockIndex;
-                    _searchSink.Feed(_file, _table, blockIndex, matcher, options.IncludeNotes);
+                    _searchSink.Feed(_file, _table, blockIndex, matcher);
                     if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                 }
                 return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: _builder is null, _index.BlockCount);
@@ -296,6 +296,10 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
         }
     }
     private RtfSearchTextSink? _searchSink;
+
+    /// <summary>The notes search, apart from the blocks' (see <see cref="IWordWindowedDocument.SearchNotes"/>).</summary>
+    public WordDocumentSearchBatch SearchNotes(string query, WordDocumentSearchOptions options, int fromNote, int maxNotesToScan)
+        => WordDocumentNoteSearch.Search(this, query, options, fromNote, maxNotesToScan);
 
     /// <summary>
     /// The block table field lookups read (REF, STYLEREF, NOTEREF, list numbers): its own span cache, whose rescans compute

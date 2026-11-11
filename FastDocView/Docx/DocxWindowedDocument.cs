@@ -426,28 +426,6 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         }
     }
 
-    /// <summary>A note's SmartArt / chart drawings (dgm:relIds r:dm, c:chart r:id outside mc:Fallback), resolved against the note's part, and its VML WordArt text (v:textpath string).</summary>
-    private void FeedNoteDrawings(XElement note, WordDocumentNoteKind kind, WordDocumentSearchMatcher matcher)
-    {
-        // the note reader parses a note with its drawings stripped (DocxDrawingStripper): a drawing is then its layout element,
-        // its SmartArt / chart as shapes/diagram dm, shapes/chart id, shapes/chartex id, a VML WordArt as textpathString
-        XNamespace relationships = WordXmlSearchText.RelationshipsNamespace;
-        foreach (XElement element in note.Descendants())
-        {
-            if (element.Ancestors().Any(a => a.Name.LocalName == "Fallback" && a.Name.NamespaceName == WordXmlSearchText.MarkupCompatibilityNamespace)) continue;
-            string local = element.Name.LocalName;
-            bool stripped = element.Ancestors().Any(a => a.Name.LocalName == "shapes" && a.Parent?.Name.LocalName == DocxDrawingStripper.PictureLayoutElementName);
-            string? id = element.Name.NamespaceName == WordXmlSearchText.DiagramNamespace && local == "relIds" ? (string?)element.Attribute(relationships + "dm")
-                       : element.Name.NamespaceName is WordXmlSearchText.ChartNamespace or WordXmlSearchText.ChartExNamespace && local == "chart" ? (string?)element.Attribute(relationships + "id")
-                       : stripped && local == "diagram" ? (string?)element.Attribute("dm")
-                       : stripped && local is "chart" or "chartex" ? (string?)element.Attribute("id") : null;
-            if (id is not null) { FeedDrawing(kind, id, matcher); continue; }
-            // VML WordArt: the v:textpath string is the text it shows (raw, or kept as textpathString on the stripped layout / its vshapes)
-            string? wordArt = element.Name.NamespaceName == WordXmlSearchText.VmlNamespace && local == "textpath" ? (string?)element.Attribute("string")
-                            : local is DocxDrawingStripper.PictureLayoutElementName or "vshape" ? (string?)element.Attribute("textpathString") : null;
-            if (wordArt is { Length: > 0 }) { matcher.Separator(); matcher.Feed(wordArt.AsSpan()); matcher.Separator(); }
-        }
-    }
 
     // ── drawing parts (charts, diagrams) and their pictures, read when a block that names them is rendered ──
 
@@ -640,15 +618,15 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     /// <summary>
     /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan) for the query: one contiguous read of their bytes from the
     /// index (one inflate pass), each block's w:t text fed to the matcher straight from the bytes - no XElement, no
-    /// rendering - and, with <see cref="WordDocumentSearchOptions.IncludeNotes"/>, the notes it references read on
-    /// demand. While an on-demand index is building, the scan extends it as far as asked, exactly as
+    /// rendering. Note bodies are in their own parts and are not read: a block counts only its own text (its HTML shows just
+    /// the note's reference mark; notes are searched apart, <see cref="SearchNotes"/>). While an on-demand index is building, the scan extends it as far as asked, exactly as
     /// <see cref="RenderBlocks"/> does; <see cref="WordDocumentSearchBatch.ReachedEnd"/> only once it is complete.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
         => Search(query, options, fromBlock, maxBlocksToScan, DocxSearchTextMode.Bytes);
 
-    /// <summary>How a search batch reads block text: the byte scanner (the product), the XmlReader reference over the index ranges (golden checks), not at all (profiling the index-range read / the raw search read alone), or the byte scanner with notes parsed as before (profiling the note read).</summary>
-    internal enum DocxSearchTextMode { Bytes, ReferenceXmlReader, ReadBytesOnly, ReadSearchBytesOnly, BytesWithParsedNotes }
+    /// <summary>How a search batch reads block text: the byte scanner (the product), the XmlReader reference over the index ranges (golden checks), not at all (profiling the index-range read / the raw search read alone).</summary>
+    internal enum DocxSearchTextMode { Bytes, ReferenceXmlReader, ReadBytesOnly, ReadSearchBytesOnly }
 
     /// <summary>Blocks per raw search read: bounds the bytes one read holds (~1 MB on the sample) whatever the batch size.</summary>
     private const int SearchPieceBlocks = 1000;
@@ -687,7 +665,6 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                         List<string> drawings = mode == DocxSearchTextMode.ReferenceXmlReader ? _referenceDrawingIds : _searchText!.DrawingRelationshipIds;
                         foreach (string drawing in drawings) FeedDrawing(null, drawing, matcher);
                         drawings.Clear();
-                        if (options.IncludeNotes) FeedNotes(blockIndex, matcher, mode);
                         if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex + 1;   // REF \p reads the field's block
                         if (matcher.Count > 0)
                         {
@@ -700,7 +677,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                     int scanFrom = fromBlock;
                     // the finished index: the scanner finds the block boundaries in raw reads (no span scan), a bounded
                     // piece at a time so a huge batch never holds more than a piece's bytes
-                    if (_blocks is DocxCompactBlockTable compact && mode is DocxSearchTextMode.Bytes or DocxSearchTextMode.ReadSearchBytesOnly or DocxSearchTextMode.BytesWithParsedNotes)
+                    if (_blocks is DocxCompactBlockTable compact && mode is DocxSearchTextMode.Bytes or DocxSearchTextMode.ReadSearchBytesOnly)
                     {
                         while (scanFrom < end)
                         {
@@ -762,46 +739,16 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
             }
             finally
             {
-                // a batch that needed an oversize buffer (a huge block or note) drops back to the normal size
+                // a batch that needed an oversize buffer (a huge block) drops back to the normal size
                 (_blocks as DocxCompactBlockTable)?.ShrinkSearchBuffer();
-                WordSearchPiece.Shrink(ref _noteSearchBuffer, 0);
                 _releasableFile?.Release();
             }
         }
     }
-    /// <summary>The bodies of the notes a block references, after its own text (a separator before each).</summary>
-    /// <summary>
-    /// The byte scanner reads each note's raw bytes (its range from the notes index); a note it declines (a text box, a
-    /// drawing, malformed XML) is parsed and read as the reference reads it - the matcher rolled back first.
-    /// </summary>
-    private void FeedNotes(int blockIndex, WordDocumentSearchMatcher matcher, DocxSearchTextMode mode)
-    {
-        foreach (DocxNoteReference reference in _blocks.NoteReferencesInBlocks(blockIndex, blockIndex))
-        {
-            if (mode is not (DocxSearchTextMode.ReferenceXmlReader or DocxSearchTextMode.BytesWithParsedNotes))
-            {
-                if (!_noteReader.ReadBytes(reference.Kind, reference.NoteId, ref _noteSearchBuffer, out int length, out string rootOpenTag)) continue;
-                matcher.Separator();
-                (int, int) before = matcher.SaveState();
-                DocxNoteSearchTextScanner scanner = reference.Kind == WordDocumentNoteKind.Footnote
-                    ? _footnoteSearchText ??= new DocxNoteSearchTextScanner(rootOpenTag)
-                    : _endnoteSearchText ??= new DocxNoteSearchTextScanner(rootOpenTag);
-                if (scanner.TryFeed(_noteSearchBuffer.AsSpan(0, length), matcher)) { NotesSearchedFromBytes++; continue; }
-                matcher.RestoreState(before);
-                if (_noteReader.Read(reference.Kind, reference.NoteId) is { } declined) { WordXmlSearchText.FeedOoxml(declined, matcher, _renderer.FieldContext); FeedNoteDrawings(declined, reference.Kind, matcher); }
-                continue;
-            }
-            if (_noteReader.Read(reference.Kind, reference.NoteId) is not { } note) continue;
-            matcher.Separator();
-            WordXmlSearchText.FeedOoxml(note, matcher, _renderer.FieldContext);
-            FeedNoteDrawings(note, reference.Kind, matcher);
-        }
-    }
 
-    private byte[] _noteSearchBuffer = new byte[4096];
-    private DocxNoteSearchTextScanner? _footnoteSearchText, _endnoteSearchText;
-    /// <summary>Notes the byte scanner read itself (not declined to the parser) - the tests check the fast path ran.</summary>
-    internal long NotesSearchedFromBytes { get; private set; }
+    /// <summary>The notes search, apart from the blocks' (see <see cref="IWordWindowedDocument.SearchNotes"/>).</summary>
+    public WordDocumentSearchBatch SearchNotes(string query, WordDocumentSearchOptions options, int fromNote, int maxNotesToScan)
+        => WordDocumentNoteSearch.Search(this, query, options, fromNote, maxNotesToScan);
 
     private DocxSearchTextScanner? _searchText;
     private DocxSearchFields? _searchFields;

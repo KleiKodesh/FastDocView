@@ -41,23 +41,6 @@ public sealed class DocxNoteXmlReader : IDisposable
 
         public string RootOpenTag => rootOpenTag();
 
-        /// <summary>The note's raw bytes into <paramref name="buffer"/> (grown when short, reused otherwise); false when the part has no such note.</summary>
-        public bool ReadBytes(int noteId, ref byte[] buffer, out int length)
-        {
-            length = 0;
-            if (RangeOf(noteId) is not { } range) return false;
-            length = checked((int)(range.end - range.start));
-            if (buffer.Length < length) buffer = new byte[Math.Max(length, buffer.Length * 2)];
-            View.Position = range.start;
-            int filled = 0;
-            while (filled < length)
-            {
-                int read = View.Read(buffer, filled, length - filled);
-                if (read <= 0) throw new EndOfStreamException("Part ended inside an element.");
-                filled += read;
-            }
-            return true;
-        }
     }
 
     /// <summary>Sidecar mode: views over the package stream (owned by the body reader, not by this one).</summary>
@@ -89,17 +72,6 @@ public sealed class DocxNoteXmlReader : IDisposable
 
     public XElement? Read(WordDocumentNoteKind kind, int noteId)
         => (kind == WordDocumentNoteKind.Footnote ? _footnotes : _endnotes)?.Read(noteId);
-
-    /// <summary>The raw bytes of one note (the search reads them with a byte scanner), and its part's root tag; false when there is no such note.</summary>
-    internal bool ReadBytes(WordDocumentNoteKind kind, int noteId, ref byte[] buffer, out int length, out string rootOpenTag)
-    {
-        PartView? part = kind == WordDocumentNoteKind.Footnote ? _footnotes : _endnotes;
-        length = 0;
-        rootOpenTag = "";
-        if (part is null || !part.ReadBytes(noteId, ref buffer, out length)) return false;
-        rootOpenTag = part.RootOpenTag;
-        return true;
-    }
 
     /// <summary>Disposes the views only; the package stream belongs to the body reader.</summary>
     public void Dispose()

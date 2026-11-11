@@ -4,9 +4,9 @@ namespace FastDocView.Rtf;
 /// One search batch fed from the span rescan itself (<see cref="RtfRandomAccessIndexBuilder.Search"/>): the parse that finds
 /// the block bounds also hands its text and separators here, so a block is parsed once. The text rules are
 /// <see cref="RtfSearchTextSink"/>'s (the per-block reference): paragraph / cell / row / line ends and note bounds are
-/// separators, \listtext labels are skipped, footnote text only when the search includes notes, a tab is a space.
+/// separators, \listtext labels are skipped, footnote text is skipped (the block shows only its mark), a tab is a space.
 /// </summary>
-internal sealed class RtfSpanSearch(WordDocumentSearchMatcher matcher, bool includeNotes)
+internal sealed class RtfSpanSearch(WordDocumentSearchMatcher matcher)
 {
     private readonly List<int> _hits = new(), _counts = new();
 
@@ -21,7 +21,7 @@ internal sealed class RtfSpanSearch(WordDocumentSearchMatcher matcher, bool incl
 
     public void Text(ReadOnlySpan<char> text, RtfParser parser)
     {
-        if (parser.IsInListText || (parser.IsInFootnote && !includeNotes)) return;
+        if (parser.IsInListText || parser.IsInFootnote) return;
         foreach (char c in text)
         {
             if (c == '\t') matcher.Feed(' ');

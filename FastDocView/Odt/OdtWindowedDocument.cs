@@ -587,7 +587,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     /// <summary>
     /// Scans blocks [fromBlock, fromBlock + maxBlocksToScan): one contiguous read of their bytes, each block's paragraph
     /// text fed to the matcher straight from the bytes (no XElement, no rendering). Notes are inline in ODF
-    /// (text:note-body), so <see cref="WordDocumentSearchOptions.IncludeNotes"/> just keeps or skips them. An on-demand
+    /// (text:note-body) and are skipped: the block's HTML shows only the note's mark. An on-demand
     /// index is extended as far as asked, as <see cref="RenderBlocks"/> does.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
@@ -643,8 +643,8 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                         foreach ((int blockIndex, int start, int length) in blocks)
                         {
                             matcher.Reset();
-                            if (mode == OdtSearchTextMode.ReferenceXmlReader) _referenceSearchText!.FeedOdf(bytes, start, length, matcher, options.IncludeNotes);
-                            else _searchText.Feed(bytes, start, length, matcher, options.IncludeNotes);
+                            if (mode == OdtSearchTextMode.ReferenceXmlReader) _referenceSearchText!.FeedOdf(bytes, start, length, matcher);
+                            else _searchText.Feed(bytes, start, length, matcher);
                             BlockEnded(blockIndex);
                             if (ObjectElementAt(bytes.AsSpan(start, length)) >= 0) objectBlocks.Add(blockIndex);
                         }
@@ -670,7 +670,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
                             pieceHitStarts.Clear();
                             pieceStartOffset = startOffset;
                             matcher.Reset();
-                            WordSearchBlocksResult result = _searchText.FeedBlocks(buffer.AsSpan(start, length), scanFrom, pieceEnd, frames, matcher, options.IncludeNotes, BlockEnded, out long stoppedAt);
+                            WordSearchBlocksResult result = _searchText.FeedBlocks(buffer.AsSpan(start, length), scanFrom, pieceEnd, frames, matcher, BlockEnded, out long stoppedAt);
                             pieceStartOffset = -1;
                             // chart objects in the piece's own blocks (bytes past pieceEnd's start belong to later batches); collected
                             // before the verdict, so a fallen-back or redone piece keeps them (the set has each block once)
@@ -714,6 +714,10 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         }
     }
     private OdtSearchTextScanner? _searchText;
+
+    /// <summary>The notes search, apart from the blocks' (see <see cref="IWordWindowedDocument.SearchNotes"/>).</summary>
+    public WordDocumentSearchBatch SearchNotes(string query, WordDocumentSearchOptions options, int fromNote, int maxNotesToScan)
+        => WordDocumentNoteSearch.Search(this, query, options, fromNote, maxNotesToScan);
     /// <summary>Blocks the byte scanner read from raw runs (not per-block ranges) - the tests check the fast path ran.</summary>
     internal long BlocksSearchedFromRawBytes { get; private set; }
     private WordXmlSearchText? _referenceSearchText;

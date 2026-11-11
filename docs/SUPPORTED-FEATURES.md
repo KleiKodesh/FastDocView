@@ -147,7 +147,7 @@ Headers / footers, columns and page layout are not shown (flow view): see UNSUPP
 | Numbering counted at index time, custom marks | yes | yes | yes | yes | n.a. | n.a. |
 | Number format and start value | partial (N1) | partial (N2) | yes | yes | n.a. | n.a. |
 | Separator notes dropped | yes | yes | yes | n.a. | n.a. | n.a. |
-| Search inside notes | yes | yes | yes | yes | n.a. | n.a. |
+| Search inside notes (own notes search, apart from the main text) | yes | yes | yes | yes | n.a. | n.a. |
 | Notes inside table cells | yes | yes | yes | yes | n.a. | n.a. |
 | Notes inside text boxes | n.a. (N3) | n.a. (N3) | n.a. (N3) | no | n.a. | n.a. |
 | Notes pane (app: one windowed scroller of all notes, click lands the note), hover tooltip (book view's link tooltip) | yes | yes | yes | yes | yes | partial (17) |

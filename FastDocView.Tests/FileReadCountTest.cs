@@ -49,7 +49,7 @@ public static class FileReadCountTest
                 {
                     for (int from = 0; ;)
                     {
-                        WordDocumentSearchBatch batch = document.Search(FrequentHebrew, new WordDocumentSearchOptions(MatchCase: false, IncludeNotes: true), from, 500);
+                        WordDocumentSearchBatch batch = document.Search(FrequentHebrew, new WordDocumentSearchOptions(MatchCase: false), from, 500);
                         hits += batch.HitCounts.Sum();
                         if (batch.ReachedEnd) break;
                         from = batch.NextBlock;

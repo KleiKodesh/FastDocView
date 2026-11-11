@@ -81,8 +81,8 @@ internal sealed class OdtSearchTextScanner
     public Frame[] StoppedFrames() => _frames.ToArray();
 
     /// <summary>One block [start, start + length) of <paramref name="bytes"/> (a block whose range comes from the index).</summary>
-    public void Feed(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher, bool includeNotes)
-        => Scan(bytes.AsSpan(start, length), matcher, includeNotes, 0, -1, null, null, out _);
+    public void Feed(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher)
+        => Scan(bytes.AsSpan(start, length), matcher, 0, -1, null, null, out _);
 
     /// <summary>
     /// A run of consecutive body blocks with no per-block ranges: <paramref name="xml"/> starts at block
@@ -97,8 +97,8 @@ internal sealed class OdtSearchTextScanner
     /// on and reads the rest block by block.
     /// </summary>
     public WordSearchBlocksResult FeedBlocks(ReadOnlySpan<byte> xml, int firstBlock, int stopBlock, IReadOnlyList<Frame> frames,
-                                             WordDocumentSearchMatcher matcher, bool includeNotes, Action<int> blockEnded, out long stoppedAt)
-        => Scan(xml, matcher, includeNotes, firstBlock, stopBlock, frames, blockEnded, out stoppedAt);
+                                             WordDocumentSearchMatcher matcher, Action<int> blockEnded, out long stoppedAt)
+        => Scan(xml, matcher, firstBlock, stopBlock, frames, blockEnded, out stoppedAt);
 
     private Outside ClassifyOutside(ReadOnlySpan<byte> qualifiedName)
     {
@@ -112,7 +112,7 @@ internal sealed class OdtSearchTextScanner
 #if NET
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]   // optimised from the first call: a search runs in short bursts
 #endif
-    private WordSearchBlocksResult Scan(ReadOnlySpan<byte> xml, WordDocumentSearchMatcher matcher, bool includeNotes, int firstBlock, int stopBlock,
+    private WordSearchBlocksResult Scan(ReadOnlySpan<byte> xml, WordDocumentSearchMatcher matcher, int firstBlock, int stopBlock,
                                         IReadOnlyList<Frame>? frames, Action<int>? blockEnded, out long stoppedAt)
     {
         bool segmented = blockEnded is not null;
@@ -291,7 +291,7 @@ internal sealed class OdtSearchTextScanner
                     }
                     else if (Is(local, "tab")) matcher.Feed(' ');
                     else if (Is(local, "line-break")) matcher.Separator();
-                    else if (Is(local, "note-citation") || Is(local, "tracked-changes") || (!includeNotes && Is(local, "note-body"))) { if (!isEmpty) skipDepth = elementDepth; }
+                    else if (Is(local, "note-citation") || Is(local, "tracked-changes") || Is(local, "note-body")) { if (!isEmpty) skipDepth = elementDepth; }
                 }
                 else if (namespaceKind == NamespaceKind.Office && Is(local, "annotation")) { if (!isEmpty) skipDepth = elementDepth; }
             }

@@ -7,7 +7,7 @@ namespace FastDocView.Tests;
 /// RTF: (1) the resumable span rescan, stepped one block at a time, gives exactly the values of the span parsed in one go;
 /// (2) the one-pass search (block bounds and matcher text from the same parse) equals the old path it replaced (each
 /// block's range re-parsed from its snapshot, <see cref="RtfWindowedDocument.SearchByBlockReparse"/>): same hit blocks,
-/// counts, next block and end for Hebrew plain and pointed, English, mixed, match case on and off, notes on and off,
+/// counts, next block and end for Hebrew plain and pointed, English, mixed, match case on and off,
 /// sequential batches of 500 / 37 / 1 and batches that start anywhere. Hebrew is written as \u escapes.
 /// </summary>
 public static class RtfSearchOnePassTest
@@ -73,10 +73,9 @@ public static class RtfSearchOnePassTest
         var random = new Random(20261103);
         foreach (string query in Queries)
             foreach (bool matchCase in new[] { true, false })
-                foreach (bool notes in new[] { true, false })
                 {
-                    var options = new WordDocumentSearchOptions(MatchCase: matchCase, IncludeNotes: notes);
-                    int[] sizes = query == Queries[0] && matchCase && notes ? [500, 37, 1] : [500];
+                    var options = new WordDocumentSearchOptions(MatchCase: matchCase);
+                    int[] sizes = query == Queries[0] && matchCase ? [500, 37, 1] : [500];
                     foreach (int size in sizes)
                         for (int from = 0, run = 0; ; run++)
                         {

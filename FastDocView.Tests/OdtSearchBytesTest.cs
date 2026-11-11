@@ -79,10 +79,10 @@ public static class OdtSearchBytesTest
         byte[] odt = Encoding.UTF8.GetBytes("<text:p>one</text:p><text:p>two</text:p><text:p>three</text:p>");
         var odtScanner = new OdtSearchTextScanner(odtRoot);
         OdtSearchTextScanner.Frame[] frames = [OdtSearchTextScanner.Frame.Outer, OdtSearchTextScanner.Frame.Outer, OdtSearchTextScanner.Frame.Container];
-        WordSearchBlocksResult odtResult = odtScanner.FeedBlocks(odt, 10, 12, frames, matcher, true, _ => matcher.Reset(), out long odtStoppedAt);
+        WordSearchBlocksResult odtResult = odtScanner.FeedBlocks(odt, 10, 12, frames, matcher, _ => matcher.Reset(), out long odtStoppedAt);
         TestReport.Check(odtResult == WordSearchBlocksResult.Stopped && WordSearchPiece.Judge(odtResult, isEndExact: true, odtStoppedAt, odt.Length) == WordSearchPieceVerdict.RedoPiece,
                          $"odt: an extra block in exact bytes is caught ({odtResult} at {odtStoppedAt} of {odt.Length})");
-        WordSearchBlocksResult odtFewer = odtScanner.FeedBlocks(odt, 10, 14, frames, matcher, true, _ => matcher.Reset(), out long odtFewerAt);
+        WordSearchBlocksResult odtFewer = odtScanner.FeedBlocks(odt, 10, 14, frames, matcher, _ => matcher.Reset(), out long odtFewerAt);
         TestReport.Check(odtFewer == WordSearchBlocksResult.Failed && odtFewerAt == 10, $"odt: one block fewer than the index fails from the piece's first block ({odtFewer} at {odtFewerAt})");
     }
 
@@ -109,7 +109,7 @@ public static class OdtSearchBytesTest
         Check("odt", odtBlocks, (bytes, hits, starts) =>
         {
             var scanner = new OdtSearchTextScanner(odtRoot);
-            WordSearchBlocksResult result = scanner.FeedBlocks(bytes, 10, 14, frames, matcher, true, block => { if (matcher.Count > 0) { hits.Add(block); starts.Add(scanner.CurrentBlockStart); } matcher.Reset(); }, out long stoppedAt);
+            WordSearchBlocksResult result = scanner.FeedBlocks(bytes, 10, 14, frames, matcher, block => { if (matcher.Count > 0) { hits.Add(block); starts.Add(scanner.CurrentBlockStart); } matcher.Reset(); }, out long stoppedAt);
             return (result, stoppedAt, scanner.CurrentBlockStart);
         });
 
@@ -160,7 +160,6 @@ public static class OdtSearchBytesTest
               + "<draw:frame><svg:title>afternote</svg:title></draw:frame>def</text:p>";                                                // 4: a note body, then a picture
         (string package, string flat) = WriteSamples("search-rendered-v1", namespaces, body);
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
-        var notesOff = new WordDocumentSearchOptions(IncludeNotes: false);
         foreach (string path in new[] { package, flat })
         {
             string format = Path.GetExtension(path).TrimStart('.');
@@ -180,7 +179,7 @@ public static class OdtSearchBytesTest
                 // the renderer agrees: what search finds is shown, what it skips is not
                 for (int block = 0; block < rendered.Count; block++)
                 {
-                    bool isShown = rendered[block].Html.Contains(query) || rendered[block].Notes.Any(note => note.Html.Contains(query));
+                    bool isShown = rendered[block].Html.Contains(query);
                     TestReport.Check(isShown == blocks.Contains(block), $"{format} rendered: \"{query}\" in block {block}: search {(blocks.Contains(block) ? "finds" : "skips")} it, the renderer {(isShown ? "shows" : "hides")} it");
                 }
             }
@@ -196,9 +195,9 @@ public static class OdtSearchBytesTest
             Expect("rubybase", [3], "ruby base text");
             Expect("rubytext", [], "ruby text");
             Expect("hiddentext", [], "hidden text");
-            Expect("notetext", [4], "the note body");
-            Expect("afternote", [], "a picture title after a skipped note body", notesOff);
-            Expect("abcdef", [4], "text around a skipped note body and a picture", notesOff);
+            Expect("notetext", [], "the note body is not the block's text (notes are searched apart)");
+            Expect("afternote", [], "a picture title after a skipped note body");
+            Expect("abcdef", [4], "text around a skipped note body and a picture");
         }
     }
 
@@ -282,7 +281,7 @@ public static class OdtSearchBytesTest
             Expect("c d", [4], "text:s with no c is one space");
             Expect("e f", [4], "text:s with a bad c is one space");
             Expect("x y", [5], "text:tab is a space");
-            Expect("cd", [], "text:line-break is a separator");
+            Expect("cd", [14], "text:line-break is a separator (block 5 not a hit; block 14 is \"abc\" + note + \"def\": the skipped note joins c and d)");
             Expect("R&D <x> \"q'", [6], "predefined entities are decoded");
             Expect("אבג", [6], "hex + decimal character references are decoded");
             Expect("amp", [], "entity names are not text");
@@ -295,10 +294,9 @@ public static class OdtSearchBytesTest
             Expect("template", [], "an index source template is not content");
             Expect("removed", [], "tracked changes are not blocks");
             Expect("epsilon", [13], "a comment and CDATA inside a word");
-            Expect("needle", [14], "a note body counts with its block");
-            Expect("needle", [], "notes excluded", new WordDocumentSearchOptions(IncludeNotes: false));
+            Expect("needle", [], "a note body never counts with its block");
             Expect("1", [], "the note citation is not text");
-            Expect("abcdef", [14], "the note adds no character around it (notes excluded)", new WordDocumentSearchOptions(IncludeNotes: false));
+            Expect("abcdef", [14], "the note adds no character around it");
             Expect("here", [16], "text in a table");
             Expect("splithere", [], "no match across paragraphs");
             Expect("otherprefix  z", [17], "elements are resolved by namespace, not prefix");

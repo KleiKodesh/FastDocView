@@ -8,7 +8,7 @@ namespace FastDocView.Tests;
 /// <summary>
 /// In-document search (<see cref="IWordWindowedDocument.Search"/>): the app's normalisation (niqqud / teamim ignored,
 /// maqaf a space, quote glyphs folded), case, matches across runs, never across paragraphs / cells, deleted text and
-/// field codes not matched, notes optional - on every format; and, with paths, the batch / full-scan timings.
+/// field codes not matched, notes never mixed into the blocks and searched apart (SearchNotes) - on every format; and, with paths, the batch / full-scan timings.
 /// Hebrew is written as \u escapes (the tooling's traffic must stay ASCII).
 /// </summary>
 public static class DocumentSearchTest
@@ -18,18 +18,17 @@ public static class DocumentSearchTest
 
     public static void Run(IReadOnlyList<string> timingPaths)
     {
-        bool notesHeavy = timingPaths.Contains("notes-heavy");     // "--search notes-heavy": the 100,000-footnote golden + timing
         timingPaths = timingPaths.Where(path => path != "notes-heavy").ToList();
         TestReport.Step("Search: docx");
         Docx();
         DocxSearchBytesTest.Run(timingPaths);
-        DocxNoteSearchBytesTest.Run(notesHeavy);
         TestReport.Step("Search: odt / fodt");
         Odt();
         OdtSearchBytesTest.Run(timingPaths);
         TestReport.Step("Search: rtf");
         Rtf();
         DocBinarySearchOnePassTest.Run(timingPaths);
+        NoteSearchTest.Run(timingPaths);
         TestReport.Step("Search: txt");
         Text();
         foreach (string path in timingPaths) Timing(path);
@@ -58,6 +57,25 @@ public static class DocumentSearchTest
         return (hits.ToArray(), counts.ToArray());
     }
 
+    /// <summary>Every matching note index with its count, over notes searches of <paramref name="batch"/> notes.</summary>
+    internal static (int[] notes, int[] counts) AllNotes(IWordWindowedDocument document, string query, WordDocumentSearchOptions? options = null, int batch = 1)
+    {
+        var hits = new List<int>();
+        var counts = new List<int>();
+        int from = 0;
+        while (true)
+        {
+            WordDocumentSearchBatch result = document.SearchNotes(query, options ?? WordDocumentSearchOptions.Default, from, batch);
+            if (result.HitCounts.Length != result.HitBlocks.Length || result.HitCounts.Any(count => count <= 0)) throw new InvalidOperationException("bad notes batch");
+            hits.AddRange(result.HitBlocks);
+            counts.AddRange(result.HitCounts);
+            if (result.ReachedEnd) { if (result.NextBlock != -1) throw new InvalidOperationException("ReachedEnd with a next note"); break; }
+            if (result.NextBlock <= from) throw new InvalidOperationException("SearchNotes did not advance");
+            from = result.NextBlock;
+        }
+        return (hits.ToArray(), counts.ToArray());
+    }
+
     private static string Show(int[] hits) => "[" + string.Join(",", hits) + "]";
 
     private static void Docx()
@@ -66,7 +84,7 @@ public static class DocumentSearchTest
         string body =
             "<w:p>" + R("\u05E9\u05B8\u05C1") + R("\u05DC\u05D5\u05B9\u0591\u05DD", "<w:b/>") + R(" world") + "</w:p>"                       // 0: split across runs + marks
           + "<w:p>" + R("Hello World") + "</w:p>"                                                                                             // 1: case
-          + "<w:p>" + R("abc") + "<w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>"                                                         // 2: note
+          + "<w:p>" + R("abc needle") + "<w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>"                                                         // 2: note
           + "<w:tbl><w:tr><w:tc><w:p>" + R("split") + "</w:p><w:p>" + R("here") + "</w:p></w:tc><w:tc><w:p>" + R("cell") + "</w:p></w:tc></w:tr></w:tbl>" // 3: table
           + "<w:p>" + R("\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9") + "</w:p>"                                                             // 4: maqaf, gershayim
           + "<w:p>" + R("kept ") + "<w:del w:id=\"9\" w:author=\"a\"><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"                   // 5: deleted text
@@ -81,7 +99,7 @@ public static class DocumentSearchTest
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
         Common(document, "docx", shalomBlock: 0, helloBlock: 1, noteBlock: 2, tableBlock: 3, maqafBlock: 4, repeatBlock: 7);
         (int[] noteBlocks, int[] noteCounts) = AllWithCounts(document, "n");
-        TestReport.Check(noteBlocks.SequenceEqual([2]) && noteCounts.SequenceEqual([3]), $"docx: matches in a note body are counted with the block's ({Show(noteCounts)})");
+        TestReport.Check(noteBlocks.SequenceEqual([2]) && noteCounts.SequenceEqual([1]), $"docx: a note body's matches are not counted with the block's ({Show(noteCounts)})");
         TestReport.Check(All(document, "gone").Length == 0, "docx: deleted text (w:delText) is not matched");
         TestReport.Check(All(document, "kept").SequenceEqual([5]), "docx: the paragraph around a deletion still matches");
         TestReport.Check(All(document, "AUTHOR").Length == 0, "docx: a field code (w:instrText) is not matched");
@@ -100,8 +118,17 @@ public static class DocumentSearchTest
         TestReport.Check(All(document, ShalomPointed).SequenceEqual([shalomBlock]), $"{format}: a pointed query matches too");
         TestReport.Check(All(document, "hello").Length == 0, $"{format}: case is matched exactly by default (as the app does)");
         TestReport.Check(All(document, "hello", new WordDocumentSearchOptions(MatchCase: false)).SequenceEqual([helloBlock]), $"{format}: MatchCase false folds case");
-        TestReport.Check(All(document, "needle").SequenceEqual([noteBlock]), $"{format}: a note body makes its referencing block a hit {Show(All(document, "needle"))}");
-        TestReport.Check(All(document, "needle", new WordDocumentSearchOptions(IncludeNotes: false)).Length == 0, $"{format}: IncludeNotes false skips note bodies");
+        (int[] bothBlocks, int[] bothCounts) = AllWithCounts(document, "needle");
+        TestReport.Check(bothBlocks.SequenceEqual([noteBlock]) && bothCounts.SequenceEqual([1]), $"{format}: a word in the block and its note: the block counts only its own {Show(bothBlocks)} x {Show(bothCounts)}");
+        (int[] bothNotes, int[] bothNoteCounts) = AllNotes(document, "needle");
+        TestReport.Check(bothNotes.SequenceEqual([0]) && bothNoteCounts.SequenceEqual([1]), $"{format}: the same word in the notes search counts only the note's {Show(bothNotes)} x {Show(bothNoteCounts)}");
+        TestReport.Check(All(document, "note").Length == 0, $"{format}: a word only in a note body is not a block hit");
+        (int[] onlyNotes, int[] onlyNoteCounts) = AllNotes(document, "note");
+        TestReport.Check(onlyNotes.SequenceEqual([0]) && onlyNoteCounts.SequenceEqual([1]), $"{format}: the notes search finds a word only in a note {Show(onlyNotes)} x {Show(onlyNoteCounts)}");
+        TestReport.Check(AllNotes(document, "abc").notes.Length == 0 && AllNotes(document, "Hello").notes.Length == 0, $"{format}: the notes search does not find main-text-only words");
+        TestReport.Check(AllNotes(document, "NOTE", new WordDocumentSearchOptions(MatchCase: false)).notes.SequenceEqual([0]), $"{format}: the notes search honours MatchCase false");
+        WordDocumentSearchBatch notesPast = document.SearchNotes("note", WordDocumentSearchOptions.Default, 5, 10);
+        TestReport.Check(notesPast.ReachedEnd && notesPast.NextBlock == -1 && notesPast.HitBlocks.Length == 0, $"{format}: a notes search past the last note reports the end");
         TestReport.Check(All(document, "here").SequenceEqual([tableBlock]), $"{format}: text in a table matches");
         TestReport.Check(All(document, "splithere").Length == 0 && All(document, "herecell").Length == 0, $"{format}: no match across paragraphs / cells");
         TestReport.Check(All(document, "\u05D1 \u05D0").SequenceEqual([maqafBlock]), $"{format}: the maqaf matches a space");
@@ -118,7 +145,7 @@ public static class DocumentSearchTest
     private static string OdfBody()
         => "<text:p>\u05E9\u05B8\u05C1<text:span>\u05DC\u05D5\u05B9\u0591\u05DD</text:span> world</text:p>"   // 0
          + "<text:p>Hello World</text:p>"                                                                       // 1
-         + "<text:p>abc<text:note text:id=\"ftn1\" text:note-class=\"footnote\"><text:note-citation>1</text:note-citation><text:note-body><text:p>needle in a note</text:p></text:note-body></text:note></text:p>" // 2
+         + "<text:p>abc needle<text:note text:id=\"ftn1\" text:note-class=\"footnote\"><text:note-citation>1</text:note-citation><text:note-body><text:p>needle in a note</text:p></text:note-body></text:note></text:p>" // 2
          + "<table:table table:name=\"T\"><table:table-column/><table:table-column/><table:table-row><table:table-cell><text:p>split</text:p><text:p>here</text:p></table:table-cell><table:table-cell><text:p>cell</text:p></table:table-cell></table:table-row></table:table>" // 3
          + "<text:p>\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9</text:p>"                                       // 4
          + "<text:p>a<text:s text:c=\"2\"/>b<office:annotation><text:p>comment zzz</text:p></office:annotation></text:p>" // 5
@@ -166,7 +193,7 @@ public static class DocumentSearchTest
         string rtf = "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Arial;}}\n"
             + "\\pard " + RtfUnicode("\u05E9\u05B8\u05C1") + "{\\b " + RtfUnicode("\u05DC\u05D5\u05B9\u0591\u05DD") + "} world\\par\n"   // 0
             + "\\pard Hello World\\par\n"                                                                                                 // 1
-            + "\\pard abc{\\super\\chftn}{\\footnote\\pard{\\super\\chftn} needle in a note}\\par\n"                                     // 2
+            + "\\pard abc needle{\\super\\chftn}{\\footnote\\pard{\\super\\chftn} needle in a note}\\par\n"                                     // 2
             + "\\trowd\\cellx3000\\cellx6000\\pard\\intbl split\\line here\\cell cell\\cell\\row\n"                                    // 3
             + "\\pard " + RtfUnicode("\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9") + "\\par\n"                                         // 4
             + "\\pard {\\listtext 1.\\tab}listed\\par\n"                                                                               // 5
@@ -229,7 +256,7 @@ public static class DocumentSearchTest
         }
     }
 
-    /// <summary>The search's hits over the first blocks must equal the blocks whose RENDERED html (+ notes) holds the query, walked as the app walks html.</summary>
+    /// <summary>The search's hits over the first blocks must equal the blocks whose RENDERED html (never its notes) holds the query, walked as the app walks html.</summary>
     private static void CrossCheckWithRendering(string path, string query)
     {
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
@@ -244,7 +271,6 @@ public static class DocumentSearchTest
             {
                 matcher.Reset();
                 matcher.FeedHtml(block.Html);
-                foreach (WordDocumentNoteHtml note in block.Notes) { matcher.Separator(); matcher.FeedHtml(note.Html); }
                 if (matcher.Found) { expected.Add(block.BlockIndex); expectedCounts.Add(matcher.Count); }
             }
         int[] onlySearch = searched.Except(expected).ToArray(), onlyRendered = expected.Except(searched).ToArray();
