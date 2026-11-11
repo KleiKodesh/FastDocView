@@ -133,7 +133,8 @@ as "won't do (not printed)" in docs/UNSUPPORTED-FEATURES.md, and don't build the
   - Word / Excel COM: set `DisplayAlerts = 0` and `Visible = false` right after creating the app;
     always `SaveAs2` with an explicit path and `FileFormat` (never `Save()` on a new document);
     `Close(0)` and `Quit(0)` in a `finally`. Never call anything that opens UI (dialogs, the
-    compatibility checker).
+    compatibility checker). Never insert charts with `AddChart`/`AddChart2` or anything else that drives Excel
+    (it raises dialogs on the user's screen): write the chart into a .docx directly and let Word only open and `SaveAs2` it.
   - LibreOffice: every `soffice` start (command line, UNO or Python) sets
     `SAL_DISABLE_PRINTERLIST=1` and `SAL_DISABLE_DEFAULTPRINTER=1` and runs with
     `--headless --invisible --norestore --nologo` and a private `-env:UserInstallation` profile.
