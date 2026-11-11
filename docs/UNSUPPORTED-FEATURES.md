@@ -132,7 +132,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Show markup / original view toggle for tracked changes | docx, doc, rtf, odt | Only Word's final view (planned as a toggle in the coverage plan) | planned |
 | Comments | docx, doc, rtf, odt | Not shown in a reading view (references skipped) | deferred |
-| Equations: Word's exact variant rule for stretched operators. Word's PDFs fit TeX's rule (cover max(0.901 x H, H - 0.5 em) of the content's ink height H, symmetric about the math axis) with matrix rows one font line apart, but the browser gives box heights, not ink, so the page uses factors fitted to Word's PDFs (1.2 delimiters, 0.7 n-ary; 30/30 within 15% on two fonts); a host without font files falls back to tables for Cambria Math and DejaVu Math TeX Gyre; heights of single-line equations read ~0.85 of Word's PDF by the measuring method | docx, doc, rtf | No ink extents in MathML layout; NOTES.md | deferred |
+| Equations: a stretched operator around content whose ink lands right at a variant boundary can take the next size (the 3-row brace in Cambria Math, 1.48 x Word's width; 29 of 30 test cases within 15%); a host without font files falls back to tables for Cambria Math and DejaVu Math TeX Gyre; heights of single-line equations read ~0.85 of Word's PDF by the measuring method | docx, doc, rtf | Ink is read from the browser's text metrics, not Word's own layout | deferred |
 | Equations in .doc saved without equationXML (Word 2003 and older) | doc | No OMML in the file; the saved picture is shown | won't do |
 | Ruby | doc, rtf | Not read (EQ \o fields still compute) | deferred |
 

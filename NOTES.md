@@ -2313,12 +2313,28 @@ tlch); checked by the same test.
   (harness check); the generated WordMathFontVariants.cs is the fallback when no file can be read (another OS, WASM).
 - Word's rule, from its PDFs (brackets-*-v1): matrix rows are one font line apart (Cambria Math 1.171 em = hhea
   ascent+descent; DejaVu 1.2 em), and the delimiter Word picks is the smallest variant covering max(0.901 H, H - 0.5 em)
-  of the content's ink height H - TeX's \delimiterfactor 901 / \delimitershortfall 5pt (The TeXbook, Appendix G, rule 19 - from memory, not rechecked),
+  of the content's ink height H - TeX's \delimiterfactor 901 / \delimitershortfall 5pt (tex.web make_left_right, as KaTeX
+  src/delimiter.ts makeLeftRightDelim reproduces it: max(maxDistFromAxis / 500 * 901, 2 * maxDistFromAxis - 5 pt),
+  maxDistFromAxis = max(height - axis, depth + axis); read 2026-11-11, tex.web itself is blocked here),
   with H measured symmetric about the math axis (MATH AxisHeight). For a 3-row matrix in Cambria Math: ink 3.0 em ->
   needs 2.7 -> variant 2.956 (Word's), 5 rows: needs 4.83 > 4.336 -> assembly (Word's). DelimitedSubFormulaMinHeight
   (1.465 / 1.333 em) only decides whether a delimiter stretches at all. The browser gives box heights, not ink (a row box
   is a full line, 1.17 em, where the digit ink is 0.66 em), so applying the rule to browser boxes picks a size too large;
   the page keeps the factors fitted to the same PDFs (1.2 x box height for delimiters, 0.7 x for n-ary), 30/30 within 15%.
+
+### Equations, seventh pass: TeX's rule applied, n-ary confirmed (2026-11-11)
+
+- The page now applies the rule above directly (fastDocViewMath.ts): the content's ink extent from its tokens' boxes and
+  the browser's text metrics (canvas measureText actualBoundingBox ascent / descent, the token's baseline from its box),
+  the axis at the middle of the stretched operator, then the smallest variant covering max(2d x 0.901, 2d - 0.5 em),
+  else the assembly. The fitted 1.2 / 0.7 factors are gone. Growing n-ary operators follow the same rule: Word's
+  integrals over 3-, 5- and 10-level fractions are 12.4 / 15.6 / 14.7 pt in Cambria Math and 8.0 / 8.5 / 8.5 pt in DejaVu,
+  ours 12.4 / 15.6 / 14.7 and 8.3 / 8.5 / 8.5.
+- Matrix rows are one math-font line apart, as in Word's PDFs (m:rSpRule single, 22.1.2.90): the row height is the
+  font's hhea line height, read by WordMathFontReader.LineHeight (1.173 em Cambria Math, 1.2 em DejaVu Math TeX Gyre).
+- 30 cases (( [ { | and integrals at 3 / 5 / 10 rows, two fonts): 29 within 15% of Word's PDF; out: the 3-row brace in
+  Cambria Math (7.1 pt for Word's 4.8: the content's ink reads just above Word's 2.971 em variant, the next one is
+  wider). The 3-row parenthesis in Cambria Math is 1.12 for the same reason.
 
 ## Web archive pictures (2026-11-10)
 Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) and an `<img>` fallback inside

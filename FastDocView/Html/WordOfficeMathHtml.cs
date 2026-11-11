@@ -81,6 +81,16 @@ public sealed class WordOfficeMathHtml
     /// <summary>For brkBinSub "+-" a broken minus ends its line as a plus (the minus starts the next line); null: unchanged.</summary>
     private string? LineEndOperator(string op) => op is "-" or "−" && _settings.BreakBinarySubtraction == "+-" ? "+" : null;
 
+    /// <summary>The math font's line height (em): read from its file, else the values of the fonts Word offers, else 1.2.</summary>
+    private double MathLineHeight
+    {
+        get
+        {
+            string font = _settings.Font ?? "Cambria Math";
+            return WordMathFontReader.LineHeight(font) ?? (font.Equals("Cambria Math", StringComparison.OrdinalIgnoreCase) ? 1.173 : 1.2);
+        }
+    }
+
     private static string Points(double points) => points.ToString("0.###", CultureInfo.InvariantCulture);
 
     /// <summary>
@@ -514,7 +524,10 @@ public sealed class WordOfficeMathHtml
         html.Append("<mtable class=\"omath-matrix\">");
         foreach (XElement row in element.Elements().Where(e => e.Name.LocalName == "mr"))
         {
-            html.Append("<mtr>");
+            // Word sets a matrix's rows one line of the math font apart (m:rSpRule 0, single spacing, ECMA-376 22.1.2.90; its
+            // PDFs: 1.171 em in Cambria Math, 1.2 em in DejaVu Math TeX Gyre = each font's hhea line height): a row is at
+            // least that tall
+            html.Append("<mtr style=\"height:").Append(Points(MathLineHeight)).Append("em\">");
             int index = 0;
             foreach (XElement cell in row.Elements().Where(e => e.Name.LocalName == "e"))
             {

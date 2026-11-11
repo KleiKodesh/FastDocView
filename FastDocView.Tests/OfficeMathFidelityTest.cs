@@ -232,7 +232,7 @@ public static class OfficeMathFidelityTest
         Expect("box", b => Has(b, "<mrow><mrow><mi>q</mi></mrow></mrow>") || Has(b, "<mi>q</mi>"), "a box: just its content");
         Expect("borderbox", b => Has(b, "class=\"omath-border-box\" style=\"padding:0.1em;border:1px solid currentColor\"", "<msup>"), "a bordered box");
         Expect("eqarr", b => Has(b, "<mtable class=\"omath-eqarr\">", "<mtd style=\"text-align:right;padding:0\"><mrow><mi>x</mi></mrow></mtd><mtd style=\"text-align:left;padding:0\"><mrow><mo>=</mo><mn>1</mn></mrow></mtd>") && !Strip(b).Contains('&'), "an equation array aligned at '&'");
-        Expect("matrix", b => Has(b, "<mtable class=\"omath-matrix\"><mtr><mtd style=\"text-align:center;padding:0 0.25em\"><mrow><mn>1</mn></mrow></mtd>"), "a 2x2 matrix");
+        Expect("matrix", b => Has(b, "<mtable class=\"omath-matrix\"><mtr style=\"height:1.173em\"><mtd style=\"text-align:center;padding:0 0.25em\"><mrow><mn>1</mn></mrow></mtd>"), "a 2x2 matrix");
         Expect("groupchr", b => Has(b, "<munder><mrow><mi>a</mi><mo>+</mo>", "<mo stretchy=\"true\">⏟</mo></munder>"), "a group character under (the default)");
         Expect("groupchr top", b => Has(b, "<mover><mrow><mi>k</mi></mrow><mo stretchy=\"true\">⏞</mo></mover>"), "a group character over");
         Expect("phant", b => Has(b, "<mphantom><mrow><mi>b</mi><mi>b</mi><mi>b</mi></mrow></mphantom>"), "a hidden phantom keeps its space");

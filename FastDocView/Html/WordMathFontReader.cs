@@ -20,6 +20,39 @@ internal static class WordMathFontReader
     /// <summary>The characters asked for: the delimiters and n-ary operators the converter stretches.</summary>
     private static readonly string Characters = "()[]{}|‖⟨⟩⌈⌉⌊⌋∫∬∭∮∯∰∑∏∐⋃⋂⋁⋀⨁⨂⨀⨄⨆";
 
+    private static readonly Dictionary<string, double?> LineHeights = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The font's line height (hhea ascender - descender + line gap, em); null when its file cannot be read.</summary>
+    public static double? LineHeight(string fontName)
+    {
+        lock (Lock)
+        {
+            if (LineHeights.TryGetValue(fontName, out double? known)) return known;
+            double? height = null;
+            try
+            {
+                _files ??= ScanFontFiles();
+                if (_files.TryGetValue(fontName, out var file))
+                {
+                    using FileStream stream = new(file.path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    var r = new BinaryReader(stream);
+                    var tables = Tables(r, FaceOffsets(r)[Math.Max(0, file.face)]);
+                    if (tables.TryGetValue("head", out var head) && tables.TryGetValue("hhea", out var hhea))
+                    {
+                        r.BaseStream.Position = head.offset + 18;
+                        double upem = U16(r);
+                        r.BaseStream.Position = hhea.offset + 4;
+                        double ascent = S16(r), descent = S16(r), gap = S16(r);
+                        if (upem > 0) height = (ascent - descent + gap) / upem;
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or EndOfStreamException or ArgumentException or IndexOutOfRangeException) { height = null; }
+            LineHeights[fontName] = height;
+            return height;
+        }
+    }
+
     public static Dictionary<string, (double[] heights, double[] widths, double assemblyWidth)>? Variants(string fontName)
     {
         lock (Lock)
@@ -33,7 +66,7 @@ internal static class WordMathFontReader
                     using (FileStream stream = new(file.path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                         read = ReadVariants(stream, file.face);
             }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or EndOfStreamException or ArgumentException or InvalidDataException or NotSupportedException) { read = null; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or EndOfStreamException or ArgumentException or InvalidDataException or NotSupportedException or IndexOutOfRangeException) { read = null; }
             Fonts[fontName] = read;
             return read;
         }
