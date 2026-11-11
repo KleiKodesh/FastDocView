@@ -770,11 +770,11 @@ internal sealed partial class DocxChart
         // Word: a tick label centred on the plot's right edge (the last value of a horizontal bar chart's value axis, the last category
         // of an axis with the points on the ticks) stays 10.8 pt plus half its width from the chart's edge (measured on Word's PDF of
         // word-charts-binary-v3: the bar chart's "6" and the area chart's "Q4", both 4.8 pt further in than the plain 6 pt margin)
-        if (!_libreOfficeLayout && _plotLayout is null && secondaryAxis is null && _legendPosition is not ("r" or "tr") && !xy)
+        if (!_libreOfficeLayout && _plotLayout is null && secondaryAxis is null && _legendPosition is not ("r" or "tr") && !xy && valueAxis is not { Reversed: true } && categoryAxis is not { Reversed: true })
         {
             string? edgeLabel = horizontal ? (valueLabels.Count > 0 ? valueLabels[valueLabels.Count - 1].Text : null)
                               : MidCategory() && categoryAxis is not { NoLabels: true } && categories.Count > 0 ? categories[categories.Count - 1] : null;
-            if (edgeLabel is { Length: > 0 }) right -= 10.8 - 6 + TextWidth(edgeLabel, labelSize) / 2;   // the right edge so far is the chart edge less 6 pt
+            if (edgeLabel is { Length: > 0 }) right = Math.Max(left + 1, right - (10.8 - 6 + TextWidth(edgeLabel, labelSize) / 2));   // the right edge so far is the chart edge less 6 pt
         }
         if (horizontal) { bottom -= valueAxis is { NoLabels: true } ? 0 : labelSize + 4; left += categoryAxis is { NoLabels: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
         CategoryLabelPlan? categoryPlan = null;
