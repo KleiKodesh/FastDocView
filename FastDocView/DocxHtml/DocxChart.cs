@@ -390,7 +390,39 @@ internal sealed partial class DocxChart
             // word-charts-binary-v3: West, South, North for a clustered bar chart of North, South, West)
             else if (group.Kind == Kind.Bar && group.Horizontal && group.Grouping == "clustered") entries.Reverse(groupStart, entries.Count - groupStart);   // stacked bars keep their order (Word's PDF of odt-charts-v5)
         }
+        // Word lists a trend line after the series (its c:name, else a name in Office's own interface language: Word's PDFs of
+        // word-charts-binary-v3 and odt-charts-v5, made by a Hebrew Office, both show "<Hebrew 'linear'> (North)" whatever the
+        // chart's c:lang) - so the name is not in the file and follows the reader's interface language here
+        if (!_libreOfficeLayout)
+            foreach (Group group in _groups)
+                foreach (Series series in group.Series)
+                    foreach (XElement trend in series.Trendlines)
+                    {
+                        string name = (string?)trend.Element("name") is { Length: > 0 } own ? own : TrendLineName(Value(trend.Element("trendlineType")) ?? "linear", trend, series.Name ?? "Series" + (series.Index + 1));
+                        string color = trend.Element("spPr")?.Element("ln")?.Element("solidFill") is { } solid ? DocxDrawingColor.Css(solid, _theme) ?? LineOf(series, totalSeries).Css : LineOf(series, totalSeries).Css;
+                        entries.Add((name, color, true));
+                    }
         return entries;
+    }
+
+    /// <summary>
+    /// Office's automatic trend line name, "type (series)", in the reader's interface language: Hebrew as a Hebrew Office writes it
+    /// (the linear name read from Word's PDFs; the others from memory, unchecked), else English (Excel's names, from memory).
+    /// </summary>
+    internal static string TrendLineName(string type, XElement trend, string seriesName)
+    {
+        bool hebrew = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "he";
+        string period = ((int?)Number(trend.Element("period")) ?? 2).ToString(CultureInfo.InvariantCulture);
+        string kind = type switch
+        {
+            "exp" => hebrew ? "\u05DE\u05E2\u05E8\u05D9\u05DB\u05D9" : "Expon.",
+            "log" => hebrew ? "\u05DC\u05D5\u05D2\u05E8\u05D9\u05EA\u05DE\u05D9" : "Log.",
+            "poly" => hebrew ? "\u05E4\u05D5\u05DC\u05D9\u05E0\u05D5\u05DE\u05D9" : "Poly.",
+            "power" => hebrew ? "\u05D7\u05D6\u05E7\u05D4" : "Power",
+            "movingAvg" => hebrew ? period + " \u05DE\u05DE\u05D5\u05E6\u05E2 \u05E0\u05E2" : period + " per. Mov. Avg.",
+            _ => hebrew ? "\u05DC\u05D9\u05E0\u05D9\u05D0\u05E8\u05D9" : "Linear",
+        };
+        return kind + " (" + seriesName + ")";
     }
 
     private string? LabelText(Group group, Series series, int point)
@@ -612,7 +644,7 @@ internal sealed partial class DocxChart
     }
 
     /// <summary>The value range of a set of groups over the categories (stacked groups by their sums), and the smallest positive value (a logarithmic axis starts below it).</summary>
-    private static (double Min, double Max, double PositiveMin) DataRange(IEnumerable<Group> groups, int categoryCount)
+    private static (double Min, double Max, double PositiveMin) DataRange(IEnumerable<Group> groups, int categoryCount, bool includeErrorBars = false)
     {
         double dataMin = 0, dataMax = 0, positiveMin = double.MaxValue;
         foreach (Group group in groups)
@@ -630,6 +662,10 @@ internal sealed partial class DocxChart
                 }
                 if (stacked) { dataMax = Math.Max(dataMax, positive); dataMin = Math.Min(dataMin, negative); }
             }
+            // the ends of the y error bars count too (Word's PDFs: odt-charts-v5 "Error Bars" / "Range Errors", word-charts-binary-v3)
+            if (!stacked && includeErrorBars)
+                foreach (Series series in group.Series)
+                    foreach (double end in ErrorBarEnds(series, "y")) { dataMax = Math.Max(dataMax, end); dataMin = Math.Min(dataMin, end); }
         }
         return (dataMin, dataMax, positiveMin == double.MaxValue ? 1 : positiveMin);
     }
@@ -721,7 +757,7 @@ internal sealed partial class DocxChart
         List<Group> primaryGroups = _groups.Except(secondaryGroups).ToList();
         if (primaryGroups.Count == 0) { primaryGroups = secondaryGroups; secondaryGroups = new(); secondaryAxis = null; }
         percent = primaryGroups.Any(g => g.Grouping == "percentStacked");
-        (double dataMin, double dataMax, double positiveMin) = DataRange(primaryGroups, categoryCount);
+        (double dataMin, double dataMax, double positiveMin) = DataRange(primaryGroups, categoryCount, includeErrorBars: !_libreOfficeLayout);
         double estimatedLength = Math.Max(1, horizontal ? right - left - 60 : bottom - top - 30);
         double axisLabelSize = valueAxis?.LabelSize ?? categoryAxis?.LabelSize ?? 9;
         (double vMin, double vMax, List<double> valueTicks) = AxisScale(dataMin, dataMax, positiveMin, valueAxis, percent, estimatedLength, axisLabelSize);
@@ -730,8 +766,14 @@ internal sealed partial class DocxChart
         if (xy)
         {
             var xs = _groups.SelectMany(g => g.Series).SelectMany(s => s.XValues.Count > 0 ? s.XValues : Enumerable.Range(1, s.Values.Count).Select(i => (double?)i)).Where(v => v is not null).Select(v => v!.Value).ToList();
+            // Word scales the axis over the error bars' ends too (Word's PDF of word-charts-binary-v3: x 1..4 with a custom +0.8 on the
+            // last point gives an x axis to 6, not 5)
+            foreach (Series series in _groups.SelectMany(g => g.Series)) xs.AddRange(ErrorBarEnds(series, "x"));
             Axis? xAxis = _axes.Values.Where(a => !a.IsCategory).Skip(1).FirstOrDefault() ?? categoryAxis;
             (xMin, xMax, xStep) = Scale(xs.Count > 0 ? xs.Min() : 0, xs.Count > 0 ? xs.Max() : 1, xAxis, false);
+            // x values that are text (1..n, Word): the axis is scaled as a value axis, with the headroom (v3: x up to 4.8 gives 0..6)
+            if (!_libreOfficeLayout && xAxis is { LogBase: null } && _groups.SelectMany(g => g.Series).All(x => x.XValues.All(v => v is null)) && AutoScale(xs.Count > 0 ? xs.Min() : 0, xs.Count > 0 ? xs.Max() : 1, xAxis, Math.Max(1, right - left - 60), axisLabelSize) is { } autoX)
+                (xMin, xMax, xStep) = (autoX.Min, autoX.Max, autoX.Step);
             if (xAxis is not null && !xAxis.IsCategory) categoryAxis = xAxis;
         }
         // room for tick labels and axis titles
@@ -937,7 +979,7 @@ internal sealed partial class DocxChart
         if (_libreOfficeLayout) return text.Length * size * 0.55;
         var font = DocxChartFontWidths.Fonts[_chartFont];
         double em = 0;
-        foreach (char c in text) em += c >= ' ' && c <= '~' ? font.Widths[c - ' '] : c >= '֐' && c <= '׿' ? DocxChartFontWidths.Hebrew[c - '֐'] : font.Average;
+        foreach (char c in text) em += c >= ' ' && c <= '~' ? font.Widths[c - ' '] : c >= '\u0590' && c <= '\u05FF' ? DocxChartFontWidths.Hebrew[c - '\u0590'] : font.Average;
         return em * size;
     }
 
@@ -1063,6 +1105,31 @@ internal sealed partial class DocxChart
     }
 
     /// <summary>A custom error amount of a point: its own, or the one value of a constant list (an ODF constant error, constant="1"), else 0.</summary>
+    /// <summary>The ends of a series' fixed, percentage and custom error bars in one direction (x: around the x values, else 1..n; y: around the values).</summary>
+    private static IEnumerable<double> ErrorBarEnds(Series series, string direction)
+    {
+        foreach (XElement bars in series.ErrorBars)
+        {
+            if ((Value(bars.Element("errDir")) ?? "y") != direction) continue;
+            string valueType = Value(bars.Element("errValType")) ?? "fixedVal";
+            if (valueType is not ("fixedVal" or "percentage" or "cust")) continue;
+            string type = Value(bars.Element("errBarType")) ?? "both";
+            double amount = Number(bars.Element("val")) ?? 0;
+            (List<double?> plus, _) = Numbers(bars.Element("plus"));
+            (List<double?> minus, _) = Numbers(bars.Element("minus"));
+            int count = series.Values.Count;
+            for (int i = 0; i < count; i++)
+            {
+                double? basis = direction == "x" ? (series.XValues.Count > 0 ? (i < series.XValues.Count ? series.XValues[i] : null) : i + 1) : series.Values[i];
+                if (basis is not { } b) continue;
+                double up = valueType == "cust" ? Custom(plus, bars.Element("plus"), i) : valueType == "percentage" ? Math.Abs(b) * amount / 100 : amount;
+                double down = valueType == "cust" ? Custom(minus, bars.Element("minus"), i) : up;
+                if (type is "both" or "plus") yield return b + up;
+                if (type is "both" or "minus") yield return b - down;
+            }
+        }
+    }
+
     private static double Custom(List<double?> amounts, XElement? source, int index)
         => (string?)source?.Attribute("constant") == "1" && amounts.Count > 0 ? amounts[0] ?? 0 : index < amounts.Count ? amounts[index] ?? 0 : 0;
 

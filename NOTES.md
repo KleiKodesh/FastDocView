@@ -4920,3 +4920,22 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   understood yet), 3-D value axes (Depth Column Chart: ticks spread up to 30 pt), the scatter x axis over text x values (Word
   0..6, ours 0..4), and Word's trend line legend entry ("Linear (North)", localized) that shifts the row.
 
+## Chart layout: error bar extents, text x values, trend line legend names, 3-D label colours (2026-11-11)
+
+- Word scales a value axis over the error bars' ends (Word's PDFs: odt-charts-v5 "Error Bars" / "Range Errors" ticks to 8
+  and 4; word-charts-binary-v3 scatter x to 6 from x 1..4 with a custom +0.8): DataRange / the scatter x range now include
+  fixed, percentage and custom ends (Word layout only). Text x values on a scatter chart are 1..n, scaled as a value axis
+  with Word's headroom.
+- Word's trend line legend entry: c:name, else "type (series)" in Office's interface language - both Word PDFs (one chart
+  en-US, one he-IL) show the Hebrew name a Hebrew Office writes, so it is not in the file. Rendered from the reader's
+  CurrentUICulture (Hebrew linear name read from the PDFs; the other names from memory, unchecked).
+- .doc / RTF: CHLABELRANGE without EXC_CHLABELRANGE_BETWEEN (xichart.cxx:2992-2998, xlchart.hxx:436) = c:crossBetween
+  midCat (area charts); the category / x cache is taken only from drawn series' columns - an error bar series has its own
+  column (its custom amounts, read as LibreOffice reads them: the error series' own value link, xichart.cxx:1706-1714,
+  1948); text x values give no xVal numbers. 3-D tick labels use their axis' colour.
+- Medians x / y: odt-charts-v5 0.73 / 0.40 -> 0.65 / 0.30; word-chart-fonts-v1 0.68 / 0.16; v3 .docx 1.21 / 1.58 (was
+  1.21 / 1.42: the new trend legend entry is English here, Word's Hebrew, so its row shifts), .doc 1.40 / 1.31, RTF 1.42 /
+  1.36. Not done: the ~4 pt lower plot of vertical charts with a bottom legend (no stored difference found between the
+  Word-made and LibreOffice-written files: both legendPos b, overlay 0, no manualLayout; the LibreOffice one has a filled,
+  bordered legend), the 3-D value-axis spread (Depth Column Chart, up to 30 pt).
+

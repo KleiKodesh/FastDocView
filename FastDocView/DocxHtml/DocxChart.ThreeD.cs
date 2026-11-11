@@ -185,15 +185,15 @@ internal sealed partial class DocxChart
             else { a = projection.Point(0, t * height, 0); b = projection.Point(0, t * height, depth); c = projection.Point(width, t * height, depth); }
             svg.Append("<path d=\"M").Append(N(a.X)).Append(' ').Append(N(a.Y)).Append('L').Append(N(b.X)).Append(' ').Append(N(b.Y)).Append('L').Append(N(c.X)).Append(' ').Append(N(c.Y))
                .Append("\" fill=\"none\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
-            if (horizontal) Text(svg, a.X, a.Y + labelSize + 2, text, labelSize, textColor, "middle");
-            else Text(svg, a.X - 4, a.Y + labelSize / 3, text, labelSize, textColor, "end");
+            if (horizontal) Text(svg, a.X, a.Y + labelSize + 2, text, labelSize, ValueAxis()?.LabelColor ?? textColor, "middle");
+            else Text(svg, a.X - 4, a.Y + labelSize / 3, text, labelSize, ValueAxis()?.LabelColor ?? textColor, "end");
         }
         if (showCategories)
             for (int i = 0; i < categoryCount; i++)
             {
                 string label = i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture);
-                if (horizontal) { var p = projection.Point(0, (i + 0.5) * slot, 0); Text(svg, p.X - 4, p.Y + labelSize / 3, label, labelSize, textColor, "end"); }
-                else { var p = projection.Point(midCategory ? (categoryCount == 1 ? 0.5 * slot : i * width / (categoryCount - 1)) : (i + 0.5) * slot, 0, 0); Text(svg, p.X, p.Y + labelSize + 2, label, labelSize, textColor, "middle"); }
+                if (horizontal) { var p = projection.Point(0, (i + 0.5) * slot, 0); Text(svg, p.X - 4, p.Y + labelSize / 3, label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "end"); }
+                else { var p = projection.Point(midCategory ? (categoryCount == 1 ? 0.5 * slot : i * width / (categoryCount - 1)) : (i + 0.5) * slot, 0, 0); Text(svg, p.X, p.Y + labelSize + 2, label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "middle"); }
             }
         return (projection, width, height, depth, slot, rowDepth);
     }

@@ -35,7 +35,7 @@ internal static class ExcelBinaryChart
         ChScatter = 0x101B, ChAxis = 0x101D, ChTick = 0x101E, ChValueRange = 0x101F, ChAxisLine = 0x1021, ChText = 0x1025,
         ChFont = 0x1026, ChObjectLink = 0x1027, ChBegin = 0x1033, ChEnd = 0x1034, ChChart3D = 0x103A, ChRadarLine = 0x103E,
         ChRadarArea = 0x1040, ChAxesSet = 0x1041, ChSourceLink = 0x1051, ChEscherFormat = 0x1066, ChSeriesIndex = 0x1065,
-        ChSeriesParent = 0x104A, ChSeriesTrendLine = 0x104B, ChSeriesErrorBar = 0x105B, ChFormat = 0x104E, ChFramePos = 0x104F, Format = 0x041E, PaletteRecord = 0x0092;
+        ChLabelRange = 0x1020, ChSeriesParent = 0x104A, ChSeriesTrendLine = 0x104B, ChSeriesErrorBar = 0x105B, ChFormat = 0x104E, ChFramePos = 0x104F, Format = 0x041E, PaletteRecord = 0x0092;
 
     /// <summary>
     /// The chart of an RTF \objdata (hex digits; [MS-OLEDS] 2.2.4 ObjectHeader, then NativeDataSize and the compound file -
@@ -108,6 +108,7 @@ internal static class ExcelBinaryChart
         public double? TitleSize;
         public int FormatIndex = -1;                               // CHFORMAT: the number format of the tick labels
         public string? LabelColor;
+        public bool Between = true;
     }
 
     private sealed class TextData
@@ -388,14 +389,16 @@ internal static class ExcelBinaryChart
                     double value = BitConverter.ToDouble(body, 6);
                     if (row >= MaxPoints || column > 255 || Sane(value) is null) continue;   // a damaged cache record
                     if (cacheKind == 1) values[(row, column)] = value;
-                    else if (cacheKind == 2) { if (!categories.ContainsKey(row)) categories[row] = value.ToString("R", CultureInfo.InvariantCulture); if (!xNumbers.ContainsKey(row)) xNumbers[row] = value; }
+                    // categories / x values: only a drawn series' column - a trend line or error bar series has its own column in the
+                    // cache too (Word's v3: the custom x error amounts), which is not the chart's categories
+                    else if (cacheKind == 2 && IsDrawnSeriesColumn(column)) { if (!categories.ContainsKey(row)) categories[row] = value.ToString("R", CultureInfo.InvariantCulture); if (!xNumbers.ContainsKey(row)) xNumbers[row] = value; }
                     else if (cacheKind == 3) bubbles[(row, column)] = value;
                     continue;
                 }
                 case Label when length >= 9 && chartDone && cacheKind == 2:
                 {
                     int row = BitConverter.ToUInt16(body, 0);
-                    if (row >= MaxPoints) continue;
+                    if (row >= MaxPoints || !IsDrawnSeriesColumn(BitConverter.ToUInt16(body, 2))) continue;
                     if (!categories.ContainsKey(row)) categories[row] = UnicodeString(body, 6, 2);
                     continue;
                 }
@@ -407,6 +410,11 @@ internal static class ExcelBinaryChart
                     continue;
                 case ChSeriesErrorBar when length >= 12 && current is SeriesData bars:
                     bars.ErrorBar = body;
+                    continue;
+                // CHLABELRANGE (xichart.cxx:2992-2998: flags at 6; EXC_CHLABELRANGE_BETWEEN 0x0001, xlchart.hxx):
+                // cleared = the points sit on the category ticks (c:crossBetween midCat)
+                case ChLabelRange when length >= 8 && current is AxisData ranged0:
+                    ranged0.Between = (BitConverter.ToUInt16(body, 6) & 1) != 0;
                     continue;
                 case ChFormat when length >= 2 && current is AxisData formatted:
                     formatted.FormatIndex = BitConverter.ToUInt16(body, 0);
@@ -519,7 +527,8 @@ internal static class ExcelBinaryChart
                 if (kind is "scatter" or "bubble")
                 {
                     var x = new XElement("numCache", new XElement("ptCount", Val(pointCount)));
-                    for (int p = 0; p < pointCount; p++)
+                    // text x values (no numbers in the category cache): none, so the points are 1..n as Word shows them
+                    for (int p = 0; p < pointCount && xNumbers.Count > 0; p++)
                         x.Add(new XElement("pt", new XAttribute("idx", p), new XElement("v", (xNumbers.TryGetValue(p, out double xv) ? xv : p + 1).ToString("R", CultureInfo.InvariantCulture))));
                     element.Add(new XElement("xVal", new XElement("numRef", x)), new XElement("yVal", new XElement("numRef", cells)));
                     if (kind == "bubble")
@@ -602,6 +611,8 @@ internal static class ExcelBinaryChart
         string? PaletteColor(int index)
             => index >= 8 && index - 8 < palette.Count ? palette[index - 8] : index >= 0 && index < DefaultPalette.Length ? DefaultPalette[index] : index is 65 or 78 ? "FFFFFF" : null;
 
+        bool IsDrawnSeriesColumn(int column) => column >= series.Count || series[column].Parent == 0;
+
         string? NumberFormat(int index) => formats.TryGetValue(index, out string? custom) ? custom : BuiltInFormat(index);
 
         XElement Axis(AxisData? axis, string name, int id, int cross, string position)
@@ -618,6 +629,7 @@ internal static class ExcelBinaryChart
             if (axis is { FormatIndex: >= 0 } && NumberFormat(axis.FormatIndex) is { } code) element.Add(new XElement("numFmt", new XAttribute("formatCode", code), new XAttribute("sourceLinked", "0")));
             if (axis?.LabelSize is { } labelSize) element.Add(TextProperties(labelSize, axis.LabelColor));
             element.Add(new XElement("crossAx", Val(cross)));
+            if (name == "valAx" && axes.FirstOrDefault(a => a.Type == 0) is { Between: false }) element.Add(new XElement("crossBetween", Val("midCat")));
             if (axis?.Major is { } major) element.Add(new XElement("majorUnit", Val(N(major))));
             return element;
         }
