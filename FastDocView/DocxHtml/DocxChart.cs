@@ -61,6 +61,8 @@ internal sealed partial class DocxChart
     {
         public string Id = "";
         public bool IsCategory, Deleted, Horizontal;
+        /// <summary>No tick labels: a deleted axis, or c:tickLblPos none (21.2.2.207; LibreOffice oox axisconverter.cxx: none = no labels, the axis line stays).</summary>
+        public bool NoLabels;
         public double? Min, Max, MajorUnit;
         public bool Gridlines;
         public string? Title;
@@ -75,6 +77,7 @@ internal sealed partial class DocxChart
     private readonly List<Group> _groups = new();
     private readonly Dictionary<string, Axis> _axes = new(StringComparer.Ordinal);
     private string? _title;
+    private string? _titleColor;
     private string? _legendPosition;
     private readonly HashSet<int> _deletedLegendEntries = new();
     private int _style = 2;
@@ -114,6 +117,9 @@ internal sealed partial class DocxChart
             model._title = TitleText(title);
             double fallback = FontSize(title.Element("txPr")) ?? 14;
             model._titleSizes = title.Element("tx")?.Element("rich")?.Elements("p").Select(p => FontSize(p) ?? fallback).ToList() ?? new List<double> { fallback };
+            // the title's own text colour (a:rPr / a:defRPr a:solidFill, 20.1.2.3.32 / 20.1.2.3.33), else the chart's text colour
+            if (title.Descendants().FirstOrDefault(e => e.Name.LocalName is "rPr" or "defRPr" && e.Element(e.Name.Namespace + "solidFill") is not null) is { } coloured)
+                model._titleColor = DocxDrawingColor.Css(coloured.Element(coloured.Name.Namespace + "solidFill")!, theme);
         }
         if (chart.Element("legend") is { } legendText) model._legendSize = FontSize(legendText.Element("txPr")) ?? chartSize ?? 9;
         model._dataLabelSize = FontSize(chart.Element("plotArea")?.Descendants("dLbls").Select(d => d.Element("txPr")).FirstOrDefault(t => t is not null)) ?? chartSize ?? 9;
@@ -138,6 +144,7 @@ internal sealed partial class DocxChart
                 var axis = new Axis
                 {
                     Id = Value(element.Element("axId")) ?? "", IsCategory = name != "valAx", Deleted = Value(element.Element("delete")) is "1" or "true",
+                    NoLabels = Value(element.Element("delete")) is "1" or "true" || Value(element.Element("tickLblPos")) == "none",
                     Min = Number(element.Element("scaling")?.Element("min")), Max = Number(element.Element("scaling")?.Element("max")),
                     MajorUnit = Number(element.Element("majorUnit")), Gridlines = element.Element("majorGridlines") is not null,
                     Title = element.Element("title") is { } axisTitle ? TitleText(axisTitle) : null,
@@ -331,7 +338,7 @@ internal sealed partial class DocxChart
     private List<string> CategoryLabels()
     {
         Group? first = _groups.FirstOrDefault(g => g.Kind is not (Kind.Pie or Kind.Doughnut or Kind.Scatter or Kind.Bubble));
-        if (first is null || CategoryAxis() is { Deleted: true }) return new();
+        if (first is null || CategoryAxis() is { NoLabels: true }) return new();
         Series? withCategories = first.Series.FirstOrDefault(s => s.Categories.Count > 0);
         if (withCategories is not null) return withCategories.Categories;
         int count = first.Series.Max(s => s.Values.Count);
@@ -376,6 +383,8 @@ internal sealed partial class DocxChart
     private string? LabelText(Group group, Series series, int point)
     {
         XElement? labels = series.Labels ?? group.Labels;
+        // c:dLbl (21.2.2.47): one point's own label settings replace the series' (Word: a label on a single point)
+        if (labels?.Elements("dLbl").FirstOrDefault(d => Value(d.Element("idx")) == point.ToString(CultureInfo.InvariantCulture)) is { } own) labels = own;
         if (labels is null || Value(labels.Element("delete")) is "1" or "true") return null;
         bool On(string name) => Value(labels.Element(name)) is "1" or "true";
         var parts = new List<string>();
@@ -477,7 +486,7 @@ internal sealed partial class DocxChart
                 double size = TitleSize(i);
                 // LibreOffice's title and subtitle are two objects: the next baseline is the two sizes apart (measured 13 + 11 = 24 pt in its PDF)
                 if (_separateTitleLines && i > 0) y += size - TitleSize(i - 1) * 0.2;
-                Text(svg, width / 2, y + size, lines[i], size, textColor, "middle");
+                Text(svg, width / 2, y + size, lines[i], size, _titleColor ?? textColor, "middle");
                 y += size * 1.2;
             }
             top = y + 8 + (_libreOfficeLayout ? 0 : TitleSize(0) * 0.35);   // Word leaves about a third of the title size more below it (measured on its PDFs: the top tick 18-19 pt below the title baseline)
@@ -707,7 +716,7 @@ internal sealed partial class DocxChart
         double valueTitleSize = valueAxis?.TitleSize ?? 10, categoryTitleSize = categoryAxis?.TitleSize ?? 10;
         string valueFormat = valueAxis?.FormatCode ?? (percent ? "0%" : _groups[0].Series[0].FormatCode ?? "General");
         var valueLabels = new List<(double Value, string Text)>();
-        if (valueAxis is not { Deleted: true })
+        if (valueAxis is not { NoLabels: true })
             foreach (double v in valueTicks) valueLabels.Add((v, FormatNumber(Math.Round(v, 10), valueFormat)));
         double valueLabelWidth = valueLabels.Count == 0 ? 0 : valueLabels.Max(l => TextWidth(l.Text, labelSize)) + (_libreOfficeLayout ? 4 : 8.2);   // Word: 6.2 pt from the label to the plot (measured)
         double sMin = 0, sMax = 1;
@@ -725,41 +734,41 @@ internal sealed partial class DocxChart
             // c:layoutTarget inner: the stored rectangle is the plot itself; the labels and titles go outside it
             double catLabelWidth = Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize));
             left -= (valueAxis?.Title is not null && !horizontal ? valueTitleSize + 4 : 0) + (categoryAxis?.Title is not null && !categoryAxis.Deleted && horizontal ? categoryTitleSize + 4 : 0)
-                    + (horizontal ? (categoryAxis is { Deleted: true } ? 0 : catLabelWidth) : valueLabelWidth);
+                    + (horizontal ? (categoryAxis is { NoLabels: true } ? 0 : catLabelWidth) : valueLabelWidth);
             bottom += (valueAxis?.Title is not null && horizontal ? valueTitleSize + 4 : 0) + (categoryAxis?.Title is not null && !categoryAxis.Deleted && !horizontal ? categoryTitleSize + 4 : 0)
-                      + (horizontal ? labelSize + 4 : categoryAxis is { Deleted: true } ? 0 : labelSize + 4);
+                      + (horizontal ? labelSize + 4 : categoryAxis is { NoLabels: true } ? 0 : labelSize + 4);
             right += secondaryLabelWidth + (secondaryAxis?.Title is not null ? 14 : 0);
         }
         if (valueAxis?.Title is { } valueTitle) { double room = valueTitleSize + 4; if (horizontal) bottom -= room; else left += room; Text(svg, horizontal ? (left + right) / 2 : left - 6, horizontal ? bottom + valueTitleSize + 2 : (top + bottom) / 2, valueTitle, valueTitleSize, textColor, "middle", horizontal ? 0 : -90); }
         if (categoryAxis?.Title is { } categoryTitle && !categoryAxis.Deleted) { double room = categoryTitleSize + 4; if (horizontal) left += room; else bottom -= room; Text(svg, horizontal ? left - 6 : (left + right) / 2, horizontal ? (top + bottom) / 2 : bottom + categoryTitleSize + 2 + (_libreOfficeLayout ? categoryTitleSize * 0.5 : 0), categoryTitle, categoryTitleSize, textColor, "middle", horizontal ? -90 : 0); }
         if (secondaryAxis?.Title is { } secondaryTitle) { right -= 14; Text(svg, right + 6, (top + bottom) / 2, secondaryTitle, 10, textColor, "middle", 90); }
         right -= secondaryLabelWidth;
-        if (horizontal) { bottom -= labelSize + 4; left += categoryAxis is { Deleted: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
+        if (horizontal) { bottom -= labelSize + 4; left += categoryAxis is { NoLabels: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
         CategoryLabelPlan? categoryPlan = null;
         if (!horizontal)
         {
             left += valueLabelWidth;
             bool drawnIn3D = _is3D && _groups.Count == 1 && _groups[0].Kind is Kind.Bar or Kind.Line or Kind.Area;   // the 3-D paths place their own labels
-            if (!xy && !drawnIn3D && categoryAxis is not { Deleted: true })
+            if (!xy && !drawnIn3D && categoryAxis is not { NoLabels: true })
             {
                 int slots = MidCategory() ? Math.Max(1, categoryCount - 1) : categoryCount;
                 categoryPlan = PlanCategoryLabels(Enumerable.Range(0, categoryCount).Select(i => i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture)).ToList(),
                                                   Math.Max(1, right - left) / slots, labelSize, categoryAxis);
                 bottom -= categoryPlan.Height;
             }
-            else bottom -= categoryAxis is { Deleted: true } ? 0 : labelSize + 4;
+            else bottom -= categoryAxis is { NoLabels: true } ? 0 : labelSize + 4;
         }
         double plotWidth = Math.Max(1, right - left), plotHeight = Math.Max(1, bottom - top);
         string gridColor = DocxDrawingColor.Css(new XElement("c", new XElement("schemeClr", new XAttribute("val", "tx1"), new XElement("lumMod", new XAttribute("val", "15000")), new XElement("lumOff", new XAttribute("val", "85000")))), _theme) ?? "#D9D9D9";
         string? plotFill = PropertiesFill(_plotAreaProperties, null);
         if (_is3D && !xy && _groups.Count == 1 && _groups[0].Kind == Kind.Bar)
         {
-            Draw3DColumns(svg, categoryCount, horizontal, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { Deleted: true }, textColor, gridColor, plotFill, labelSize);
+            Draw3DColumns(svg, categoryCount, horizontal, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { NoLabels: true }, textColor, gridColor, plotFill, labelSize);
             return;
         }
         if (_is3D && !xy && !horizontal && _groups.Count == 1 && _groups[0].Kind is Kind.Line or Kind.Area)
         {
-            Draw3DRows(svg, categoryCount, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { Deleted: true }, textColor, gridColor, plotFill, labelSize);
+            Draw3DRows(svg, categoryCount, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { NoLabels: true }, textColor, gridColor, plotFill, labelSize);
             return;
         }
         if (_is3D && !horizontal)
@@ -800,7 +809,7 @@ internal sealed partial class DocxChart
         foreach ((double value, string text) in secondaryLabels)
             Text(svg, right + 4, bottom - SecondaryToAxis(value) * plotHeight + labelSize / 3, text, labelSize, textColor, "start");
         // category labels
-        if (!xy && categoryAxis is not { Deleted: true })
+        if (!xy && categoryAxis is not { NoLabels: true })
             for (int i = 0; i < categoryCount; i++)
             {
                 string label = i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture);

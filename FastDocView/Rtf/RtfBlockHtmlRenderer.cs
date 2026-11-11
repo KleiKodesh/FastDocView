@@ -458,10 +458,17 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     public override bool WantsObjects => true;
 
-    /// <summary>An {\object}: an embedded Excel chart drawn as SVG at the object's size (the \result preview is not shown); anything else stays a placeholder.</summary>
+    /// <summary>An {\object}: an embedded Excel chart drawn as SVG at the object's size (the \result preview is not shown); any other object shows its \result preview picture.</summary>
     public override void Object(byte[] group, in RtfGroupState state)
     {
-        if (RtfObjectChart.Read(group) is not { } found) { Embedded(RtfEmbeddedKind.Object, state); return; }
+        if (RtfObjectChart.Read(group) is not { } found)
+        {
+            // not a chart: the object's saved preview picture (its result group), else a placeholder
+            if (RtfObjectChart.ResultPictureOffset(group) is { } at)
+                using (var bytes = new MemoryStream(group, writable: false)) Picture(new RtfParser(this, _tables, readsHeaderTables: false).ReadPictureAt(bytes, at), state);
+            else Embedded(RtfEmbeddedKind.Object, state);
+            return;
+        }
         FlushRun();
         StringBuilder html = _listTextTarget ?? _flow.Inline;
         WordShapeHtml.OpenFrame(html, new WordPictureLayout(found.WidthPt, found.HeightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0), growsWithText: false);

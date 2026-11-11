@@ -50,6 +50,31 @@ internal static class RtfObjectChart
         return new Found(chart, width / 20.0 * scaleX / 100.0, height / 20.0 * scaleY / 100.0);
     }
 
+    /// <summary>
+    /// Where the first {\pict} body of the object's {\result} starts in the group (just after the "\pict" word): the preview picture
+    /// Word saves for the object (LibreOffice rtfdocumentimpl.cxx:3069-3075 uses \result when the object itself is not read);
+    /// null when there is none.
+    /// </summary>
+    public static int? ResultPictureOffset(byte[] group)
+    {
+        int result = IndexOf(group, "\\result", 0);
+        if (result < 0) return null;
+        for (int at = IndexOf(group, "\\pict", result); at >= 0; at = IndexOf(group, "\\pict", at + 5))
+            if (at + 5 >= group.Length || !IsLetter(group[at + 5])) return at + 5;
+        return null;
+    }
+
+    private static int IndexOf(byte[] group, string word, int from)
+    {
+        for (int i = Math.Max(0, from); i + word.Length <= group.Length; i++)
+        {
+            int k = 0;
+            while (k < word.Length && group[i + k] == word[k]) k++;
+            if (k == word.Length) return i;
+        }
+        return -1;
+    }
+
     /// <summary>The bytes of the hex digits from <paramref name="at"/> to the group's closing brace (white space skipped); null on any other character.</summary>
     private static byte[]? HexDigits(byte[] group, int at, out int end)
     {

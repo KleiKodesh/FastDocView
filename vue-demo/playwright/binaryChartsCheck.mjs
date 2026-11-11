@@ -1,7 +1,7 @@
 // Live check of .doc / .rtf charts (embedded Excel chart objects) in the app's FastDocView page: open
-// test-data/word-charts-binary/word-charts-binary-v1.doc or .rtf, check the charts are drawn as SVG filling their frame (not
+// test-data/word-charts-binary/word-charts-binary-v2.doc or .rtf, check the charts are drawn as SVG filling their frame (not
 // the preview picture), with titles, legend and Word's series colours, and no console errors. DOM only, no screenshots.
-//   node playwright/binaryChartsCheck.mjs <path to word-charts-binary-v1.doc or .rtf>
+//   node playwright/binaryChartsCheck.mjs <path to word-charts-binary-v2.doc or .rtf>
 import { chromium } from 'playwright'
 
 const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? `http://localhost:${process.env.FASTDOCVIEW_DEMO_PORT ?? 5189}/`

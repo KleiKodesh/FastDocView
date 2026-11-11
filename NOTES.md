@@ -4853,3 +4853,26 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   charts, median 6.6 pt x / 3.2 pt y (scripts/compare-chart-text-positions.py). The .docx charts are closer (0.3 / 0.6 pt):
   the BIFF frame positions (CHFRAMEPOS, CHAXESSET rect) are not applied yet.
 
+## Charts in .doc and RTF: positions, labels, trend lines, error bars, formats (2026-11-11)
+
+- Fixture v2 (test-data/word-charts-binary): no chart is inserted through Word or Excel any more (Excel's UI popped up).
+  scripts/make-word-binary-charts-v2.py edits the Word-made v1 .docx chart XML (a point label, a linear trend line, fixed y
+  error bars, value axis 0.0, no category labels, a red title); scripts/save-word-binary-charts.ps1 only opens it in Word and
+  saves the PDF (first: once saved as .doc / .rtf the charts print their text as outlines), .doc and .rtf.
+- The line chart: Word 16 saved its own default line chart (AddChart2 xlLine / xlLineMarkers) as an Excel chart object in
+  both formats (word-line-chart-v1.doc / .rtf, drawn as a line chart), but saved the v1 / v2 fixture's line chart as a
+  plain picture both times. So it depends on the chart, not on its type; the earlier note was wrong to say Word always does.
+- BIFF8 as Word writes it: a trend line or error bar is its own CHSERIES with CHSERPARENT (1-based parent) and
+  CHSERTRENDLINE (type, order, intercept NaN = none, equation / R squared flags, forecasts) or CHSERERRORBAR (one record per
+  direction: y+ and y- with source 2 = fixed, value 0.5); they are joined to the parent as c:trendline / c:errBars and not
+  drawn as series. A single point's label: CHTEXT + CHOBJECTLINK 4 with the point index (0xFFFF = whole series) -> c:dLbl
+  (now read by the renderer, 21.2.2.47). Axis number format: CHFORMAT 0x104E = index of a FORMAT record (0xA4 = "0.0").
+  Text colour: CHTEXT RGB when the automatic bit is clear (the title's is drawn; the renderer gained a title colour).
+  Labels off: CHTICK label position 0 -> c:tickLblPos none; DocxChart now hides tick labels for it (and ODT's
+  chart:display-label false) while keeping the axis and its title.
+- Saved positions: CHFRAMEPOS in CHAXESSET (modes 2 / 2, chart units / 4000; LibreOffice xichart.cxx:4030-4046 sets it
+  as the diagram including axes) and in CHLEGEND (top left, :2610-2620). Applied to DocxChart as c:manualLayout they made
+  things worse against Word's PDF (21 texts: automatic 7.4 / 2.6 pt median x / y; outer plot rectangle 8.5 / 7.5; inner
+  16.9 / 19.6; legend alone 7.6 / 20.3), so they are read but not applied (ExcelBinaryChart.UsesSavedPlotPosition).
+- .doc search skips equations and charts in hidden text (sprmCFVanish resolved as the renderer does).
+

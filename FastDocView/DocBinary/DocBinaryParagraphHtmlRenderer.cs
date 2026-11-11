@@ -696,13 +696,22 @@ public sealed class DocBinaryParagraphHtmlRenderer
             if (c >= ' ') matcher.Feed(c);
             else if (c == '\t') matcher.Feed(' ');
             else if (c is '\r' or '\u0007' or '\u000B' or '\u000C') matcher.Separator();
-            else if (c == '\u0001' && DataLocationAt(cpStart + i) is { } location)
+            else if (c == '\u0001' && DataLocationAt(cpStart + i) is { } location && !IsHiddenAt(cpStart + i))   // hidden: not drawn (AppendRunHtml), so not searched
             {
                 if (EquationOf(location) is { } equation) FeedEquationText(equation, matcher);     // a picture of an equation: its text is shown (AppendPicture), so searched
                 else if (ObjectIdBefore(cpStart + i) is { } objectId && Charts?.Invoke(objectId) is { } chart && Pictures.Locate(location) is not null)   // drawn only where its preview box is known (AppendPicture)
                     foreach (string chartText in chart.Texts()) { matcher.Separator(); matcher.Feed(chartText.AsSpan()); matcher.Separator(); }
             }
         }
+    }
+
+    /// <summary>Whether the character at <paramref name="cp"/> is hidden (sprmCFVanish) as the renderer resolves it: paragraph style, character style, direct formatting.</summary>
+    private bool IsHiddenAt(int cp)
+    {
+        (WordParagraphFormatting paragraph, int styleIndex) = ResolveParagraph(cp, cp + 1);
+        WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
+        foreach ((WordRunFormatting formatting, _, _, _, _) in CharacterRuns(cp, cp + 1, paragraph.RunFormatting, styleBase)) return formatting.IsHidden;
+        return false;
     }
 
     /// <summary>An equation's text (its m:t, as the renderer shows them) to the matcher.</summary>

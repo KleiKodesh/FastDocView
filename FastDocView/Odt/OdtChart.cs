@@ -352,6 +352,8 @@ internal static class OdtChart
         if (chartProperty(axis, "logarithmic") == "true") scaling.AddFirst(new XElement("logBase", new XAttribute("val", "10")));
         var element = new XElement(kind, new XElement("axId", Val(id)), scaling,
                                    new XElement("delete", Val(axis is null || chartProperty(axis, "display-label") == "false" && axis.Element(Chart + "title") is null ? 1 : 0)));
+        // chart:display-label false (ODF 1.3 part 3, 19.12): no tick labels, the axis and its title stay (c:tickLblPos none)
+        if (chartProperty(axis, "display-label") == "false") element.Add(new XElement("tickLblPos", new XAttribute("val", "none")));
         if (axis?.Elements(Chart + "grid").Any(g => (string?)g.Attribute(Chart + "class") is null or "major") == true) element.Add(new XElement("majorGridlines"));
         if (TitleText(axis?.Element(Chart + "title")) is { } title) element.Add(RichTitle(title, LineSizes(axis!.Element(Chart + "title"), styles)));
         if (SizeOf((string?)axis?.Attribute(Chart + "style-name"), styles) is { } labelSize) element.Add(TextProperties(labelSize));
