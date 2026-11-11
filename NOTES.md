@@ -2304,6 +2304,22 @@ tlch); checked by the same test.
   one read pass over all stretched operators and equation pieces, then the writes; line breaks are simulated from the
   measured piece widths (greedy fill), so showing repeated operators needs no second measurement.
 
+### Equations, sixth pass: run-time MATH reader, Word's variant rule (2026-11-11)
+
+- Html/WordMathFontReader.cs reads the installed font's OpenType MATH table at run time (OpenType 1.9 MATH:
+  MathVariants -> vertical coverage, MathGlyphConstruction variant records and GlyphAssembly parts; with head, cmap
+  4 / 12, hhea / hmtx). Fonts are found by name (name IDs 1 / 4 / 16) in the Windows font folders (system and per user,
+  .ttf / .otf / .ttc), scanned once; each font read once and kept. Its output equals the fontTools tables for both fonts
+  (harness check); the generated WordMathFontVariants.cs is the fallback when no file can be read (another OS, WASM).
+- Word's rule, from its PDFs (brackets-*-v1): matrix rows are one font line apart (Cambria Math 1.171 em = hhea
+  ascent+descent; DejaVu 1.2 em), and the delimiter Word picks is the smallest variant covering max(0.901 H, H - 0.5 em)
+  of the content's ink height H - TeX's \delimiterfactor 901 / \delimitershortfall 5pt (The TeXbook, Appendix G, rule 19 - from memory, not rechecked),
+  with H measured symmetric about the math axis (MATH AxisHeight). For a 3-row matrix in Cambria Math: ink 3.0 em ->
+  needs 2.7 -> variant 2.956 (Word's), 5 rows: needs 4.83 > 4.336 -> assembly (Word's). DelimitedSubFormulaMinHeight
+  (1.465 / 1.333 em) only decides whether a delimiter stretches at all. The browser gives box heights, not ink (a row box
+  is a full line, 1.17 em, where the digit ink is 0.66 em), so applying the rule to browser boxes picks a size too large;
+  the page keeps the factors fitted to the same PDFs (1.2 x box height for delimiters, 0.7 x for n-ary), 30/30 within 15%.
+
 ## Web archive pictures (2026-11-10)
 Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) and an `<img>` fallback inside
 `<![if !vml]>`, which is what a browser shows. The renderer skips the VML copy and draws the `<img>` through the picture

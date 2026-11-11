@@ -130,7 +130,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Show markup / original view toggle for tracked changes | docx, doc, rtf, odt | Only Word's final view (planned as a toggle in the coverage plan) | planned |
 | Comments | docx, doc, rtf, odt | Not shown in a reading view (references skipped) | deferred |
-| Equations: stretched-operator widths for a math font other than Cambria Math and DejaVu Math TeX Gyre (the fonts Word offers on this Windows; another keeps the browser's width - its MATH table would have to be added to the generated table); heights of single-line equations read ~0.85 of Word's PDF by the measuring method (font boxes against math boxes, NOTES.md) | docx, doc, rtf | Font data is generated offline from the fonts on the machine; the library reads no font files | deferred |
+| Equations: Word's exact variant rule for stretched operators. Word's PDFs fit TeX's rule (cover max(0.901 x H, H - 0.5 em) of the content's ink height H, symmetric about the math axis) with matrix rows one font line apart, but the browser gives box heights, not ink, so the page uses factors fitted to Word's PDFs (1.2 delimiters, 0.7 n-ary; 30/30 within 15% on two fonts); a host without font files falls back to tables for Cambria Math and DejaVu Math TeX Gyre; heights of single-line equations read ~0.85 of Word's PDF by the measuring method | docx, doc, rtf | No ink extents in MathML layout; NOTES.md | deferred |
 | Equations in .doc saved without equationXML (Word 2003 and older) | doc | No OMML in the file; the saved picture is shown | won't do |
 | Ruby | doc, rtf | Not read (EQ \o fields still compute) | deferred |
 

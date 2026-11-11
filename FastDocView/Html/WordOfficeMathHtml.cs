@@ -446,14 +446,16 @@ public sealed class WordOfficeMathHtml
     /// table but its stretched glyph box is wider (measured: Cambria Math "(" 9.0 pt against Word's 7.3 around three rows).
     /// LibreOffice Math uses neither: SmMathSymbolNode::AdaptToY (starmath/source/node.cxx) scales the glyph height and keeps
     /// its width. So the operator carries the font's variants (height:width em, then the widest assembly
-    /// part; Html/WordMathFontVariants.cs, generated from the fonts' MATH tables) and the page (the app's fastDocViewMath.ts)
+    /// part; read from the installed font's MATH table by WordMathFontReader, else Html/WordMathFontVariants.cs) and the page (the app's fastDocViewMath.ts)
     /// narrows it (negative margins, centred on the glyph) to the variant Word picks for the height the browser stretched it to. A font
     /// without a table there keeps the browser's own width.
     /// </summary>
     private void AppendStretched(StringBuilder html, string mo, string character, bool stretches)
     {
         string font = _settings.Font ?? "Cambria Math";
-        if (!stretches || !WordMathFontVariants.Fonts.TryGetValue(font, out var table) || !table.TryGetValue(character, out var variants))
+        // the installed font's own MATH table, else the tables generated for the fonts Word offers (a host without font files)
+        var table = WordMathFontReader.Variants(font) ?? (WordMathFontVariants.Fonts.TryGetValue(font, out var generated) ? generated : null);
+        if (!stretches || table is null || !table.TryGetValue(character, out var variants))
         {
             html.Append(mo);
             return;
