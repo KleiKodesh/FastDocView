@@ -67,7 +67,7 @@ internal static class WordMathFontReader
                     {
                         var tables = Tables(reader, faces[face]);
                         if (!tables.ContainsKey("MATH") || !tables.TryGetValue("name", out var name)) continue;
-                        foreach (string fontName in Names(reader, name.offset)) files.TryAdd(fontName, (path, face));
+                        foreach (string fontName in Names(reader, name.offset)) if (!files.ContainsKey(fontName)) files.Add(fontName, (path, face));   // net48 has no TryAdd
                     }
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or EndOfStreamException or ArgumentException) { }
