@@ -472,6 +472,7 @@ internal sealed class WordXmlSearchText
                         if (reader.LocalName == "t" && !reader.IsEmptyElement) textDepth = reader.Depth;
                         else if (reader.LocalName == "tab") { if (fields is null || fields.Shows("\t")) matcher.Feed(' '); }
                         else if (reader.LocalName is "br" or "cr") { if (fields is null || fields.Shows(null)) matcher.Separator(); }
+                        else if (reader.LocalName is "footnoteReference" or "endnoteReference" && IsWordprocessing(reader.NamespaceURI)) matcher.Separator();   // the note's mark: a match never crosses it
                         else if (reader.LocalName == "p" && reader.IsEmptyElement) matcher.Separator();
                         break;
                     case XmlNodeType.EndElement:
@@ -540,8 +541,10 @@ internal sealed class WordXmlSearchText
                                     break;
                                 case "tab": matcher.Feed(' '); break;
                                 case "line-break": matcher.Separator(); break;
-                                case "note-citation" or "tracked-changes": reader.Skip(); skipped = true; continue;
+                                case "note-citation": matcher.Separator(); reader.Skip(); skipped = true; continue;   // the note's mark: a match never crosses it
+                                case "tracked-changes": reader.Skip(); skipped = true; continue;
                                 case "note-body":
+                                    matcher.Separator();
                                     if (contexts.Count > 0 && contexts[contexts.Count - 1].depth == reader.Depth) contexts.RemoveAt(contexts.Count - 1);   // never closes: skipped whole
                                     reader.Skip(); skipped = true; continue;
                             }

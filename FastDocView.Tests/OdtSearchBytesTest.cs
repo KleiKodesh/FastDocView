@@ -197,7 +197,8 @@ public static class OdtSearchBytesTest
             Expect("hiddentext", [], "hidden text");
             Expect("notetext", [], "the note body is not the block's text (notes are searched apart)");
             Expect("afternote", [], "a picture title after a skipped note body");
-            Expect("abcdef", [4], "text around a skipped note body and a picture");
+            Expect("abcdef", [], "the note's mark (drawn in the block) separates the text around it");
+            Expect("def", [4], "text after a skipped note body and a picture");
         }
     }
 
@@ -281,7 +282,7 @@ public static class OdtSearchBytesTest
             Expect("c d", [4], "text:s with no c is one space");
             Expect("e f", [4], "text:s with a bad c is one space");
             Expect("x y", [5], "text:tab is a space");
-            Expect("cd", [14], "text:line-break is a separator (block 5 not a hit; block 14 is \"abc\" + note + \"def\": the skipped note joins c and d)");
+            Expect("cd", [], "text:line-break is a separator (block 5 not a hit; block 14 is \"abc\" + note mark + \"def\": the drawn mark separates c and d)");
             Expect("R&D <x> \"q'", [6], "predefined entities are decoded");
             Expect("אבג", [6], "hex + decimal character references are decoded");
             Expect("amp", [], "entity names are not text");
@@ -296,7 +297,8 @@ public static class OdtSearchBytesTest
             Expect("epsilon", [13], "a comment and CDATA inside a word");
             Expect("needle", [], "a note body never counts with its block");
             Expect("1", [], "the note citation is not text");
-            Expect("abcdef", [14], "the note adds no character around it");
+            Expect("abcdef", [], "the note's drawn mark separates the text around it");
+            Expect("def", [14], "text after a note is still the block's");
             Expect("here", [16], "text in a table");
             Expect("splithere", [], "no match across paragraphs");
             Expect("otherprefix  z", [17], "elements are resolved by namespace, not prefix");

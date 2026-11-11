@@ -695,7 +695,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
             if (step.IsConsumed) continue;
             if (c >= ' ') matcher.Feed(c);
             else if (c == '\t') matcher.Feed(' ');
-            else if (c is '\r' or '\u0007' or '\u000B' or '\u000C') matcher.Separator();
+            else if (c is '\r' or '\u0007' or '\u000B' or '\u000C' or AutoNumberedNoteMark) matcher.Separator();   // a note's mark is drawn here: a match never crosses it
             else if (c == '\u0001' && DataLocationAt(cpStart + i) is { } location && !IsHiddenAt(cpStart + i, ParagraphEndAfter(text, i, cpStart)))   // hidden: not drawn (AppendRunHtml), so not searched
             {
                 if (EquationOf(location) is { } equation) FeedEquationText(equation, matcher);     // a picture of an equation: its text is shown (AppendPicture), so searched

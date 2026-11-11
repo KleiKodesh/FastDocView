@@ -306,6 +306,9 @@ internal sealed class DocxSearchTextScanner
                         if (MathKindAt(elementDepth - 1) == MathKind.Run) { if (Is(local, "br")) matcher.Feed(' '); }   // in an equation's run: w:br drawn as a space, w:cr not drawn
                         else matcher.Separator();
                         break;
+                    case 16 or 17 when (Is(local, "footnoteReference") || Is(local, "endnoteReference")) && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
+                        matcher.Separator();                                  // the note's mark is drawn here: a match never crosses it
+                        break;
                     case 3 when Is(local, "tab") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
                         if (MathKindAt(elementDepth - 1) != MathKind.Run) matcher.Feed(' ');      // a tab in an equation's run is not drawn
                         break;

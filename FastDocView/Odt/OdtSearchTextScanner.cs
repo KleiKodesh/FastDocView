@@ -291,7 +291,11 @@ internal sealed class OdtSearchTextScanner
                     }
                     else if (Is(local, "tab")) matcher.Feed(' ');
                     else if (Is(local, "line-break")) matcher.Separator();
-                    else if (Is(local, "note-citation") || Is(local, "tracked-changes") || Is(local, "note-body")) { if (!isEmpty) skipDepth = elementDepth; }
+                    else if (Is(local, "note-citation") || Is(local, "tracked-changes") || Is(local, "note-body"))
+                    {
+                        if (!Is(local, "tracked-changes")) matcher.Separator();      // the note's mark is drawn here: a match never crosses it
+                        if (!isEmpty) skipDepth = elementDepth;
+                    }
                 }
                 else if (namespaceKind == NamespaceKind.Office && Is(local, "annotation")) { if (!isEmpty) skipDepth = elementDepth; }
             }

@@ -84,7 +84,7 @@ public static class DocumentSearchTest
         string body =
             "<w:p>" + R("\u05E9\u05B8\u05C1") + R("\u05DC\u05D5\u05B9\u0591\u05DD", "<w:b/>") + R(" world") + "</w:p>"                       // 0: split across runs + marks
           + "<w:p>" + R("Hello World") + "</w:p>"                                                                                             // 1: case
-          + "<w:p>" + R("abc needle") + "<w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>"                                                         // 2: note
+          + "<w:p>" + R("abc needle") + "<w:r><w:footnoteReference w:id=\"1\"/></w:r>" + R("after") + "</w:p>"                                                         // 2: note
           + "<w:tbl><w:tr><w:tc><w:p>" + R("split") + "</w:p><w:p>" + R("here") + "</w:p></w:tc><w:tc><w:p>" + R("cell") + "</w:p></w:tc></w:tr></w:tbl>" // 3: table
           + "<w:p>" + R("\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9") + "</w:p>"                                                             // 4: maqaf, gershayim
           + "<w:p>" + R("kept ") + "<w:del w:id=\"9\" w:author=\"a\"><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"                   // 5: deleted text
@@ -122,6 +122,8 @@ public static class DocumentSearchTest
         TestReport.Check(bothBlocks.SequenceEqual([noteBlock]) && bothCounts.SequenceEqual([1]), $"{format}: a word in the block and its note: the block counts only its own {Show(bothBlocks)} x {Show(bothCounts)}");
         (int[] bothNotes, int[] bothNoteCounts) = AllNotes(document, "needle");
         TestReport.Check(bothNotes.SequenceEqual([0]) && bothNoteCounts.SequenceEqual([1]), $"{format}: the same word in the notes search counts only the note's {Show(bothNotes)} x {Show(bothNoteCounts)}");
+        TestReport.Check(All(document, "after").SequenceEqual([noteBlock]), $"{format}: text after a note's mark is the block's");
+        TestReport.Check(All(document, "needleafter").Length == 0, $"{format}: a match never crosses a note's drawn mark");
         TestReport.Check(All(document, "note").Length == 0, $"{format}: a word only in a note body is not a block hit");
         (int[] onlyNotes, int[] onlyNoteCounts) = AllNotes(document, "note");
         TestReport.Check(onlyNotes.SequenceEqual([0]) && onlyNoteCounts.SequenceEqual([1]), $"{format}: the notes search finds a word only in a note {Show(onlyNotes)} x {Show(onlyNoteCounts)}");
@@ -145,7 +147,7 @@ public static class DocumentSearchTest
     private static string OdfBody()
         => "<text:p>\u05E9\u05B8\u05C1<text:span>\u05DC\u05D5\u05B9\u0591\u05DD</text:span> world</text:p>"   // 0
          + "<text:p>Hello World</text:p>"                                                                       // 1
-         + "<text:p>abc needle<text:note text:id=\"ftn1\" text:note-class=\"footnote\"><text:note-citation>1</text:note-citation><text:note-body><text:p>needle in a note</text:p></text:note-body></text:note></text:p>" // 2
+         + "<text:p>abc needle<text:note text:id=\"ftn1\" text:note-class=\"footnote\"><text:note-citation>1</text:note-citation><text:note-body><text:p>needle in a note</text:p></text:note-body></text:note>after</text:p>" // 2
          + "<table:table table:name=\"T\"><table:table-column/><table:table-column/><table:table-row><table:table-cell><text:p>split</text:p><text:p>here</text:p></table:table-cell><table:table-cell><text:p>cell</text:p></table:table-cell></table:table-row></table:table>" // 3
          + "<text:p>\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9</text:p>"                                       // 4
          + "<text:p>a<text:s text:c=\"2\"/>b<office:annotation><text:p>comment zzz</text:p></office:annotation></text:p>" // 5
@@ -193,7 +195,7 @@ public static class DocumentSearchTest
         string rtf = "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Arial;}}\n"
             + "\\pard " + RtfUnicode("\u05E9\u05B8\u05C1") + "{\\b " + RtfUnicode("\u05DC\u05D5\u05B9\u0591\u05DD") + "} world\\par\n"   // 0
             + "\\pard Hello World\\par\n"                                                                                                 // 1
-            + "\\pard abc needle{\\super\\chftn}{\\footnote\\pard{\\super\\chftn} needle in a note}\\par\n"                                     // 2
+            + "\\pard abc needle{\\super\\chftn}{\\footnote\\pard{\\super\\chftn} needle in a note}after\\par\n"                                     // 2
             + "\\trowd\\cellx3000\\cellx6000\\pard\\intbl split\\line here\\cell cell\\cell\\row\n"                                    // 3
             + "\\pard " + RtfUnicode("\u05D1\u05BE\u05D0 \u05E8\u05D1\u05F4\u05D9") + "\\par\n"                                         // 4
             + "\\pard {\\listtext 1.\\tab}listed\\par\n"                                                                               // 5
