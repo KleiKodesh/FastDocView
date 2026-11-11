@@ -699,7 +699,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
             else if (c == '\u0001' && DataLocationAt(cpStart + i) is { } location)
             {
                 if (EquationOf(location) is { } equation) FeedEquationText(equation, matcher);     // a picture of an equation: its text is shown (AppendPicture), so searched
-                else if (ObjectIdBefore(cpStart + i) is { } objectId && Charts?.Invoke(objectId) is { } chart)
+                else if (ObjectIdBefore(cpStart + i) is { } objectId && Charts?.Invoke(objectId) is { } chart && Pictures.Locate(location) is not null)   // drawn only where its preview box is known (AppendPicture)
                     foreach (string chartText in chart.Texts()) { matcher.Separator(); matcher.Feed(chartText.AsSpan()); matcher.Separator(); }
             }
         }

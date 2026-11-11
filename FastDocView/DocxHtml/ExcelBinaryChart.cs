@@ -97,7 +97,7 @@ internal static class ExcelBinaryChart
     {
         public int Type;
         public double? Min, Max, Major;
-        public bool Gridlines, NoTickMarks, Deleted;
+        public bool Gridlines, NoTickMarks, NoLabels;
         public double? LabelSize;
         public string? Title;
         public double? TitleSize;
@@ -306,6 +306,7 @@ internal static class ExcelBinaryChart
                     continue;
                 }
                 case ChAxis when length >= 2:
+                    axisLine = -1;
                     var axis = new AxisData { Type = BitConverter.ToUInt16(body, 0) };
                     axes.Add(axis);
                     last = axis;
@@ -313,14 +314,15 @@ internal static class ExcelBinaryChart
                 case ChValueRange when length >= 42 && current is AxisData ranged:
                 {
                     ushort flags = BitConverter.ToUInt16(body, 40);
-                    if ((flags & 1) == 0) ranged.Min = BitConverter.ToDouble(body, 0);
-                    if ((flags & 2) == 0) ranged.Max = BitConverter.ToDouble(body, 8);
-                    if ((flags & 4) == 0) ranged.Major = BitConverter.ToDouble(body, 16);
+                    if ((flags & 1) == 0) ranged.Min = Sane(BitConverter.ToDouble(body, 0));
+                    if ((flags & 2) == 0) ranged.Max = Sane(BitConverter.ToDouble(body, 8));
+                    if ((flags & 4) == 0 && Sane(BitConverter.ToDouble(body, 16)) is > 0 and var major) ranged.Major = major;
+                    if (ranged.Min is { } low && ranged.Max is { } high && high <= low) ranged.Min = ranged.Max = null;   // a damaged range: automatic
                     continue;
                 }
                 case ChTick when length >= 1 && current is AxisData ticked:
                     ticked.NoTickMarks = body[0] is 0 or 1;            // none / inside: no mark outside the plot
-                    if (length >= 3 && body[2] == 0) ticked.Deleted = true;   // label position none
+                    if (length >= 3 && body[2] == 0) ticked.NoLabels = true;   // label position none: the axis line stays
                     continue;
                 case ChAxisLine when length >= 2:
                     axisLine = BitConverter.ToUInt16(body, 0);
@@ -333,6 +335,7 @@ internal static class ExcelBinaryChart
                 case ChObjectLink when length >= 4 && current is TextData linked:
                     linked.Link = BitConverter.ToUInt16(body, 0);
                     linked.Series = BitConverter.ToUInt16(body, 2);
+                    if (linked.Link == 4 && length >= 6 && BitConverter.ToUInt16(body, 4) != 0xFFFF) linked.Link = -1;   // one point's label (wLinkVar2), not the whole series
                     continue;
                 case ChFont when length >= 2:
                 {
@@ -351,6 +354,7 @@ internal static class ExcelBinaryChart
                 {
                     int row = BitConverter.ToUInt16(body, 0), column = BitConverter.ToUInt16(body, 2);
                     double value = BitConverter.ToDouble(body, 6);
+                    if (row >= MaxPoints || column > 255 || Sane(value) is null) continue;   // a damaged cache record
                     if (cacheKind == 1) values[(row, column)] = value;
                     else if (cacheKind == 2) { if (!categories.ContainsKey(row)) categories[row] = value.ToString("R", CultureInfo.InvariantCulture); if (!xNumbers.ContainsKey(row)) xNumbers[row] = value; }
                     else if (cacheKind == 3) bubbles[(row, column)] = value;
@@ -359,6 +363,7 @@ internal static class ExcelBinaryChart
                 case Label when length >= 9 && chartDone && cacheKind == 2:
                 {
                     int row = BitConverter.ToUInt16(body, 0);
+                    if (row >= MaxPoints) continue;
                     if (!categories.ContainsKey(row)) categories[row] = UnicodeString(body, 6, 2);
                     continue;
                 }
@@ -496,11 +501,12 @@ internal static class ExcelBinaryChart
             var scaling = new XElement("scaling");
             if (axis?.Max is { } max) scaling.Add(new XElement("max", Val(N(max))));
             if (axis?.Min is { } min) scaling.Add(new XElement("min", Val(N(min))));
-            var element = new XElement(name, new XElement("axId", Val(id)), scaling, new XElement("delete", Val(axis is null || axis.Deleted ? "1" : "0")),
+            var element = new XElement(name, new XElement("axId", Val(id)), scaling, new XElement("delete", Val(axis is null ? "1" : "0")),
                                        new XElement("axPos", Val(position)));
             if (axis?.Gridlines == true) element.Add(new XElement("majorGridlines"));
             if (axis?.Title is { } axisTitle) element.Add(new XElement("title", RichText(axisTitle, axis.TitleSize)));
             element.Add(new XElement("majorTickMark", Val(axis?.NoTickMarks == false ? "out" : "none")));
+            if (axis?.NoLabels == true) element.Add(new XElement("tickLblPos", Val("none")));
             if (axis?.LabelSize is { } labelSize) element.Add(TextProperties(labelSize));
             element.Add(new XElement("crossAx", Val(cross)));
             if (axis?.Major is { } major) element.Add(new XElement("majorUnit", Val(N(major))));
@@ -537,6 +543,12 @@ internal static class ExcelBinaryChart
         count = Math.Min(count, (body.Length - at) / (wide ? 2 : 1));
         return wide ? Encoding.Unicode.GetString(body, at, count * 2) : Latin1(body, at, count);
     }
+
+    /// <summary>Excel's limit of points per series in a 2-D chart (32,000; Excel specifications and limits): a row past it is damage.</summary>
+    private const int MaxPoints = 32000;
+
+    /// <summary>A finite number; null for NaN, infinity or a magnitude past 1e300 (damaged bytes).</summary>
+    private static double? Sane(double value) => double.IsNaN(value) || double.IsInfinity(value) || Math.Abs(value) > 1e300 ? null : value;
 
     private static string Latin1(byte[] body, int at, int count)
     {

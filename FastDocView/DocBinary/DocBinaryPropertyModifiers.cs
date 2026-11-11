@@ -264,9 +264,6 @@ public static class DocBinaryPropertyModifiers
         return null;
     }
 
-    /// <summary>sprmCPicLocation (0x6A03, LibreOffice sprmids.hxx CPicLocation): the picture's PICF offset in the Data stream
-    /// (ww8par6.cxx Read_PicLoc: a 4-byte operand, else none); sprmCFOle2 (0x080A) / sprmCFData (0x0806) set mark the 0x01 as
-    /// an OLE object / field data instead (ww8par.cxx "case 0x1": bObj -> ImportOle).</summary>
     /// <summary>The last 4-byte operand of <paramref name="sprm"/> (sprmCPicLocation 0x6A03) in a grpprl; null when absent.</summary>
     public static uint? LocationIn(byte[] grpprl, int start, int length, ushort sprm)
     {
@@ -276,6 +273,9 @@ public static class DocBinaryPropertyModifiers
         return location;
     }
 
+    /// <summary>sprmCPicLocation (0x6A03, LibreOffice sprmids.hxx CPicLocation): the picture's PICF offset in the Data stream
+    /// (ww8par6.cxx Read_PicLoc: a 4-byte operand, else none); sprmCFOle2 (0x080A) / sprmCFData (0x0806) set mark the 0x01 as
+    /// an OLE object / field data instead (ww8par.cxx "case 0x1": bObj -> ImportOle).</summary>
     public static (uint? pictureLocation, bool isObject) PictureCharacterIn(byte[] grpprl, int start, int length)
     {
         uint? location = null;

@@ -640,11 +640,14 @@ internal sealed partial class DocxChart
         if (axis?.LogBase is null && !percent && axisLength > 0 && AutoScale(dataMin, dataMax, axis, axisLength, labelSize) is { } auto)
         {
             var autoTicks = new List<double>();
-            for (double v = auto.Min; v <= auto.Max + auto.Step / 1000; v += auto.Step) autoTicks.Add(v);
+            for (double v = auto.Min; v <= auto.Max + auto.Step / 1000 && v + auto.Step > v && autoTicks.Count <= MaxTicks; v += auto.Step) autoTicks.Add(v);
             return (auto.Min, auto.Max, autoTicks);
         }
         return AxisScale(dataMin, dataMax, positiveMin, axis, percent);
     }
+
+    /// <summary>A guard against damaged scales (an infinite span, or a step below the value's precision) that would never end; no real axis has this many ticks.</summary>
+    private const int MaxTicks = 10000;
 
     private static (double Min, double Max, List<double> Ticks) AxisScale(double dataMin, double dataMax, double positiveMin, Axis? axis, bool percent)
     {
@@ -655,11 +658,11 @@ internal sealed partial class DocxChart
             double low = axis.Min is > 0 ? axis.Min.Value : Math.Pow(logBase, Math.Floor(Log(positiveMin) + 1e-9));
             double high = axis.Max is > 0 ? axis.Max.Value : Math.Pow(logBase, Math.Ceiling(Log(Math.Max(dataMax, low)) - 1e-9));
             if (high <= low) high = low * logBase;
-            for (double v = low; v <= high * (1 + 1e-9); v *= logBase) ticks.Add(v);
+            for (double v = low; v <= high * (1 + 1e-9) && ticks.Count <= MaxTicks; v *= logBase) ticks.Add(v);
             return (low, high, ticks);
         }
         (double min, double max, double step) = Scale(dataMin, dataMax, axis, percent);
-        for (double v = min; v <= max + step / 1000; v += step) ticks.Add(v);
+        for (double v = min; v <= max + step / 1000 && v + step > v && ticks.Count <= MaxTicks; v += step) ticks.Add(v);
         return (min, max, ticks);
     }
 
@@ -1309,7 +1312,7 @@ internal sealed partial class DocxChart
         double dataMax = group.Series.SelectMany(s => s.Values).Where(v => v is not null).Select(v => v!.Value).DefaultIfEmpty(1).Max();
         (double min, double max, double step) = Scale(0, dataMax, ValueAxis(), false);
         string gridColor = "#D9D9D9";
-        for (double v = min + step; v <= max + step / 1000; v += step)
+        for (double v = min + step; v <= max + step / 1000 && v + step > v; v += step)
         {
             var ring = new StringBuilder();
             for (int i = 0; i < count; i++)
