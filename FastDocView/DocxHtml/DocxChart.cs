@@ -394,7 +394,7 @@ internal sealed partial class DocxChart
         // word-charts-binary-v3 and odt-charts-v5, made by a Hebrew Office, both show "<Hebrew 'linear'> (North)" whatever the
         // chart's c:lang) - so the name is not in the file and follows the reader's interface language here
         if (!_libreOfficeLayout)
-            foreach (Group group in _groups)
+            foreach (Group group in _groups.Where(g => g.Grouping is not ("stacked" or "percentStacked") && !g.Horizontal && g.Kind is not (Kind.Pie or Kind.Doughnut)))   // only where trend lines are drawn
                 foreach (Series series in group.Series)
                     foreach (XElement trend in series.Trendlines)
                     {
@@ -757,7 +757,7 @@ internal sealed partial class DocxChart
         List<Group> primaryGroups = _groups.Except(secondaryGroups).ToList();
         if (primaryGroups.Count == 0) { primaryGroups = secondaryGroups; secondaryGroups = new(); secondaryAxis = null; }
         percent = primaryGroups.Any(g => g.Grouping == "percentStacked");
-        (double dataMin, double dataMax, double positiveMin) = DataRange(primaryGroups, categoryCount, includeErrorBars: !_libreOfficeLayout);
+        (double dataMin, double dataMax, double positiveMin) = DataRange(primaryGroups, categoryCount, includeErrorBars: !_libreOfficeLayout && valueAxis?.LogBase is null);
         double estimatedLength = Math.Max(1, horizontal ? right - left - 60 : bottom - top - 30);
         double axisLabelSize = valueAxis?.LabelSize ?? categoryAxis?.LabelSize ?? 9;
         (double vMin, double vMax, List<double> valueTicks) = AxisScale(dataMin, dataMax, positiveMin, valueAxis, percent, estimatedLength, axisLabelSize);
@@ -772,7 +772,7 @@ internal sealed partial class DocxChart
             Axis? xAxis = _axes.Values.Where(a => !a.IsCategory).Skip(1).FirstOrDefault() ?? categoryAxis;
             (xMin, xMax, xStep) = Scale(xs.Count > 0 ? xs.Min() : 0, xs.Count > 0 ? xs.Max() : 1, xAxis, false);
             // x values that are text (1..n, Word): the axis is scaled as a value axis, with the headroom (v3: x up to 4.8 gives 0..6)
-            if (!_libreOfficeLayout && xAxis is { LogBase: null } && _groups.SelectMany(g => g.Series).All(x => x.XValues.All(v => v is null)) && AutoScale(xs.Count > 0 ? xs.Min() : 0, xs.Count > 0 ? xs.Max() : 1, xAxis, Math.Max(1, right - left - 60), axisLabelSize) is { } autoX)
+            if (!_libreOfficeLayout && xAxis is { LogBase: null, Min: null, Max: null } && _groups.SelectMany(g => g.Series).All(x => x.XValues.All(v => v is null)) && AutoScale(xs.Count > 0 ? xs.Min() : 0, xs.Count > 0 ? xs.Max() : 1, xAxis, Math.Max(1, right - left - 60), axisLabelSize) is { } autoX)
                 (xMin, xMax, xStep) = (autoX.Min, autoX.Max, autoX.Step);
             if (xAxis is not null && !xAxis.IsCategory) categoryAxis = xAxis;
         }
@@ -1104,7 +1104,6 @@ internal sealed partial class DocxChart
         }
     }
 
-    /// <summary>A custom error amount of a point: its own, or the one value of a constant list (an ODF constant error, constant="1"), else 0.</summary>
     /// <summary>The ends of a series' fixed, percentage and custom error bars in one direction (x: around the x values, else 1..n; y: around the values).</summary>
     private static IEnumerable<double> ErrorBarEnds(Series series, string direction)
     {
@@ -1130,6 +1129,7 @@ internal sealed partial class DocxChart
         }
     }
 
+    /// <summary>A custom error amount of a point: its own, or the one value of a constant list (an ODF constant error, constant="1"), else 0.</summary>
     private static double Custom(List<double?> amounts, XElement? source, int index)
         => (string?)source?.Attribute("constant") == "1" && amounts.Count > 0 ? amounts[0] ?? 0 : index < amounts.Count ? amounts[index] ?? 0 : 0;
 
