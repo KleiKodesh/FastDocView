@@ -505,6 +505,9 @@ internal sealed partial class DocxChart
             top = y + 8 + (_libreOfficeLayout ? 0 : TitleSize(0) * 0.35);   // Word leaves about a third of the title size more below it (measured on its PDFs: the top tick 18-19 pt below the title baseline)
         }
         List<(string Text, string Color, bool Line)> legend = LegendEntries();
+        // a right-to-left chart (c:lang he / ar / fa / ur / yi): Word runs a legend row from right to left (measured on Word's PDF:
+        // the first series rightmost), wherever the row sits
+        if (_rightToLeftLanguage && _legendPosition is "t" or "b") legend.Reverse();
         if (legend.Count > 0)
         {
             double size = _legendSize, entryHeight = size * 13 / 9;
@@ -533,9 +536,6 @@ internal sealed partial class DocxChart
             {
                 double total = legend.Sum(e => TextWidth(e.Text, size) + 22);
                 double x = Math.Max(left, width / 2 - total / 2), y = _legendPosition == "t" ? top : bottom - entryHeight;
-                // a right-to-left chart (c:lang he / ar / fa / ur / yi): Word runs a legend row from right to left (measured on Word's PDF:
-                // the first series rightmost)
-                if (_rightToLeftLanguage) legend.Reverse();
                 foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, _legendColor ?? textColor, "start"); x += TextWidth(text, size) + 22; }
                 if (_legendPosition == "t") top += entryHeight + 6; else bottom -= entryHeight + 6;
             }

@@ -430,7 +430,9 @@ internal static class ExcelBinaryChart
                     // whose a:endParaRPr lang is the chart's editing language (c:lang in the .docx Word writes from the same chart)
                     string xml = Latin1(body, 0, body.Length);
                     int at = xml.IndexOf("lang=\"", StringComparison.Ordinal);
-                    if (at >= 0 && xml.IndexOf('"', at + 6) is int close && close > at + 6 && close - at < 20) language = xml.Substring(at + 6, close - at - 6);
+                    if (at >= 0 && xml.IndexOf('"', at + 6) is int close && close > at + 6 && close - at < 20
+                        && System.Text.RegularExpressions.Regex.IsMatch(xml.Substring(at + 6, close - at - 6), "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$"))
+                        language = xml.Substring(at + 6, close - at - 6);   // a BCP 47 tag only (damaged bytes are dropped)
                     continue;
                 }
                 case Continue:
@@ -750,6 +752,7 @@ internal static class ExcelBinaryChart
     {
         byte[] record = bar.ErrorBar!;
         string valueType = record[1] switch { 1 => "percentage", 3 => "stdDev", 4 => "cust", 5 => "stdErr", _ => "fixedVal" };
+        if (valueType == "cust" && bar.CustomValues?.Any(v => v is not null) != true) valueType = "fixedVal";   // no cached amounts: a zero bar, not an empty list
         var element = new XElement("errBars", new XElement("errDir", Val(yDirection ? "y" : "x")), new XElement("errBarType", Val(type)),
             new XElement("errValType", Val(valueType)), new XElement("noEndCap", Val(record[2] != 0 ? "0" : "1")));
         if (valueType == "cust")
