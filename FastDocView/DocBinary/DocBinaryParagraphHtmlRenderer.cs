@@ -696,7 +696,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
             if (c >= ' ') matcher.Feed(c);
             else if (c == '\t') matcher.Feed(' ');
             else if (c is '\r' or '\u0007' or '\u000B' or '\u000C') matcher.Separator();
-            else if (c == '\u0001' && DataLocationAt(cpStart + i) is { } location && !IsHiddenAt(cpStart + i))   // hidden: not drawn (AppendRunHtml), so not searched
+            else if (c == '\u0001' && DataLocationAt(cpStart + i) is { } location && !IsHiddenAt(cpStart + i, ParagraphEndAfter(text, i, cpStart)))   // hidden: not drawn (AppendRunHtml), so not searched
             {
                 if (EquationOf(location) is { } equation) FeedEquationText(equation, matcher);     // a picture of an equation: its text is shown (AppendPicture), so searched
                 else if (ObjectIdBefore(cpStart + i) is { } objectId && Charts?.Invoke(objectId) is { } chart && Pictures.Locate(location) is not null)   // drawn only where its preview box is known (AppendPicture)
@@ -705,10 +705,19 @@ public sealed class DocBinaryParagraphHtmlRenderer
         }
     }
 
-    /// <summary>Whether the character at <paramref name="cp"/> is hidden (sprmCFVanish) as the renderer resolves it: paragraph style, character style, direct formatting.</summary>
-    private bool IsHiddenAt(int cp)
+    /// <summary>The CP just after the paragraph mark (or cell mark) at or after <paramref name="i"/> in the fed text; the text's end when there is none.</summary>
+    private static int ParagraphEndAfter(ReadOnlySpan<char> text, int i, int cpStart)
     {
-        (WordParagraphFormatting paragraph, int styleIndex) = ResolveParagraph(cp, cp + 1);
+        for (int k = i; k < text.Length; k++)
+            if (text[k] is '\r' or '\u0007') return cpStart + k + 1;
+        return cpStart + text.Length;
+    }
+
+    /// <summary>Whether the character at <paramref name="cp"/> is hidden (sprmCFVanish) as the renderer resolves it: paragraph style, character style, direct formatting.</summary>
+    private bool IsHiddenAt(int cp, int paragraphEnd)
+    {
+        // the whole paragraph's range: in a fast-saved file the paragraph's Prm is the one of the piece holding its mark (PrmGrpprlOfParagraph)
+        (WordParagraphFormatting paragraph, int styleIndex) = ResolveParagraph(cp, paragraphEnd);
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
         foreach ((WordRunFormatting formatting, _, _, _, _) in CharacterRuns(cp, cp + 1, paragraph.RunFormatting, styleBase)) return formatting.IsHidden;
         return false;

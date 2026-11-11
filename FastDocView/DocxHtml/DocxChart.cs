@@ -63,6 +63,8 @@ internal sealed partial class DocxChart
         public bool IsCategory, Deleted, Horizontal;
         /// <summary>No tick labels: a deleted axis, or c:tickLblPos none (21.2.2.207; LibreOffice oox axisconverter.cxx: none = no labels, the axis line stays).</summary>
         public bool NoLabels;
+        /// <summary>The tick labels' own colour (c:txPr a:defRPr a:solidFill); null = the chart's text colour.</summary>
+        public string? LabelColor;
         public double? Min, Max, MajorUnit;
         public bool Gridlines;
         public string? Title;
@@ -78,6 +80,8 @@ internal sealed partial class DocxChart
     private readonly Dictionary<string, Axis> _axes = new(StringComparer.Ordinal);
     private string? _title;
     private string? _titleColor;
+    private bool _rightToLeftLanguage;
+    private string? _legendColor;
     private string? _legendPosition;
     private readonly HashSet<int> _deletedLegendEntries = new();
     private int _style = 2;
@@ -104,6 +108,8 @@ internal sealed partial class DocxChart
         if (Value(chartSpace.Element("style")) is { } style && int.TryParse(style, out int styleIndex)) model._style = styleIndex;
         else if (chartSpace.Element("AlternateContent")?.Element("Fallback")?.Element("style") is { } fallbackStyle && int.TryParse(Value(fallbackStyle), out int fallbackIndex)) model._style = fallbackIndex;
         model._chartSpaceProperties = chartSpace.Element("spPr");
+        // c:lang (21.2.2.86): the chart's editing language; a right-to-left one mirrors the legend row
+        model._rightToLeftLanguage = Value(chartSpace.Element("lang")) is { } language && language.Split('-')[0].ToLowerInvariant() is "he" or "ar" or "fa" or "ur" or "yi";
         // text sizes (a:defRPr / a:rPr sz in hundredths of a point): the element's own, else the chart's c:txPr; Office's defaults otherwise
         double? chartSize = FontSize(chartSpace.Element("txPr"));
         // the chart's Latin font (a:latin typeface), for text widths
@@ -145,6 +151,7 @@ internal sealed partial class DocxChart
                 {
                     Id = Value(element.Element("axId")) ?? "", IsCategory = name != "valAx", Deleted = Value(element.Element("delete")) is "1" or "true",
                     NoLabels = Value(element.Element("delete")) is "1" or "true" || Value(element.Element("tickLblPos")) == "none",
+                    LabelColor = TextColorOf(element.Element("txPr"), theme),
                     Min = Number(element.Element("scaling")?.Element("min")), Max = Number(element.Element("scaling")?.Element("max")),
                     MajorUnit = Number(element.Element("majorUnit")), Gridlines = element.Element("majorGridlines") is not null,
                     Title = element.Element("title") is { } axisTitle ? TitleText(axisTitle) : null,
@@ -187,6 +194,7 @@ internal sealed partial class DocxChart
         if (chart.Element("legend") is { } legend)
         {
             model._legendPosition = Value(legend.Element("legendPos")) ?? "r";
+            model._legendColor = TextColorOf(legend.Element("txPr"), theme);
             // only an edge-mode position (c:xMode / c:yMode edge, 21.2.2.233 / 21.2.2.235); the default factor mode is an offset from the automatic place
             if (legend.Element("layout")?.Element("manualLayout") is { } legendManual && Value(legendManual.Element("xMode")) == "edge" && Value(legendManual.Element("yMode")) == "edge"
                 && Number(legendManual.Element("x")) is { } lx && Number(legendManual.Element("y")) is { } ly)
@@ -199,6 +207,11 @@ internal sealed partial class DocxChart
         if (Value(chart.Element("autoTitleDeleted")) is "1" or "true" && chart.Element("title") is null) model._title = null;
         return model;
     }
+
+    /// <summary>The colour of a text-properties element's first run properties with a fill (a:defRPr / a:rPr a:solidFill); null when none.</summary>
+    private static string? TextColorOf(XElement? textProperties, DocxTheme? theme)
+        => textProperties?.Descendants().FirstOrDefault(e => e.Name.LocalName is "defRPr" or "rPr" && e.Element(e.Name.Namespace + "solidFill") is not null) is { } run
+            ? DocxDrawingColor.Css(run.Element(run.Name.Namespace + "solidFill")!, theme) : null;
 
     private static Series ReadSeries(XElement element)
     {
@@ -502,7 +515,7 @@ internal sealed partial class DocxChart
                 bool row = _legendPosition is "t" or "b";
                 foreach ((string text, string color, bool line) in legend)
                 {
-                    LegendKey(svg, x, y, color, line); Text(svg, x + 14, y + 8, text, size, textColor, "start");
+                    LegendKey(svg, x, y, color, line); Text(svg, x + 14, y + 8, text, size, _legendColor ?? textColor, "start");
                     if (row) x += TextWidth(text, size) + 22; else y += entryHeight;
                 }
                 double legendWidth = row ? 0 : legend.Max(e => TextWidth(e.Text, size)) + (_libreOfficeLayout ? 18 : 19.4);
@@ -513,14 +526,17 @@ internal sealed partial class DocxChart
                 double legendWidth = Math.Min(width / 3, legend.Max(e => TextWidth(e.Text, size)) + (_libreOfficeLayout ? 18 : 19.4));
                 double y = (top + bottom) / 2 - legend.Count * entryHeight / 2;
                 double x = _legendPosition == "l" ? left : right - legendWidth;
-                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, textColor, "start"); y += entryHeight; }
+                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, _legendColor ?? textColor, "start"); y += entryHeight; }
                 if (_legendPosition == "l") left += legendWidth + 6; else right -= legendWidth + 6;
             }
             else
             {
                 double total = legend.Sum(e => TextWidth(e.Text, size) + 22);
                 double x = Math.Max(left, width / 2 - total / 2), y = _legendPosition == "t" ? top : bottom - entryHeight;
-                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, textColor, "start"); x += TextWidth(text, size) + 22; }
+                // a right-to-left chart (c:lang he / ar / fa / ur / yi): Word runs a legend row from right to left (measured on Word's PDF:
+                // the first series rightmost)
+                if (_rightToLeftLanguage) legend.Reverse();
+                foreach ((string text, string color, bool line) in legend) { LegendKey(svg, x, y, color, line); Text(svg, x + 14 + (_libreOfficeLayout ? 0 : 1.4), y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, _legendColor ?? textColor, "start"); x += TextWidth(text, size) + 22; }
                 if (_legendPosition == "t") top += entryHeight + 6; else bottom -= entryHeight + 6;
             }
         }
@@ -796,7 +812,7 @@ internal sealed partial class DocxChart
             {
                 double x = left + t * plotWidth;
                 if (valueAxis?.Gridlines != false) svg.Append("<path d=\"M").Append(N(x)).Append(' ').Append(N(top)).Append('V').Append(N(bottom)).Append("\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
-                Text(svg, x, bottom + labelSize + 2, text, labelSize, textColor, "middle");
+                Text(svg, x, bottom + labelSize + 2, text, labelSize, valueAxis?.LabelColor ?? textColor, "middle");
             }
             else
             {
@@ -805,34 +821,34 @@ internal sealed partial class DocxChart
                 // LibreOffice centres the label's full text height on the tick (measured: baseline 0.08 x size above it); Word a third of the size below
                 // Word: 6.2 pt from the plot with outside tick marks (the LibreOffice-written charts), 8.2 pt without (Word's own charts,
                 // c:majorTickMark none) - both measured on Word's PDFs
-                Text(svg, left - (_libreOfficeLayout ? labelSize * 0.7 : valueAxis?.NoTickMarks == true ? 8.2 : 6.2), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, textColor, "end");
+                Text(svg, left - (_libreOfficeLayout ? labelSize * 0.7 : valueAxis?.NoTickMarks == true ? 8.2 : 6.2), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, valueAxis?.LabelColor ?? textColor, "end");
             }
         }
         foreach ((double value, string text) in secondaryLabels)
-            Text(svg, right + 4, bottom - SecondaryToAxis(value) * plotHeight + labelSize / 3, text, labelSize, textColor, "start");
+            Text(svg, right + 4, bottom - SecondaryToAxis(value) * plotHeight + labelSize / 3, text, labelSize, secondaryAxis?.LabelColor ?? textColor, "start");
         // category labels
         if (!xy && categoryAxis is not { NoLabels: true })
             for (int i = 0; i < categoryCount; i++)
             {
                 string label = i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture);
                 double centre = MidCategory() ? (categoryCount == 1 ? 0.5 : (double)i / (categoryCount - 1)) : (i + 0.5) / categoryCount;
-                if (horizontal) Text(svg, left - 4, bottom - centre * plotHeight + labelSize / 3, label, labelSize, textColor, "end");
+                if (horizontal) Text(svg, left - 4, bottom - centre * plotHeight + labelSize / 3, label, labelSize, categoryAxis?.LabelColor ?? textColor, "end");
                 else if (categoryPlan is { } plan)
                 {
                     if (i % plan.Rhythm != 0) continue;
                     double x = left + centre * plotWidth;
-                    if (plan.Rotated) Text(svg, x, bottom + labelSize, label, labelSize, textColor, "end", -45);
+                    if (plan.Rotated) Text(svg, x, bottom + labelSize, label, labelSize, categoryAxis?.LabelColor ?? textColor, "end", -45);
                     else
                     {
                         double y = bottom + labelSize + 2 + (_libreOfficeLayout ? 0 : labelSize / 3) + (plan.Staggered && i % 2 == 1 ? labelSize * 1.2 : 0);   // Word: a third of the size lower (measured)
-                        foreach (string line in plan.Lines[i]) { Text(svg, x, y, line, labelSize, textColor, "middle"); y += labelSize * 1.2; }
+                        foreach (string line in plan.Lines[i]) { Text(svg, x, y, line, labelSize, categoryAxis?.LabelColor ?? textColor, "middle"); y += labelSize * 1.2; }
                     }
                 }
-                else Text(svg, left + centre * plotWidth, bottom + labelSize + 2, label, labelSize, textColor, "middle");
+                else Text(svg, left + centre * plotWidth, bottom + labelSize + 2, label, labelSize, categoryAxis?.LabelColor ?? textColor, "middle");
             }
         if (xy && categoryAxis is not { NoLabels: true })
             for (double x = xMin; x <= xMax + xStep / 1000; x += xStep)
-                Text(svg, left + (x - xMin) / (xMax - xMin) * plotWidth, bottom + labelSize + 2, FormatNumber(Math.Round(x, 10), "General"), labelSize, textColor, "middle");
+                Text(svg, left + (x - xMin) / (xMax - xMin) * plotWidth, bottom + labelSize + 2, FormatNumber(Math.Round(x, 10), "General"), labelSize, categoryAxis?.LabelColor ?? textColor, "middle");
         int totalSeries = _groups.Sum(g => g.Series.Count);
         foreach (Group group in _groups)
         {

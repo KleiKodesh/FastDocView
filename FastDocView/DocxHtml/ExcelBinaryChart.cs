@@ -35,7 +35,7 @@ internal static class ExcelBinaryChart
         ChScatter = 0x101B, ChAxis = 0x101D, ChTick = 0x101E, ChValueRange = 0x101F, ChAxisLine = 0x1021, ChText = 0x1025,
         ChFont = 0x1026, ChObjectLink = 0x1027, ChBegin = 0x1033, ChEnd = 0x1034, ChChart3D = 0x103A, ChRadarLine = 0x103E,
         ChRadarArea = 0x1040, ChAxesSet = 0x1041, ChSourceLink = 0x1051, ChEscherFormat = 0x1066, ChSeriesIndex = 0x1065,
-        ChSeriesParent = 0x104A, ChSeriesTrendLine = 0x104B, ChSeriesErrorBar = 0x105B, ChFormat = 0x104E, ChFramePos = 0x104F, Format = 0x041E;
+        ChSeriesParent = 0x104A, ChSeriesTrendLine = 0x104B, ChSeriesErrorBar = 0x105B, ChFormat = 0x104E, ChFramePos = 0x104F, Format = 0x041E, PaletteRecord = 0x0092;
 
     /// <summary>
     /// The chart of an RTF \objdata (hex digits; [MS-OLEDS] 2.2.4 ObjectHeader, then NativeDataSize and the compound file -
@@ -95,6 +95,7 @@ internal static class ExcelBinaryChart
         public Dictionary<int, ushort> PointLabels = new();       // point -> CHTEXT flags of its own label
         public int Parent;                                         // CHSERPARENT (1-based): a trend line / error bar series of that series
         public byte[]? TrendLine, ErrorBar;
+        public List<double?>? CustomValues;                        // a custom error bar series' cached amounts
     }
 
     private sealed class AxisData
@@ -106,6 +107,7 @@ internal static class ExcelBinaryChart
         public string? Title;
         public double? TitleSize;
         public int FormatIndex = -1;                               // CHFORMAT: the number format of the tick labels
+        public string? LabelColor;
     }
 
     private sealed class TextData
@@ -138,8 +140,11 @@ internal static class ExcelBinaryChart
         string? legendPosition = null;
         (double X, double Y)? legendAt = null;
         double? legendSize = null;
+        TextData? legendText = null;
         (double X, double Y, double W, double H)? plotRect = null;     // the axes set's CHFRAMEPOS (chart units / 4000)
         var formats = new Dictionary<int, string>();
+        var palette = new List<string>();                          // PALETTE (0x0092): the workbook's colours 8.. (xistyle.cxx:169-190)
+        string? language = null;                                  // the first lang="..." of the Office 2007+ DrawingML kept in CrtMlFrt records
         int cacheKind = 0;
         var values = new Dictionary<(int Point, int Series), double>();
         var categories = new Dictionary<int, string>();
@@ -183,6 +188,13 @@ internal static class ExcelBinaryChart
                 if (16 + count * (wide ? 2 : 1) <= length)
                     font.Name = wide ? Encoding.Unicode.GetString(body, 16, count * 2) : Latin1(body, 16, count);
                 fonts.Add(font);
+                continue;
+            }
+            if (id == PaletteRecord && length >= 2 && substreamType == 0x0005)
+            {
+                int count = Math.Min(BitConverter.ToUInt16(body, 0), (length - 2) / 4);
+                palette.Clear();
+                for (int i = 0; i < count; i++) palette.Add(Rgb(body, 2 + i * 4));
                 continue;
             }
             if (id == Format && length >= 5 && substreamType == 0x0005)
@@ -235,7 +247,7 @@ internal static class ExcelBinaryChart
                 {
                     bool automatic = (BitConverter.ToUInt16(body, 10) & 1) != 0;
                     bool none = BitConverter.ToUInt16(body, 8) == 0;
-                    string color = Rgb(body, 0);
+                    string color = ColorOf(body, 0, length >= 14 ? BitConverter.ToUInt16(body, 12) : -1);
                     if (formatPoint == 0xFFFF)
                     {
                         if (none) formatSeries.NoFill = true;
@@ -251,7 +263,7 @@ internal static class ExcelBinaryChart
                     if (current is "dataformat" && formatSeries is not null && formatPoint == 0xFFFF)
                     {
                         if (pattern == 5) formatSeries.NoLine = true;
-                        else if (!automatic) formatSeries.Line = Rgb(body, 0);
+                        else if (!automatic) formatSeries.Line = ColorOf(body, 0, length >= 12 ? BitConverter.ToUInt16(body, 10) : -1);
                     }
                     else if (current is AxisData lined && axisLine == 1) lined.Gridlines = pattern != 5;
                     continue;
@@ -338,6 +350,8 @@ internal static class ExcelBinaryChart
                 }
                 case ChTick when length >= 1 && current is AxisData ticked:
                     ticked.NoTickMarks = body[0] is 0 or 1;            // none / inside: no mark outside the plot
+                    // the labels' colour unless automatic: rgb at 4 + 16, flags at 24 (EXC_CHTICK_AUTOCOLOR), BIFF8 palette index at 26 (xichart.cxx:3194-3209)
+                    if (length >= 28 && (BitConverter.ToUInt16(body, 24) & 1) == 0) ticked.LabelColor = ColorOf(body, 20, BitConverter.ToUInt16(body, 26));
                     if (length >= 3 && body[2] == 0) ticked.NoLabels = true;   // label position none: the axis line stays
                     continue;
                 case ChAxisLine when length >= 2:
@@ -345,7 +359,8 @@ internal static class ExcelBinaryChart
                     continue;
                 case ChText when length >= 26:
                     var textRecord = new TextData { Flags = BitConverter.ToUInt16(body, 24) };
-                    if ((textRecord.Flags & 1) == 0) textRecord.Color = Rgb(body, 4);    // EXC_CHTEXT_AUTOCOLOR clear: the record's own colour (xichart.cxx:951-965)
+                    // EXC_CHTEXT_AUTOCOLOR clear: the record's own colour, the BIFF8 palette index at 26 (xichart.cxx:951-968)
+                    if ((textRecord.Flags & 1) == 0) textRecord.Color = ColorOf(body, 4, length >= 28 ? BitConverter.ToUInt16(body, 26) : -1);
                     texts.Add(textRecord);
                     last = textRecord;
                     continue;
@@ -360,7 +375,7 @@ internal static class ExcelBinaryChart
                     int at = index >= 4 ? index - 1 : index;             // BIFF font tables skip index 4
                     if (at < 0 || at >= fonts.Count) continue;
                     double size = fonts[at].Size;
-                    if (current is TextData sized) { sized.Size = size; sized.Typeface = fonts[at].Name; if (inLegend) legendSize = size; }
+                    if (current is TextData sized) { sized.Size = size; sized.Typeface = fonts[at].Name; if (inLegend) { legendSize = size; legendText = sized; } }
                     else if (current is AxisData axisFont) { axisFont.LabelSize = size; labelTypeface ??= fonts[at].Name; }
                     continue;
                 }
@@ -409,6 +424,15 @@ internal static class ExcelBinaryChart
                 case ChAxesSet:
                     last = "axesset";
                     continue;
+                case 0x08A5 when language is null:
+                {
+                    // CrtMlFrt ([MS-XLS] 2.4.70; continued in 0x08A4 records): Office's DrawingML text properties,
+                    // whose a:endParaRPr lang is the chart's editing language (c:lang in the .docx Word writes from the same chart)
+                    string xml = Latin1(body, 0, body.Length);
+                    int at = xml.IndexOf("lang=\"", StringComparison.Ordinal);
+                    if (at >= 0 && xml.IndexOf('"', at + 6) is int close && close > at + 6 && close - at < 20) language = xml.Substring(at + 6, close - at - 6);
+                    continue;
+                }
                 case Continue:
                     continue;
                 default:
@@ -417,6 +441,10 @@ internal static class ExcelBinaryChart
             }
         }
         if (series.Count == 0 || kind.Length == 0) return null;
+        // custom error amounts: the error bar series' own cached values (their column of the value cache)
+        for (int s = 0; s < series.Count; s++)
+            if (series[s].ErrorBar is { } custom && custom[1] == 4)
+                series[s].CustomValues = Enumerable.Range(0, MaxPointOf(values)).Select(p => values.TryGetValue((p, s), out double v) ? (double?)v : null).ToList();
 
         foreach (TextData text in texts)
             if (text.Link is 2 or 3 && text.Text is not null && axes.FirstOrDefault(a => a.Type == (text.Link == 2 ? 1 : 0)) is { } titled)
@@ -482,7 +510,7 @@ internal static class ExcelBinaryChart
                 }
                 int parentNumber = s + 1;
                 foreach (SeriesData child in series.Where(c => c.Parent == parentNumber && c.TrendLine is not null)) element.Add(TrendLineElement(child.TrendLine!));
-                if (ErrorBarsElement(series.Where(c => c.Parent == parentNumber && c.ErrorBar is not null).Select(c => c.ErrorBar!).ToList()) is { } errorBars) element.Add(errorBars);
+                foreach (XElement errorBars in ErrorBarsElements(series.Where(c => c.Parent == parentNumber && c.ErrorBar is not null).ToList())) element.Add(errorBars);
                 var cells = new XElement("numCache", new XElement("ptCount", Val(pointCount)));
                 for (int p = 0; p < pointCount; p++)
                     if (values.TryGetValue((p, s), out double v)) cells.Add(new XElement("pt", new XAttribute("idx", p), new XElement("v", v.ToString("R", CultureInfo.InvariantCulture))));
@@ -547,14 +575,30 @@ internal static class ExcelBinaryChart
                 if (legendAt is { } at && UsesSavedPlotPosition)
                     legend.Add(new XElement("layout", new XElement("manualLayout", new XElement("xMode", Val("edge")), new XElement("yMode", Val("edge")),
                         new XElement("x", Val(N(at.X))), new XElement("y", Val(N(at.Y))))));
-                if (legendSize is { } size) legend.Add(TextProperties(size));
+                if (legendSize is { } size) legend.Add(TextProperties(size, legendText?.Color));
                 chart.Add(legend);
             }
             var space = new XElement("chartSpace", chart);
+            if (language is not null) space.AddFirst(new XElement("lang", Val(language)));
             if (typeface is { Length: > 0 })
                 space.Add(new XElement("txPr", new XElement("p", new XElement("pPr", new XElement("defRPr", new XElement("latin", new XAttribute("typeface", typeface)))))));
             return space;
         }
+
+        // a BIFF8 palette index (xistyle.cxx:158-167, xlstyle.cxx:78-88 default table, xlstyle.hxx:205-216 system indices):
+        // 8.. from the PALETTE record, else the default table; window text / chart text and auto = null (automatic)
+        // a record's colour: BIFF8 keeps both an RGB and a palette index. LibreOffice reads only the index (xichart.cxx:453-499,
+        // 951-968, 3194-3209), which Office 2007+ writes as the nearest of the 56 palette colours (measured: legend 00B050 has
+        // index 0x39 = 339966) while the RGB is the exact colour Word draws. So the RGB, unless it is black and the index is not
+        // (writers that leave the RGB empty) - then the palette colour as LibreOffice reads it.
+        string ColorOf(byte[] record, int rgbAt, int index)
+        {
+            string rgb = Rgb(record, rgbAt);
+            return rgb == "000000" && index >= 0 && PaletteColor(index) is { } fromPalette ? fromPalette : rgb;
+        }
+
+        string? PaletteColor(int index)
+            => index >= 8 && index - 8 < palette.Count ? palette[index - 8] : index >= 0 && index < DefaultPalette.Length ? DefaultPalette[index] : index is 65 or 78 ? "FFFFFF" : null;
 
         string? NumberFormat(int index) => formats.TryGetValue(index, out string? custom) ? custom : BuiltInFormat(index);
 
@@ -570,7 +614,7 @@ internal static class ExcelBinaryChart
             element.Add(new XElement("majorTickMark", Val(axis?.NoTickMarks == false ? "out" : "none")));
             if (axis?.NoLabels == true) element.Add(new XElement("tickLblPos", Val("none")));
             if (axis is { FormatIndex: >= 0 } && NumberFormat(axis.FormatIndex) is { } code) element.Add(new XElement("numFmt", new XAttribute("formatCode", code), new XAttribute("sourceLinked", "0")));
-            if (axis?.LabelSize is { } labelSize) element.Add(TextProperties(labelSize));
+            if (axis?.LabelSize is { } labelSize) element.Add(TextProperties(labelSize, axis.LabelColor));
             element.Add(new XElement("crossAx", Val(cross)));
             if (axis?.Major is { } major) element.Add(new XElement("majorUnit", Val(N(major))));
             return element;
@@ -615,6 +659,19 @@ internal static class ExcelBinaryChart
 
     /// <summary>A finite number; null for NaN, infinity or a magnitude past 1e300 (damaged bytes).</summary>
     private static double? Sane(double value) => double.IsNaN(value) || double.IsInfinity(value) || Math.Abs(value) > 1e300 ? null : value;
+
+    /// <summary>BIFF8's default colour table (LibreOffice xlstyle.cxx:44-48, 78-88): 0-7 and 8-15 the light EGA colours, 16-23 the dark ones, then the rest.</summary>
+    private static readonly string[] DefaultPalette =
+    [
+        "000000", "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF",
+        "000000", "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF",
+        "800000", "008000", "000080", "808000", "800080", "008080", "C0C0C0", "808080",
+        "9999FF", "993366", "FFFFCC", "CCFFFF", "660066", "FF8080", "0066CC", "CCCCFF",
+        "000080", "FF00FF", "FFFF00", "00FFFF", "800080", "800000", "008080", "0000FF",
+        "00CCFF", "CCFFFF", "CCFFCC", "FFFF99", "99CCFF", "FF99CC", "CC99FF", "FFCC99",
+        "3366FF", "33CCCC", "99CC00", "FFCC00", "FF9900", "FF6600", "666699", "969696",
+        "003366", "339966", "003300", "333300", "993300", "993366", "333399", "333333",
+    ];
 
     private static string Latin1(byte[] body, int at, int count)
     {
@@ -670,23 +727,45 @@ internal static class ExcelBinaryChart
     }
 
     /// <summary>
-    /// The CHSERERRORBAR series of one parent ([MS-XLS] 2.4.271 SerAuxErrBar: direction 1 x+, 2 x-, 3 y+, 4 y-; source 1 percent,
-    /// 2 fixed, 3 standard deviation, 4 custom, 5 standard error; end caps; the value): one record per direction, joined as
-    /// c:errBars (both when plus and minus are there). Custom ranges are not read (their cells are not in the chart's cache).
+    /// The CHSERERRORBAR series of one parent ([MS-XLS] 2.4.271 SerAuxErrBar; LibreOffice xichart.cxx:1696-1704: direction 1 x+,
+    /// 2 x-, 3 y+, 4 y-; source 1 percent, 2 fixed, 3 standard deviation, 4 custom, 5 standard error; end caps; the value): one
+    /// record per direction, joined per axis as c:errBars - "both" when plus and minus have the same source and value, else one
+    /// c:errBars for each. Custom amounts are the error series' own cached values (c:plus / c:minus).
     /// </summary>
-    private static XElement? ErrorBarsElement(List<byte[]> records)
+    private static IEnumerable<XElement> ErrorBarsElements(List<SeriesData> bars)
     {
-        var usable = records.Where(r => r[0] is >= 1 and <= 4 && r[1] is 1 or 2 or 3 or 5).ToList();
-        if (usable.Count == 0) return null;
-        bool yDirection = usable.Any(r => r[0] >= 3);
-        var same = usable.Where(r => (r[0] >= 3) == yDirection).ToList();
-        bool plus = same.Any(r => r[0] is 1 or 3), minus = same.Any(r => r[0] is 2 or 4);
-        byte[] first = same[0];
-        string valueType = first[1] switch { 1 => "percentage", 3 => "stdDev", 5 => "stdErr", _ => "fixedVal" };
-        return new XElement("errBars", new XElement("errDir", Val(yDirection ? "y" : "x")), new XElement("errBarType", Val(plus && minus ? "both" : plus ? "plus" : "minus")),
-            new XElement("errValType", Val(valueType)), new XElement("noEndCap", Val(first[2] != 0 ? "0" : "1")),
-            new XElement("val", Val(N(Sane(BitConverter.ToDouble(first, 4)) ?? 0))));
+        foreach (bool yDirection in new[] { true, false })
+        {
+            var same = bars.Where(b => b.ErrorBar![0] is >= 1 and <= 4 && b.ErrorBar[1] is >= 1 and <= 5 && (b.ErrorBar[0] >= 3) == yDirection).ToList();
+            SeriesData? plus = same.FirstOrDefault(b => b.ErrorBar![0] is 1 or 3), minus = same.FirstOrDefault(b => b.ErrorBar![0] is 2 or 4);
+            bool joined = plus is not null && minus is not null && plus.ErrorBar![1] == minus.ErrorBar![1] && plus.ErrorBar[1] != 4
+                          && BitConverter.ToDouble(plus.ErrorBar, 4).Equals(BitConverter.ToDouble(minus.ErrorBar, 4));
+            if (joined) { yield return ErrorBarsOf(plus!, "both", yDirection); continue; }
+            if (plus is not null) yield return ErrorBarsOf(plus, "plus", yDirection);
+            if (minus is not null) yield return ErrorBarsOf(minus, "minus", yDirection);
+        }
     }
+
+    private static XElement ErrorBarsOf(SeriesData bar, string type, bool yDirection)
+    {
+        byte[] record = bar.ErrorBar!;
+        string valueType = record[1] switch { 1 => "percentage", 3 => "stdDev", 4 => "cust", 5 => "stdErr", _ => "fixedVal" };
+        var element = new XElement("errBars", new XElement("errDir", Val(yDirection ? "y" : "x")), new XElement("errBarType", Val(type)),
+            new XElement("errValType", Val(valueType)), new XElement("noEndCap", Val(record[2] != 0 ? "0" : "1")));
+        if (valueType == "cust")
+        {
+            var cache = new XElement("numCache", new XElement("ptCount", Val(bar.CustomValues?.Count ?? 0)));
+            for (int p = 0; p < (bar.CustomValues?.Count ?? 0); p++)
+                if (bar.CustomValues![p] is { } amount) cache.Add(new XElement("pt", new XAttribute("idx", p), new XElement("v", amount.ToString("R", CultureInfo.InvariantCulture))));
+            element.Add(new XElement(type == "minus" ? "minus" : "plus", new XElement("numRef", cache)));
+            if (type == "both") element.Add(new XElement("minus", new XElement("numRef", new XElement(cache))));
+        }
+        else element.Add(new XElement("val", Val(N(Sane(BitConverter.ToDouble(record, 4)) ?? 0))));
+        return element;
+    }
+
+    private static int MaxPointOf(Dictionary<(int Point, int Series), double> values) => values.Count == 0 ? 0 : values.Keys.Max(k => k.Point) + 1;
+
 
     /// <summary>Excel's built-in number formats seen on chart axes ([MS-XLS] 2.4.126 Format: the built-in ids are not stored); null when unknown.</summary>
     private static string? BuiltInFormat(int index) => index switch
@@ -694,7 +773,8 @@ internal static class ExcelBinaryChart
         0 => "General", 1 => "0", 2 => "0.00", 3 => "#,##0", 4 => "#,##0.00", 9 => "0%", 10 => "0.00%", 11 => "0.00E+00", _ => null,
     };
 
-    private static XElement TextProperties(double size) => new("txPr", new XElement("p", new XElement("pPr", new XElement("defRPr", new XAttribute("sz", N(size * 100))))));
+    private static XElement TextProperties(double size, string? color = null)
+        => new("txPr", new XElement("p", new XElement("pPr", new XElement("defRPr", new XAttribute("sz", N(size * 100)), color is not null ? Solid(color) : null))));
 
     private static XElement Solid(string color) => new("solidFill", new XElement("srgbClr", new XAttribute("val", color)));
 

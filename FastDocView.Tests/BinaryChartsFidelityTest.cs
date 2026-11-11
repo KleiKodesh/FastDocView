@@ -18,10 +18,13 @@ public static class BinaryChartsFidelityTest
     public static void Run()
     {
         string folder = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-charts-binary");
+        // the same charts as Word's .docx, for comparing layouts (scripts/compare-chart-text-positions.py)
+        string docx = Path.Combine(folder, "word-charts-binary-v3.docx");
+        if (File.Exists(docx)) File.WriteAllText(Path.Combine(TestReport.OutputDirectory, "charts-binary-docx.html"), string.Concat(Render(docx)));
         foreach (string extension in new[] { ".doc", ".rtf" })
         {
             TestReport.Step("Charts in " + extension + ": Word's embedded Excel chart objects drawn from their chart records");
-            string path = Path.Combine(folder, "word-charts-binary-v2" + extension);
+            string path = Path.Combine(folder, "word-charts-binary-v3" + extension);
             TestReport.Check(File.Exists(path), extension + ": chart fixture exists");
             if (!File.Exists(path)) continue;
             List<string> html = Render(path);
@@ -50,6 +53,10 @@ public static class BinaryChartsFidelityTest
             TestReport.Check(!column.Contains(">Q1<"), extension + ": no category labels (axis labels turned off)");
             TestReport.Check(Regex.IsMatch(column, "fill=\"#FF0000\"[^>]*>Column Chart<"), extension + ": the title's own colour");
             TestReport.Check(Regex.Matches(all, "<svg class=\"word-chart\"").Count == Titles.Length, extension + ": the trend line and error bar series are not drawn as series");
+            // v3: a blue value axis, a green legend; the scatter chart's first series with custom plus-only x and fixed y error bars
+            TestReport.Check(Regex.IsMatch(column, "fill=\"#0000FF\"[^>]*>5[.]0<") && Regex.IsMatch(column, "fill=\"#339966\"[^>]*>North<"), extension + ": axis label and legend text colours (the legend's 00B050 is saved as its nearest palette colour, 339966, in both the RGB and the index)");
+            string scatter = Block("Scatter Chart");
+            TestReport.Check(Regex.Matches(scatter, "word-chart-error-bar").Count == 8, extension + ": x (custom) and y (fixed) error bars, one per point each (" + Regex.Matches(scatter, "word-chart-error-bar").Count + ")");
         }
     }
 

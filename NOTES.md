@@ -4876,3 +4876,23 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   16.9 / 19.6; legend alone 7.6 / 20.3), so they are read but not applied (ExcelBinaryChart.UsesSavedPlotPosition).
 - .doc search skips equations and charts in hidden text (sprmCFVanish resolved as the renderer does).
 
+## Charts in .doc and RTF: layout inputs, colours, error bars (2026-11-11)
+
+- Layout: the .doc / RTF model compared with the same chart's .docx model (fixture v3, Word's PDF of the .docx): same fonts
+  (Calibri 14 / 9), sizes and data; the chart size differs by about 1 pt (preview picture 416.2 x 243.4 pt vs the .docx
+  extent 415.3 x 242.25). The chart language was missing: it is kept in Office's CrtMlFrt DrawingML records (0x08A5,
+  a:endParaRPr lang he-IL) and is now passed on as c:lang. Medians (21 texts, centred texts only): .docx 6.5 / 2.6 pt, .doc
+  6.3 / 3.8, RTF 6.3 / 3.8. So the remaining gap is the shared renderer's automatic layout on this right-to-left fixture
+  (Word: value labels 0..6 at -182..194 pt from the title, ours -185..202; category labels 7 pt further left), not the .doc
+  input; the 0.3 / 0.6 pt figure was another fixture. Word runs a legend row right to left in a he-IL chart (North rightmost):
+  done from c:lang. Saved positions: LibreOffice applies CHFRAMEPOS when CHPROPS has USEMANPLOTAREA (0x10; xichart.cxx:
+  3973-3977) - Word's records have it - but here they measured worse (see the earlier section), so they stay off.
+- Colours: CHTEXT, CHTICK (labels: RGB at 20, flags 24, index 26), CHLINEFORMAT, CHAREAFORMAT keep an RGB and a palette
+  index; LibreOffice reads the index (xichart.cxx:453-499, 951-968, 3194-3209; palette xistyle.cxx:158-190, default table
+  xlstyle.cxx:44-88). Office 2007+ writes the nearest palette colour into both (legend 00B050 saved as 339966), so the RGB is
+  used and the palette only when the RGB is empty. Renderer: axis label and legend colours from their c:txPr.
+- Error bars: one c:errBars per direction; plus and minus joined only when their source and value match; custom amounts
+  (source 4) are the error series' own column of the value cache, as c:plus / c:minus. Fixture v3: the scatter chart's first
+  series has custom plus x bars and fixed both-way y bars (8 bars drawn).
+- .doc search: hidden-text check resolves the whole paragraph (fast-saved files take the Prm of the piece with the mark).
+

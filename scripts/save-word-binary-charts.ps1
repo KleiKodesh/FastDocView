@@ -1,9 +1,9 @@
-# Opens test-data/word-charts-binary/word-charts-binary-v2.docx in Word 16 (hidden, no alerts) and saves it as .doc, .rtf and
+# Opens test-data/word-charts-binary/word-charts-binary-v3.docx in Word 16 (hidden, no alerts) and saves it as .doc, .rtf and
 # PDF (ExportAsFixedFormat keeps chart text as text). No chart is inserted or edited here, so Excel is never driven.
 # Word is quit in finally; only the Word process this script started is stopped.
 $ErrorActionPreference = 'Stop'
 $folder = (Resolve-Path (Join-Path $PSScriptRoot '..\test-data\word-charts-binary')).Path
-$base = Join-Path $folder 'word-charts-binary-v2'
+$base = Join-Path $folder 'word-charts-binary-v3'
 $before = @(Get-Process WINWORD -ErrorAction SilentlyContinue | ForEach-Object Id)
 $word = New-Object -ComObject Word.Application
 $mine = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id } | ForEach-Object Id)
