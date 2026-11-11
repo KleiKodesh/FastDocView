@@ -129,6 +129,14 @@ as "won't do (not printed)" in docs/UNSUPPORTED-FEATURES.md, and don't build the
 - Default sidecar threshold is 8 MB of text (body + notes); change it with a measurement.
 - Demo UI stays plain — it is a rig, not the product.
 - Clean up what you start (dev server, Vite, Word automation instances) — by PID, never by name.
+- **Automation never shows anything on the user's screen** (user, 2026-11-11):
+  - Word / Excel COM: set `DisplayAlerts = 0` and `Visible = false` right after creating the app;
+    always `SaveAs2` with an explicit path and `FileFormat` (never `Save()` on a new document);
+    `Close(0)` and `Quit(0)` in a `finally`. Never call anything that opens UI (dialogs, the
+    compatibility checker).
+  - LibreOffice: every `soffice` start (command line, UNO or Python) sets
+    `SAL_DISABLE_PRINTERLIST=1` and `SAL_DISABLE_DEFAULTPRINTER=1` and runs with
+    `--headless --invisible --norestore --nologo` and a private `-env:UserInstallation` profile.
 - **QA before each commit** (user, 2026-10-28): before every commit run the harness
   (`dotnet run -c Release -- --real samples/…doc samples/…docx --audit <both>`), and when the
   change touches rendering or the demo, the Playwright checks against the live rig. Then have a
