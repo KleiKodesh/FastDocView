@@ -1238,14 +1238,14 @@ internal sealed class RtfParser
     }
 
     /// <summary>The picture whose {\pict} body starts at <paramref name="offset"/>, with its bytes (a list picture: <see cref="RtfDocumentTables.ListPictures"/>).</summary>
-    public RtfPicture ReadPictureAt(Stream source, long offset)
+    public RtfPicture ReadPictureAt(Stream source, long offset, bool keepsData = true)
     {
         _source = source;
         source.Position = offset;
         _bufferOffset = offset;
         _position = _end = 0;
         _limit = source.Length;
-        return ReadPictureBody(keepsData: true).picture;
+        return ReadPictureBody(keepsData).picture;
     }
 
     /// <summary>A {\pict} group's body up to its closing brace (consumed; the group is not popped), and whether it closed.</summary>

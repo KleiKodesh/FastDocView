@@ -465,7 +465,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         {
             // not a chart: the object's saved preview picture (its result group), else a placeholder
             if (RtfObjectChart.ResultPictureOffset(group) is { } at)
-                using (var bytes = new MemoryStream(group, writable: false)) Picture(new RtfParser(this, _tables, readsHeaderTables: false).ReadPictureAt(bytes, at), state);
+                using (var bytes = new MemoryStream(group, writable: false)) Picture(new RtfParser(this, _tables, readsHeaderTables: false).ReadPictureAt(bytes, at, WantsPictureData), state);
             else Embedded(RtfEmbeddedKind.Object, state);
             return;
         }

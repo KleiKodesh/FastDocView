@@ -548,6 +548,7 @@ internal sealed partial class DocxChart
     /// </summary>
     private static void Text(StringBuilder svg, double x, double y, string text, double size, string color, string anchor, double rotate = 0)
     {
+        if (text.Length == 0) return;                // a tick whose label is turned off
         bool rightToLeft = IsRightToLeftText(text);
         if (rightToLeft) anchor = anchor switch { "start" => "end", "end" => "start", _ => anchor };
         svg.Append("<text x=\"").Append(N(x)).Append("\" y=\"").Append(N(y)).Append("\" font-size=\"").Append(N(size)).Append("\" fill=\"").Append(color)
@@ -716,12 +717,13 @@ internal sealed partial class DocxChart
         double valueTitleSize = valueAxis?.TitleSize ?? 10, categoryTitleSize = categoryAxis?.TitleSize ?? 10;
         string valueFormat = valueAxis?.FormatCode ?? (percent ? "0%" : _groups[0].Series[0].FormatCode ?? "General");
         var valueLabels = new List<(double Value, string Text)>();
-        if (valueAxis is not { NoLabels: true })
-            foreach (double v in valueTicks) valueLabels.Add((v, FormatNumber(Math.Round(v, 10), valueFormat)));
-        double valueLabelWidth = valueLabels.Count == 0 ? 0 : valueLabels.Max(l => TextWidth(l.Text, labelSize)) + (_libreOfficeLayout ? 4 : 8.2);   // Word: 6.2 pt from the label to the plot (measured)
+        // the ticks carry the gridlines even when the labels are off (c:tickLblPos none: empty texts); a deleted axis has neither
+        if (valueAxis is not { Deleted: true })
+            foreach (double v in valueTicks) valueLabels.Add((v, valueAxis is { NoLabels: true } ? "" : FormatNumber(Math.Round(v, 10), valueFormat)));
+        double valueLabelWidth = valueLabels.All(l => l.Text.Length == 0) ? 0 : valueLabels.Max(l => TextWidth(l.Text, labelSize)) + (_libreOfficeLayout ? 4 : 8.2);   // Word: 6.2 pt from the label to the plot (measured)
         double sMin = 0, sMax = 1;
         var secondaryLabels = new List<(double Value, string Text)>();
-        if (secondaryAxis is not null)
+        if (secondaryAxis is not null && !secondaryAxis.NoLabels)
         {
             (double sDataMin, double sDataMax, double sPositiveMin) = DataRange(secondaryGroups, categoryCount);
             (sMin, sMax, List<double> secondaryTicks) = AxisScale(sDataMin, sDataMax, sPositiveMin, secondaryAxis, secondaryGroups.Any(g => g.Grouping == "percentStacked"), estimatedLength, axisLabelSize);
@@ -736,14 +738,14 @@ internal sealed partial class DocxChart
             left -= (valueAxis?.Title is not null && !horizontal ? valueTitleSize + 4 : 0) + (categoryAxis?.Title is not null && !categoryAxis.Deleted && horizontal ? categoryTitleSize + 4 : 0)
                     + (horizontal ? (categoryAxis is { NoLabels: true } ? 0 : catLabelWidth) : valueLabelWidth);
             bottom += (valueAxis?.Title is not null && horizontal ? valueTitleSize + 4 : 0) + (categoryAxis?.Title is not null && !categoryAxis.Deleted && !horizontal ? categoryTitleSize + 4 : 0)
-                      + (horizontal ? labelSize + 4 : categoryAxis is { NoLabels: true } ? 0 : labelSize + 4);
+                      + (horizontal ? (valueAxis is { NoLabels: true } ? 0 : labelSize + 4) : categoryAxis is { NoLabels: true } ? 0 : labelSize + 4);
             right += secondaryLabelWidth + (secondaryAxis?.Title is not null ? 14 : 0);
         }
         if (valueAxis?.Title is { } valueTitle) { double room = valueTitleSize + 4; if (horizontal) bottom -= room; else left += room; Text(svg, horizontal ? (left + right) / 2 : left - 6, horizontal ? bottom + valueTitleSize + 2 : (top + bottom) / 2, valueTitle, valueTitleSize, textColor, "middle", horizontal ? 0 : -90); }
         if (categoryAxis?.Title is { } categoryTitle && !categoryAxis.Deleted) { double room = categoryTitleSize + 4; if (horizontal) left += room; else bottom -= room; Text(svg, horizontal ? left - 6 : (left + right) / 2, horizontal ? (top + bottom) / 2 : bottom + categoryTitleSize + 2 + (_libreOfficeLayout ? categoryTitleSize * 0.5 : 0), categoryTitle, categoryTitleSize, textColor, "middle", horizontal ? -90 : 0); }
         if (secondaryAxis?.Title is { } secondaryTitle) { right -= 14; Text(svg, right + 6, (top + bottom) / 2, secondaryTitle, 10, textColor, "middle", 90); }
         right -= secondaryLabelWidth;
-        if (horizontal) { bottom -= labelSize + 4; left += categoryAxis is { NoLabels: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
+        if (horizontal) { bottom -= valueAxis is { NoLabels: true } ? 0 : labelSize + 4; left += categoryAxis is { NoLabels: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
         CategoryLabelPlan? categoryPlan = null;
         if (!horizontal)
         {
@@ -828,7 +830,7 @@ internal sealed partial class DocxChart
                 }
                 else Text(svg, left + centre * plotWidth, bottom + labelSize + 2, label, labelSize, textColor, "middle");
             }
-        if (xy)
+        if (xy && categoryAxis is not { NoLabels: true })
             for (double x = xMin; x <= xMax + xStep / 1000; x += xStep)
                 Text(svg, left + (x - xMin) / (xMax - xMin) * plotWidth, bottom + labelSize + 2, FormatNumber(Math.Round(x, 10), "General"), labelSize, textColor, "middle");
         int totalSeries = _groups.Sum(g => g.Series.Count);
