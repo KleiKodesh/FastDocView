@@ -4976,8 +4976,28 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   their gap from the axis follows the 2-D rule (8.2 pt without tick marks, 6.2 with). Max dy 29.9 -> 6.8 pt.
 - Trend names: Word's PDF of a chart with all six types (Hebrew Office 16): polynomial and moving average were wrong (now
   U+05E4 05D5 05DC 05D9 05E0 05D5 05DE 05D9 05D0 05DC 05D9, and "2 " + U+05EA 05E7 05D5 05E4 05EA + moving average); the others
-  matched. English stays from memory. Word also showed R squared on trend lines with no c:dispRSqr (not drawn by us; not checked).
+  matched. English stays from memory. Word also showed R squared on trend lines with no c:dispRSqr (resolved below, 2026-11-12).
 - Harness: --chart-html <file> <out.html> writes a document's blocks for scripts/compare-chart-text-positions.py; Hebrew trend name
   checks run with --charts / --fidelity.
 - Medians x / y: v3 .docx 1.21 / 1.58 -> 0.95 / 0.35, .doc 1.40 / 1.31 -> 1.39 / 1.12, RTF 1.42 / 1.36 -> 1.42 / 1.17,
   odt-charts-v5.docx 0.65 / 0.30 -> 0.62 / 0.29, word-chart-fonts-v1 0.68 / 0.16 unchanged; ODT (LibreOffice layout) untouched.
+
+## Chart: trend label defaults, 3-D scale on nine charts (2026-11-12)
+
+- Trend lines: c:dispEq / c:dispRSqr are shown unless val is false. Word 16's PDFs of probes made from word-charts-binary-v3
+  (chart1's trend line replaced): neither element -> both lines for linear, exp, log, poly and power; <c:dispRSqr/> without val ->
+  shown; val="0" -> hidden; c:trendlineLbl alone changes nothing; moving averages never show either. ECMA-376 Part 1 21.2.2 (dispEq, dispRSqr)
+  are CT_Boolean (val defaults true) and give no default for an absent element; Word treats absent as true. LibreOffice the same:
+  oox seriesmodel.cxx:90-91 (both default !bMSO2007Doc), seriescontext.cxx:332-335 (getBool(val, !bMSO2007Doc)),
+  seriesconverter.cxx:738-745. LibreOffice keeps them off for files Office 2007 wrote (app.xml version 12); not followed (no
+  Office 2007 here to check).
+- 3-D value scale confirmed on nine probes (3-D columns with negatives / 0.02..0.37 / 1200..48000, horizontal 3-D bars 90..860 and
+  with negatives, 3-D lines and areas, with and without rAngAx): every tick set matched Word's (no 5 % headroom, e.g. data 48000 ->
+  axis to 50000 where 2-D goes to 55000). LibreOffice adds an interval only with m_bExpandIfValuesCloseToBorder
+  (ScaleAutomatism.cxx:929-940), which is a 2-D choice; its 3-D labels are placed from scene points (VCartesianAxis.cxx:1135-1145).
+- Fix: 3-D category labels sit where the category axis crosses the value axis (zero, clamped), not under the floor - Word put them
+  on the zero plane for columns, bars and areas with negatives (was up to 38.6 pt / 146.5 pt off); oox axisconverter.cxx:99, 492. c:crosses min / max and
+  c:crossesAt are not read (zero is assumed), nor maxMin orientation in 3-D.
+- Errors vs Word (texts relative to the title): 3-D columns / bars 80 texts median 1.25 x / 1.70 y pt, max 6.2 / 9.7. 3-D lines /
+  areas 54 texts median 19.4 / 2.9, max 27.9 / 14.1: Word's line / area scene is about 24 pt wider at the left and its slots 8 pt
+  wider - the series-depth / frame fit for lines and areas, not the scale; left open (UNSUPPORTED).

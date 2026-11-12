@@ -1109,8 +1109,8 @@ internal sealed partial class DocxChart
                 }
                 var lines = new List<string>();
                 string prefix = (string?)trend.Attribute("equationPrefix") ?? "y = ";
-                if (Value(trend.Element("dispEq")) is "1" or "true") lines.Add(prefix + fit.Equation);
-                if (Value(trend.Element("dispRSqr")) is "1" or "true") lines.Add("R² = " + Math.Round(fit.RSquared, 4).ToString("0.####", CultureInfo.InvariantCulture));
+                if (TrendLabelShown(trend.Element("dispEq"))) lines.Add(prefix + fit.Equation);
+                if (TrendLabelShown(trend.Element("dispRSqr"))) lines.Add("R² = " + Math.Round(fit.RSquared, 4).ToString("0.####", CultureInfo.InvariantCulture));
                 for (int i = 0; i < lines.Count; i++)
                     Text(svg, toPx(xHigh) - 2, toPy(fit.Evaluate(xHigh)) - 6 - (lines.Count - 1 - i) * 11, lines[i], 9, textColor, "end");
             }
@@ -1147,6 +1147,15 @@ internal sealed partial class DocxChart
     /// <summary>A custom error amount of a point: its own, or the one value of a constant list (an ODF constant error, constant="1"), else 0.</summary>
     private static double Custom(List<double?> amounts, XElement? source, int index)
         => (string?)source?.Attribute("constant") == "1" && amounts.Count > 0 ? amounts[0] ?? 0 : index < amounts.Count ? amounts[index] ?? 0 : 0;
+
+    /// <summary>
+    /// c:dispEq / c:dispRSqr on a fitted trend line: shown unless val is false. Word 16's PDFs of probes made from
+    /// word-charts-binary-v3 (2026-11-12): with neither element both lines show for linear, exp, log, poly and power; an element
+    /// without val shows; val="0" hides; c:trendlineLbl changes nothing; moving averages never show either. LibreOffice reads the
+    /// same (oox seriesmodel.cxx:90-91 defaults both true, seriescontext.cxx:332-335 getBool(val, true); seriesconverter.cxx:738-739;
+    /// it keeps them false only for files Office 2007 wrote, which Word 16 does not follow here).
+    /// </summary>
+    internal static bool TrendLabelShown(XElement? element) => element is null || Value(element) is null or "1" or "true" or "on";
 
     /// <summary>A least-squares trend: its function, equation text and R squared.</summary>
     private sealed record TrendFit(Func<double, double> Evaluate, string Equation, double RSquared);

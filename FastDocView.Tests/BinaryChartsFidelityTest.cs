@@ -108,6 +108,18 @@ public static class BinaryChartsFidelityTest
         finally { System.Globalization.CultureInfo.CurrentUICulture = saved; }
     }
 
+    /// <summary>c:dispEq / c:dispRSqr shown unless val is false (Word 16's PDFs of probes, 2026-11-12; oox seriesmodel.cxx:90-91).</summary>
+    public static void RunTrendLabelDefaults()
+    {
+        TestReport.Step("Charts: trend equation / R squared shown unless turned off");
+        static System.Xml.Linq.XElement Flag(string? val) => val is null ? new System.Xml.Linq.XElement("dispRSqr") : new System.Xml.Linq.XElement("dispRSqr", new System.Xml.Linq.XAttribute("val", val));
+        TestReport.Check(FastDocView.DocxHtml.DocxChart.TrendLabelShown(null), "absent element: shown");
+        TestReport.Check(FastDocView.DocxHtml.DocxChart.TrendLabelShown(Flag(null)), "no val: shown");
+        TestReport.Check(FastDocView.DocxHtml.DocxChart.TrendLabelShown(Flag("1")), "val 1: shown");
+        TestReport.Check(!FastDocView.DocxHtml.DocxChart.TrendLabelShown(Flag("0")), "val 0: hidden");
+        TestReport.Check(!FastDocView.DocxHtml.DocxChart.TrendLabelShown(Flag("false")), "val false: hidden");
+    }
+
     private static List<string> Render(string path)
     {
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };

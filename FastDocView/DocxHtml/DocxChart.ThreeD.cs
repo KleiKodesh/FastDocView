@@ -188,12 +188,17 @@ internal sealed partial class DocxChart
             if (horizontal) Text(svg, a.X, a.Y + labelSize + 2, text, labelSize, ValueAxis()?.LabelColor ?? textColor, "middle");
             else Text(svg, a.X - (_libreOfficeLayout ? 4 : ValueAxis()?.NoTickMarks == true ? 8.2 : 6.2), a.Y + labelSize / 3, text, labelSize, ValueAxis()?.LabelColor ?? textColor, "end");   // Word: as its 2-D value labels
         }
+        // category labels next to the category axis where it crosses the value axis - at zero (c:crosses autoZero), clamped to the
+        // scale: Word 16's PDFs of 3-D columns, bars and areas with negative values (2026-11-12 probes) put them on the zero plane, not
+        // under the floor; LibreOffice the same (oox axisconverter.cxx:99, 492: nextTo = NEAR_AXIS, autoZero = ChartAxisPosition_ZERO)
+        double zero = valueToAxis(0);
+        zero = double.IsNaN(zero) ? 0 : Math.Max(0, Math.Min(1, zero));
         if (showCategories)
             for (int i = 0; i < categoryCount; i++)
             {
                 string label = i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture);
-                if (horizontal) { var p = projection.Point(0, (i + 0.5) * slot, 0); Text(svg, p.X - 4, p.Y + labelSize / 3, label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "end"); }
-                else { var p = projection.Point(midCategory ? (categoryCount == 1 ? 0.5 * slot : i * width / (categoryCount - 1)) : (i + 0.5) * slot, 0, 0); Text(svg, p.X, p.Y + labelSize + 2, label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "middle"); }
+                if (horizontal) { var p = projection.Point(zero * width, (i + 0.5) * slot, 0); Text(svg, p.X - 4, p.Y + labelSize / 3, label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "end"); }
+                else { var p = projection.Point(midCategory ? (categoryCount == 1 ? 0.5 * slot : i * width / (categoryCount - 1)) : (i + 0.5) * slot, zero * height, 0); Text(svg, p.X, p.Y + labelSize + 2, label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "middle"); }
             }
         return (projection, width, height, depth, slot, rowDepth);
     }
