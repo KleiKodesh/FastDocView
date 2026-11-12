@@ -126,6 +126,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         _dataStream = _compoundFile.OpenRootStream("Data");
         FormattedDiskPages = new DocBinaryFormattedDiskPages(_wordDocument, _tableStream, FileInformationBlock, _dataStream);
         _notes = new DocBinaryNoteReferences(_tableStream, FileInformationBlock);
+        _notes.Numbering = DocBinarySectionTable.ReadNoteNumbering(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors);
         _renderer = new DocBinaryParagraphHtmlRenderer(PieceTable, FormattedDiskPages, _styles, _notes);
         ListDefinitions = DocBinaryListDefinitions.Read(_tableStream, FileInformationBlock.ListFormats, FileInformationBlock.ListFormatOverrides);
         _renderer.Lists = ListDefinitions;
@@ -193,7 +194,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     {
         if (FindBookmark(name) is not { } block) return null;
         ReadOnlySpan<DocBinaryNoteReferences.NoteReference> references = _notes.InRange(_table.BlockStartCp(block), _table.BlockEndCp(block));
-        return references.Length > 0 ? DocBinaryParagraphHtmlRenderer.NoteLabel(references[0]) : null;
+        return references.Length > 0 ? _notes.Label(references[0]) : null;
     }
 
     /// <summary>STYLEREF: the nearest paragraph block in the named style (its PAPX istd, the style's STD name), backward from a block or forward after it.</summary>
@@ -504,7 +505,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         var notes = new List<WordDocumentNoteHtml>(references.Length);
         foreach (DocBinaryNoteReferences.NoteReference reference in references)
         {
-            string label = DocBinaryParagraphHtmlRenderer.NoteLabel(reference);
+            string label = _notes.Label(reference);
             notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label,
                                                _renderer.RenderNote(reference.TextStartCp, reference.TextEndCp, label)));
         }
@@ -526,7 +527,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
                 for (int i = first; i < end; i++)
                 {
                     DocBinaryNoteReferences.NoteReference reference = references[i];
-                    string label = DocBinaryParagraphHtmlRenderer.NoteLabel(reference);
+                    string label = _notes.Label(reference);
                     notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, _renderer.RenderNote(reference.TextStartCp, reference.TextEndCp, label)));
                 }
                 return notes;

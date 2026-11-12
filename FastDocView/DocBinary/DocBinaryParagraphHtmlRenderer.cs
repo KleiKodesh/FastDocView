@@ -1097,13 +1097,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
         if (_notes?.At(cp) is not { } reference) { html.Append("<sup class=\"note-reference\">*</sup>"); return; }
         string kind = reference.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote";
         html.Append("<sup class=\"note-reference\" data-note-kind=\"").Append(kind).Append("\" data-note-number=\"").Append(reference.Number).Append("\">")
-            .Append(WordHtmlText.Encode(NoteLabel(reference))).Append("</sup>");
+            .Append(WordHtmlText.Encode(_notes!.Label(reference))).Append("</sup>");
     }
 
-    /// <summary>Word's defaults for .doc: footnotes 1, 2, 3; endnotes i, ii, iii.</summary>
-    public static string NoteLabel(DocBinaryNoteReferences.NoteReference reference)
-        => reference.Number == 0 ? "*" : reference.Kind == WordDocumentNoteKind.Footnote
-            ? reference.Number.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            : DocxHtml.DocxNumberingDefinitions.FormatNumber(reference.Number, "lowerRoman");
 
 }

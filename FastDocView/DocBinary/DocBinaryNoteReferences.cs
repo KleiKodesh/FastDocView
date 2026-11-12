@@ -25,6 +25,21 @@ public sealed class DocBinaryNoteReferences
         References = references.ToArray();
     }
 
+    /// <summary>The sections' note numbering (by main-text CP); set once at open, before anything renders.</summary>
+    public WordDocumentNoteNumbering Numbering { get; set; } = WordDocumentNoteNumbering.Defaults;
+
+    /// <summary>The label Word prints for a note: its section's format, start and restart (sprmSNfcFtnRef / sprmSNFtn / sprmSRncFtn ...).</summary>
+    public string Label(NoteReference reference)
+        => Numbering.Label(reference.Kind, reference.Number, reference.ReferenceCp, NotesBefore);
+
+    /// <summary>Auto-numbered notes of a kind before a CP: the last such reference's running number.</summary>
+    private int NotesBefore(WordDocumentNoteKind kind, int cp)
+    {
+        for (int i = LowerBound(cp) - 1; i >= 0; i--)
+            if (References[i].Kind == kind && References[i].Number > 0) return References[i].Number;
+        return 0;
+    }
+
     /// <summary>The reference at exactly this main-text CP, if any.</summary>
     public NoteReference? At(int cp)
     {

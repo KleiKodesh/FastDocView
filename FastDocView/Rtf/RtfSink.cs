@@ -63,6 +63,8 @@ internal abstract class RtfSink
     public virtual void UnhandledWord(ReadOnlySpan<byte> name) { }
     /// <summary>A page-setup word (\paperw \margl \margr \gutter, \sectd, \pgwsxn \marglsxn \margrsxn \guttersxn) in the main text.</summary>
     public virtual void PageSetup(RtfWord word, int value) { }
+    /// <summary>A section note-numbering word (\sftnn* \saftnn* \sftnstart \saftnstart \sftnrst* \saftnrst*) in the main text.</summary>
+    public virtual void SectionNoteNumbering(RtfWord word, int value) { }
     /// <summary>A destination group was skipped whole (header, info, bookmarks, ...).</summary>
     public virtual void DestinationSkipped(ReadOnlySpan<byte> name) { }
     /// <summary>A \field group opened at <paramref name="depth"/> (its group closes when GroupClosed reports a smaller depth).</summary>

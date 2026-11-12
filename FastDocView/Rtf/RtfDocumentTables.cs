@@ -53,7 +53,10 @@ public sealed class RtfDocumentTables
     public int DefaultFont { get; set; } = -1;
     public int AnsiCodePage { get; set; } = 1252;
     public string FootnoteFormat { get; set; } = "decimal";
-    public string EndnoteFormat { get; set; } = "decimal";
+    /// <summary>Word reads an RTF without \aftnn* as lower roman endnotes (test-data/word-notes: section 1 has none, Word 16 prints i).</summary>
+    public string EndnoteFormat { get; set; } = "lowerRoman";
+    public WordDocumentNoteRestart FootnoteRestart { get; set; }
+    public WordDocumentNoteRestart EndnoteRestart { get; set; }
     public int FootnoteStart { get; set; } = 1;
     public int EndnoteStart { get; set; } = 1;
     public bool IsRightToLeftDocument { get; set; }
@@ -91,6 +94,7 @@ public sealed class RtfDocumentTables
     {
         writer.Write(DefaultFont); writer.Write(AnsiCodePage);
         writer.Write(FootnoteFormat); writer.Write(EndnoteFormat); writer.Write(FootnoteStart); writer.Write(EndnoteStart);
+        writer.Write((byte)FootnoteRestart); writer.Write((byte)EndnoteRestart);
         writer.Write(IsRightToLeftDocument);
         writer.Write(IsAutoHyphenation); writer.Write(DefaultLanguage);
         writer.Write(Fonts.Count);
@@ -137,6 +141,7 @@ public sealed class RtfDocumentTables
         {
             DefaultFont = reader.ReadInt32(), AnsiCodePage = reader.ReadInt32(),
             FootnoteFormat = reader.ReadString(), EndnoteFormat = reader.ReadString(), FootnoteStart = reader.ReadInt32(), EndnoteStart = reader.ReadInt32(),
+            FootnoteRestart = (WordDocumentNoteRestart)reader.ReadByte(), EndnoteRestart = (WordDocumentNoteRestart)reader.ReadByte(),
             IsRightToLeftDocument = reader.ReadBoolean(),
             IsAutoHyphenation = reader.ReadBoolean(),
             DefaultLanguage = reader.ReadUInt16(),

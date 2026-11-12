@@ -147,6 +147,8 @@ internal sealed class DocxIncrementalIndexBuilder : IDocxBlockTable
     public IReadOnlyList<int> KnownSectionLastBlocks => _scanner.SectionLastBlocks;
     public IReadOnlyList<int> KnownSectionTextWidths => _scanner.SectionTextWidths;
     public IReadOnlyList<int> KnownSectionColumnLefts => _scanner.SectionColumnLefts;
+    public IReadOnlyList<WordDocumentNoteNumberRule> KnownSectionFootnoteRules => _scanner.SectionFootnoteRules;
+    public IReadOnlyList<WordDocumentNoteNumberRule> KnownSectionEndnoteRules => _scanner.SectionEndnoteRules;
 
     /// <summary>Note references of the known blocks (body order).</summary>
     public IReadOnlyList<DocxNoteReference> KnownNoteReferences => _scanner.NoteReferences;

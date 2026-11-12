@@ -29,7 +29,6 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private readonly DocxStyleCascade _styles;
     private readonly DocxBlockHtmlRenderer _renderer;
     private DocxNoteXmlReader _noteReader;
-    private readonly DocxNoteNumberFormats _noteFormats;
     private WordDocumentFileStream? _releasableFile;   // set by Open(path): released after every window
     private bool _isReadingFromFile;                    // false when the whole text was inflated in memory (small .docx)
     private WordDocumentBlockRenderGuard? _blockRenderGuardField;
@@ -38,7 +37,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private readonly Dictionary<(WordDocumentNoteKind kind, int id), string> _noteHtmlCache = new();
     private long _noteHtmlCacheCharacters;
     private const long NoteHtmlCacheCharacterLimit = 2_000_000;   // bounded: a few MB of rendered notes, never the part
-    private readonly Dictionary<(WordDocumentNoteKind kind, int id), int> _noteNumbers = new();
+    private readonly Dictionary<(WordDocumentNoteKind kind, int id), DocxNoteReference> _noteNumbers = new();
     private int _noteReferencesRecorded;                // references already counted into _noteNumbers / the counts
     private int _footnoteCount;
     private int _endnoteCount;
@@ -184,7 +183,6 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         _parts = parts;
         _noteReader = noteReader;
         _styles = parts.Styles;
-        _noteFormats = parts.NoteNumberFormats;
         RecordNewNoteReferences();
         _renderer = new DocxBlockHtmlRenderer(_styles, ResolveNoteLabel, parts.HyperlinkTargets, parts.FootnoteHyperlinkTargets, parts.EndnoteHyperlinkTargets, PictureId)
         {
@@ -206,7 +204,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         for (; _noteReferencesRecorded < references.Count; _noteReferencesRecorded++)
         {
             DocxNoteReference reference = references[_noteReferencesRecorded];
-            _noteNumbers[(reference.Kind, reference.NoteId)] = reference.Number;
+            _noteNumbers[(reference.Kind, reference.NoteId)] = reference;
             if (reference.Kind == WordDocumentNoteKind.Footnote) _footnoteCount++; else _endnoteCount++;
         }
     }
@@ -329,7 +327,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
                 for (int i = first; i < end; i++)
                 {
                     DocxNoteReference reference = references[i];
-                    string label = reference.Number > 0 ? _noteFormats.Format(reference.Kind, reference.Number) : "*";
+                    string label = NoteLabel(reference);
                     notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, RenderNoteBody(reference, label)));
                 }
                 return notes;
@@ -346,7 +344,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         var notes = new List<WordDocumentNoteHtml>(references.Length);
         foreach (DocxNoteReference reference in references)
         {
-            string label = reference.Number > 0 ? _noteFormats.Format(reference.Kind, reference.Number) : "*";
+            string label = NoteLabel(reference);
             notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, RenderNoteBody(reference, label)));
         }
         return notes;
@@ -480,7 +478,45 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     }
 
     private (int number, string label)? ResolveNoteLabel(WordDocumentNoteKind kind, int noteId)
-        => _noteNumbers.TryGetValue((kind, noteId), out int number) ? (number, number > 0 ? _noteFormats.Format(kind, number) : "*") : null;
+        => _noteNumbers.TryGetValue((kind, noteId), out DocxNoteReference reference) ? (reference.Number, NoteLabel(reference)) : null;
+
+    /// <summary>The number Word prints for a note: its section's w:footnotePr / w:endnotePr (<see cref="WordDocumentNoteNumbering"/>).</summary>
+    private string NoteLabel(DocxNoteReference reference)
+        => NoteNumbering().Label(reference.Kind, reference.Number, reference.BlockIndex, NotesBefore);
+
+    /// <summary>The sections' note numbering; while the index is building, blocks past the last section read so far take the
+    /// defaults until their w:sectPr is reached (a section's properties come at its end in document.xml).</summary>
+    private WordDocumentNoteNumbering NoteNumbering()
+    {
+        if (_noteNumbering is { } cached) return cached;
+        bool isFinal = _builder is null;
+        IReadOnlyList<int> lastBlocks = isFinal ? _index!.SectionLastBlocks : _builder!.KnownSectionLastBlocks;
+        var footnotes = new List<WordDocumentNoteNumberRule>(isFinal ? _index!.SectionFootnoteRules : _builder!.KnownSectionFootnoteRules);
+        var endnotes = new List<WordDocumentNoteNumberRule>(isFinal ? _index!.SectionEndnoteRules : _builder!.KnownSectionEndnoteRules);
+        var firstBlocks = new List<int>(lastBlocks.Count + 1);
+        for (int i = 0; i < lastBlocks.Count; i++) firstBlocks.Add(i == 0 ? 0 : lastBlocks[i - 1] + 1);
+        if (!isFinal)
+        {
+            firstBlocks.Add(lastBlocks.Count == 0 ? 0 : lastBlocks[lastBlocks.Count - 1] + 1);
+            footnotes.Add(WordDocumentNoteNumberRule.FootnoteDefault);
+            endnotes.Add(WordDocumentNoteNumberRule.EndnoteDefault);
+        }
+        var numbering = new WordDocumentNoteNumbering(firstBlocks, footnotes, endnotes);
+        if (isFinal) _noteNumbering = numbering;
+        return numbering;
+    }
+    private WordDocumentNoteNumbering? _noteNumbering;
+
+    /// <summary>Auto-numbered notes of a kind in the blocks before <paramref name="blockIndex"/>: the last such reference's running number.</summary>
+    private int NotesBefore(WordDocumentNoteKind kind, int blockIndex)
+    {
+        IReadOnlyList<DocxNoteReference> references = (IReadOnlyList<DocxNoteReference>?)_index?.NoteReferences ?? _builder!.KnownNoteReferences;
+        int low = 0, high = references.Count;
+        while (low < high) { int middle = (low + high) >> 1; if (references[middle].BlockIndex < blockIndex) low = middle + 1; else high = middle; }
+        for (int i = low - 1; i >= 0; i--)
+            if (references[i].Kind == kind && references[i].Number > 0) return references[i].Number;
+        return 0;
+    }
 
     /// <summary>
     /// From the index — captured during the scan, so a reopen reads no blocks for the TOC. While an

@@ -85,6 +85,10 @@ public sealed class OdtStyleCascade
         public string Prefix = "";
         public string Suffix = "";
         public int StartOffset;
+        /// <summary>Footnotes only: text:start-numbering-at="chapter" restarts the count at each outline-level-1 heading
+        /// (LibreOffice xmloff XMLFootnoteConfigurationImportContext.cxx:199-201, 312-315: FootnoteCounting, footnotes only).
+        /// "page" cannot be followed in a flow view; a note's citation text (what LibreOffice printed) is shown when there is one.</summary>
+        public bool RestartsAtChapter;
     }
 
     public OdtNotesConfiguration NotesConfiguration(WordDocumentNoteKind kind) => _notesConfigurations[(int)kind];
@@ -131,7 +135,9 @@ public sealed class OdtStyleCascade
                     Suffix = (string?)element.Attribute(Style + "num-suffix") ?? "",
                 };
                 if (int.TryParse((string?)element.Attribute(Text + "start-value"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int offset)) configuration.StartOffset = offset;
-                _notesConfigurations[(string?)element.Attribute(Text + "note-class") == "endnote" ? 1 : 0] = configuration;
+                bool isEndnote = (string?)element.Attribute(Text + "note-class") == "endnote";
+                configuration.RestartsAtChapter = !isEndnote && (string?)element.Attribute(Text + "start-numbering-at") == "chapter";
+                _notesConfigurations[isEndnote ? 1 : 0] = configuration;
             }
             else if (local == "outline-style") { /* heading numbering: not rendered (see NOTES.md) */ }
         }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace FastDocView.Docx;
@@ -16,7 +17,7 @@ internal sealed class DocxBodyBlockScanner
 {
     private enum State { Text, TagOpen, TagName, TagBody, TagQuote, Comment, ProcessingInstruction, CData, DocumentType }
 
-    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, SimpleField, DeletedContent, SectionProperties, PageSize, PageMargins, RightToLeftGutter, BookmarkStart }
+    private enum KnownTag : byte { Other, Body, Paragraph, Table, ContentControl, Text, ParagraphProperties, ParagraphStyle, NumberingId, NumberingLevel, FootnoteReference, EndnoteReference, FieldCharacter, FieldInstruction, SimpleField, DeletedContent, SectionProperties, PageSize, PageMargins, RightToLeftGutter, BookmarkStart, FootnoteProperties, EndnoteProperties, NoteNumberFormat, NoteNumberStart, NoteNumberRestart }
 
     private const int MaxRootTagBytes = 1 << 16;
     private const int MaxHeadingTextBytes = 600;
@@ -78,6 +79,9 @@ internal sealed class DocxBodyBlockScanner
     private int _openTables;                          // w:tbl elements open now: a cell paragraph's w:sectPr is not a section break
     private int? _sectionPageWidth, _sectionLeftMargin, _sectionRightMargin, _sectionGutter;
     private bool _sectionRightToLeftGutter;
+    // the w:sectPr's w:footnotePr / w:endnotePr: which one is open (0 / 1, -1 none) and the values read so far per kind
+    private int _sectionNoteKind = -1;
+    private readonly WordDocumentNoteNumberRule[] _sectionNoteRules = new WordDocumentNoteNumberRule[2];
     private readonly bool _isGutterAtTop;
 
     /// <summary>Per section, in order: its last block (inclusive) and its text width in twips.</summary>
@@ -85,6 +89,9 @@ internal sealed class DocxBodyBlockScanner
     public List<int> SectionTextWidths { get; } = new();
     /// <summary>Per section: where the text column starts on the page (left margin + gutter, twips).</summary>
     public List<int> SectionColumnLefts { get; } = new();
+    /// <summary>Per section: its footnote / endnote numbering (w:footnotePr / w:endnotePr in the w:sectPr; see <see cref="WordDocumentNoteNumberRule"/>).</summary>
+    public List<WordDocumentNoteNumberRule> SectionFootnoteRules { get; } = new();
+    public List<WordDocumentNoteNumberRule> SectionEndnoteRules { get; } = new();
 
     public List<long> BlockStartOffsets { get; } = new();
     public List<WordDocumentBlockKind> BlockKinds { get; } = new();
@@ -364,6 +371,8 @@ internal sealed class DocxBodyBlockScanner
             KnownTag.FootnoteReference or KnownTag.EndnoteReference or KnownTag.FieldCharacter or KnownTag.SimpleField => _depth > _bodyDepth,
             KnownTag.BookmarkStart => _depth >= _bodyDepth,      // also between paragraphs (a body child of its own)
             KnownTag.PageSize or KnownTag.PageMargins or KnownTag.RightToLeftGutter => _sectionDepth >= 0 && _depth == _sectionDepth + 1,
+            KnownTag.FootnoteProperties or KnownTag.EndnoteProperties => _sectionDepth >= 0 && _depth == _sectionDepth + 1,
+            KnownTag.NoteNumberFormat or KnownTag.NoteNumberStart or KnownTag.NoteNumberRestart => _sectionDepth >= 0 && _depth == _sectionDepth + 2 && _sectionNoteKind >= 0,
             _ => false,
         };
     }
@@ -393,11 +402,13 @@ internal sealed class DocxBodyBlockScanner
             case 8:
                 if (name.SequenceEqual("w:pStyle"u8)) return KnownTag.ParagraphStyle;
                 if (name.SequenceEqual("w:sectPr"u8)) return KnownTag.SectionProperties;
+                if (name.SequenceEqual("w:numFmt"u8)) return KnownTag.NoteNumberFormat;
                 return KnownTag.Other;
             case 9: return name.SequenceEqual("w:fldChar"u8) ? KnownTag.FieldCharacter : KnownTag.Other;
-            case 10: return name.SequenceEqual("w:moveFrom"u8) ? KnownTag.DeletedContent : KnownTag.Other;
+            case 10: return name.SequenceEqual("w:moveFrom"u8) ? KnownTag.DeletedContent : name.SequenceEqual("w:numStart"u8) ? KnownTag.NoteNumberStart : KnownTag.Other;
             case 11: return name.SequenceEqual("w:instrText"u8) ? KnownTag.FieldInstruction : name.SequenceEqual("w:fldSimple"u8) ? KnownTag.SimpleField
-                          : name.SequenceEqual("w:rtlGutter"u8) ? KnownTag.RightToLeftGutter : KnownTag.Other;
+                          : name.SequenceEqual("w:rtlGutter"u8) ? KnownTag.RightToLeftGutter : name.SequenceEqual("w:endnotePr"u8) ? KnownTag.EndnoteProperties : KnownTag.Other;
+            case 12: return name.SequenceEqual("w:footnotePr"u8) ? KnownTag.FootnoteProperties : name.SequenceEqual("w:numRestart"u8) ? KnownTag.NoteNumberRestart : KnownTag.Other;
             case 15: return name.SequenceEqual("w:bookmarkStart"u8) ? KnownTag.BookmarkStart : KnownTag.Other;
             case 18: return name.SequenceEqual("w:endnoteReference"u8) ? KnownTag.EndnoteReference : KnownTag.Other;
             case 19: return name.SequenceEqual("w:footnoteReference"u8) ? KnownTag.FootnoteReference : KnownTag.Other;
@@ -451,6 +462,9 @@ internal sealed class DocxBodyBlockScanner
             _sectionDepth = _depth;
             _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = null;
             _sectionRightToLeftGutter = false;
+            _sectionNoteKind = -1;
+            _sectionNoteRules[0] = WordDocumentNoteNumberRule.FootnoteDefault;
+            _sectionNoteRules[1] = WordDocumentNoteNumberRule.EndnoteDefault;
             if (isSelfClosing) OnSectionPropertiesClosed();
         }
         if (_tag == KnownTag.Text && !isSelfClosing) _isInsideTextRun = true;
@@ -637,6 +651,16 @@ internal sealed class DocxBodyBlockScanner
             _sectionRightToLeftGutter = AttributeValue(attributes, "w:val=") is not ("0" or "false" or "off");
             return;
         }
+        if (_tag is KnownTag.FootnoteProperties or KnownTag.EndnoteProperties)
+        {
+            _sectionNoteKind = _tag == KnownTag.FootnoteProperties ? 0 : 1;
+            return;
+        }
+        if (_tag is KnownTag.NoteNumberFormat or KnownTag.NoteNumberStart or KnownTag.NoteNumberRestart)
+        {
+            OnSectionNoteProperty(AttributeValue(attributes, "w:val="));
+            return;
+        }
         if (_tag is KnownTag.FootnoteReference or KnownTag.EndnoteReference)
             OnNoteReference(_tag == KnownTag.FootnoteReference ? WordDocumentNoteKind.Footnote : WordDocumentNoteKind.Endnote, attributes);
     }
@@ -729,6 +753,21 @@ internal sealed class DocxBodyBlockScanner
     /// A section ends at the paragraph whose pPr holds the w:sectPr, or - for the body's own w:sectPr -
     /// at the last block. Missing values take LibreOffice's Word-import defaults (Letter, 1 in margins).
     /// </summary>
+    /// <summary>
+    /// A w:sectPr's w:footnotePr / w:endnotePr child (ECMA-376 17.11.11 numFmt, 17.11.20 numStart, 17.11.19 numRestart).
+    /// LibreOffice reads the same three into its one document-wide setting (sw/source/writerfilter/dmapper/DomainMapper.cxx:3170-3215,
+    /// last section wins, eachSect as per chapter); Word numbers each section by its own (WordDocumentNoteNumberRule), which we follow.
+    /// </summary>
+    private void OnSectionNoteProperty(string? value)
+    {
+        if (value is null) return;
+        WordDocumentNoteNumberRule rule = _sectionNoteRules[_sectionNoteKind];
+        if (_tag == KnownTag.NoteNumberFormat) rule = rule with { Format = value };
+        else if (_tag == KnownTag.NoteNumberStart) { if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int start) && start >= 0) rule = rule with { Start = start }; }
+        else rule = rule with { Restart = value switch { "eachSect" => WordDocumentNoteRestart.EachSection, "eachPage" => WordDocumentNoteRestart.EachPage, _ => WordDocumentNoteRestart.Continuous } };
+        _sectionNoteRules[_sectionNoteKind] = rule;
+    }
+
     private void OnSectionPropertiesClosed()
     {
         bool isBodyLevel = _sectionDepth == _bodyDepth;
@@ -745,12 +784,18 @@ internal sealed class DocxBodyBlockScanner
         int lastBlock = BlockStartOffsets.Count - 1;
         if (SectionLastBlocks.Count > 0 && SectionLastBlocks[SectionLastBlocks.Count - 1] >= lastBlock)
         {
-            if (!isBodyLevel) { SectionTextWidths[SectionTextWidths.Count - 1] = width; SectionColumnLefts[SectionColumnLefts.Count - 1] = columnLeft; }
+            if (!isBodyLevel)
+            {
+                SectionTextWidths[SectionTextWidths.Count - 1] = width; SectionColumnLefts[SectionColumnLefts.Count - 1] = columnLeft;
+                SectionFootnoteRules[SectionFootnoteRules.Count - 1] = _sectionNoteRules[0]; SectionEndnoteRules[SectionEndnoteRules.Count - 1] = _sectionNoteRules[1];
+            }
             return;
         }
         SectionLastBlocks.Add(lastBlock);
         SectionTextWidths.Add(width);
         SectionColumnLefts.Add(columnLeft);
+        SectionFootnoteRules.Add(_sectionNoteRules[0]);
+        SectionEndnoteRules.Add(_sectionNoteRules[1]);
     }
 
     private static string? AttributeValue(string attributes, string attributeWithEquals)

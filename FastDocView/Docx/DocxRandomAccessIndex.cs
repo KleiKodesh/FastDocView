@@ -19,7 +19,7 @@ namespace FastDocView.Docx;
 public sealed class DocxRandomAccessIndex
 {
     private const string Magic = "KHWORDIDX";
-    private const int FormatVersion = 21;     // 21: a symbol bullet resolved against the level's Latin font only (not w:cs); 20: list label CSS for both the Latin and the complex-script set; 19: picture bullets (numPicBullet); 18: list labels in every Word number format, symbol-font bullets resolved; 17: gutter placement (w:rtlGutter / w:gutterAtTop) in section widths; 16: section column lefts; 15: XE / TA entries;     // 14: field counters (SEQ / AUTONUM / LISTNUM) in the open-field stacks; 12: compact per-block tables; 13: no per-block tables — span anchors + list counter state, one window store, Elias-Fano block lists
+    private const int FormatVersion = 22;     // 22: per-section footnote / endnote numbering (numFmt / numStart / numRestart); 21: a symbol bullet resolved against the level's Latin font only (not w:cs); 20: list label CSS for both the Latin and the complex-script set; 19: picture bullets (numPicBullet); 18: list labels in every Word number format, symbol-font bullets resolved; 17: gutter placement (w:rtlGutter / w:gutterAtTop) in section widths; 16: section column lefts; 15: XE / TA entries;     // 14: field counters (SEQ / AUTONUM / LISTNUM) in the open-field stacks; 12: compact per-block tables; 13: no per-block tables — span anchors + list counter state, one window store, Elias-Fano block lists
     public const int TextLengthGroupSize = 64;
     /// <summary>Output bytes between span anchors: a random block rescans at most this much (~1-2 ms) on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
@@ -46,6 +46,9 @@ public sealed class DocxRandomAccessIndex
     public int[] SectionLastBlocks { get; private set; } = [];
     public int[] SectionTextWidths { get; private set; } = [];
     public int[] SectionColumnLefts { get; private set; } = [];
+    /// <summary>Per section: its footnote and endnote numbering rules (<see cref="WordDocumentNoteNumberRule.Serialize"/>).</summary>
+    public WordDocumentNoteNumberRule[] SectionFootnoteRules { get; private set; } = [];
+    public WordDocumentNoteNumberRule[] SectionEndnoteRules { get; private set; } = [];
     /// <summary>Bookmarks in body order: name and the block it marks (see DocxBodyBlockScanner.BookmarkNames).</summary>
     public string[] BookmarkNames { get; private set; } = [];
     public int[] BookmarkBlocks { get; private set; } = [];
@@ -89,8 +92,11 @@ public sealed class DocxRandomAccessIndex
         return this;
     }
 
-    internal DocxRandomAccessIndex WithSections(int[] sectionLastBlocks, int[] sectionTextWidths, int[] sectionColumnLefts)
+    internal DocxRandomAccessIndex WithSections(int[] sectionLastBlocks, int[] sectionTextWidths, int[] sectionColumnLefts,
+                                                WordDocumentNoteNumberRule[] footnoteRules, WordDocumentNoteNumberRule[] endnoteRules)
     {
+        SectionFootnoteRules = footnoteRules;
+        SectionEndnoteRules = endnoteRules;
         SectionLastBlocks = sectionLastBlocks;
         SectionTextWidths = sectionTextWidths;
         SectionColumnLefts = sectionColumnLefts;
@@ -274,6 +280,8 @@ public sealed class DocxRandomAccessIndex
         IndexBinaryArrays.WriteVarints(writer, widthTable);
         IndexBinaryArrays.WriteByteIds(writer, SectionTextWidths.Select(w => (short)Array.IndexOf(widthTable, w)).ToArray());
         IndexBinaryArrays.WriteVarints(writer, SectionColumnLefts);
+        IndexBinaryArrays.WriteCompressedStrings(writer, SectionFootnoteRules.Select(rule => rule.Serialize()).ToArray());
+        IndexBinaryArrays.WriteCompressedStrings(writer, SectionEndnoteRules.Select(rule => rule.Serialize()).ToArray());
         Section("sections");
         IndexBinaryArrays.WriteCompressedStrings(writer, BookmarkNames);
         new EliasFanoSequence(BookmarkBlocks).Write(writer);
@@ -333,7 +341,10 @@ public sealed class DocxRandomAccessIndex
         if (widthIds.Any(id => id < 0 || id >= widthTable.Length)) throw new InvalidDataException("Word index: section widths out of range.");
         int[] sectionTextWidths = widthIds.Select(id => widthTable[id]).ToArray();
         int[] sectionColumnLefts = IndexBinaryArrays.ReadVarints(reader);
-        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionColumnLefts.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)blockCount))
+        WordDocumentNoteNumberRule[] footnoteRules = IndexBinaryArrays.ReadCompressedStrings(reader).Select(WordDocumentNoteNumberRule.Parse).ToArray();
+        WordDocumentNoteNumberRule[] endnoteRules = IndexBinaryArrays.ReadCompressedStrings(reader).Select(WordDocumentNoteNumberRule.Parse).ToArray();
+        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionColumnLefts.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)blockCount)
+            || footnoteRules.Length != sectionLastBlocks.Length || endnoteRules.Length != sectionLastBlocks.Length)
             throw new InvalidDataException("Word index: section table does not match the blocks.");
         string[] bookmarkNames = IndexBinaryArrays.ReadCompressedStrings(reader);
         int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
@@ -344,7 +355,7 @@ public sealed class DocxRandomAccessIndex
         return new DocxRandomAccessIndex(sourceLength, sourceTicks, entry, rootOpenTag, bodyEnd, checkpoints, blockCount, anchors, groupTotals,
                                          headings, noteReferences, footnotesPart, endnotesPart)
             .WithOpenFieldPairs(openFieldBlocks, openFieldIds, openFieldStacks)
-            .WithSections(sectionLastBlocks, sectionTextWidths, sectionColumnLefts)
+            .WithSections(sectionLastBlocks, sectionTextWidths, sectionColumnLefts, footnoteRules, endnoteRules)
             .WithBookmarks(bookmarkNames, bookmarkBlocks)
             .WithIndexEntries(indexEntries);
     }

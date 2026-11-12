@@ -258,8 +258,23 @@ so the host lists the notes of the visible blocks without a second round trip.
 
 - **Numbering is counted at index time** (same reason as list numbers): .docx — the scanner counts
   `w:footnoteReference` / `w:endnoteReference` per kind in body order (`customMarkFollows` → no
-  number, the following run is the mark), formats from settings.xml `footnotePr`/`endnotePr`
-  (defaults decimal / lowerRoman). .doc — PlcffndRef/PlcfendRef order, FRD.nAuto ≠ 0 → numbered.
+  number, the following run is the mark). .doc — PlcffndRef/PlcfendRef order, FRD.nAuto ≠ 0 → numbered.
+- **Printed numbers follow each section** (`WordDocumentNoteNumbering`, 2026-11-12): number format, start and
+  restart per section and kind - .docx `w:sectPr` footnotePr / endnotePr (numFmt, numStart, numRestart; kept per
+  section in the index, v22), .doc sprmSNfcFtnRef / sprmSNFtn / sprmSRncFtn and the endnote twins (read at open
+  from the Sepx), RTF `\sftnn*` `\sftnstart` `\sftnrst*` (and `\saftn*`; the document-level words are the defaults,
+  `\sectd` resets to them). Measured in Word 16 (test-data/word-notes, Word's PDF): continuous = start + every
+  earlier note of that kind in the document (a later section's start is an offset, not a reset: start 10 after four
+  notes prints 14); each section = start + the earlier notes in that section; no section properties = decimal /
+  lower roman from 1 - Word ignores settings.xml footnotePr / endnotePr for numbering. LibreOffice keeps one
+  document-wide setting instead (dmapper DomainMapper.cxx:3170-3215, ww8par.cxx:5060-5085 from the Dop only,
+  rtfdispatchflag.cxx:367-450 document words only), so Word is the reference. **Each page** cannot be done in a
+  windowed flow view (no pages); LibreOffice numbers per page in its layout. We count it like each section (a
+  section starts a page): right on a section's first page, continuing on later pages where Word restarts.
+  .odt: the citation text LibreOffice wrote is shown (its layout already applied the rule); without one,
+  `text:start-numbering-at="chapter"` restarts footnotes at each outline-level-1 heading.
+  .docx first open: a section's properties come at its end, so until the index reaches its `w:sectPr` its notes show
+  the defaults; windows rendered after that point (and every reopen) show the section's numbers.
 - **Bodies are streamed like blocks.** .docx: the index pass also scans footnotes.xml / endnotes.xml
   (`DocxNotesPartScanner`: note id → byte range, separators dropped) with deflate checkpoints
   (`DocxNotesPartIndex`, persisted in the sidecar, format v4); a note is read on demand from its
@@ -2704,8 +2719,23 @@ so the host lists the notes of the visible blocks without a second round trip.
 
 - **Numbering is counted at index time** (same reason as list numbers): .docx — the scanner counts
   `w:footnoteReference` / `w:endnoteReference` per kind in body order (`customMarkFollows` → no
-  number, the following run is the mark), formats from settings.xml `footnotePr`/`endnotePr`
-  (defaults decimal / lowerRoman). .doc — PlcffndRef/PlcfendRef order, FRD.nAuto ≠ 0 → numbered.
+  number, the following run is the mark). .doc — PlcffndRef/PlcfendRef order, FRD.nAuto ≠ 0 → numbered.
+- **Printed numbers follow each section** (`WordDocumentNoteNumbering`, 2026-11-12): number format, start and
+  restart per section and kind - .docx `w:sectPr` footnotePr / endnotePr (numFmt, numStart, numRestart; kept per
+  section in the index, v22), .doc sprmSNfcFtnRef / sprmSNFtn / sprmSRncFtn and the endnote twins (read at open
+  from the Sepx), RTF `\sftnn*` `\sftnstart` `\sftnrst*` (and `\saftn*`; the document-level words are the defaults,
+  `\sectd` resets to them). Measured in Word 16 (test-data/word-notes, Word's PDF): continuous = start + every
+  earlier note of that kind in the document (a later section's start is an offset, not a reset: start 10 after four
+  notes prints 14); each section = start + the earlier notes in that section; no section properties = decimal /
+  lower roman from 1 - Word ignores settings.xml footnotePr / endnotePr for numbering. LibreOffice keeps one
+  document-wide setting instead (dmapper DomainMapper.cxx:3170-3215, ww8par.cxx:5060-5085 from the Dop only,
+  rtfdispatchflag.cxx:367-450 document words only), so Word is the reference. **Each page** cannot be done in a
+  windowed flow view (no pages); LibreOffice numbers per page in its layout. We count it like each section (a
+  section starts a page): right on a section's first page, continuing on later pages where Word restarts.
+  .odt: the citation text LibreOffice wrote is shown (its layout already applied the rule); without one,
+  `text:start-numbering-at="chapter"` restarts footnotes at each outline-level-1 heading.
+  .docx first open: a section's properties come at its end, so until the index reaches its `w:sectPr` its notes show
+  the defaults; windows rendered after that point (and every reopen) show the section's numbers.
 - **Bodies are streamed like blocks.** .docx: the index pass also scans footnotes.xml / endnotes.xml
   (`DocxNotesPartScanner`: note id → byte range, separators dropped) with deflate checkpoints
   (`DocxNotesPartIndex`, persisted in the sidecar, format v4); a note is read on demand from its

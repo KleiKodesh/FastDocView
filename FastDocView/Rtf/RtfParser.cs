@@ -759,6 +759,15 @@ internal sealed class RtfParser
             case RtfWord.EndnoteNumberingUpperRoman: if (_readsHeaderTables) _tables.EndnoteFormat = "upperRoman"; return;
             case RtfWord.EndnoteNumberingChicago: if (_readsHeaderTables) _tables.EndnoteFormat = "chicago"; return;
             case RtfWord.FootnoteStart: if (_readsHeaderTables && hasParameter) _tables.FootnoteStart = parameter; return;
+            case RtfWord.FootnoteRestartContinuous: if (_readsHeaderTables) _tables.FootnoteRestart = WordDocumentNoteRestart.Continuous; return;
+            case RtfWord.FootnoteRestartEachSection: if (_readsHeaderTables) _tables.FootnoteRestart = WordDocumentNoteRestart.EachSection; return;
+            case RtfWord.FootnoteRestartEachPage: if (_readsHeaderTables) _tables.FootnoteRestart = WordDocumentNoteRestart.EachPage; return;
+            case RtfWord.EndnoteRestartContinuous: if (_readsHeaderTables) _tables.EndnoteRestart = WordDocumentNoteRestart.Continuous; return;
+            case RtfWord.EndnoteRestartEachSection: if (_readsHeaderTables) _tables.EndnoteRestart = WordDocumentNoteRestart.EachSection; return;
+            // section note numbering: main text only, like the page setup
+            case >= RtfWord.SectionFootnoteArabic and <= RtfWord.SectionEndnoteRestartEachSection:
+                if (state.Destination == RtfDestination.Body && !IsInFootnote) _sink.SectionNoteNumbering(word, hasParameter ? parameter : 1);
+                return;
             case RtfWord.EndnoteStart: if (_readsHeaderTables && hasParameter) _tables.EndnoteStart = parameter; return;
             case RtfWord.RightToLeftDocument: if (_readsHeaderTables) _tables.IsRightToLeftDocument = true; return;
             // \hyphauto: LibreOffice rtfdocumentimpl.cxx:2359 (autoHyphenation = !bParam || nParam != 0, line 2163); \deflang: rtfdispatchvalue.cxx:909

@@ -72,6 +72,7 @@ internal sealed class OdtBodyBlockScanner
     private string? _citationLabel;
     private long _noteBodyStart, _noteBodyEnd;
     private readonly int[] _noteCounts = new int[2];
+    private int _footnotesBeforeChapter;          // footnotes counted before the current outline-level-1 heading (start-numbering-at="chapter")
 
     public string RootOpenTag { get; private set; } = "";
     public List<long> BlockStartOffsets { get; } = new();
@@ -457,6 +458,7 @@ internal sealed class OdtBodyBlockScanner
                 {
                     _headingLevel = 1;                                           // txtparai.cxx: text:h defaults to outline level 1
                     if (Attribute(tag, nameEnd, "text:outline-level") is { } level && int.TryParse(level, out int parsed) && parsed >= 1) _headingLevel = Math.Min(10, parsed);
+                    if (_headingLevel == 1) _footnotesBeforeChapter = _noteCounts[(int)WordDocumentNoteKind.Footnote];
                 }
                 return Frame.Block;
             }
@@ -603,9 +605,13 @@ internal sealed class OdtBodyBlockScanner
         bool isCustom = !string.IsNullOrEmpty(_citationLabel);
         int number = isCustom ? 0 : ++_noteCounts[(int)_noteKind] + _styles.NotesConfiguration(_noteKind).StartOffset;
         string citation = WebUtility.HtmlDecode(Encoding.UTF8.GetString(_citationText.GetBuffer(), 0, (int)_citationText.Length)).Trim();
-        string label = citation.Length > 0 ? citation : isCustom ? _citationLabel! : FormatNoteNumber(_noteKind, number);
+        string label = citation.Length > 0 ? citation : isCustom ? _citationLabel! : FormatNoteNumber(_noteKind, ShownNumber(_noteKind, number));
         NoteReferences.Add(new OdtNoteReference(_currentBlock, _noteKind, number, label, _noteBodyStart, _noteBodyEnd));
     }
+
+    /// <summary>The number printed: the count restarts at each chapter when the footnote configuration says so.</summary>
+    private int ShownNumber(WordDocumentNoteKind kind, int number)
+        => kind == WordDocumentNoteKind.Footnote && _styles.NotesConfiguration(kind).RestartsAtChapter ? number - _footnotesBeforeChapter : number;
 
     private string FormatNoteNumber(WordDocumentNoteKind kind, int number)
     {

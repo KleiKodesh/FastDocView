@@ -72,10 +72,8 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Notes at the page bottom / end of section | all | Draft-view model on purpose: notes pane and tooltip | won't do (flow view) |
 | Notes-only render (a note's block body is built and dropped) | docx, odt | Speed item, not correctness | deferred |
-| Restart note numbering per page | docx, doc, rtf | Page-bound | planned (paged view) |
-| Note start value and per-section restart | docx (numStart / numRestart), doc (Dop) | Not read | deferred |
+| Restart note numbering per page | docx, doc, rtf, odt | Page-bound: counted like each section (right on a section's first page, continues on later pages); odt shows the citation LibreOffice wrote | planned (paged view) |
 | Note mark inside Fontwork text, a dimension label or a shape left out of the drawing | odt/fodt | Drawn as plain text or not drawn; the note is in the pane only | won't do |
-| Note number format | doc | Always decimal; nfcFtnRef / nfcEdnRef not read | deferred |
 
 ## Fields
 

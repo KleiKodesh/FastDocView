@@ -46,6 +46,57 @@ internal static class DocBinarySectionTable
         return WordDocumentPageSetup.FromSectionStarts(starts);
     }
 
+    // Note numbering sprms (LibreOffice sw/source/filter/ww8/sprmids.hxx:606-611): sprmSRncFtn 0x303C, sprmSRncEdn 0x303E (one
+    // byte: 0 continuous, 1 each section, 2 each page), sprmSNFtn 0x503F, sprmSNEdn 0x5041 (start, 2 bytes), sprmSNfcFtnRef 0x5040,
+    // sprmSNfcEdnRef 0x5042 (MSONFC, 2 bytes). LibreOffice ignores them (ww8par6.cxx: SRncFtn has no handler) and numbers by the Dop
+    // only (ww8par.cxx:5060-5085); Word numbers by each section's own (test-data/word-notes: Word 16 prints them), which we follow.
+    private const ushort SprmSRncFtn = 0x303C, SprmSRncEdn = 0x303E, SprmSNFtn = 0x503F, SprmSNfcFtnRef = 0x5040, SprmSNEdn = 0x5041, SprmSNfcEdnRef = 0x5042;
+
+    /// <summary>Each section's footnote / endnote numbering, keyed by the section's start CP (<see cref="WordDocumentNoteNumbering"/>
+    /// positions are main-text CPs here). A section without the sprms takes the Sep defaults: decimal / lower roman, from 1, continuous.</summary>
+    public static WordDocumentNoteNumbering ReadNoteNumbering(Stream wordDocument, Stream tableStream, (uint offset, uint length) plcfSed)
+    {
+        if (!TryReadPlc(tableStream, plcfSed, out byte[] plc, out int count, out int sedsAt)) return WordDocumentNoteNumbering.Defaults;
+        var starts = new int[count];
+        var footnotes = new WordDocumentNoteNumberRule[count];
+        var endnotes = new WordDocumentNoteNumberRule[count];
+        for (int i = 0; i < count; i++)
+        {
+            starts[i] = i == 0 ? 0 : Math.Max(starts[i - 1], BitConverter.ToInt32(plc, i * 4));
+            WordDocumentNoteNumberRule footnote = WordDocumentNoteNumberRule.FootnoteDefault, endnote = WordDocumentNoteNumberRule.EndnoteDefault;
+            uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * SedSize + 2);
+            if (ReadSepx(wordDocument, fcSepx) is { } grpprl)
+                foreach ((ushort opcode, int at, int length) in DocBinaryPropertyModifiers.Sprms(grpprl, 0, grpprl.Length))
+                {
+                    if (length == 1 && opcode is SprmSRncFtn or SprmSRncEdn)
+                    {
+                        var restart = grpprl[at] switch { 1 => WordDocumentNoteRestart.EachSection, 2 => WordDocumentNoteRestart.EachPage, _ => WordDocumentNoteRestart.Continuous };
+                        if (opcode == SprmSRncFtn) footnote = footnote with { Restart = restart }; else endnote = endnote with { Restart = restart };
+                    }
+                    else if (length == 2)
+                    {
+                        ushort value = BitConverter.ToUInt16(grpprl, at);
+                        switch (opcode)
+                        {
+                            case SprmSNFtn: footnote = footnote with { Start = value }; break;
+                            case SprmSNEdn: endnote = endnote with { Start = value }; break;
+                            case SprmSNfcFtnRef: footnote = footnote with { Format = DocBinaryListDefinitions.NumberFormatName((byte)Math.Min(value, (ushort)255)) }; break;
+                            case SprmSNfcEdnRef: endnote = endnote with { Format = DocBinaryListDefinitions.NumberFormatName((byte)Math.Min(value, (ushort)255)) }; break;
+                        }
+                    }
+                }
+            footnotes[i] = footnote; endnotes[i] = endnote;
+        }
+        return new WordDocumentNoteNumbering(starts, footnotes, endnotes);
+    }
+
+    private static byte[]? ReadSepx(Stream wordDocument, uint fcSepx)
+    {
+        if (fcSepx == 0xFFFFFFFF || DocBinaryStructureReader.TryRead(wordDocument, (fcSepx, 2)) is not { } sizeBytes) return null;
+        short cb = BitConverter.ToInt16(sizeBytes, 0);
+        return cb > 0 ? DocBinaryStructureReader.TryRead(wordDocument, (fcSepx + 2, (uint)cb)) : null;
+    }
+
     private static bool TryReadPlc(Stream tableStream, (uint offset, uint length) plcfSed, out byte[] plc, out int count, out int sedsAt)
     {
         plc = []; count = 0; sedsAt = 0;

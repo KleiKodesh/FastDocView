@@ -145,14 +145,15 @@ Headers / footers, columns and page layout are not shown (flow view): see UNSUPP
 |---|---|---|---|---|---|---|
 | Footnotes and endnotes, read on demand with their block | yes | yes | yes | yes | partial (16) | partial (17) |
 | Numbering counted at index time, custom marks | yes | yes | yes | yes | n.a. | n.a. |
-| Number format and start value | partial (N1) | partial (N2) | yes | yes | n.a. | n.a. |
+| Number format, start value and restart per section, as printed | yes (N1) | yes (N1) | yes (N1) | yes (N2) | n.a. | n.a. |
 | Separator notes dropped | yes | yes | yes | n.a. | n.a. | n.a. |
 | Search inside notes (own notes search, apart from the main text) | yes | yes | yes | yes | n.a. | n.a. |
 | Notes inside table cells | yes | yes | yes | yes | n.a. | n.a. |
 | Notes inside text boxes, nested frames and shape text (mark in the body, pane, search, numbered in document order) | yes (N3) | n.a. (N3) | n.a. (N3) | yes (N4) | n.a. | n.a. |
 | Notes pane (app: one windowed scroller of all notes, click lands the note), hover tooltip (book view's link tooltip) | yes | yes | yes | yes | yes | partial (17) |
 
-N1. docx: settings.xml numFmt per kind is read; numStart and numRestart are not.
+N1. Each section's own format, start and restart (continuous / each section), checked against Word 16's PDF (test-data/word-notes).
+    Word ignores the .docx settings.xml footnotePr / endnotePr for numbering, and so do we. Restart each page: see UNSUPPORTED-FEATURES.md.
 N3. Word does not allow notes in text boxes: checked in Word 16 through COM (2026-11-10, test-data/word-tables/make-tables-fixtures.ps1):
     Footnotes.Add and Endnotes.Add on a text box's range both fail (0x800A172F), as the Insert Footnote command is off there.
     A .docx written by another tool can still hold them (w:txbxContent, DrawingML or VML): shown like any other note.
@@ -160,7 +161,7 @@ N4. LibreOffice drops a note in a text frame (sw thints.cxx SwTextNode::InsertHi
     frames keep footnotes) and will not load a file with one in a shape's text; we show what the file holds, numbered in
     document order. A note in Fontwork text, a dimension label or a shape the drawing leaves out (no geometry, a frame inside a group) is in
     the pane, in document order, but has no mark.
-N2. .doc: always decimal from 1 (the Dop's nfcFtnRef / nFtn are not read).
+N2. The citation text LibreOffice wrote is shown; without one, num-format, start-value and start-numbering-at="chapter" are followed.
 16. Torat Emet note lines only.
 17. Word's own HTML note links and texts are passed through.
 

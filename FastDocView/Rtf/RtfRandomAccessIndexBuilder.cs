@@ -122,6 +122,9 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     // notes
     private bool _hasAutoMark;
     private int _footnoteCount, _endnoteCount;
+    // the current section's note numbering (null = the document's, from the header tables) and the counts before the section
+    private WordDocumentNoteNumberRule? _sectionFootnoteRule, _sectionEndnoteRule;
+    private int _footnotesBeforeSection, _endnotesBeforeSection;
 
     // span anchors of the compact index: the block start past every AnchorSpanBytes (and block 0), with the parser snapshot
     // + list state there (captured at TakeStart, committed when that block is added - a re-taken start replaces it)
@@ -550,7 +553,10 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             case RtfWord.LeftMargin: _leftMargin = value; break;
             case RtfWord.RightMargin: _rightMargin = value; break;
             case RtfWord.Gutter: _gutter = value; break;
-            case RtfWord.SectionDefault: _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = null; _sectionRightToLeftGutter = false; break;
+            case RtfWord.SectionDefault:
+                _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = null; _sectionRightToLeftGutter = false;
+                _sectionFootnoteRule = _sectionEndnoteRule = null;
+                break;
             case RtfWord.RightToLeftGutter: _sectionRightToLeftGutter = value != 0; break;
             case RtfWord.GutterAtTop: _isGutterAtTop = value != 0; break;
             case RtfWord.SectionPageWidth: _sectionPageWidth = value; break;
@@ -560,9 +566,48 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         }
     }
 
+    /// <summary>
+    /// A section's note numbering: RTF 1.9.1 \sftnn* / \saftnn* (format), \sftnstartN / \saftnstartN, \sftnrstcont / \sftnrestart /
+    /// \sftnrstpg and the endnote pair. LibreOffice reads only the document-level words, as every section's default
+    /// (sw/source/writerfilter/rtftok/rtfdispatchflag.cxx:367-450, rtfdispatchvalue.cxx:1505-1514), and ignores these; Word numbers
+    /// each section by its own (test-data/word-notes), which we follow. A \sectd resets them to the document's.
+    /// </summary>
+    public override void SectionNoteNumbering(RtfWord word, int value)
+    {
+        WordDocumentNoteNumberRule footnote = CurrentNoteRule(WordDocumentNoteKind.Footnote), endnote = CurrentNoteRule(WordDocumentNoteKind.Endnote);
+        switch (word)
+        {
+            case RtfWord.SectionFootnoteArabic: footnote = footnote with { Format = "decimal" }; break;
+            case RtfWord.SectionFootnoteLowerAlpha: footnote = footnote with { Format = "lowerLetter" }; break;
+            case RtfWord.SectionFootnoteUpperAlpha: footnote = footnote with { Format = "upperLetter" }; break;
+            case RtfWord.SectionFootnoteLowerRoman: footnote = footnote with { Format = "lowerRoman" }; break;
+            case RtfWord.SectionFootnoteUpperRoman: footnote = footnote with { Format = "upperRoman" }; break;
+            case RtfWord.SectionFootnoteChicago: footnote = footnote with { Format = "chicago" }; break;
+            case RtfWord.SectionEndnoteArabic: endnote = endnote with { Format = "decimal" }; break;
+            case RtfWord.SectionEndnoteLowerAlpha: endnote = endnote with { Format = "lowerLetter" }; break;
+            case RtfWord.SectionEndnoteUpperAlpha: endnote = endnote with { Format = "upperLetter" }; break;
+            case RtfWord.SectionEndnoteLowerRoman: endnote = endnote with { Format = "lowerRoman" }; break;
+            case RtfWord.SectionEndnoteUpperRoman: endnote = endnote with { Format = "upperRoman" }; break;
+            case RtfWord.SectionEndnoteChicago: endnote = endnote with { Format = "chicago" }; break;
+            case RtfWord.SectionFootnoteStart: footnote = footnote with { Start = value }; break;
+            case RtfWord.SectionEndnoteStart: endnote = endnote with { Start = value }; break;
+            case RtfWord.SectionFootnoteRestartContinuous: footnote = footnote with { Restart = WordDocumentNoteRestart.Continuous }; break;
+            case RtfWord.SectionFootnoteRestartEachSection: footnote = footnote with { Restart = WordDocumentNoteRestart.EachSection }; break;
+            case RtfWord.SectionFootnoteRestartEachPage: footnote = footnote with { Restart = WordDocumentNoteRestart.EachPage }; break;
+            case RtfWord.SectionEndnoteRestartContinuous: endnote = endnote with { Restart = WordDocumentNoteRestart.Continuous }; break;
+            case RtfWord.SectionEndnoteRestartEachSection: endnote = endnote with { Restart = WordDocumentNoteRestart.EachSection }; break;
+        }
+        _sectionFootnoteRule = footnote; _sectionEndnoteRule = endnote;
+    }
+
+    private WordDocumentNoteNumberRule CurrentNoteRule(WordDocumentNoteKind kind) => kind == WordDocumentNoteKind.Footnote
+        ? _sectionFootnoteRule ?? new(_tables.FootnoteFormat, _tables.FootnoteStart, _tables.FootnoteRestart)
+        : _sectionEndnoteRule ?? new(_tables.EndnoteFormat, _tables.EndnoteStart, _tables.EndnoteRestart);
+
     /// <summary>A \sect (or the end of the file) closes the section at the last block with the page setup in effect.</summary>
     private void EndSection()
     {
+        _footnotesBeforeSection = _footnoteCount; _endnotesBeforeSection = _endnoteCount;
         if (_starts.Count == 0) return;
         int lastBlock = _starts.Count - 1;
         int width = CurrentSectionTextWidth();
@@ -693,8 +738,9 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         if (_hasAutoMark)
         {
             number = isEndnote ? ++_endnoteCount : ++_footnoteCount;
-            int shown = number - 1 + (isEndnote ? _tables.EndnoteStart : _tables.FootnoteStart);
-            label = FormatNoteNumber(shown, isEndnote ? _tables.EndnoteFormat : _tables.FootnoteFormat);
+            // each page: a flow view has no pages - counted like each section (WordDocumentNoteNumberRule)
+            WordDocumentNoteNumberRule rule = CurrentNoteRule(kind);
+            label = FormatNoteNumber(rule.Number(number, isEndnote ? _endnotesBeforeSection : _footnotesBeforeSection), rule.Format);
         }
         _hasAutoMark = false;
         _notes.Add(new RtfNoteReference(_starts.Count, kind, number, label));
