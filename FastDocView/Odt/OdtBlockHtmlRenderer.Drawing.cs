@@ -153,7 +153,16 @@ public sealed partial class OdtBlockHtmlRenderer
     private void AppendShape(XElement element, StringBuilder html)
     {
         List<OdtDrawnShape> drawn = ShapeBuilder.Build(element);
-        if (drawn.Count == 0) { AppendUnshownNotes(element); return; }
+        // notes of what the builder leaves out (a shape without geometry, a frame inside a group): no mark, but the scanner
+        // indexed them, so they go to the pane in document order - before the first drawn shape that follows them
+        Queue<XElement> leftOutNotes = new(element.DescendantsAndSelf(TextNs + "note")
+            .Where(note => !note.Ancestors(TextNs + "note").Any() && !note.Ancestors().Any(a => drawn.Any(d => d.Element == a))));
+        void AppendLeftOutNotesBefore(XElement? next)
+        {
+            var unshownMarks = new StringBuilder();
+            while (leftOutNotes.Count > 0 && (next is null || leftOutNotes.Peek().IsBefore(next))) AppendNote(leftOutNotes.Dequeue(), unshownMarks);
+        }
+        if (drawn.Count == 0) { AppendLeftOutNotesBefore(null); return; }
         double left = double.MaxValue, top = double.MaxValue, right = double.MinValue, bottom = double.MinValue;
         void Take(double px, double py) { left = Math.Min(left, px); top = Math.Min(top, py); right = Math.Max(right, px); bottom = Math.Max(bottom, py); }
         foreach (OdtDrawnShape d in drawn)
@@ -197,6 +206,7 @@ public sealed partial class OdtBlockHtmlRenderer
         for (int k = 0; k < drawn.Count; k++)
         {
             OdtDrawnShape d = drawn[k];
+            AppendLeftOutNotesBefore(d.Element);
             if (d.MeasureLabel is { } m)
             {
                 // the dimension line and its label together: the page measures the label and lays both out again (fastDocViewShapeText.ts)
@@ -214,6 +224,7 @@ public sealed partial class OdtBlockHtmlRenderer
             if (d.HasText && d.Geometry is not { IsTextPath: true }) AppendShapeText(d, html, growth[k]);
             else AppendUnshownNotes(d.Element);
         }
+        AppendLeftOutNotesBefore(null);
         WordShapeHtml.CloseFrame(html);
     }
 

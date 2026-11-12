@@ -42,6 +42,10 @@ public static class LibreOfficeConversion
                 using Process process = Process.Start(start)!;
                 try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (InvalidOperationException) { }
                 if (!process.WaitForExit(600_000)) { process.Kill(); TestReport.Check(false, "LibreOffice conversion finished within 10 minutes"); continue; }
+                // LibreOffice ended without writing the file: say how, so a stopped run (a killed soffice exits non-zero after
+                // a few minutes; the 87 MB sample takes ~7) is not taken for a conversion bug
+                if (!File.Exists(odt))
+                    TestReport.Step($"LibreOffice exited with code {process.ExitCode} after {(process.ExitTime - process.StartTime).TotalSeconds:0} s without writing {Path.GetFileName(odt)}");
             }
             TestReport.Check(File.Exists(odt), $"converted {Path.GetFileName(odt)} exists");
             if (File.Exists(odt)) converted.Add(odt);

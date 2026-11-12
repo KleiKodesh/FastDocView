@@ -158,7 +158,8 @@ N3. Word does not allow notes in text boxes: checked in Word 16 through COM (202
     A .docx written by another tool can still hold them (w:txbxContent, DrawingML or VML): shown like any other note.
 N4. LibreOffice drops a note in a text frame (sw thints.cxx SwTextNode::InsertHint, RES_TXTATR_FTN: only body text and split
     frames keep footnotes) and will not load a file with one in a shape's text; we show what the file holds, numbered in
-    document order. A note in Fontwork text is in the pane but has no mark (Fontwork draws plain text).
+    document order. A note in Fontwork text, a dimension label or a shape the drawing leaves out (no geometry, a frame inside a group) is in
+    the pane, in document order, but has no mark.
 N2. .doc: always decimal from 1 (the Dop's nfcFtnRef / nFtn are not read).
 16. Torat Emet note lines only.
 17. Word's own HTML note links and texts are passed through.

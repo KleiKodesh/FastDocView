@@ -273,7 +273,8 @@ so the host lists the notes of the visible blocks without a second round trip.
   reference in w:txbxContent, is indexed and rendered like any other, numbered in document order (`TextBoxNotesTest`).
   LibreOffice drops them (sw thints.cxx, RES_TXTATR_FTN outside body / split fly) and refuses a note in shape text; Word
   cannot insert them (N3 in docs/SUPPORTED-FEATURES.md). Fontwork shapes draw plain text, so the renderer steps past
-  their notes' references to keep the block's later marks in step with the index.
+  their notes' references to keep the block's later marks in step with the index; the same for dimension labels and
+  for shapes the shape builder leaves out (no geometry, a draw:frame inside a draw:g), in document order.
 - `NoteReferences` (kind, number, block) for "next footnote" navigation; `NoteCounts`.
 - Demo: notes pane under the text (All footnotes / All endnotes), click highlights, hover tooltip.
   Verified live: 239 / 234 footnotes in the samples; synthetic file checks endnotes (i, ii, iii).

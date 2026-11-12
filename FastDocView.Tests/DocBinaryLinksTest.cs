@@ -29,7 +29,7 @@ public static class DocBinaryLinksTest
             var start = new ProcessStartInfo(SofficePath)
             {
                 UseShellExecute = false, CreateNoWindow = true,
-                Arguments = $"-env:UserInstallation=file:///{directory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --norestore --convert-to doc --outdir \"{directory}\" \"{odt}\"",
+                Arguments = $"-env:UserInstallation=file:///{directory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --invisible --nologo --norestore --convert-to doc --outdir \"{directory}\" \"{odt}\"",
             };
             LibreOfficeConversion.WithoutPrinters(start);
             using Process process = Process.Start(start)!;
