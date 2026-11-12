@@ -79,6 +79,7 @@ for (int i = 0; i < args.Length; i++)
         case "--body-script-sample": BodyScriptFidelityTest.DumpSample(args[i + 1], int.Parse(args[i + 2]), int.Parse(args[i + 3])); return 0;
         case "--body-script": BodyScriptFidelityTest.Run(); skipSynthetic = true; break;   // Latin / complex-script set per run (Word 16 PDF)
         case "--list-formats": ListNumberFormatsFidelityTest.Run(); skipSynthetic = true; break;   // only the list number-format / bullet checks against Word
+        case "--textbox-notes": TextBoxNotesTest.Run(); return TestReport.FailureCount == 0 ? 0 : 1;      // notes in text boxes / shapes only (seconds)
         case "--fidelity": fidelityOnly = true; break;                                  // only the small Word-fidelity checks (seconds)
         case "--page-width": pageWidthOnly = true; break;                               // only the page-text-width checks (+ --real files)                                  // only the small Word-fidelity checks (seconds)
         case "--incremental-open":                                                     // optional block count, default 1000000
@@ -187,6 +188,7 @@ if (realPaths.Count > 0) RealDocumentSmokeTest.Run(realPaths.Where(File.Exists))
 if (realPaths.Count > 0) CompactIndexTest.RunRecovery(realPaths.Where(path => File.Exists(path) && path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)));
 if (realPaths.Count > 0) CompactDocIndexTest.Run(realPaths.Where(path => File.Exists(path) && path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)));
 if (fidelityOnly || realPaths.Count > 0) NotesWindowTest.Run(realPaths.Where(File.Exists));
+if (fidelityOnly || realPaths.Count > 0) TextBoxNotesTest.Run();
 if (realPaths.Count > 0) WordCoexistenceTest.Run(realPaths.Where(File.Exists));
 if (realPaths.Any(path => path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)))
     DocBinaryListLabelsTest.Run(realPaths.Where(path => File.Exists(path) && path.EndsWith(".doc", StringComparison.OrdinalIgnoreCase)), listLabelsFallback ?? corpusList);

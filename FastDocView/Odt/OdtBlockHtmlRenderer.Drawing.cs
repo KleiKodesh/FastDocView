@@ -153,7 +153,7 @@ public sealed partial class OdtBlockHtmlRenderer
     private void AppendShape(XElement element, StringBuilder html)
     {
         List<OdtDrawnShape> drawn = ShapeBuilder.Build(element);
-        if (drawn.Count == 0) return;
+        if (drawn.Count == 0) { AppendUnshownNotes(element); return; }
         double left = double.MaxValue, top = double.MaxValue, right = double.MinValue, bottom = double.MinValue;
         void Take(double px, double py) { left = Math.Min(left, px); top = Math.Min(top, py); right = Math.Max(right, px); bottom = Math.Max(bottom, py); }
         foreach (OdtDrawnShape d in drawn)
@@ -208,11 +208,25 @@ public sealed partial class OdtBlockHtmlRenderer
                 (double mx, double my) = toPage.Apply(m.X, m.Y);
                 html.Append("<span class=\"word-shape-text\" style=\"position:absolute;left:").Append(Css(mx)).Append("pt;top:").Append(Css(my))
                     .Append("pt;white-space:nowrap;pointer-events:auto;transform:translate(-50%,-50%) rotate(").Append(Css(m.Rotation)).Append("deg);\">").Append(WordHtmlText.Encode(m.Text)).Append("</span></span>");
+                AppendUnshownNotes(d.Element);
                 continue;
             }
             if (d.HasText && d.Geometry is not { IsTextPath: true }) AppendShapeText(d, html, growth[k]);
+            else AppendUnshownNotes(d.Element);
         }
         WordShapeHtml.CloseFrame(html);
+    }
+
+    /// <summary>
+    /// Notes in shape text drawn without its paragraphs (Fontwork, a dimension line's label, a shape with nothing to draw): no
+    /// mark, but the scanner indexed them (top-level notes with a body), so their bodies still go to the notes pane and their
+    /// references are consumed in document order - else the block's later marks would take the wrong numbers.
+    /// </summary>
+    private void AppendUnshownNotes(XElement shape)
+    {
+        var unshownMarks = new StringBuilder();
+        foreach (XElement note in shape.Descendants(TextNs + "note").Where(note => !note.Ancestors(TextNs + "note").Any()).ToList())
+            AppendNote(note, unshownMarks);
     }
 
     private static string Matrix(WordAffine t) => string.Join(" ", new[] { t.A, t.B, t.C, t.D, t.E, t.F }.Select(v => (Math.Round(v, 6) == 0 ? 0 : v).ToString("0.######", CultureInfo.InvariantCulture)));

@@ -74,7 +74,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Notes-only render (a note's block body is built and dropped) | docx, odt | Speed item, not correctness | deferred |
 | Restart note numbering per page | docx, doc, rtf | Page-bound | planned (paged view) |
 | Note start value and per-section restart | docx (numStart / numRestart), doc (Dop) | Not read | deferred |
-| Notes inside text boxes / drawing text | odt/fodt | The drawing-text renderer skips text:note (OdtBlockHtmlRenderer.Drawing) | deferred |
+| Note mark inside Fontwork text | odt/fodt | Fontwork is drawn as plain text on a path; the note is in the pane only | won't do |
 | Note number format | doc | Always decimal; nfcFtnRef / nfcEdnRef not read | deferred |
 
 ## Fields

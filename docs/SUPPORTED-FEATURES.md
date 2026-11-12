@@ -149,12 +149,16 @@ Headers / footers, columns and page layout are not shown (flow view): see UNSUPP
 | Separator notes dropped | yes | yes | yes | n.a. | n.a. | n.a. |
 | Search inside notes (own notes search, apart from the main text) | yes | yes | yes | yes | n.a. | n.a. |
 | Notes inside table cells | yes | yes | yes | yes | n.a. | n.a. |
-| Notes inside text boxes | n.a. (N3) | n.a. (N3) | n.a. (N3) | no | n.a. | n.a. |
+| Notes inside text boxes, nested frames and shape text (mark in the body, pane, search, numbered in document order) | yes (N3) | n.a. (N3) | n.a. (N3) | yes (N4) | n.a. | n.a. |
 | Notes pane (app: one windowed scroller of all notes, click lands the note), hover tooltip (book view's link tooltip) | yes | yes | yes | yes | yes | partial (17) |
 
 N1. docx: settings.xml numFmt per kind is read; numStart and numRestart are not.
 N3. Word does not allow notes in text boxes: checked in Word 16 through COM (2026-11-10, test-data/word-tables/make-tables-fixtures.ps1):
     Footnotes.Add and Endnotes.Add on a text box's range both fail (0x800A172F), as the Insert Footnote command is off there.
+    A .docx written by another tool can still hold them (w:txbxContent, DrawingML or VML): shown like any other note.
+N4. LibreOffice drops a note in a text frame (sw thints.cxx SwTextNode::InsertHint, RES_TXTATR_FTN: only body text and split
+    frames keep footnotes) and will not load a file with one in a shape's text; we show what the file holds, numbered in
+    document order. A note in Fontwork text is in the pane but has no mark (Fontwork draws plain text).
 N2. .doc: always decimal from 1 (the Dop's nfcFtnRef / nFtn are not read).
 16. Torat Emet note lines only.
 17. Word's own HTML note links and texts are passed through.
