@@ -4961,3 +4961,23 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   without pHYs at the screen's dpi, so its fo:clip lengths depend on the machine: the fixture PNG carries 96 dpi.
 - Harness: `--picture-crop` (also in `--fidelity`): box, whole width and offset of the three pictures in .docx / .doc / .rtf /
   .odt against Word's PDF, the served bytes uncropped, a VML crop.
+
+## Chart layout: bottom legend room, 3-D value axes, Hebrew trend names (2026-11-12)
+
+- Bottom legends (Word layout): probes made from word-chart-fonts-v1 and odt-charts-v5 (legend filled and bordered or plain, 9 / 10 pt
+  legend, chart border on / off; Word only opened them and exported PDFs) moved nothing - no stored field drives it. The rule is
+  sizes: the legend baseline sits 10.3 pt + the font's usWinDescent x size above the chart's bottom (relative to the title; Calibri 550,
+  Arial 434, Times 443, Cambria 455 / 2048, read from the font files and generated into DocxChartFontWidths), and the bottom text
+  row's baseline 19.4 + 0.8 x (legend size - 9) pt above the legend's. Our category labels are drawn a third of their size below the
+  room kept for them, so vertical charts reserve that third too; with no category labels the axis keeps 2 pt more. The earlier
+  1.8 pt row shift fitted only the Word-made files, which is why the LibreOffice-written chart looked different.
+- 3-D value axis (Depth Column Chart): the spread was the scale, not the projection - Word adds no 5 % headroom to 3-D charts (data
+  to 5: axis 0..5 by 0.5; a 2-D chart goes to 6). Labels stay on the front-left edge (the back-wall edge measured worse: max 19 pt);
+  their gap from the axis follows the 2-D rule (8.2 pt without tick marks, 6.2 with). Max dy 29.9 -> 6.8 pt.
+- Trend names: Word's PDF of a chart with all six types (Hebrew Office 16): polynomial and moving average were wrong (now
+  U+05E4 05D5 05DC 05D9 05E0 05D5 05DE 05D9 05D0 05DC 05D9, and "2 " + U+05EA 05E7 05D5 05E4 05EA + moving average); the others
+  matched. English stays from memory. Word also showed R squared on trend lines with no c:dispRSqr (not drawn by us; not checked).
+- Harness: --chart-html <file> <out.html> writes a document's blocks for scripts/compare-chart-text-positions.py; Hebrew trend name
+  checks run with --charts / --fidelity.
+- Medians x / y: v3 .docx 1.21 / 1.58 -> 0.95 / 0.35, .doc 1.40 / 1.31 -> 1.39 / 1.12, RTF 1.42 / 1.36 -> 1.42 / 1.17,
+  odt-charts-v5.docx 0.65 / 0.30 -> 0.62 / 0.29, word-chart-fonts-v1 0.68 / 0.16 unchanged; ODT (LibreOffice layout) untouched.

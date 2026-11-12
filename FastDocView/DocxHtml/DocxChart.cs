@@ -82,6 +82,7 @@ internal sealed partial class DocxChart
     private string? _titleColor;
     private string? _legendColor;
     private string? _legendPosition;
+    private bool _bottomLegendRow;   // set by Svg: Word's legend row below the plot (DrawAxes keeps Word's room above it)
     private readonly HashSet<int> _deletedLegendEntries = new();
     private int _style = 2;
     private XElement? _chartSpaceProperties, _plotAreaProperties;
@@ -407,7 +408,8 @@ internal sealed partial class DocxChart
 
     /// <summary>
     /// Office's automatic trend line name, "type (series)", in the reader's interface language: Hebrew as a Hebrew Office writes it
-    /// (the linear name read from Word's PDFs; the others from memory, unchecked), else English (Excel's names, from memory).
+    /// (all six read from Word's PDF of a chart with every trend type, Hebrew Office 16, 2026-11-12), else English (Excel's names,
+    /// from memory: only a Hebrew Office is installed here, and the interface language is a registry setting we do not change).
     /// </summary>
     internal static string TrendLineName(string type, XElement trend, string seriesName)
     {
@@ -417,9 +419,9 @@ internal sealed partial class DocxChart
         {
             "exp" => hebrew ? "\u05DE\u05E2\u05E8\u05D9\u05DB\u05D9" : "Expon.",
             "log" => hebrew ? "\u05DC\u05D5\u05D2\u05E8\u05D9\u05EA\u05DE\u05D9" : "Log.",
-            "poly" => hebrew ? "\u05E4\u05D5\u05DC\u05D9\u05E0\u05D5\u05DE\u05D9" : "Poly.",
+            "poly" => hebrew ? "\u05E4\u05D5\u05DC\u05D9\u05E0\u05D5\u05DE\u05D9\u05D0\u05DC\u05D9" : "Poly.",
             "power" => hebrew ? "\u05D7\u05D6\u05E7\u05D4" : "Power",
-            "movingAvg" => hebrew ? period + " \u05DE\u05DE\u05D5\u05E6\u05E2 \u05E0\u05E2" : period + " per. Mov. Avg.",
+            "movingAvg" => hebrew ? period + " \u05EA\u05E7\u05D5\u05E4\u05EA \u05DE\u05DE\u05D5\u05E6\u05E2 \u05E0\u05E2" : period + " per. Mov. Avg.",
             _ => hebrew ? "\u05DC\u05D9\u05E0\u05D9\u05D0\u05E8\u05D9" : "Linear",
         };
         return kind + " (" + seriesName + ")";
@@ -537,6 +539,7 @@ internal sealed partial class DocxChart
             top = y + 8 + (_libreOfficeLayout ? 0 : TitleSize(0) * 0.35);   // Word leaves about a third of the title size more below it (measured on its PDFs: the top tick 18-19 pt below the title baseline)
         }
         List<(string Text, string Color, bool Line)> legend = LegendEntries();
+        _bottomLegendRow = false;
         if (legend.Count > 0)
         {
             double size = _legendSize, entryHeight = size * 13 / 9;
@@ -567,15 +570,19 @@ internal sealed partial class DocxChart
                 // the entry's start, the next entry 14.4 pt after the name, the row 1.8 pt lower; LibreOffice: 14 pt and 22 pt
                 double nameAt = _libreOfficeLayout ? 14 : 10.7, advance = _libreOfficeLayout ? 22 : 14.4;
                 double total = legend.Sum(e => TextWidth(e.Text, size) + advance) - (_libreOfficeLayout ? 0 : advance - nameAt);
-                double rowShift = _libreOfficeLayout || _legendPosition == "t" ? 0 : 1.8;
-                double x = Math.Max(left, width / 2 - total / 2), y = (_legendPosition == "t" ? top : bottom - entryHeight) + rowShift;
+                // Word's bottom row: the baseline 10.3 pt plus the font's own depth (usWinDescent) above the chart's bottom edge, as
+                // measured relative to the title on Word's PDFs (Calibri 9 / 10 pt and Arial 10 pt legends)
+                bool wordBottomRow = !_libreOfficeLayout && _legendPosition == "b";
+                double x = Math.Max(left, width / 2 - total / 2);
+                double y = wordBottomRow ? height - 10.3 - DocxChartFontWidths.Fonts[_chartFont].WinDescent * size - 9.3 : _legendPosition == "t" ? top : bottom - entryHeight;
                 foreach ((string text, string color, bool line) in legend)
                 {
                     LegendKey(svg, _libreOfficeLayout ? x : x + nameAt - 10.7, y, color, line);
                     Text(svg, x + nameAt, y + 8 + (_libreOfficeLayout ? 0 : 1.3), text, size, _legendColor ?? textColor, "start");
                     x += TextWidth(text, size) + advance;
                 }
-                if (_legendPosition == "t") top += entryHeight + 6; else bottom -= entryHeight + 6;
+                if (_legendPosition == "t") top += entryHeight + 6; else if (wordBottomRow) bottom = Math.Max(top + 1, y + 9.3 - 17.1); else bottom -= entryHeight + 6;
+                _bottomLegendRow = wordBottomRow;
             }
         }
         if (_plotLayout is { } manual) (left, top, right, bottom) = (manual.X * width, manual.Y * height, (manual.X + manual.W) * width, (manual.Y + manual.H) * height);
@@ -686,7 +693,9 @@ internal sealed partial class DocxChart
     {
         if (axis?.MajorUnit is > 0 && axis.Min is not null && axis.Max is not null) return null;
         double min = Math.Min(0, dataMin), max = Math.Max(0, dataMax);
-        if (!_libreOfficeLayout)
+        // Word's 3-D charts add none (its PDF of word-charts-binary-v3, Depth Column Chart: data to 5, axis 0..5 by 0.5, where a 2-D chart
+        // goes to 6)
+        if (!_libreOfficeLayout && !_is3D)
         {
             double span = max - min;
             if (max > 0) max += span * 0.05;
@@ -818,6 +827,12 @@ internal sealed partial class DocxChart
                               : MidCategory() && categoryAxis is not { NoLabels: true } && categories.Count > 0 ? categories[categories.Count - 1] : null;
             if (edgeLabel is { Length: > 0 }) right = Math.Max(left + 1, right - (10.8 - 6 + TextWidth(edgeLabel, labelSize) / 2));   // the right edge so far is the chart edge less 6 pt
         }
+        // Word, a legend row below the plot (its PDFs of word-charts-binary-v3, word-chart-fonts-v1 and odt-charts-v5 "Legend Below", and
+        // variants of them with a filled and bordered legend, a 10 pt legend, with and without a chart border, none of which moved it):
+        // the bottom text row's baseline sits 19.4 pt + 0.8 x (legend size - 9) above the legend's. Category labels, drawn a third of
+        // their size below the room kept for them, add that third; with no category labels the axis stays 2 pt higher still.
+        if (_bottomLegendRow && _plotLayout is null)
+            bottom = Math.Max(top + 1, bottom - 0.3 - 0.8 * (_legendSize - 9) - (horizontal || xy ? 0 : labelSize / 3 + (categoryAxis is null or { NoLabels: true } or { Deleted: true } ? 2 : 0)));
         if (horizontal) { bottom -= valueAxis is { NoLabels: true } ? 0 : labelSize + 4; left += categoryAxis is { NoLabels: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
         CategoryLabelPlan? categoryPlan = null;
         if (!horizontal)

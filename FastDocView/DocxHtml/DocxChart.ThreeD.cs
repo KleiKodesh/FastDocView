@@ -186,7 +186,7 @@ internal sealed partial class DocxChart
             svg.Append("<path d=\"M").Append(N(a.X)).Append(' ').Append(N(a.Y)).Append('L').Append(N(b.X)).Append(' ').Append(N(b.Y)).Append('L').Append(N(c.X)).Append(' ').Append(N(c.Y))
                .Append("\" fill=\"none\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
             if (horizontal) Text(svg, a.X, a.Y + labelSize + 2, text, labelSize, ValueAxis()?.LabelColor ?? textColor, "middle");
-            else Text(svg, a.X - 4, a.Y + labelSize / 3, text, labelSize, ValueAxis()?.LabelColor ?? textColor, "end");
+            else Text(svg, a.X - (_libreOfficeLayout ? 4 : ValueAxis()?.NoTickMarks == true ? 8.2 : 6.2), a.Y + labelSize / 3, text, labelSize, ValueAxis()?.LabelColor ?? textColor, "end");   // Word: as its 2-D value labels
         }
         if (showCategories)
             for (int i = 0; i < categoryCount; i++)

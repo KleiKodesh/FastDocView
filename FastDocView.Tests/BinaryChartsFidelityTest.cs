@@ -85,6 +85,29 @@ public static class BinaryChartsFidelityTest
         TestReport.Check(pictures >= 14 && placeholders == 0, "rtf: the 14 non-chart objects drawn as their preview pictures (" + pictures + " pictures, " + placeholders + " object placeholders)");
     }
 
+    /// <summary>--chart-html &lt;file&gt; &lt;out.html&gt;: every block of a document as HTML, for scripts/compare-chart-text-positions.py.</summary>
+    public static void WriteHtml(string path, string output) => File.WriteAllText(output, string.Concat(Render(path)));
+
+    /// <summary>Office's automatic trend line names in a Hebrew interface, as Word 16 printed them (its PDF of a chart with all six types, 2026-11-12; code points).</summary>
+    public static void RunTrendNames()
+    {
+        TestReport.Step("Charts: trend line legend names as a Hebrew Office writes them");
+        var saved = System.Globalization.CultureInfo.CurrentUICulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentUICulture = new System.Globalization.CultureInfo("he-IL");
+            var poly = new System.Xml.Linq.XElement("trendline");
+            var moving = new System.Xml.Linq.XElement("trendline", new System.Xml.Linq.XElement("period", new System.Xml.Linq.XAttribute("val", "2")));
+            (string Type, System.Xml.Linq.XElement Trend, string Name)[] cases =
+            [
+                ("exp", poly, "\u05DE\u05E2\u05E8\u05D9\u05DB\u05D9"), ("log", poly, "\u05DC\u05D5\u05D2\u05E8\u05D9\u05EA\u05DE\u05D9"), ("poly", poly, "\u05E4\u05D5\u05DC\u05D9\u05E0\u05D5\u05DE\u05D9\u05D0\u05DC\u05D9"), ("power", poly, "\u05D7\u05D6\u05E7\u05D4"), ("movingAvg", moving, "2 \u05EA\u05E7\u05D5\u05E4\u05EA \u05DE\u05DE\u05D5\u05E6\u05E2 \u05E0\u05E2"), ("linear", poly, "\u05DC\u05D9\u05E0\u05D9\u05D0\u05E8\u05D9"),
+            ];
+            foreach ((string type, System.Xml.Linq.XElement trend, string name) in cases)
+                TestReport.Check(FastDocView.DocxHtml.DocxChart.TrendLineName(type, trend, "S1") == name + " (S1)", "Hebrew trend name: " + type);
+        }
+        finally { System.Globalization.CultureInfo.CurrentUICulture = saved; }
+    }
+
     private static List<string> Render(string path)
     {
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache") };
