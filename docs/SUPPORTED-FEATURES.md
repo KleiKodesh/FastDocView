@@ -188,10 +188,10 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 | Floating pictures: square, tight, top-and-bottom wrap, offsets | yes | yes | yes | yes | n.a. | n.a. |
 | Contour wrap from the wrap polygon | yes | yes | yes | yes | n.a. | n.a. |
 | Two-sided wrap (floats flush to its nearer edge; contour as shape-outside) | yes (18) | yes (18) | yes (18) | yes (18) | n.a. | n.a. |
-| Cropping | no | partial (19) | no | no | n.a. | n.a. |
+| Cropping, negative crop (padding) included (19) | yes | yes | yes | yes | n.a. | n.a. |
 
 18. CSS cannot put text on both sides of one float, so the object floats flush to the nearer edge of its section's text width (page / right-margin offsets converted first) and wraps one side, as a contour where it has one.
-19. .doc crops change the shown size only; the picture is not clipped.
+19. a:srcRect and VML croptop..., OfficeArt cropFrom* (and the PICF crop fields), \piccrop*, fo:clip: the box keeps the shown size and hides what overflows; the whole picture inside is scaled and offset, as Word 16 draws it in its PDF.
 
 ## Shapes, WordArt, text boxes
 

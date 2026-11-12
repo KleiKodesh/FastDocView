@@ -39,7 +39,26 @@ public readonly record struct WordPictureLayout(double WidthPt, double HeightPt,
                                                 double TopPt, double RightPt, double BottomPt, double LeftPt, double OffsetPt = 0,
                                                 WordPictureTextSides TextSides = WordPictureTextSides.Both,
                                                 IReadOnlyList<IReadOnlyList<(double X, double Y)>>? Contour = null, double ColumnWidthPt = 0,
-                                                WordPictureOffsetOrigin OffsetOrigin = WordPictureOffsetOrigin.Column, double ColumnLeftPt = -1);
+                                                WordPictureOffsetOrigin OffsetOrigin = WordPictureOffsetOrigin.Column, double ColumnLeftPt = -1,
+                                                WordPictureCrop Crop = default);
+
+/// <summary>
+/// The part of a picture that shows, as fractions of the picture's own width / height cut from each side (DrawingML a:srcRect,
+/// VML croptop..., OfficeArt cropFrom*, .doc PICF / RTF \piccrop lengths over the original size, ODF fo:clip lengths over the
+/// picture's own size). Positive cuts the picture; negative adds empty space on that side (Word's crop "fill": Word 16's PDF
+/// draws the picture at its own scale inside the larger box, offset by the padding). The box keeps the shown size; the
+/// picture inside is scaled to box / (1 - left - right) and offset by the left / top crop.
+/// </summary>
+public readonly record struct WordPictureCrop(double Left, double Top, double Right, double Bottom)
+{
+    /// <summary>Whether this crop changes the drawing: some side set, and something of the picture left to show.</summary>
+    public bool IsDrawable => (Left != 0 || Top != 0 || Right != 0 || Bottom != 0) && Left + Right < 1 && Top + Bottom < 1
+                              && !double.IsNaN(Left + Top + Right + Bottom) && !double.IsInfinity(Left + Top + Right + Bottom);
+
+    /// <summary>A crop given as lengths over the picture's original size (any one unit); default when that size is unknown.</summary>
+    public static WordPictureCrop FromLengths(double left, double top, double right, double bottom, double originalWidth, double originalHeight)
+        => originalWidth > 0 && originalHeight > 0 ? new(left / originalWidth, top / originalHeight, right / originalWidth, bottom / originalHeight) : default;
+}
 
 /// <summary>
 /// What a floating object's <see cref="WordPictureLayout.OffsetPt"/> counts from: the text column (or its margin edge - the same
@@ -80,6 +99,11 @@ public static class WordPictureHtml
             css.Append("aspect-ratio:").Append(Points(layout.WidthPt)).Append('/').Append(Points(layout.HeightPt)).Append(';');
         else if (layout.HeightPt > 0) css.Append("height:").Append(Points(layout.HeightPt)).Append("pt;");
         AppendPlacement(css, layout);
+        if (pictureId is not null && layout.Crop.IsDrawable && layout.WidthPt > 0 && layout.HeightPt > 0)
+        {
+            AppendCropped(html, layout, pictureId, css);
+            return;
+        }
         if (pictureId is not null)
         {
             html.Append("<img class=\"word-picture\" alt=\"\" ").Append(PictureIdAttribute).Append("=\"").Append(WordHtmlText.Encode(pictureId)).Append('"');
@@ -90,6 +114,29 @@ public static class WordPictureHtml
         else
             html.Append("<span class=\"word-picture word-picture-missing\" style=\"").Append(css).Append("\">[image]</span>");
     }
+
+    /// <summary>
+    /// A cropped picture (<see cref="WordPictureCrop"/>): a box at the shown size and placement that hides what overflows, the
+    /// picture inside at its whole size - width (box / (1 - left - right)) and aspect ratio in percent of the box, so the two
+    /// shrink together when the column is narrower - pulled left / up by the left / top crop (a negative crop pushes it in).
+    /// Margins in percent count from the box's width, so the top offset is scaled by height / width.
+    /// The box is left to right: in a right-to-left paragraph a block wider than its box would line up on the right instead.
+    /// </summary>
+    private static void AppendCropped(StringBuilder html, WordPictureLayout layout, string pictureId, StringBuilder boxCss)
+    {
+        WordPictureCrop crop = layout.Crop;
+        double shownWidth = 1 - crop.Left - crop.Right, shownHeight = 1 - crop.Top - crop.Bottom;
+        double wholeWidthPt = layout.WidthPt / shownWidth, wholeHeightPt = layout.HeightPt / shownHeight;
+        html.Append("<span class=\"word-picture word-picture-crop\" style=\"display:inline-block;overflow:hidden;direction:ltr;").Append(boxCss).Append("\">")
+            .Append("<img alt=\"\" ").Append(PictureIdAttribute).Append("=\"").Append(WordHtmlText.Encode(pictureId)).Append('"')
+            .Append(" width=\"").Append(Pixels(wholeWidthPt)).Append("\" height=\"").Append(Pixels(wholeHeightPt)).Append('"')
+            .Append(" loading=\"lazy\" decoding=\"async\" style=\"display:block;max-width:none;height:auto;width:").Append(Signed(100 / shownWidth))
+            .Append("%;aspect-ratio:").Append(Points(wholeWidthPt)).Append('/').Append(Points(wholeHeightPt))
+            .Append(";margin:").Append(Signed(-crop.Top / shownHeight * layout.HeightPt / layout.WidthPt * 100)).Append("% 0 0 ")
+            .Append(Signed(-crop.Left / shownWidth * 100)).Append("%\"></span>");
+    }
+
+    private static string Signed(double value) => (Math.Abs(value) < 0.0005 ? 0 : value).ToString("0.###", CultureInfo.InvariantCulture);
 
     /// <summary>The float / block / margin CSS of an object placed as <see cref="WordPictureHtml"/> describes (pictures, text boxes, shapes share it).</summary>
     public static void AppendPlacement(StringBuilder css, WordPictureLayout layout)

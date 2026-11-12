@@ -4939,3 +4939,25 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   Word-made and LibreOffice-written files: both legendPos b, overlay 0, no manualLayout; the LibreOffice one has a filled,
   bordered legend), the 3-D value-axis spread (Depth Column Chart, up to 30 pt).
 
+
+## Picture cropping in every format (2026-11-12)
+
+- One model, `WordPictureCrop`: fractions of the picture's own width / height cut from each side, negative = empty padding
+  (Word's crop "fill"). `WordPictureHtml` draws a cropped picture as a box at the shown size with overflow hidden and the
+  whole picture inside at width box / (1 - left - right) and the box's aspect, pulled by the left / top crop - all in percent
+  of the box, so it shrinks with a narrow column. The served picture stays the whole one.
+- Word 16's PDF (test-data/word-picture-crop/picture-crop-v1.pdf) bakes a cut into the image (140 x 70 of 200 x 100 px) and draws
+  a padded one whole at its scale, offset inside the bigger clip box (+15 / +7.5 pt) - the model above.
+- Where each format keeps it: .docx a:srcRect l/t/r/b in 1000ths of a percent of pic:blipFill (LibreOffice
+  fillproperties.cxx:108-117, misccontexts.cxx:445); VML v:imagedata croptop... "Nf" = N / 65536 (vmlshapecontext.cxx:460-464,
+  vmlshape.cxx:118-128; a plain fraction is read too); .doc: Word 16 writes the OfficeArt cropFromTop/Bottom/Left/Right (256-259,
+  signed 16.16, msdffdef.hxx:131-134) in the inline picture's own SpContainer and leaves the PICF crop fields 0 (the size comes
+  from mx / my) - read as LibreOffice reads OfficeArt pictures (ww8graf2.cxx:524-685, ww8graf.cxx:2166-2222, whole parts >= 50
+  dropped), else the PICF dxaCrop* over the goal size (ww8graf2.cxx:303-318, 431); floating shapes the same properties.
+  RTF \piccropl/t/r/b in twips over \picwgoal, taken off before \picscale (rtfdispatchvalue.cxx:1193-1204,
+  rtfdocumentimpl.cxx:1163-1171) - the shown size was the uncropped goal before. Word's RTF rounds \picscale to whole percents
+  (99 for 99.94), so its padded picture is 1 % smaller. ODF fo:clip rect(top, right, bottom, left) on the frame's graphic style,
+  lengths over the picture's own size from its header (xmloff XMLClipPropertyHandler.cxx:60-107). LibreOffice sizes a PNG
+  without pHYs at the screen's dpi, so its fo:clip lengths depend on the machine: the fixture PNG carries 96 dpi.
+- Harness: `--picture-crop` (also in `--fidelity`): box, whole width and offset of the three pictures in .docx / .doc / .rtf /
+  .odt against Word's PDF, the served bytes uncropped, a VML crop.

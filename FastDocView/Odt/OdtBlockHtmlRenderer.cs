@@ -447,7 +447,35 @@ public sealed partial class OdtBlockHtmlRenderer
             if (WordPictureHtml.ContentTypeOf(part) is not null) pictureId = PackagePicturePrefix + part;
         }
         double width = Points((string?)frame.Attribute(SvgNs + "width")), height = Points((string?)frame.Attribute(SvgNs + "height"));
-        WordPictureHtml.Append(html, WithContour(frame, Placement(frame, width, height), width, height, null), pictureId);
+        WordPictureLayout layout = WithContour(frame, Placement(frame, width, height), width, height, null);
+        if (pictureId is not null && GraphicProperty(frame, OdtStyleCascade.Fo + "clip") is { } clip && ClipLengths(clip) is { } lengths
+            && PictureSizeOf(pictureId) is { } size)
+            layout = layout with { Crop = WordPictureCrop.FromLengths(lengths.Left, lengths.Top, lengths.Right, lengths.Bottom, size.W, size.H) };
+        WordPictureHtml.Append(html, layout, pictureId);
+    }
+
+    /// <summary>
+    /// fo:clip "rect(top, right, bottom, left)" (ODF 1.3 part 3 20.179; ODF 1.0 wrote it without commas) in points: lengths cut
+    /// from the picture's own size, negative = padding, "auto" = 0 - as LibreOffice reads it (xmloff
+    /// XMLClipPropertyHandler.cxx:60-107: comma or space separated, exactly four values, and a value over 400000 hundredths of
+    /// a millimetre ignored as nonsense). Null when it is not such a rect.
+    /// </summary>
+    internal static (double Top, double Right, double Bottom, double Left)? ClipLengths(string clip)
+    {
+        clip = clip.Trim();
+        if (clip.Length <= 6 || !clip.StartsWith("rect(", StringComparison.Ordinal) || clip[clip.Length - 1] != ')') return null;
+        string inner = clip.Substring(5, clip.Length - 6);
+        string[] parts = inner.Split(new[] { inner.IndexOf(',') >= 0 ? ',' : ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 4) return null;
+        var points = new double[4];
+        for (int i = 0; i < 4; i++)
+        {
+            string part = parts[i].Trim();
+            if (part == "auto") continue;
+            if (OdtStyleCascade.Twips(part) is not { } twips) return null;
+            points[i] = Math.Abs(twips) > 400000 * 72 * 20 / 2540.0 ? 0 : twips / 20.0;
+        }
+        return (points[0], points[1], points[2], points[3]);
     }
 
     private static double Points(string? length) => length is not null && OdtStyleCascade.Twips(length) is { } twips ? twips / 20.0 : 0;

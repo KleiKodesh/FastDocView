@@ -24,13 +24,13 @@ public static class DocxWordArtFidelityTest
         string vml = $"<w:p><w:r><w:pict {Namespaces}><v:shape type=\"#_x0000_t136\" style=\"width:216pt;height:72pt\" fillcolor=\"blue\" stroked=\"f\">"
             + "<v:textpath style=\"font-family:&quot;Arial Black&quot;\" string=\"VmlArt\"/></v:shape></w:pict></w:r></w:p>"
             + "<w:p><w:r><mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice Requires=\"wps\"><w:t>choice</w:t></mc:Choice><mc:Fallback><w:pict " + Namespaces + "><v:shape type=\"#_x0000_t136\" style=\"width:72pt;height:36pt\"><v:textpath string=\"FallbackArt\"/></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>";
-        // a footnote holding VML WordArt: its textpath string makes the referencing block a hit
+        // a footnote holding VML WordArt: its textpath string is found by the notes search, not as a hit on the referencing block
         string footnotes = "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:id=\"1\"><w:p><w:r><w:pict " + Namespaces + "><v:shape type=\"#_x0000_t136\" style=\"width:72pt;height:36pt\"><v:textpath string=\"NoteArt\"/></v:shape></w:pict></w:r></w:p></w:footnote>";
         vml += "<w:p><w:r><w:t>noted</w:t></w:r><w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>";
         List<string> html = DocxFidelityTest.RenderAll("wordart", drawingMl + vml, footnotes: footnotes,
             inspect: document =>
             {
-                foreach ((string text, int expected) in new[] { ("Arched", 1), ("VmlArt", 1), ("FallbackArt", 0), ("NoteArt", 1) })
+                foreach ((string text, int expected) in new[] { ("Arched", 1), ("VmlArt", 1), ("FallbackArt", 0), ("NoteArt", 0) })
                 {
                     int hits = 0;
                     for (int from = 0; from < document.BlockCount;)
@@ -52,6 +52,9 @@ public static class DocxWordArtFidelityTest
                         }
                     TestReport.Check(referenceHits == expected, "reference reader: \"" + text + "\" found " + expected + " time(s) (" + referenceHits + ")");
                 }
+                // A note's WordArt is searched with the notes (SearchNotes, over the rendered note), never as a hit on the text.
+                int noteHits = document.SearchNotes("NoteArt", WordDocumentSearchOptions.Default, 0, 100).HitCounts.Sum();
+                TestReport.Check(noteHits == 1, "notes search: a note's WordArt text found once (" + noteHits + ")");
             });
         // textArchUp -> fontwork-arch-up-curve -> mso_sptTextArchUpCurve 144 (presetgeometrynames.cxx, EnhancedCustomShapeTypeNames.cxx, msdffdef.hxx)
         TestReport.Check(html[0].Contains("<textPath") && html[0].Contains(">Arched</textPath>") && html[0].Contains("fill=\"#FF0000\"") && html[0].Contains("font-family=\"Impact\"")

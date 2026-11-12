@@ -55,7 +55,7 @@ public sealed class OdtStyleCascade
     public static readonly HashSet<string> HandledGraphicProperties =
     [
         "style:wrap", "style:horizontal-pos", "style:horizontal-rel", "fo:margin", "fo:margin-left", "fo:margin-right", "fo:margin-top",
-        "fo:margin-bottom", "text:anchor-type", "style:vertical-pos", "style:vertical-rel",
+        "fo:margin-bottom", "text:anchor-type", "style:vertical-pos", "style:vertical-rel", "fo:clip",
         // text boxes and shapes (ODF 1.3 part 3 20.118 draw:fill, 20.119 draw:fill-color, 20.120 draw:fill-gradient-name,
         // 20.167 draw:stroke, 20.408 svg:stroke-color, 20.410 svg:stroke-width; fo:padding / fo:border / fo:background-color)
         "draw:fill", "draw:fill-color", "draw:fill-gradient-name", "draw:stroke", "svg:stroke-color", "svg:stroke-width",

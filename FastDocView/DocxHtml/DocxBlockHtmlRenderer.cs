@@ -1161,7 +1161,25 @@ public sealed class DocxBlockHtmlRenderer
         return new WordPictureLayout(width, height, pictureWrap, side, Emu("distT"), Emu("distR"), Emu("distB"), Emu("distL"), offset,
                                      TextSidesOf((string?)picture.Attribute("wrapText")),
                                      WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs((string?)picture.Attribute("wrapPolygon")), width, height),
-                                     ColumnWidthPt, OriginOfDrawing((string?)picture.Attribute("relativeFrom")), ColumnLeftPt);
+                                     ColumnWidthPt, OriginOfDrawing((string?)picture.Attribute("relativeFrom")), ColumnLeftPt,
+                                     new WordPictureCrop(Emu("cropl") * EmuPerPoint / SourceRectangleWhole, Emu("cropt") * EmuPerPoint / SourceRectangleWhole,
+                                                         Emu("cropr") * EmuPerPoint / SourceRectangleWhole, Emu("cropb") * EmuPerPoint / SourceRectangleWhole));
+    }
+
+    /// <summary>a:srcRect's whole side: 100000 (1000ths of a percent; LibreOffice fillproperties.cxx:108-117 divides by MAX_PERCENT).</summary>
+    private const double SourceRectangleWhole = 100000;
+
+    /// <summary>
+    /// A VML v:imagedata crop fraction: "Nf" = N / 65536 (LibreOffice vmlshape.cxx:118-128 lclConvertCrop, which reads only
+    /// this form) or a plain fraction (VML's own notation, kept by Word's web archives); 0 when absent or unreadable.
+    /// </summary>
+    private static double VmlCropFraction(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return 0;
+        string text = value!.Trim();
+        bool isFixed = text.EndsWith("f", StringComparison.Ordinal);
+        return double.TryParse(isFixed ? text.Substring(0, text.Length - 1) : text, NumberStyles.Float, CultureInfo.InvariantCulture, out double number)
+            ? isFixed ? number / 65536 : number : 0;
     }
 
     /// <summary>
@@ -1240,7 +1258,9 @@ public sealed class DocxBlockHtmlRenderer
                                      Length("mso-wrap-distance-bottom"), Length("mso-wrap-distance-left"), offset,
                                      TextSidesOf((string?)picture.Attribute("wrapText")),
                                      WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs(coords), width, height),
-                                     ColumnWidthPt, OriginOfVml(style.TryGetValue("mso-position-horizontal-relative", out string? relative) ? relative : null), ColumnLeftPt);
+                                     ColumnWidthPt, OriginOfVml(style.TryGetValue("mso-position-horizontal-relative", out string? relative) ? relative : null), ColumnLeftPt,
+                                     new WordPictureCrop(VmlCropFraction((string?)picture.Attribute("vmlcropleft")), VmlCropFraction((string?)picture.Attribute("vmlcroptop")),
+                                                         VmlCropFraction((string?)picture.Attribute("vmlcropright")), VmlCropFraction((string?)picture.Attribute("vmlcropbottom"))));
     }
 
     /// <summary>

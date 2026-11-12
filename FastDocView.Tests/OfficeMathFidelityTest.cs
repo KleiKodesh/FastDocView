@@ -263,10 +263,13 @@ public static class OfficeMathFidelityTest
         foreach (string query in new[] { "x=1", "y=22" })
             TestReport.Check(document.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length > 0, $"{format}: search reads an equation array row without its '&' alignment marks (\"{query}\")");
         TestReport.Check(document.Search("&=", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0, $"{format}: search does not find the hidden '&'");
-        foreach (string query in format == ".rtf" ? new[] { "tablemath", "notemath", "boxmath", "sin", "red" } : new[] { "tablemath", "notemath", "boxmath", "sin", "red", "forall\u2200" })
+        foreach (string query in format == ".rtf" ? new[] { "tablemath", "boxmath", "sin", "red" } : new[] { "tablemath", "boxmath", "sin", "red", "forall\u2200" })
         {
             WordDocumentSearchBatch result = document.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount);
             TestReport.Check(result.HitBlocks.Length > 0, $"{format}: search finds equation text \"{query}\"");
         }
+        // a footnote's equation: found by the notes search (over the rendered note), never as a hit on the text
+        TestReport.Check(document.Search("notemath", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0, $"{format}: a note's equation is not a hit on the text");
+        TestReport.Check(document.SearchNotes("notemath", WordDocumentSearchOptions.Default, 0, 1000).HitCounts.Sum() > 0, $"{format}: the notes search finds a footnote's equation text");
     }
 }

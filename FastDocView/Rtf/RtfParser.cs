@@ -1251,7 +1251,7 @@ internal sealed class RtfParser
     /// <summary>A {\pict} group's body up to its closing brace (consumed; the group is not popped), and whether it closed.</summary>
     private (RtfPicture picture, bool isClosed) ReadPictureBody(bool keepsData)
     {
-        int depth = 1, goalWidth = 0, goalHeight = 0, scaleX = 100, scaleY = 100, high = -1;
+        int depth = 1, goalWidth = 0, goalHeight = 0, scaleX = 100, scaleY = 100, high = -1, cropLeft = 0, cropTop = 0, cropRight = 0, cropBottom = 0;
         bool isClosed = false;
         string extension = "";
         MemoryStream? data = keepsData ? new MemoryStream() : null;
@@ -1283,6 +1283,10 @@ internal sealed class RtfParser
                     case "pichgoal": goalHeight = value; break;
                     case "picscalex": scaleX = value; break;
                     case "picscaley": scaleY = value; break;
+                    case "piccropl": cropLeft = value; break;
+                    case "piccropt": cropTop = value; break;
+                    case "piccropr": cropRight = value; break;
+                    case "piccropb": cropBottom = value; break;
                     case "pngblip": extension = ".png"; break;
                     case "jpegblip": extension = ".jpg"; break;
                     case "dibitmap": extension = ".dib"; break;          // a DIB without its file header (RTF 1.5 spec \dibitmapN)
@@ -1299,10 +1303,14 @@ internal sealed class RtfParser
             if (high < 0) high = digit; else { data.WriteByte((byte)(high << 4 | digit)); high = -1; }
         }
         // \picw / \pich are the picture's own extent (pixels for bitmaps), not the shown size: without a goal size the
-        // picture keeps its natural size (0 here).
-        int shownWidth = goalWidth > 0 ? (int)((long)goalWidth * scaleX / 100) : 0;
-        int shownHeight = goalHeight > 0 ? (int)((long)goalHeight * scaleY / 100) : 0;
-        return (new RtfPicture(shownWidth, shownHeight, extension, data?.ToArray()), isClosed);
+        // picture keeps its natural size (0 here). \piccropl / t / r / b (twips over the goal size, negative = padding) take
+        // their part off it before the scale - LibreOffice rtfdispatchvalue.cxx:1193-1204 hands them on as the picture's
+        // srcRect (rtfdocumentimpl.cxx:1163-1171), Word 16 writes \picwgoal3000 \piccropl300 \piccropr600 for a 105 pt wide
+        // picture at \picscalex100 (test-data/word-picture-crop, its PDF draws the box 105 pt wide).
+        int shownWidth = goalWidth > 0 ? (int)((long)Math.Max(1, goalWidth - cropLeft - cropRight) * scaleX / 100) : 0;
+        int shownHeight = goalHeight > 0 ? (int)((long)Math.Max(1, goalHeight - cropTop - cropBottom) * scaleY / 100) : 0;
+        var crop = Html.WordPictureCrop.FromLengths(cropLeft, cropTop, cropRight, cropBottom, goalWidth, goalHeight);
+        return (new RtfPicture(shownWidth, shownHeight, extension, data?.ToArray(), Crop: crop), isClosed);
     }
 
     /// <summary>

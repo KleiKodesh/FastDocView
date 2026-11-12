@@ -45,6 +45,7 @@ internal sealed class DocBinaryFloatingPictures
     private List<(uint offset, bool insideTable)>? _blips;
     private Dictionary<uint, (long start, long end, bool isGroup)>? _containerBySpid;
     private HashSet<uint>? _textBoxSpids;
+    private Dictionary<uint, WordPictureCrop>? _cropBySpid;
     private readonly DocBinaryTextBoxStories _stories;
 
     /// <param name="isHeader">
@@ -142,7 +143,8 @@ internal sealed class DocBinaryFloatingPictures
         bool located = _containerBySpid!.TryGetValue(fspa.spid, out var container);
         if (located && container.isGroup) return null;                                                        // a group is a drawing
         if (_textBoxSpids!.Contains(fspa.spid)) return null;                                                  // a picture with a text box too
-        return (located ? WithContour(LayoutOf(fspa), fspa.flags, container, null) : LayoutOf(fspa), IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        WordPictureLayout layout = LayoutOf(fspa) with { Crop = _cropBySpid!.TryGetValue(fspa.spid, out WordPictureCrop crop) ? crop : default };
+        return (located ? WithContour(layout, fspa.flags, container, null) : layout, IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     /// <summary>The id prefix of a fill picture: the BStore index (1-based) of a shape's fillBlip.</summary>
@@ -234,6 +236,7 @@ internal sealed class DocBinaryFloatingPictures
         _blips = [];
         _containerBySpid = [];
         _textBoxSpids = [];
+        _cropBySpid = [];
         (uint offset, uint length) = _drawing;
         Stream table = _tableStream;
         long end = Math.Min(table.Length, offset + (long)length);
@@ -312,12 +315,17 @@ internal sealed class DocBinaryFloatingPictures
         return null;
     }
 
-    /// <summary>One SpContainer: its spid, pib and whether it has a text box (lTxid 128); returns the spid.</summary>
+    /// <summary>
+    /// One SpContainer: its spid, pib, crop and whether it has a text box (lTxid 128); returns the spid. The crop is
+    /// <see cref="DocBinaryPictures.ShapeCrop"/>, as LibreOffice reads it for a floating picture (msdffimp.cxx:5607-5614,
+    /// ww8graf.cxx:2166-2221 lcl_ConvertCrop).
+    /// </summary>
     private uint? ReadShape(long position, long end)
     {
         bool hasText = false;
         uint? spid = null;
         int? pib = null;
+        long start = position;
         while (position + 8 <= end)
         {
             if (DocBinaryPictures.RecordHeader(_tableStream, position) is not { } record) return spid;
@@ -339,6 +347,7 @@ internal sealed class DocBinaryFloatingPictures
         }
         if (spid is { } shapeId && pib is { } blipIndex) _pibBySpid![shapeId] = blipIndex;
         if (spid is { } textShape && hasText) _textBoxSpids!.Add(textShape);
+        if (spid is { } croppedShape && pib is not null && DocBinaryPictures.ShapeCrop(_tableStream, start, end) is { IsDrawable: true } shapeCrop) _cropBySpid![croppedShape] = shapeCrop;
         return spid;
     }
 }

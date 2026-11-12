@@ -1066,7 +1066,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
             return;
         }
         if (Pictures.Locate(location) is { } picture)
-            WordPictureHtml.Append(html, new WordPictureLayout(picture.widthPt, picture.heightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0),
+            WordPictureHtml.Append(html, new WordPictureLayout(picture.widthPt, picture.heightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0, Crop: picture.crop),
                                    location.ToString(System.Globalization.CultureInfo.InvariantCulture));
         else html.Append("<span class=\"unsupported\">[image]</span>");
     }

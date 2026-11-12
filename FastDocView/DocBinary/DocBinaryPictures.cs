@@ -27,8 +27,15 @@ internal sealed class DocBinaryPictures
 
     public DocBinaryPictures(Stream? dataStream) => _dataStream = dataStream;
 
-    /// <summary>A picture's shown size (points) and where its blip's data lies in the Data stream; null when it is not a shown PNG / JPEG.</summary>
-    public (double widthPt, double heightPt, long dataAt, int dataLength, string extension)? Locate(uint pictureLocation)
+    /// <summary>
+    /// A picture's shown size (points), its crop and where its blip's data lies in the Data stream; null when it is not a shown
+    /// PNG / JPEG. The crop: the picture's OfficeArt cropFrom* properties when its shape has them - where Word 16 keeps it
+    /// (test-data/word-picture-crop: PICF crops 0, the size by mx / my) and LibreOffice reads it for an OfficeArt picture
+    /// (ww8graf2.cxx:524-685 ImportObj, then SetAttributesAtGrfNode, ww8graf.cxx:2180-2222) - else the PICF's dxaCropLeft /
+    /// dyaCropTop / dxaCropRight / dyaCropBottom (twips over the goal size, negative = padding; ww8graf2.cxx:303-318
+    /// WW8PicDesc, :431 SwCropGrf).
+    /// </summary>
+    public (double widthPt, double heightPt, long dataAt, int dataLength, string extension, WordPictureCrop crop)? Locate(uint pictureLocation)
     {
         Stream? data = _dataStream;
         if (data is null || pictureLocation + 0x44L > data.Length) return null;
@@ -43,6 +50,7 @@ internal sealed class DocBinaryPictures
         double goalWidth = Twips(0x1C) - Twips(0x24) - Twips(0x28), goalHeight = Twips(0x1E) - Twips(0x26) - Twips(0x2A);
         double widthPt = Math.Max(1, goalWidth) * BitConverter.ToUInt16(header, 0x20) / 1000 / 20;
         double heightPt = Math.Max(1, goalHeight) * BitConverter.ToUInt16(header, 0x22) / 1000 / 20;
+        WordPictureCrop crop = WordPictureCrop.FromLengths(Twips(0x24), Twips(0x26), Twips(0x28), Twips(0x2A), Twips(0x1C), Twips(0x1E));
 
         long position = pictureLocation + cbHeader, end = pictureLocation + (long)lcb;
         if (mm == 0x66)
@@ -53,6 +61,7 @@ internal sealed class DocBinaryPictures
         }
         // the OfficeArtSpContainer, then the records after it: the first FBSE holds the blip
         if (RecordHeader(data, position) is not { Type: 0xF004 } shape) return null;
+        if (ShapeCrop(data, position + 8, Math.Min(end, position + 8 + shape.Length)) is { } shapeCrop) crop = shapeCrop;
         position += 8 + shape.Length;
         while (position + 8 <= end)
         {
@@ -60,7 +69,7 @@ internal sealed class DocBinaryPictures
             if (record.Type == 0xF007 && record.Length >= FbseBlipOffset + 8)
             {
                 if (Blip(data, position + 8 + FbseBlipOffset) is not { } blip) return null;
-                return (widthPt, heightPt, blip.dataAt, blip.dataLength, blip.extension);
+                return (widthPt, heightPt, blip.dataAt, blip.dataLength, blip.extension, crop);
             }
             position += 8 + record.Length;
         }
@@ -110,6 +119,36 @@ internal sealed class DocBinaryPictures
                         return System.Text.Encoding.UTF8.GetString(table, (int)complexAt, (int)value);
                     if (isComplex) complexAt += value;
                 }
+            }
+            position += 8 + record.Length;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The cropFromTop / Bottom / Left / Right properties (msdffdef.hxx:131-134, ids 256-259: signed 16.16 fractions of the
+    /// picture) of the FOPT in the SpContainer body [<paramref name="start"/>, <paramref name="end"/>); null when it sets none.
+    /// A whole part of 50 or more is dropped as LibreOffice drops it (ww8graf.cxx:2169-2174, values old OOo mangled).
+    /// </summary>
+    internal static WordPictureCrop? ShapeCrop(Stream data, long start, long end)
+    {
+        for (long position = start; position + 8 <= end;)
+        {
+            if (RecordHeader(data, position) is not { } record) return null;
+            if (record.Type == 0xF00B)
+            {
+                byte[] table = Read(data, position + 8, (int)Math.Min(record.Length, (long)record.Instance * 6));
+                double[] crop = new double[4];   // top, bottom, left, right
+                bool isSet = false;
+                for (int i = 0; i + 6 <= table.Length; i += 6)
+                {
+                    int property = BitConverter.ToUInt16(table, i) & 0x3FFF;
+                    if (property is < 256 or > 259) continue;
+                    int value = BitConverter.ToInt32(table, i + 2);
+                    crop[property - 256] = Math.Abs(value >> 16) >= 50 ? 0 : value / 65536.0;
+                    isSet = true;
+                }
+                return isSet ? new WordPictureCrop(crop[2], crop[0], crop[3], crop[1]) : null;
             }
             position += 8 + record.Length;
         }

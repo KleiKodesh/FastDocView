@@ -100,13 +100,19 @@ public sealed partial class OdtBlockHtmlRenderer
             if (WordPictureHtml.ContentTypeOf(part) is not null) id = PackagePicturePrefix + part;
         }
         if (id is null) return null;
+        return (id, PictureSizeOf(id));
+    }
+
+    /// <summary>A picture's own size in points from its header (<see cref="WordPictureSize"/>), read once per id (a bounded cache); null when unknown.</summary>
+    private (double W, double H)? PictureSizeOf(string id)
+    {
         if (!_pictureSizes.TryGetValue(id, out (double W, double H)? size))
         {
             size = Pictures?.Invoke(id) is { } picture ? WordPictureSize.Read(picture.Bytes) : null;
             if (_pictureSizes.Count > 256) _pictureSizes.Clear();
             _pictureSizes[id] = size;
         }
-        return (id, size);
+        return size;
     }
 
     private static bool IsDrawnShape(XElement element) => OdtShapeBuilder.IsShape(element);

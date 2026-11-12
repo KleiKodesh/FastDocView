@@ -82,8 +82,9 @@ internal abstract class RtfSink
 }
 
 /// <summary>A picture: shown size in twips (0 = unknown), the blip type's file extension ("" = a type a browser cannot show),
-/// its bytes when the sink asked for them, and for a floating shape its placement.</summary>
-internal readonly record struct RtfPicture(int WidthTwips, int HeightTwips, string Extension, byte[]? Data, RtfShapePlacement? Placement = null);
+/// its bytes when the sink asked for them, for a floating shape its placement, and its crop (\piccrop*).</summary>
+internal readonly record struct RtfPicture(int WidthTwips, int HeightTwips, string Extension, byte[]? Data, RtfShapePlacement? Placement = null,
+                                           FastDocView.Html.WordPictureCrop Crop = default);
 
 /// <summary>
 /// A {\shp} or {\shpgrp} as the parser read it ("Word 97 RTF for Drawing Objects (Shapes)", techshelps.github.io/MSDN/SPECS/

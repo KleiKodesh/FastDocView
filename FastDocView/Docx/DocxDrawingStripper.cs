@@ -109,6 +109,10 @@ internal static class DocxDrawingStripper
             }
         }
         if (IndexOfOpenTag(drawing, frame, "a:blip") is var blip and >= 0) Copy("embed", OpenTagAt(drawing, blip), "r:embed");
+        // a picture's crop: the a:srcRect of its pic:blipFill (ECMA-376 Part 1 20.1.8.55, l / t / r / b in 1000ths of a percent)
+        if (IndexOfOpenTag(drawing, frame, "pic:blipFill") is var blipFill and >= 0 && ElementEnd(drawing, blipFill, "pic:blipFill") is var blipFillEnd and > 0
+            && IndexOfOpenTag(drawing, blipFill, "a:srcRect") is var sourceRectangle and >= 0 && sourceRectangle < blipFillEnd)
+            foreach (string side in new[] { "l", "t", "r", "b" }) Copy("crop" + side, OpenTagAt(drawing, sourceRectangle), side);
         WriteTextBoxShape(layout, drawing);
         string shapes = ShapeTree(drawing, frame);
         if (shapes.Length == 0) layout.Append("/>");
@@ -335,6 +339,9 @@ internal static class DocxDrawingStripper
         var layout = new StringBuilder("<" + PictureLayoutElementName + " kind=\"vml\" embed=\"" + embed + "\"");
         if (shape >= 0 && AttributeValue(OpenTagAt(picture, shape), "style") is { } style) layout.Append(" style=\"").Append(style).Append('"');
         if (shape >= 0 && AttributeValue(OpenTagAt(picture, shape), "wrapcoords") is { } wrapCoords) layout.Append(" wrapcoords=\"").Append(wrapCoords).Append('"');
+        // the crop (VML v:imagedata croptop / cropleft / cropbottom / cropright: fractions, "Nf" in 65536ths; vmlshapecontext.cxx:460-464)
+        foreach (string side in new[] { "top", "left", "bottom", "right" })
+            if (AttributeValue(imageTag, "crop" + side) is { } crop) layout.Append(" vmlcrop").Append(side).Append("=\"").Append(crop).Append('"');
         if (IndexOfOpenTag(picture, 0, "w10:wrap") is var wrap and >= 0)
         {
             ReadOnlySpan<byte> wrapTag = OpenTagAt(picture, wrap);
