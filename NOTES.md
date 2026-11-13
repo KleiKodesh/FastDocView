@@ -5085,3 +5085,17 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   of it, right of it at the last category; no room kept on the left (11 pt from the chart edge). Word's PDF of the crosses fixture:
   median 1.16 x / 0.24 y, max 5.4 / 4.4. Excel ignores the value axis crossing in 3-D (xichart.cxx:3058-3062), so .doc does too.
   Scatter / bubble axes still stay at the edges.
+
+## Chart: scatter / bubble crossings, bubble axis room; perspective camera search (2026-11-13)
+
+- Scatter / bubble: the x axis (axPos b / t) crosses at a y value, the y axis (l / r) at an x value (autoZero = 0, min / max = the
+  scale's ends, crossesAt). Word scales numeric x values like text ones (5 % headroom: x -2..5 -> -3..6 by 1), keeps the first and
+  last x labels 10.8 pt + half their width inside the chart, and puts the x labels a third of their size lower; bubble charts
+  widen both axes by each bubble's radius at an eighth of the span (x -2..5, y -5..4.5, sizes 1..4 -> -4..7, -8..8). Fixture
+  word-charts-scatter-crosses-v1 vs Word's PDF: median 0.13 / 0.30 pt, max 1.4; v3's scatter chart 0.95 / 0.41 (was up to 7.2 / 3.7).
+- Perspective 3-D lines / areas (not solved): Word's scene picture covers only the drawn faces (walls, floor, data - not the box's
+  near top corner), which the fits now respect. A pinhole camera after the rotation fits each probe to 0.6-1.6 pt rms with its own
+  distance and aim point, but no shared rule was found: the aim moves from the front, 60-80 % up (perspective 10-30) to the back,
+  near the floor (100-200), and with the scene depth at perspective 30; fixed aim points, absolute aims, eye-on-the-bounding-box
+  axis, perspective before / after the elevation, and free height / depth all left 2-6 pt. The fitted distance at perspective 30 is
+  about 0.5 / tan(15 deg) of the width. Left at the 2026-11-13 camera (median about 3.5 / 2 pt).

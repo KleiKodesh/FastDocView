@@ -21,11 +21,11 @@ WALLS = re.search(r'<c:floor>.*?</c:backWall>', charts[7], re.S).group(0)
 LABELS = ('<c:dLbls><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/>'
           '<c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>')
 
-def with_values(series, values):
+def with_values(series, values, tag='val'):
     if values is None: return series
     out = []
     for s, vs in zip(series, values):
-        val = block(s, 'val')
+        val = block(s, tag)
         cache = re.sub(r'<c:pt idx="(\d)"><c:v>[^<]*</c:v></c:pt>', lambda m: '<c:pt idx="%s"><c:v>%s</c:v></c:pt>' % (m.group(1), vs[int(m.group(1))]), val)
         out.append(s.replace(val, cache))
     return out
@@ -94,4 +94,40 @@ write('word-charts-crosses-v1.docx', {
     5: make('col', 'Col CrossAt', values=NEGATIVE, cat_crosses='at:-2', val_crosses='at:3'),
     6: make('col3d', 'Col3D CrossAt', {'rotX': 15, 'rotY': 20, 'rAngAx': 1}, values=NEGATIVE, cat_crosses='at:2'),
     7: make('line', 'Line CrossMin', values=NEGATIVE, cat_crosses='min'),
+})
+
+# word-charts-scatter-crosses-v1.docx: scatter and bubble charts with numeric x values (some negative) and their axes crossing
+def scatter(title, x_crosses=None, y_crosses=None, bubble=False, x_labels=None):
+    x = charts[6]
+    xs, ys = ['-2', '1', '3', '5'], [['4.3', '-2.5', '3.5', '4.5'], ['2.4', '4.4', '-1.8', '2.8'], ['2', '2', '3', '-5']]
+    out = []
+    for k, s in enumerate(sers(x)):
+        s = re.sub(r'<c:xVal>.*?</c:xVal>', '<c:xVal><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="4"/>' + ''.join('<c:pt idx="%d"><c:v>%s</c:v></c:pt>' % (i, v) for i, v in enumerate(xs)) + '</c:numLit></c:xVal>', s, flags=re.S)
+        s = with_values([s], [ys[k]], 'yVal')[0]
+        if bubble:
+            s = re.sub(r'<c:marker>.*?</c:marker>', '', s, flags=re.S).replace('<c:smooth val="0"/>', '')
+            s = s.replace('</c:yVal>', '</c:yVal><c:bubbleSize><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="4"/>' + ''.join('<c:pt idx="%d"><c:v>%d</c:v></c:pt>' % (i, i + 1) for i in range(4)) + '</c:numLit></c:bubbleSize><c:bubble3D val="0"/>')
+        out.append(s)
+    group = re.search(r'<c:scatterChart>.*?</c:scatterChart>', x, re.S).group(0)
+    new = group.replace(''.join(sers(x)), ''.join(out))
+    if bubble:
+        ids = re.findall(r'<c:axId val="\d+"/>', group)
+        new = '<c:bubbleChart><c:varyColors val="0"/>' + ''.join(out) + LABELS + '<c:bubbleScale val="100"/><c:showNegBubbles val="0"/>' + ''.join(ids) + '</c:bubbleChart>'
+    x = x.replace(group, new)
+    axes = re.findall(r'<c:valAx>.*?</c:valAx>', x, re.S)
+    for axis in axes:
+        horizontal = '<c:axPos val="b"/>' in axis
+        changed = crossing(axis, x_crosses if horizontal else y_crosses)
+        if x_labels and horizontal: changed = changed.replace('<c:tickLblPos val="nextTo"/>', '<c:tickLblPos val="%s"/>' % x_labels)
+        x = x.replace(axis, changed)
+    return re.sub(r'(<a:t>)[^<]*Chart(</a:t>)', r'\g<1>' + title + r'\g<2>', x, count=1)
+
+write('word-charts-scatter-crosses-v1.docx', {
+    1: scatter('Sc Zero'),
+    2: scatter('Sc AtBoth', x_crosses='at:2', y_crosses='at:1.5'),
+    3: scatter('Sc MaxBoth', x_crosses='max', y_crosses='max'),
+    4: scatter('Sc MinBoth', x_crosses='min', y_crosses='min'),
+    5: scatter('Sc Low', x_labels='low'),
+    6: scatter('Bub AtBoth', x_crosses='at:-1', y_crosses='at:2', bubble=True),
+    7: scatter('Bub Zero', bubble=True),
 })

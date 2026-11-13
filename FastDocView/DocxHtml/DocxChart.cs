@@ -775,25 +775,10 @@ internal sealed partial class DocxChart
         if (primaryGroups.Count == 0) { primaryGroups = secondaryGroups; secondaryGroups = new(); secondaryAxis = null; }
         percent = primaryGroups.Any(g => g.Grouping == "percentStacked");
         (double dataMin, double dataMax, double positiveMin) = DataRange(primaryGroups, categoryCount, includeErrorBars: !_libreOfficeLayout && valueAxis?.LogBase is null);
+        if (!_libreOfficeLayout && valueAxis?.LogBase is null) (dataMin, dataMax) = BubbleRange(dataMin, dataMax, false, right - left, bottom - top);
         double estimatedLength = Math.Max(1, horizontal ? right - left - 60 : bottom - top - 30);
         double axisLabelSize = valueAxis?.LabelSize ?? categoryAxis?.LabelSize ?? 9;
         (double vMin, double vMax, List<double> valueTicks) = AxisScale(dataMin, dataMax, positiveMin, valueAxis, percent, estimatedLength, axisLabelSize);
-        // where the axes cross (c:crosses / c:crossesAt, 21.2.2.33-34; LibreOffice oox axisconverter.cxx:484-500: min / max = the
-        // crossing axis's start / end, autoZero = 0 (1 on a log scale), crossesAt = that value). The category axis's own c:crosses is
-        // the value it sits at (bars and areas grow from it, Word's PDFs of word-charts-crosses-v1); the value axis's is the category
-        // it sits at (1-based; between categories it is that category's left edge, midCat its tick)
-        double categoryCrossValue = categoryAxis?.CrossesAt ?? (categoryAxis?.Crosses switch { "min" => vMin, "max" => vMax, _ => valueAxis?.LogBase is not null ? 1 : 0 });
-        categoryCrossValue = Math.Max(Math.Min(vMin, vMax), Math.Min(Math.Max(vMin, vMax), categoryCrossValue));
-        _categoryCross = xy ? 0 : categoryCrossValue;
-        double categoryCross = xy ? 0 : Math.Max(0, Math.Min(1, AxisMap(valueAxis, vMin, vMax)(categoryCrossValue)));
-        if (double.IsNaN(categoryCross)) categoryCross = 0;
-        int categorySlots = MidCategory() ? Math.Max(1, categoryCount - 1) : categoryCount;
-        double valueCross = xy || valueAxis is null ? 0 : valueAxis.CrossesAt is { } at ? (at - 1) / categorySlots : valueAxis.Crosses == "max" ? 1 : 0;
-        valueCross = double.IsNaN(valueCross) ? 0 : Math.Max(0, Math.Min(1, valueCross));
-        double categoryAxisLine = categoryCross;   // the line itself; its labels follow c:tickLblPos (low / high: at the plot's edge)
-        categoryCross = categoryAxis?.LabelPosition switch { "low" => 0, "high" => 1, _ => categoryCross };
-        valueCross = valueAxis?.LabelPosition switch { "low" => 0, "high" => 1, _ => valueCross };
-        bool crossings2D = !_is3D && (categoryCross > 1e-9 || valueCross > 1e-9);
         // x range for scatter / bubble
         double xMin = 0, xMax = categoryCount, xStep = 1;
         if (xy)
@@ -803,12 +788,35 @@ internal sealed partial class DocxChart
             // last point gives an x axis to 6, not 5)
             foreach (Series series in _groups.SelectMany(g => g.Series)) xs.AddRange(ErrorBarEnds(series, "x"));
             Axis? xAxis = _axes.Values.Where(a => !a.IsCategory).Skip(1).FirstOrDefault() ?? categoryAxis;
+            if (!_libreOfficeLayout && xs.Count > 0 && xAxis?.LogBase is null) { var (low, high) = BubbleRange(xs.Min(), xs.Max(), true, right - left, bottom - top); xs.Add(low); xs.Add(high); }
             (xMin, xMax, xStep) = Scale(xs.Count > 0 ? xs.Min() : 0, xs.Count > 0 ? xs.Max() : 1, xAxis, false);
-            // x values that are text (1..n, Word): the axis is scaled as a value axis, with the headroom (v3: x up to 4.8 gives 0..6)
-            if (!_libreOfficeLayout && xAxis is { LogBase: null, Min: null, Max: null } && _groups.SelectMany(g => g.Series).All(x => x.XValues.All(v => v is null)) && AutoScale(xs.Count > 0 ? xs.Min() : 0, xs.Count > 0 ? xs.Max() : 1, xAxis, Math.Max(1, right - left - 60), axisLabelSize) is { } autoX)
+            // Word scales the x axis as a value axis with the headroom, text x values (1..n; v3: x up to 4.8 gives 0..6) and numbers alike (word-charts-scatter-crosses-v1: x -2..5 gives -3..6 by 1)
+            if (!_libreOfficeLayout && xAxis is { LogBase: null, Min: null, Max: null } && AutoScale(xs.Count > 0 ? xs.Min() : 0, xs.Count > 0 ? xs.Max() : 1, xAxis, Math.Max(1, right - left - 60), axisLabelSize) is { } autoX)
                 (xMin, xMax, xStep) = (autoX.Min, autoX.Max, autoX.Step);
             if (xAxis is not null && !xAxis.IsCategory) categoryAxis = xAxis;
         }
+        // where the axes cross (c:crosses / c:crossesAt, 21.2.2.33-34; LibreOffice oox axisconverter.cxx:484-500: min / max = the
+        // crossing axis's start / end, autoZero = 0 (1 on a log scale), crossesAt = that value). The category axis's own c:crosses is
+        // the value it sits at (bars and areas grow from it, Word's PDFs of word-charts-crosses-v1); the value axis's is the category
+        // it sits at (1-based; between categories it is that category's left edge, midCat its tick)
+        // scatter / bubble: the x axis (axPos b / t) crosses at a y value, the y axis (l / r) at an x value
+        Axis? horizontalCrossing = xy ? _axes.Values.FirstOrDefault(a => !a.IsCategory && a.Position is "b" or "t") ?? categoryAxis : categoryAxis;
+        Axis? verticalCrossing = xy ? _axes.Values.FirstOrDefault(a => !a.IsCategory && a.Position is "l" or "r") ?? valueAxis : valueAxis;
+        double categoryCrossValue = horizontalCrossing?.CrossesAt ?? (horizontalCrossing?.Crosses switch { "min" => vMin, "max" => vMax, _ => valueAxis?.LogBase is not null ? 1 : 0 });
+        categoryCrossValue = Math.Max(Math.Min(vMin, vMax), Math.Min(Math.Max(vMin, vMax), categoryCrossValue));
+        _categoryCross = xy ? 0 : categoryCrossValue;   // scatter / bubble points grow from nothing
+        double categoryCross = xy && _libreOfficeLayout ? 0 : Math.Max(0, Math.Min(1, AxisMap(valueAxis, vMin, vMax)(categoryCrossValue)));
+        if (double.IsNaN(categoryCross)) categoryCross = 0;
+        int categorySlots = MidCategory() ? Math.Max(1, categoryCount - 1) : categoryCount;
+        // scatter / bubble: the y axis's crossing is an x value (autoZero = x 0, clamped; min / max = the x scale's ends)
+        double valueCross = verticalCrossing is null ? 0
+            : xy ? (_libreOfficeLayout ? 0 : AxisMap(categoryAxis is { IsCategory: false } ? categoryAxis : null, xMin, xMax)(verticalCrossing.CrossesAt ?? (verticalCrossing.Crosses switch { "min" => xMin, "max" => xMax, _ => categoryAxis?.LogBase is not null ? 1 : 0 })))
+            : verticalCrossing.CrossesAt is { } at ? (at - 1) / categorySlots : verticalCrossing.Crosses == "max" ? 1 : 0;
+        valueCross = double.IsNaN(valueCross) ? 0 : Math.Max(0, Math.Min(1, valueCross));
+        double categoryAxisLine = categoryCross;   // the line itself; its labels follow c:tickLblPos (low / high: at the plot's edge)
+        categoryCross = horizontalCrossing?.LabelPosition switch { "low" => 0, "high" => 1, _ => categoryCross };
+        valueCross = verticalCrossing?.LabelPosition switch { "low" => 0, "high" => 1, _ => valueCross };
+        bool crossings2D = !_is3D && (categoryCross > 1e-9 || valueCross > 1e-9);
         // room for tick labels and axis titles
         double labelSize = valueAxis?.LabelSize ?? categoryAxis?.LabelSize ?? 9;
         double valueTitleSize = valueAxis?.TitleSize ?? 10, categoryTitleSize = categoryAxis?.TitleSize ?? 10;
@@ -845,9 +853,10 @@ internal sealed partial class DocxChart
         // Word: a tick label centred on the plot's right edge (the last value of a horizontal bar chart's value axis, the last category
         // of an axis with the points on the ticks) stays 10.8 pt plus half its width from the chart's edge (measured on Word's PDF of
         // word-charts-binary-v3: the bar chart's "6" and the area chart's "Q4", both 4.8 pt further in than the plain 6 pt margin)
-        if (!_libreOfficeLayout && _plotLayout is null && secondaryAxis is null && _legendPosition is not ("r" or "tr") && !xy && valueAxis is not { Reversed: true } && categoryAxis is not { Reversed: true })
+        if (!_libreOfficeLayout && _plotLayout is null && secondaryAxis is null && _legendPosition is not ("r" or "tr") && (!xy || !crossings2D || valueCross < 1 - 1e-9) && valueAxis is not { Reversed: true } && categoryAxis is not { Reversed: true })
         {
-            string? edgeLabel = horizontal ? (valueLabels.Count > 0 ? valueLabels[valueLabels.Count - 1].Text : null)
+            string? edgeLabel = xy ? (categoryAxis is { NoLabels: true } ? null : FormatNumber(Math.Round(xMax, 10), "General"))
+                              : horizontal ? (valueLabels.Count > 0 ? valueLabels[valueLabels.Count - 1].Text : null)
                               : MidCategory() && categoryAxis is not { NoLabels: true } && categories.Count > 0 ? categories[categories.Count - 1] : null;
             if (edgeLabel is { Length: > 0 }) right = Math.Max(left + 1, right - (10.8 - 6 + TextWidth(edgeLabel, labelSize) / 2));   // the right edge so far is the chart edge less 6 pt
         }
@@ -872,7 +881,9 @@ internal sealed partial class DocxChart
             if (crossings2D && valueCross > 1e-9)
             {
                 // the value axis inside the plot or at its right: no room on the left (Word: 11 pt from the chart edge), at the right a column
-                left += 5;
+                // (scatter / bubble: the first x label centred on the plot's left edge stays 10.8 pt plus half its width in, as Word's
+                // right-edge rule below; word-charts-scatter-crosses-v1)
+                left += xy && categoryAxis is not { NoLabels: true } ? 4.8 + TextWidth(FormatNumber(Math.Round(xMin, 10), "General"), labelSize) / 2 : 5;
                 if (valueCross >= 1 - 1e-9) right -= valueLabelWidth;
             }
             else left += valueLabelWidth;
@@ -885,6 +896,7 @@ internal sealed partial class DocxChart
                 if (!crossings2D || categoryCross <= 1e-9) bottom -= categoryPlan.Height;
                 else if (categoryCross >= 1 - 1e-9) top += labelSize + 3.5;   // the labels above an axis at the top (Word: 12.5 pt at 9 pt)
             }
+            else if (crossings2D && xy && categoryAxis is not { NoLabels: true } && categoryCross > 1e-9) { if (categoryCross >= 1 - 1e-9) top += labelSize + 3.5; }
             else bottom -= categoryAxis is { NoLabels: true } ? 0 : labelSize + 4;
         }
         double plotWidth = Math.Max(1, right - left), plotHeight = Math.Max(1, bottom - top);
@@ -990,7 +1002,7 @@ internal sealed partial class DocxChart
             }
         if (xy && categoryAxis is not { NoLabels: true })
             for (double x = xMin; x <= xMax + xStep / 1000; x += xStep)
-                Text(svg, left + (x - xMin) / (xMax - xMin) * plotWidth, bottom + labelSize + 2, FormatNumber(Math.Round(x, 10), "General"), labelSize, categoryAxis?.LabelColor ?? textColor, "middle");
+                Text(svg, left + (x - xMin) / (xMax - xMin) * plotWidth, crossings2D && categoryCross >= 1 - 1e-9 ? bottom - categoryCross * plotHeight - labelSize : bottom - categoryCross * plotHeight + labelSize + 2 + (_libreOfficeLayout ? 0 : labelSize / 3), FormatNumber(Math.Round(x, 10), "General"), labelSize, categoryAxis?.LabelColor ?? textColor, "middle");
         int totalSeries = _groups.Sum(g => g.Series.Count);
         foreach (Group group in _groups)
         {
@@ -1463,6 +1475,31 @@ internal sealed partial class DocxChart
                 DrawSeriesExtras(svg, series, points.Select((p, k) => (p.X, p.Y, data[k].X, data[k].Y, p.Index)).ToList(),
                                  v => top + height - axisY(v) * height, x => left + axisX(x) * width, css == "none" ? AutomaticColor(series.Index, totalSeries) : css, textColor);
         }
+    }
+
+    /// <summary>
+    /// Word widens a bubble chart's axes so the bubbles fit (Word 16's PDF of word-charts-scatter-crosses-v1: x -2..5 and y -5..4.5 with
+    /// bubbles 1..4 gave axes -4..7 and -8..8, where the points alone give -3..6 and -6..6): each point's range is extended by its
+    /// bubble's radius in data units: sqrt(size / largest) x an eighth of the axis span (with the room it adds), on both axes.
+    /// </summary>
+    private (double Min, double Max) BubbleRange(double min, double max, bool x, double width, double height)
+    {
+        var bubbles = _groups.Where(g => g.Kind == Kind.Bubble).SelectMany(g => g.Series).ToList();
+        if (bubbles.Count == 0 || width <= 0 || height <= 0) return (min, max);
+        double largest = bubbles.SelectMany(s => s.BubbleSizes).Where(v => v is not null).Select(v => Math.Abs(v!.Value)).DefaultIfEmpty(1).Max();
+        const double share = 1.0 / 8;   // the largest bubble's radius as a share of either axis (Word: the x axis widens as much as the y axis)
+        double span = Math.Max(1e-12, max - min), scale = span / Math.Max(0.2, 1 - 2 * share);
+        double low = min, high = max;
+        foreach (Series series in bubbles)
+            for (int i = 0; i < series.Values.Count; i++)
+            {
+                if (series.Values[i] is not { } y) continue;
+                double v = x ? (i < series.XValues.Count && series.XValues[i] is { } xv ? xv : i + 1) : y;
+                double size = i < series.BubbleSizes.Count && series.BubbleSizes[i] is { } b ? Math.Abs(b) : 1;
+                double radius = Math.Sqrt(size / Math.Max(1e-300, largest)) * share * scale;
+                low = Math.Min(low, v - radius); high = Math.Max(high, v + radius);
+            }
+        return (low, high);
     }
 
     private void DrawPie(StringBuilder svg, Group group, double left, double top, double right, double bottom, string textColor)

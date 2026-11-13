@@ -11,7 +11,7 @@ try {
     $word.Visible = $false
     $word.DisplayAlerts = 0
     $word.Options.DoNotPromptForConvert = $true
-    foreach ($name in 'word-charts-3d-rows-v1', 'word-charts-crosses-v1') {
+    foreach ($name in 'word-charts-3d-rows-v1', 'word-charts-crosses-v1', 'word-charts-scatter-crosses-v1') {
         $base = Join-Path $folder $name
         $doc = $word.Documents.Open($base + '.docx', $false, $true, $false)
         # the PDF first: once saved as .doc / .rtf the charts are OLE pictures and print their text as outlines

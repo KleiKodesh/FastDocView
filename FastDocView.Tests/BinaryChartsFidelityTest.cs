@@ -168,6 +168,18 @@ public static class BinaryChartsFidelityTest
             TestReport.Check(ChartTexts(doc, "Col CrossAt").Any(t => t.Text == "3" && t.Anchor == "end" && Math.Abs(t.X + 8.3) <= 4) && Near(ChartTexts(doc, "Bar CrossAt"), "2", null, 18.7, 1.5),
                              ".doc (BIFF8 CHVALUERANGE / CHLABELRANGE crossings): value axis at category 3, horizontal bars' value labels at the top");
         }
+        // scatter / bubble: the y axis at an x value (x 0 for autoZero), at the right for max; bubbles widen both axes (Word: -4..7, -8..8)
+        string scatterPath = Path.Combine(folder, "word-charts-scatter-crosses-v1.docx");
+        TestReport.Check(File.Exists(scatterPath), "scatter crossings fixture exists");
+        if (File.Exists(scatterPath))
+        {
+            List<string> scatter = Render(scatterPath);
+            TestReport.Check(ChartTexts(scatter, "Sc Zero").Any(t => t.Text == "2" && t.Anchor == "end" && Math.Abs(t.X + 72.0) <= 2), "scatter: y axis at x 0 (autoZero), its labels beside it");
+            TestReport.Check(ChartTexts(scatter, "Sc MaxBoth").Any(t => t.Text == "2" && t.Anchor == "start" && Math.Abs(t.X - 193.2) <= 2), "scatter: y axis crossing at the x maximum, labels at the right");
+            TestReport.Check(ChartTexts(scatter, "Sc AtBoth").Any(t => t.Text == "2" && t.Anchor == "end" && Math.Abs(t.X + 7.6) <= 2), "scatter: c:crossesAt on both axes");
+            var bubble = ChartTexts(scatter, "Bub AtBoth");
+            TestReport.Check(bubble.Any(t => t.Text == "8") && bubble.Any(t => t.Text == "7") && bubble.Any(t => t.Text == "-4"), "bubble: the axes widened for the bubbles as Word does (-4..7, -8..8)");
+        }
         // ODF: chart:axis-position on the axis style becomes c:crosses / c:crossesAt
         XNamespace chart = "urn:oasis:names:tc:opendocument:xmlns:chart:1.0", style = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
         var styles = new Dictionary<string, XElement>(StringComparer.Ordinal);
