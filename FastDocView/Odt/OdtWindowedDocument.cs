@@ -13,7 +13,7 @@ namespace FastDocView.Odt;
 /// <see cref="OnDemandFirstBlockCount"/> blocks and extends the index as blocks are asked for
 /// (<see cref="OdtIncrementalIndexBuilder"/>); the finished index is saved when the scan completes.
 /// </summary>
-public sealed class OdtWindowedDocument : IWordWindowedDocument
+public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSearchScan
 {
     public const int OnDemandFirstBlockCount = 100;
 
@@ -592,7 +592,11 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     /// index is extended as far as asked, as <see cref="RenderBlocks"/> does.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
-        => Search(query, options, fromBlock, maxBlocksToScan, OdtSearchTextMode.Bytes);
+        => ((IWordDocumentSearchScan)this).ScanBlocks(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan);
+
+    /// <summary>The product block scan, shared with <see cref="WordDocumentText"/> (one text path, <see cref="IWordDocumentSearchScan"/>).</summary>
+    WordDocumentSearchBatch IWordDocumentSearchScan.ScanBlocks(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan)
+        => SearchWith(matcher, fromBlock, maxBlocksToScan, OdtSearchTextMode.Bytes);
 
     /// <summary>How a search batch reads block text: the byte scanner (the product) or the XmlReader reference over the index ranges (golden checks).</summary>
     internal enum OdtSearchTextMode { Bytes, ReferenceXmlReader }

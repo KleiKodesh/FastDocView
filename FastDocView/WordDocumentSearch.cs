@@ -293,6 +293,17 @@ public sealed class WordDocumentSearchMatcher
 }
 
 /// <summary>
+/// The ONE block-text path of a document: <see cref="IWordWindowedDocument.Search"/> and <see cref="WordDocumentText"/>
+/// (GetText) both read blocks only through <see cref="ScanBlocks"/> - they must stay one path, so upgrading the search
+/// text upgrades GetText and the other way round (DocumentTextTest compares them block by block). The notes have one path too: SearchNotes and
+/// GetNotes both scan through <see cref="WordDocumentNoteSearch"/>.
+/// </summary>
+internal interface IWordDocumentSearchScan
+{
+    WordDocumentSearchBatch ScanBlocks(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan);
+}
+
+/// <summary>
 /// The notes search every format shares (<see cref="IWordWindowedDocument.SearchNotes"/>): each note's rendered HTML as
 /// the notes pane shows it (<see cref="WordWindowedDocumentHostExtensions.RenderNotesForDisplay"/>), walked as the app's
 /// highlighter walks it (tags skipped, an entity one character, Hebrew marks dropped) with paragraph tags as separators.

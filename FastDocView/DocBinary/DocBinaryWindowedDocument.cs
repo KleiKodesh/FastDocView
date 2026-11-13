@@ -8,7 +8,7 @@ namespace FastDocView.DocBinary;
 /// small files and saved as a sidecar for big ones (policy). Everything else — PAPX, CHPX, styles,
 /// fonts, note bodies — is looked up on demand. <see cref="OpenFromStream"/> is the host-agnostic (WASM) entry.
 /// </summary>
-public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
+public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocumentSearchScan
 {
     private readonly CompoundFileReader _compoundFile;
     private readonly Stream _wordDocument;
@@ -365,7 +365,11 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
     /// its own text (the reference mark is all its HTML shows of a note). A batch that starts where the previous one ended continues its cursor. The index of a .doc is always complete.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
-        => SearchBlocks(query, options, fromBlock, maxBlocksToScan, onePass: true);
+        => ((IWordDocumentSearchScan)this).ScanBlocks(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan);
+
+    /// <summary>The product block scan, shared with <see cref="WordDocumentText"/> (one text path, <see cref="IWordDocumentSearchScan"/>).</summary>
+    WordDocumentSearchBatch IWordDocumentSearchScan.ScanBlocks(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan)
+        => SearchBlocksWith(matcher, fromBlock, maxBlocksToScan, onePass: true);
 
     /// <summary>The search as it was before the one pass: block ranges from the compact table, each block's text read again - the golden reference.</summary>
     internal WordDocumentSearchBatch SearchByBlockRanges(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)

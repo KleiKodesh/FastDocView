@@ -15,7 +15,7 @@ namespace FastDocView.Docx;
 /// (<see cref="DocxIncrementalIndexBuilder"/>), and when the scan reaches the end the finished index
 /// replaces the builder (and is saved as the sidecar by <see cref="Open"/>).
 /// </summary>
-public sealed class DocxWindowedDocument : IWordWindowedDocument
+public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentSearchScan
 {
     /// <summary>Blocks scanned before an on-demand open returns — more than a first screen.</summary>
     public const int OnDemandFirstBlockCount = 100;
@@ -676,7 +676,11 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     /// <see cref="RenderBlocks"/> does; <see cref="WordDocumentSearchBatch.ReachedEnd"/> only once it is complete.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
-        => Search(query, options, fromBlock, maxBlocksToScan, DocxSearchTextMode.Bytes);
+        => ((IWordDocumentSearchScan)this).ScanBlocks(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan);
+
+    /// <summary>The product block scan, shared with <see cref="WordDocumentText"/> (one text path, <see cref="IWordDocumentSearchScan"/>).</summary>
+    WordDocumentSearchBatch IWordDocumentSearchScan.ScanBlocks(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan)
+        => SearchWith(matcher, fromBlock, maxBlocksToScan, DocxSearchTextMode.Bytes);
 
     /// <summary>How a search batch reads block text: the byte scanner (the product), the XmlReader reference over the index ranges (golden checks), not at all (profiling the index-range read / the raw search read alone).</summary>
     internal enum DocxSearchTextMode { Bytes, ReferenceXmlReader, ReadBytesOnly, ReadSearchBytesOnly }

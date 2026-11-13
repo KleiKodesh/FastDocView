@@ -14,7 +14,7 @@ namespace FastDocView.Markup;
 /// (<see cref="MarkupIncrementalIndexBuilder"/>), windows read the known blocks from the partial index, and the finished
 /// index is saved when the pass ends.
 /// </summary>
-public sealed class MarkupWindowedDocument : IWordWindowedDocument
+public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumentSearchScan
 {
     /// <summary>Text and web archives carry no page setup: Word's default text width.</summary>
     public int? FindBookmark(string name) => null;     // bookmarks not indexed for this format yet
@@ -298,7 +298,11 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument
     /// app's search walks a line's HTML (tags skipped, an entity one character). No rendering; nothing kept.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
-        => SearchWith(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan);
+        => ((IWordDocumentSearchScan)this).ScanBlocks(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan);
+
+    /// <summary>The product block scan, shared with <see cref="WordDocumentText"/> (one text path, <see cref="IWordDocumentSearchScan"/>).</summary>
+    WordDocumentSearchBatch IWordDocumentSearchScan.ScanBlocks(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan)
+        => SearchWith(matcher, fromBlock, maxBlocksToScan);
 
     /// <summary>The same scan with a caller's matcher (<see cref="WordDocumentText"/> captures the text through it).</summary>
     internal WordDocumentSearchBatch SearchWith(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan)

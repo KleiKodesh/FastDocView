@@ -1,9 +1,4 @@
 using System.Text;
-using FastDocView.DocBinary;
-using FastDocView.Docx;
-using FastDocView.Markup;
-using FastDocView.Odt;
-using FastDocView.Rtf;
 
 namespace FastDocView;
 
@@ -50,16 +45,10 @@ public static class WordDocumentText
     /// <summary><see cref="GetText(string, CancellationToken)"/> of an open document.</summary>
     public static string GetText(IWordWindowedDocument document, CancellationToken cancellation = default)
     {
-        Func<WordDocumentSearchMatcher, int, int, WordDocumentSearchBatch> scan = document switch
-        {
-            DocxWindowedDocument docx => (matcher, from, count) => docx.SearchWith(matcher, from, count, DocxWindowedDocument.DocxSearchTextMode.Bytes),
-            OdtWindowedDocument odt => (matcher, from, count) => odt.SearchWith(matcher, from, count, OdtWindowedDocument.OdtSearchTextMode.Bytes),
-            DocBinaryWindowedDocument doc => (matcher, from, count) => doc.SearchBlocksWith(matcher, from, count, onePass: true),
-            MarkupWindowedDocument markup => markup.SearchWith,
-            RtfWindowedDocument rtf => rtf.SearchWith,
-            _ => throw new NotSupportedException($"No text reader for {document.GetType().Name}."),
-        };
-        return Collect(scan, BlocksPerBatch, cancellation);
+        // ONE text path with the search: blocks are read only through the search's own scan (IWordDocumentSearchScan) -
+        // never add a second extractor here; upgrade the scan and both follow.
+        if (document is not IWordDocumentSearchScan scanner) throw new NotSupportedException($"No text reader for {document.GetType().Name}.");
+        return Collect(scanner.ScanBlocks, BlocksPerBatch, cancellation);
     }
 
     /// <summary><see cref="GetNotes(string, CancellationToken)"/> of an open document.</summary>
@@ -71,6 +60,7 @@ public static class WordDocumentText
             cancellation.ThrowIfCancellationRequested();
             document.ScanAhead(BlocksPerBatch);
         }
+        // the notes search's own scan (WordDocumentNoteSearch) - the same one path as SearchNotes
         return Collect((matcher, from, count) => WordDocumentNoteSearch.Search(document, matcher, from, count), NotesPerBatch, cancellation);
     }
 

@@ -11,7 +11,7 @@ namespace FastDocView.Rtf;
 /// <see cref="OnDemandFirstBlockCount"/> blocks; <see cref="ScanAhead"/> parses on (the same one pass, paused between calls),
 /// windows read the known blocks from the partial index, and the finished index is saved when the pass ends.
 /// </summary>
-public sealed class RtfWindowedDocument : IWordWindowedDocument
+public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSearchScan
 {
     public const int OnDemandFirstBlockCount = RtfRandomAccessIndexBuilder.DirectionSampleBlocks;   // the direction is known by then
 
@@ -247,7 +247,11 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     /// Footnotes are groups inside the block and are skipped: the block's HTML shows only their reference mark.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
-        => SearchWith(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan);
+        => ((IWordDocumentSearchScan)this).ScanBlocks(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan);
+
+    /// <summary>The product block scan, shared with <see cref="WordDocumentText"/> (one text path, <see cref="IWordDocumentSearchScan"/>).</summary>
+    WordDocumentSearchBatch IWordDocumentSearchScan.ScanBlocks(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan)
+        => SearchWith(matcher, fromBlock, maxBlocksToScan);
 
     /// <summary>The same scan with a caller's matcher (<see cref="WordDocumentText"/> captures the text through it).</summary>
     internal WordDocumentSearchBatch SearchWith(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan)
