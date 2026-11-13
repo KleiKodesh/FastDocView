@@ -166,6 +166,9 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         var document = new DocxWindowedDocument(displayPath, null, builder, DocxBlockXmlReader.OverIncrementalBuild(package, builder),
                                                 DocxNoteXmlReader.OverIncrementalParts(package, builder.Footnotes, builder.Endnotes),
                                                 parts, decision, sidecarPathToSave);
+        // notes show their printed numbers from the first window: the sections' note properties are read up front
+        if (!builder.IsBodyScanned && (builder.Footnotes is not null || builder.Endnotes is not null))
+            document._sectionNotesUpFront = DocxSectionNotePropertiesScanner.Scan(package, builder.BodyEntry);
         if (builder.IsBodyScanned) document.CompleteIndexLocked();      // a short body: done already
         return document;
     }
@@ -482,7 +485,32 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
 
     /// <summary>The number Word prints for a note: its section's w:footnotePr / w:endnotePr (<see cref="WordDocumentNoteNumbering"/>).</summary>
     private string NoteLabel(DocxNoteReference reference)
-        => NoteNumbering().Label(reference.Kind, reference.Number, reference.BlockIndex, NotesBefore);
+        => _builder is not null && _sectionNotesUpFront is { } upFront
+            ? UpFrontNoteLabel(upFront, reference)
+            : NoteNumbering().Label(reference.Kind, reference.Number, reference.BlockIndex, NotesBefore);
+
+    /// <summary>While a first open's index builds: the section is found by byte offset in the up-front pass's section ends.</summary>
+    private DocxSectionNotePropertiesScanner.Result? _sectionNotesUpFront;
+
+    private string UpFrontNoteLabel(DocxSectionNotePropertiesScanner.Result sections, DocxNoteReference reference)
+    {
+        if (reference.Number <= 0) return "*";
+        long blockOffset = _blocks.BlockStartOffset(reference.BlockIndex);
+        long[] ends = sections.SectionEndOffsets;
+        int low = 0, high = ends.Length;                          // the first section ending after the block's start
+        while (low < high) { int middle = (low + high) >> 1; if (ends[middle] <= blockOffset) low = middle + 1; else high = middle; }
+        WordDocumentNoteNumberRule rule = low >= ends.Length ? WordDocumentNoteNumberRule.Default(reference.Kind)
+            : reference.Kind == WordDocumentNoteKind.Footnote ? sections.Footnotes[low] : sections.Endnotes[low];
+        int before = 0;
+        if (rule.Restart != WordDocumentNoteRestart.Continuous && low > 0)
+        {
+            long sectionStart = ends[low - 1];
+            int first = 0, last = reference.BlockIndex;               // the section's first block: the first starting at or after its start
+            while (first < last) { int middle = (first + last) >> 1; if (_blocks.BlockStartOffset(middle) < sectionStart) first = middle + 1; else last = middle; }
+            before = NotesBefore(reference.Kind, first);
+        }
+        return DocxHtml.DocxNumberingDefinitions.FormatNumber(rule.Number(reference.Number, before), rule.Format);
+    }
 
     /// <summary>The sections' note numbering; while the index is building, blocks past the last section read so far take the
     /// defaults until their w:sectPr is reached (a section's properties come at its end in document.xml).</summary>
