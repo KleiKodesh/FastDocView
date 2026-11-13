@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using System.Text.RegularExpressions;
 using FastDocView;
 
@@ -118,6 +119,66 @@ public static class BinaryChartsFidelityTest
         TestReport.Check(FastDocView.DocxHtml.DocxChart.TrendLabelShown(Flag("1")), "val 1: shown");
         TestReport.Check(!FastDocView.DocxHtml.DocxChart.TrendLabelShown(Flag("0")), "val 0: hidden");
         TestReport.Check(!FastDocView.DocxHtml.DocxChart.TrendLabelShown(Flag("false")), "val false: hidden");
+    }
+
+    /// <summary>A chart's texts relative to its title: (text, x, y, anchor).</summary>
+    private static List<(string Text, double X, double Y, string Anchor)> ChartTexts(List<string> html, string title)
+    {
+        string svg = Regex.Match(string.Concat(html), "<svg class=\"word-chart\"(?:(?!</svg>).)*>" + Regex.Escape(title) + "<.*?</svg>", RegexOptions.Singleline).Value;
+        var texts = Regex.Matches(svg, "<text x=\"([-0-9.]+)\" y=\"([-0-9.]+)\"[^>]*text-anchor=\"([a-z]+)\"[^>]*>([^<]*)<")
+            .Select(m => (Text: m.Groups[4].Value, X: double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), Y: double.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture), Anchor: m.Groups[3].Value)).ToList();
+        var head = texts.FirstOrDefault(t => t.Text == title);
+        return texts.Select(t => (t.Text, t.X - head.X, t.Y - head.Y, t.Anchor)).ToList();
+    }
+
+    /// <summary>
+    /// 3-D line / area scenes and axis crossings against Word 16's PDFs (test-data/word-charts-binary/word-charts-3d-rows-v1 and
+    /// word-charts-crosses-v1, scripts/make-word-charts-3d-crosses-v1.py): label positions relative to the title, in points.
+    /// </summary>
+    public static void RunCrossingsAndRows()
+    {
+        TestReport.Step("Charts: 3-D line / area scenes and axis crossings (c:crosses, c:crossesAt; BIFF8; ODF chart:axis-position) as Word draws them");
+        string folder = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-charts-binary");
+        bool Near(List<(string Text, double X, double Y, string Anchor)> texts, string text, double? x, double? y, double tolerance)
+            => texts.Any(t => t.Text == text && (x is null || Math.Abs(t.X - x.Value) <= tolerance) && (y is null || Math.Abs(t.Y - y.Value) <= tolerance));
+        string rows = Path.Combine(folder, "word-charts-3d-rows-v1.docx"), crosses = Path.Combine(folder, "word-charts-crosses-v1.docx");
+        TestReport.Check(File.Exists(rows) && File.Exists(crosses), "fixtures exist");
+        if (!File.Exists(rows) || !File.Exists(crosses)) return;
+        List<string> html = Render(rows);
+        var right = ChartTexts(html, "Area3D Right");
+        TestReport.Check(Near(right, "Q1", -186.2, 186.4, 2) && Near(right, "Q4", 112.0, 186.4, 2) && Near(right, "5", -194.6, 81.4, 2), "right-angled 3-D area: Word's scene (categories within 2 pt)");
+        var flat = ChartTexts(html, "Area3D Flat");
+        TestReport.Check(Near(flat, "Q1", -186.0, 178.7, 2) && Near(flat, "Q4", 161.7, 178.7, 2), "right-angled 3-D area, depth 60 %: Word's scene");
+        var perspective = ChartTexts(html, "Area3D Persp");
+        TestReport.Check(Near(perspective, "Q1", -153.7, 150.2, 5) && Near(perspective, "Q4", 136.4, 187.6, 5) && !perspective.Any(t => t.Text == "0.5"), "3-D area with perspective: Word's scene within 5 pt, ticks by 1");
+        html = Render(crosses);
+        var columnMax = ChartTexts(html, "Col CrossMax");
+        TestReport.Check(Near(columnMax, "Q1", null, 19.3, 1.5), "category axis at the maximum: its labels above the plot");
+        var lineMax = ChartTexts(html, "Line ValMax");
+        TestReport.Check(lineMax.Any(t => t.Text == "4" && t.Anchor == "start" && Math.Abs(t.X - 195.7) <= 2), "value axis crossing at the last category: its labels at the right");
+        var bar = ChartTexts(html, "Bar CrossAt");
+        TestReport.Check(bar.Any(t => t.Text == "Q1" && t.Anchor == "end" && Math.Abs(t.X - 57.0) <= 3) && Near(bar, "2", null, 18.7, 1.5), "horizontal bars: category axis at a value, value axis at the top");
+        var area = ChartTexts(html, "Area CrossAt");
+        TestReport.Check(Near(area, "Q1", null, 116.2, 1.5) && area.Any(t => t.Text == "3" && t.Anchor == "end" && Math.Abs(t.X + 71.6) <= 5), "area: both axes crossing at values inside the plot");
+        string binary = Path.Combine(folder, "word-charts-crosses-v1.doc");
+        if (File.Exists(binary))
+        {
+            List<string> doc = Render(binary);
+            // (Word saves the line charts as pictures; its .doc keeps the workbook's own values, all positive)
+            TestReport.Check(ChartTexts(doc, "Col CrossAt").Any(t => t.Text == "3" && t.Anchor == "end" && Math.Abs(t.X + 8.3) <= 4) && Near(ChartTexts(doc, "Bar CrossAt"), "2", null, 18.7, 1.5),
+                             ".doc (BIFF8 CHVALUERANGE / CHLABELRANGE crossings): value axis at category 3, horizontal bars' value labels at the top");
+        }
+        // ODF: chart:axis-position on the axis style becomes c:crosses / c:crossesAt
+        XNamespace chart = "urn:oasis:names:tc:opendocument:xmlns:chart:1.0", style = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
+        var styles = new Dictionary<string, XElement>(StringComparer.Ordinal);
+        foreach ((string name, string position) in new[] { ("x", "end"), ("y", "2.5") })
+            styles[name] = new XElement(style + "style", new XAttribute(style + "name", name), new XElement(style + "chart-properties", new XAttribute(chart + "axis-position", position)));
+        var odf = new XElement(chart + "chart", new XAttribute(chart + "class", "chart:bar"),
+            new XElement(chart + "plot-area", new XElement(chart + "axis", new XAttribute(chart + "dimension", "x"), new XAttribute(chart + "style-name", "x")),
+                                              new XElement(chart + "axis", new XAttribute(chart + "dimension", "y"), new XAttribute(chart + "style-name", "y"))));
+        string converted = FastDocView.Odt.OdtChart.ChartSpace(odf, styles).ToString();
+        TestReport.Check(Regex.IsMatch(converted, "<catAx[^>]*>.*<crosses val=\"max\" />.*</catAx>", RegexOptions.Singleline) && Regex.IsMatch(converted, "<valAx[^>]*>.*<crossesAt val=\"2.5\" />.*</valAx>", RegexOptions.Singleline),
+                         "ODT: chart:axis-position end / a value become c:crosses max / c:crossesAt");
     }
 
     private static List<string> Render(string path)

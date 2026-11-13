@@ -25,6 +25,8 @@ internal sealed partial class DocxChart
     {
         public double RotX = 15, RotY = 20, Perspective = 30, DepthPercent = 100, GapDepth = 150;
         public bool RightAngled, Smooth;
+        /// <summary>c:hPercent: the scene height as a percentage of its base; null = Word's automatic height (no element written).</summary>
+        public double? HeightPercent;
         public double Ambient = 0.8, Light = 0.4;
         public (double X, double Y, double Z) LightDirection = (0.2, 0.4, 1.0);
     }
@@ -39,6 +41,7 @@ internal sealed partial class DocxChart
         if (Number(view.Element("rotX")) is { } rotX) result.RotX = rotX;
         if (Number(view.Element("rotY")) is { } rotY) result.RotY = rotY;
         if (Number(view.Element("perspective")) is { } perspective) result.Perspective = perspective;
+        if (Number(view.Element("hPercent")) is { } heightPercent) result.HeightPercent = Math.Max(5, Math.Min(500, heightPercent));
         if (Number(view.Element("depthPercent")) is { } depth) result.DepthPercent = Math.Max(20, Math.Min(2000, depth));
         result.RightAngled = Value(view.Element("rAngAx")) is "1" or "true";
         result.Smooth = (string?)view.Attribute("shadeMode") is "gouraud" or "phong";
@@ -58,15 +61,18 @@ internal sealed partial class DocxChart
     private sealed class Projection
     {
         private readonly View3D _view;
-        private readonly double _cx, _cy, _cz, _distance, _sinX, _cosX, _sinY, _cosY;
+        private readonly double _cx, _cy, _cz, _distance, _sinX, _cosX, _sinY, _cosY, _obliqueX;
         private double _scale = 1, _offsetX, _offsetY;
 
-        public Projection(View3D view, double width, double height, double depth)
+        public Projection(View3D view, double width, double height, double depth, bool seriesRows = false)
         {
             _view = view;
-            (_cx, _cy, _cz) = (width / 2, height / 2, depth / 2);
+            (_cx, _cy, _cz) = (width / 2, height / 2, seriesRows ? depth / 4 : depth / 2);
             double x = view.RotX * Math.PI / 180, y = view.RotY * Math.PI / 180;
             (_sinX, _cosX, _sinY, _cosY) = (Math.Sin(x), Math.Cos(x), Math.Sin(y), Math.Cos(y));
+            // Word's right-angled 3-D lines / areas draw the depth sin(rotY) across and sin(rotX) up (its PDFs of the 2026-11-13 probes:
+            // the same across with rotX 0 and 15, x / y in the ratio of the two sines); its columns keep the |cos rotX| (measured before)
+            _obliqueX = seriesRows ? _sinY : _sinY * Math.Abs(_cosX);
             // ThreeDHelper.cxx:635-645 PerspectiveToCameraDistance, in scene volumes (the scene's largest extent)
             double perspective = Math.Max(0, Math.Min(100, view.Perspective / 2));
             const double minimum = 0.75, maximum = 20;
@@ -74,6 +80,11 @@ internal sealed partial class DocxChart
             _distance = view.RightAngled || perspective <= 0 ? double.PositiveInfinity : a / (perspective - b) * Math.Max(width, Math.Max(height, depth));
             // never inside the scene (OOXML perspective goes to 240, past LibreOffice's 100): at least the scene's diagonal away
             _distance = Math.Max(_distance, 1.5 * Math.Sqrt(width * width + height * height + depth * depth) / 2);
+            // Word's 3-D lines / areas: c:perspective as a field of view in degrees over the scene's width, the eye aimed a quarter of
+            // the depth in (fitted to Word 16's PDFs of 14 perspective probes, 2026-11-13: labels median about 2.4 pt for perspective
+            // 10..60; LibreOffice's camera distance above was 20+ pt off)
+            if (seriesRows && !view.RightAngled && view.Perspective > 0)
+                _distance = 0.5 * width / Math.Tan(Math.Min(179, view.Perspective) / 2 * Math.PI / 180);
         }
 
         /// <summary>A direction turned by the scene rotation (z toward the viewer): visibility and shading of a face.</summary>
@@ -92,11 +103,25 @@ internal sealed partial class DocxChart
             if (_view.RightAngled)
             {
                 // the front stays flat; depth goes up and to the side by the angles (Word's right-angled axes)
-                return (x + z * _sinY * Math.Abs(_cosX), y + z * _sinX, z);
+                return (x + z * _obliqueX, y + z * _sinX, z);
             }
             (double tx, double ty, double tz) = Turn((x - _cx, y - _cy, z - _cz));
             double factor = double.IsInfinity(_distance) ? 1 : _distance / Math.Max(1e-6, _distance - tz);
             return (tx * factor, ty * factor, -tz);
+        }
+
+        /// <summary>The projected scene box's width and height before fitting.</summary>
+        public (double Width, double Height) Extent(double width, double height, double depth)
+        {
+            double minX = double.MaxValue, maxX = double.MinValue, minY = double.MaxValue, maxY = double.MinValue;
+            foreach (double x in new[] { 0, width })
+                foreach (double y in new[] { 0, height })
+                    foreach (double z in new[] { 0, depth })
+                    {
+                        var p = Raw(x, y, z);
+                        minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X); minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
+                    }
+            return (maxX - minX, maxY - minY);
         }
 
         /// <summary>Fits the projected scene box into the rectangle (uniform scale, centred).</summary>
@@ -131,7 +156,7 @@ internal sealed partial class DocxChart
         public bool FacesViewer((double X, double Y, double Z) normal, (double X, double Y, double Z) point)
         {
             // right-angled (oblique) view: seen when the normal points against the depth direction drawn (sinY |cosX|, sinX, away)
-            if (_view.RightAngled) return normal.X * _sinY * Math.Abs(_cosX) + normal.Y * _sinX - normal.Z > 1e-12;
+            if (_view.RightAngled) return normal.X * _obliqueX + normal.Y * _sinX - normal.Z > 1e-12;
             var n = Turn(normal);
             if (double.IsInfinity(_distance)) return n.Z > 1e-9;
             var p = Turn((point.X - _cx, point.Y - _cy, point.Z - _cz));
@@ -166,12 +191,12 @@ internal sealed partial class DocxChart
     /// <summary>The scene box with its walls, floor, gridlines and axis labels; returns the projection and the scene's size for the data.</summary>
     private (Projection Projection, double Width, double Height, double Depth, double Slot, double RowDepth) Draw3DFrame(StringBuilder svg, int categoryCount, int rows, bool horizontal,
         double left, double top, double right, double bottom, Func<double, double> valueToAxis, List<(double Value, string Text)> valueLabels, List<string> categories,
-        bool showCategories, string textColor, string gridColor, string? plotFill, double labelSize, bool midCategory = false)
+        bool showCategories, string textColor, string gridColor, string? plotFill, double labelSize, bool midCategory = false, bool seriesRows = false)
     {
         View3D view = _view3D ?? new View3D();
-        double width = 1, height = Math.Max(0.2, (bottom - top) / Math.Max(1, right - left));
+        double width = 1, height = SceneHeight(view, categoryCount, rows, seriesRows, left, top, right, bottom);
         double slot = (horizontal ? height : width) / categoryCount, rowDepth = slot * view.DepthPercent / 100, depth = rowDepth * rows;
-        var projection = new Projection(view, width, height, depth);
+        var projection = new Projection(view, width, height, depth, seriesRows);
         projection.Fit(width, height, depth, left, top, right, bottom);
         string wallFill = PropertiesFill(_backWallProperties, plotFill) ?? "none", floorFill = PropertiesFill(_floorProperties, plotFill) ?? "none";
         Polygon(svg, new[] { projection.Point(0, 0, depth), projection.Point(width, 0, depth), projection.Point(width, height, depth), projection.Point(0, height, depth) }, wallFill, gridColor, "word-chart-wall");
@@ -188,19 +213,47 @@ internal sealed partial class DocxChart
             if (horizontal) Text(svg, a.X, a.Y + labelSize + 2, text, labelSize, ValueAxis()?.LabelColor ?? textColor, "middle");
             else Text(svg, a.X - (_libreOfficeLayout ? 4 : ValueAxis()?.NoTickMarks == true ? 8.2 : 6.2), a.Y + labelSize / 3, text, labelSize, ValueAxis()?.LabelColor ?? textColor, "end");   // Word: as its 2-D value labels
         }
-        // category labels next to the category axis where it crosses the value axis - at zero (c:crosses autoZero), clamped to the
+        // category labels next to the category axis where it crosses the value axis - zero for c:crosses autoZero, else c:crosses min / max
+        // or c:crossesAt (_categoryCross, clamped to the scale; Word PDF of word-charts-crosses-v1, Col3D CrossAt); autoZero clamped to the
         // scale: Word 16's PDFs of 3-D columns, bars and areas with negative values (2026-11-12 probes) put them on the zero plane, not
         // under the floor; LibreOffice the same (oox axisconverter.cxx:99, 492: nextTo = NEAR_AXIS, autoZero = ChartAxisPosition_ZERO)
-        double zero = valueToAxis(0);
+        double zero = valueToAxis(_categoryCross);
         zero = double.IsNaN(zero) ? 0 : Math.Max(0, Math.Min(1, zero));
         if (showCategories)
             for (int i = 0; i < categoryCount; i++)
             {
                 string label = i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture);
                 if (horizontal) { var p = projection.Point(zero * width, (i + 0.5) * slot, 0); Text(svg, p.X - 4, p.Y + labelSize / 3, label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "end"); }
-                else { var p = projection.Point(midCategory ? (categoryCount == 1 ? 0.5 * slot : i * width / (categoryCount - 1)) : (i + 0.5) * slot, zero * height, 0); Text(svg, p.X, p.Y + labelSize + 2, label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "middle"); }
+                else { var p = projection.Point(midCategory ? (categoryCount == 1 ? 0.5 * slot : i * width / (categoryCount - 1)) : (i + 0.5) * slot, zero * height, 0); Text(svg, p.X, p.Y + labelSize + 2 + (seriesRows && !_libreOfficeLayout ? labelSize / 3 : 0), label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "middle"); }
             }
         return (projection, width, height, depth, slot, rowDepth);
+    }
+
+    /// <summary>
+    /// The scene height for a width of 1. Columns and bars: the plot's own proportions. Word's 3-D lines and areas (one depth row per series):
+    /// a base of floor((categories + series) / 2) / categories of the width, times c:hPercent, or with no c:hPercent (Word's automatic
+    /// height) times the plot's height / width - measured on Word 16's PDFs of 3-D line / area probes (2026-11-13: 1 to 6 series, 2 to 8
+    /// categories, hPercent 50 / 100 / absent, three plot heights): bases 1/2 (1 series, 2, 4, 6 or 8 categories), 2/3 (1 of 3, 3 of 6),
+    /// 3/4 (2 or 3 of 4), 1 (as many series as categories); depthPercent and gapDepth leave it unchanged. LibreOffice reads neither
+    /// hPercent nor an automatic height (oox plotareaconverter.cxx:262-323 converts only the angles and perspective), so Word is the reference.
+    /// </summary>
+    private static double SceneHeight(View3D view, int categoryCount, int rows, bool seriesRows, double left, double top, double right, double bottom)
+    {
+        double aspect = Math.Max(0.01, (bottom - top) / Math.Max(1, right - left));
+        if (!seriesRows) return Math.Max(0.2, aspect);
+        double baseHeight = Math.Floor((categoryCount + rows) / 2.0) / Math.Max(1, categoryCount);
+        if (view.HeightPercent is { } percent) return Math.Max(0.01, percent / 100 * baseHeight);
+        return Math.Max(0.01, aspect * baseHeight);
+    }
+
+    /// <summary>The front height in points of a 3-D line / area scene fitted into the rectangle (the value axis length Word scales over).</summary>
+    private double Rows3DFrontHeight(int categoryCount, int rows, double left, double top, double right, double bottom)
+    {
+        View3D view = _view3D ?? new View3D();
+        double height = SceneHeight(view, categoryCount, rows, true, left, top, right, bottom), depth = view.DepthPercent / 100 / categoryCount * rows;
+        var projection = new Projection(view, 1, height, depth, true);
+        projection.Fit(1, height, depth, left, top, right, bottom);
+        return Math.Abs(projection.Point(0, 0, 0).Y - projection.Point(0, height, 0).Y);
     }
 
     /// <summary>One flat-shaded scene face, culled when it faces away from the camera.</summary>
@@ -238,7 +291,7 @@ internal sealed partial class DocxChart
                 double value = percent ? (total == 0 ? 0 : raw / total) : raw;
                 double from, to;
                 if (stacked) { if (value >= 0) { from = positive; positive += value; to = positive; } else { from = negative; negative += value; to = negative; } }
-                else { from = 0; to = value; }
+                else { from = _categoryCross; to = value; }
                 double c0 = i * slot + gap * barWidth / 2 + (stacked || standard ? 0 : s * barWidth * (1 - overlap));
                 double z0 = (standard ? s : 0) * rowDepth + (rowDepth - barDepth) / 2;
                 double v0 = Math.Max(0, Math.Min(1, valueToAxis(Math.Min(from, to)))) * valueExtent, v1 = Math.Max(0, Math.Min(1, valueToAxis(Math.Max(from, to)))) * valueExtent;
@@ -280,7 +333,7 @@ internal sealed partial class DocxChart
         Group group = _groups[0];
         int rows = group.Series.Count, totalSeries = rows;
         bool area = group.Kind == Kind.Area;
-        var (projection, _, height, _, slot, rowDepth) = Draw3DFrame(svg, categoryCount, rows, false, left, top, right, bottom, valueToAxis, valueLabels, categories, showCategories, textColor, gridColor, plotFill, labelSize, MidCategory());
+        var (projection, _, height, _, slot, rowDepth) = Draw3DFrame(svg, categoryCount, rows, false, left, top, right, bottom, valueToAxis, valueLabels, categories, showCategories, textColor, gridColor, plotFill, labelSize, MidCategory(), seriesRows: true);
         double thickness = rowDepth / (1 + view.GapDepth / 100);
         for (int s = rows - 1; s >= 0; s--)
         {

@@ -132,7 +132,7 @@ internal static class OdtChart
 
     // ── conversion to the DrawingML chart vocabulary (namespace-free, as DocxChart reads it) ──
 
-    private static XElement ChartSpace(XElement chart, Dictionary<string, XElement> styles)
+    internal static XElement ChartSpace(XElement chart, Dictionary<string, XElement> styles)
     {
         XElement? StyleOf(XElement? element) => (string?)element?.Attribute(Chart + "style-name") is { } name && styles.TryGetValue(name, out XElement? style) ? style : null;
         string? ChartProperty(XElement? element, string name) => (string?)StyleOf(element)?.Element(Style + "chart-properties")?.Attribute(Chart + name);
@@ -364,6 +364,17 @@ internal static class OdtChart
         element.SetAttributeValue("tryStaggeringFirst", (string?)axisChartProperties?.Attribute(loext + "try-staggering-first") == "true" ? "1" : "0");
         if (chartProperty(axis, "interval-major") is { } step) element.Add(new XElement("majorUnit", new XAttribute("val", step)));
         element.Add(new XElement("crossAx", Val(crossId)));
+        // chart:axis-position (ODF 1.2+, the axis style): where this axis crosses the other - start / end of its scale, 0, or a value
+        // there (xmloff XMLAxisPositionPropertyHdl.cxx: START / END / ZERO / VALUE with the number as the crossing value), as c:crosses
+        // min / max / autoZero or c:crossesAt
+        switch (chartProperty(axis, "axis-position"))
+        {
+            case "start": element.Add(new XElement("crosses", new XAttribute("val", "min"))); break;
+            case "end": element.Add(new XElement("crosses", new XAttribute("val", "max"))); break;
+            case null or "0": break;
+            case var position when double.TryParse(position, NumberStyles.Float, CultureInfo.InvariantCulture, out double at):
+                element.Add(new XElement("crossesAt", new XAttribute("val", at.ToString("R", CultureInfo.InvariantCulture)))); break;
+        }
         return element;
     }
 

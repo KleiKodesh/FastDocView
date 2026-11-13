@@ -5062,3 +5062,26 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
 - Errors vs Word (texts relative to the title): 3-D columns / bars 80 texts median 1.25 x / 1.70 y pt, max 6.2 / 9.7. 3-D lines /
   areas 54 texts median 19.4 / 2.9, max 27.9 / 14.1: Word's line / area scene is about 24 pt wider at the left and its slots 8 pt
   wider - the series-depth / frame fit for lines and areas, not the scale; left open (UNSUPPORTED).
+
+## Chart: Word's 3-D line / area scene, axis crossings (2026-11-13)
+
+- Fixtures: test-data/word-charts-binary/word-charts-3d-rows-v1 and word-charts-crosses-v1 (.docx written from word-charts-binary-v1
+  by scripts/make-word-charts-3d-crosses-v1.py, Word 16 saved PDF / .doc by scripts/save-word-charts-3d-crosses.ps1); about 40 more
+  probes (1-6 series, 2-8 categories, depth, gap depth, hPercent, rotX / rotY, perspective 0-200, chart heights) measured from the
+  PDFs' text and the scene picture's alpha bounds. LibreOffice reads no hPercent / depthPercent (oox plotareaconverter.cxx:262-323),
+  so Word is the reference.
+- Word's 3-D line / area scene, width 1: depth = series x depthPercent / categories (gapDepth only thins the rows); height = base x
+  hPercent, base = floor((categories + series) / 2) / categories, and with no c:hPercent (automatic) the plot's height / width in
+  its place. Right-angled axes draw the depth sin(rotY) across and sin(rotX) up (3-D columns keep |cos rotX|). The plot is 2.8 pt
+  further in at the left and 7.15 pt at the right than the 2-D plot; the value axis ticks over the front height, one per 1.55 label
+  sizes; category labels a third of their size lower. Perspective: field of view = c:perspective degrees over the scene width, eye
+  aimed a quarter of the depth in (fitted; good to about 3 pt at perspective 10-30, poor at 60+).
+- Before / after vs Word (labels): right-angled 30.5 / 0.2 pt x, perspective 24 / 3 pt; all seven fixture charts median 0.30 x /
+  0.57 y (was 19.4 / 2.9).
+- Axis crossings: c:crosses / c:crossesAt (oox axisconverter.cxx:484-500; xichart.cxx:3058-3083, 3150-3161 for BIFF8; xmloff
+  XMLAxisPositionPropertyHdl.cxx for ODF chart:axis-position). The category axis's crossing is a value: its line and labels sit
+  there (Word: labels above an axis at the maximum, 12.5 pt room at the top; none kept below when it is not at the bottom), bars and
+  areas grow from it. The value axis's crossing is a category (1-based; a slot's left edge, midCat its tick): its labels sit left
+  of it, right of it at the last category; no room kept on the left (11 pt from the chart edge). Word's PDF of the crosses fixture:
+  median 1.16 x / 0.24 y, max 5.4 / 4.4. Excel ignores the value axis crossing in 3-D (xichart.cxx:3058-3062), so .doc does too.
+  Scatter / bubble axes still stay at the edges.

@@ -109,6 +109,9 @@ internal static class ExcelBinaryChart
         public int FormatIndex = -1;                               // CHFORMAT: the number format of the tick labels
         public string? LabelColor;
         public bool Between = true;
+        /// <summary>Where the other axis crosses this one: at its maximum, or at a value (CHVALUERANGE cross / CHLABELRANGE category); null = automatic.</summary>
+        public bool MaxCross;
+        public double? CrossValue;
     }
 
     private sealed class TextData
@@ -347,6 +350,10 @@ internal static class ExcelBinaryChart
                     if ((flags & 2) == 0) ranged.Max = Sane(BitConverter.ToDouble(body, 8));
                     if ((flags & 4) == 0 && Sane(BitConverter.ToDouble(body, 16)) is > 0 and var major) ranged.Major = major;
                     if (ranged.Min is { } low && ranged.Max is { } high && high <= low) ranged.Min = ranged.Max = null;   // a damaged range: automatic
+                    // where the category axis crosses (xichart.cxx:3092-3099 cross at 32, :3150-3161: EXC_CHVALUERANGE_MAXCROSS 0x0080
+                    // overrides, EXC_CHVALUERANGE_AUTOCROSS 0x0010 = zero, a log scale stores the exponent)
+                    ranged.MaxCross = (flags & 0x80) != 0;
+                    if (!ranged.MaxCross && (flags & 0x10) == 0 && Sane(BitConverter.ToDouble(body, 32)) is { } cross) ranged.CrossValue = (flags & 0x20) != 0 ? Math.Pow(10, cross) : cross;
                     continue;
                 }
                 case ChTick when length >= 1 && current is AxisData ticked:
@@ -415,6 +422,10 @@ internal static class ExcelBinaryChart
                 // cleared = the points sit on the category ticks (c:crossBetween midCat)
                 case ChLabelRange when length >= 8 && current is AxisData ranged0:
                     ranged0.Between = (BitConverter.ToUInt16(body, 6) & 1) != 0;
+                    // where the value axis crosses: the category number at 0, EXC_CHLABELRANGE_MAXCROSS 0x0002 overrides (xichart.cxx:2992-2998,
+                    // 3058-3083; Excel does not move it in 3-D charts, so it is not written for them)
+                    ranged0.MaxCross = (BitConverter.ToUInt16(body, 6) & 2) != 0;
+                    if (!ranged0.MaxCross && BitConverter.ToUInt16(body, 0) is var category and > 1) ranged0.CrossValue = category;
                     continue;
                 case ChFormat when length >= 2 && current is AxisData formatted:
                     formatted.FormatIndex = BitConverter.ToUInt16(body, 0);
@@ -629,6 +640,13 @@ internal static class ExcelBinaryChart
             if (axis is { FormatIndex: >= 0 } && NumberFormat(axis.FormatIndex) is { } code) element.Add(new XElement("numFmt", new XAttribute("formatCode", code), new XAttribute("sourceLinked", "0")));
             if (axis?.LabelSize is { } labelSize) element.Add(TextProperties(labelSize, axis.LabelColor));
             element.Add(new XElement("crossAx", Val(cross)));
+            // c:crosses / c:crossesAt come from the crossing axis's record: a category axis crosses where the value axis's CHVALUERANGE
+            // says, a value axis where the category axis's CHLABELRANGE says
+            if (axes.FirstOrDefault(a => a.Type == (name == "catAx" ? 1 : 0)) is { } crossing && (name == "catAx" || axis?.Type == 1 && !is3D))
+            {
+                if (crossing.MaxCross) element.Add(new XElement("crosses", Val("max")));
+                else if (crossing.CrossValue is { } at) element.Add(new XElement("crossesAt", Val(N(at))));
+            }
             if (name == "valAx" && axes.FirstOrDefault(a => a.Type == 0) is { Between: false }) element.Add(new XElement("crossBetween", Val("midCat")));
             if (axis?.Major is { } major) element.Add(new XElement("majorUnit", Val(N(major))));
             return element;

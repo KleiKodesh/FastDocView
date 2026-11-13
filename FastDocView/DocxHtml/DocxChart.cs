@@ -74,6 +74,11 @@ internal sealed partial class DocxChart
         public bool Reversed;
         public double? LogBase;
         public string? Position;
+        /// <summary>c:crosses (autoZero / min / max) and c:crossesAt (21.2.2.33-34): where this axis crosses its crossing axis, in that axis's units.</summary>
+        public string Crosses = "autoZero";
+        public double? CrossesAt;
+        /// <summary>c:tickLblPos low / high: the labels stay at the plot's low / high edge whatever the crossing.</summary>
+        public string? LabelPosition;
     }
 
     private readonly List<Group> _groups = new();
@@ -94,6 +99,8 @@ internal sealed partial class DocxChart
     private double _legendSize = 9, _dataLabelSize = 9;
     private (double X, double Y)? _legendLayout;
     private bool _is3D;
+    /// <summary>The value where the category axis crosses (c:crosses / c:crossesAt of the category axis): bars and areas grow from it.</summary>
+    private double _categoryCross;
     private XElement? _floorProperties, _backWallProperties;
     private readonly DocxTheme? _theme;
 
@@ -160,6 +167,7 @@ internal sealed partial class DocxChart
                     FormatCode = (string?)element.Element("numFmt")?.Attribute("formatCode"),
                     Reversed = Value(element.Element("scaling")?.Element("orientation")) == "maxMin",
                     LogBase = Number(element.Element("scaling")?.Element("logBase")), Position = Value(element.Element("axPos")),
+                    Crosses = Value(element.Element("crosses")) ?? "autoZero", LabelPosition = Value(element.Element("tickLblPos")), CrossesAt = Number(element.Element("crossesAt")),
                 };
                 model._axes[axis.Id] = axis;
                 continue;
@@ -770,6 +778,22 @@ internal sealed partial class DocxChart
         double estimatedLength = Math.Max(1, horizontal ? right - left - 60 : bottom - top - 30);
         double axisLabelSize = valueAxis?.LabelSize ?? categoryAxis?.LabelSize ?? 9;
         (double vMin, double vMax, List<double> valueTicks) = AxisScale(dataMin, dataMax, positiveMin, valueAxis, percent, estimatedLength, axisLabelSize);
+        // where the axes cross (c:crosses / c:crossesAt, 21.2.2.33-34; LibreOffice oox axisconverter.cxx:484-500: min / max = the
+        // crossing axis's start / end, autoZero = 0 (1 on a log scale), crossesAt = that value). The category axis's own c:crosses is
+        // the value it sits at (bars and areas grow from it, Word's PDFs of word-charts-crosses-v1); the value axis's is the category
+        // it sits at (1-based; between categories it is that category's left edge, midCat its tick)
+        double categoryCrossValue = categoryAxis?.CrossesAt ?? (categoryAxis?.Crosses switch { "min" => vMin, "max" => vMax, _ => valueAxis?.LogBase is not null ? 1 : 0 });
+        categoryCrossValue = Math.Max(Math.Min(vMin, vMax), Math.Min(Math.Max(vMin, vMax), categoryCrossValue));
+        _categoryCross = xy ? 0 : categoryCrossValue;
+        double categoryCross = xy ? 0 : Math.Max(0, Math.Min(1, AxisMap(valueAxis, vMin, vMax)(categoryCrossValue)));
+        if (double.IsNaN(categoryCross)) categoryCross = 0;
+        int categorySlots = MidCategory() ? Math.Max(1, categoryCount - 1) : categoryCount;
+        double valueCross = xy || valueAxis is null ? 0 : valueAxis.CrossesAt is { } at ? (at - 1) / categorySlots : valueAxis.Crosses == "max" ? 1 : 0;
+        valueCross = double.IsNaN(valueCross) ? 0 : Math.Max(0, Math.Min(1, valueCross));
+        double categoryAxisLine = categoryCross;   // the line itself; its labels follow c:tickLblPos (low / high: at the plot's edge)
+        categoryCross = categoryAxis?.LabelPosition switch { "low" => 0, "high" => 1, _ => categoryCross };
+        valueCross = valueAxis?.LabelPosition switch { "low" => 0, "high" => 1, _ => valueCross };
+        bool crossings2D = !_is3D && (categoryCross > 1e-9 || valueCross > 1e-9);
         // x range for scatter / bubble
         double xMin = 0, xMax = categoryCount, xStep = 1;
         if (xy)
@@ -833,18 +857,33 @@ internal sealed partial class DocxChart
         // their size below the room kept for them, add that third; with no category labels the axis stays 2 pt higher still.
         if (_bottomLegendRow && _plotLayout is null)
             bottom = Math.Max(top + 1, bottom - 0.3 - 0.8 * (_legendSize - 9) - (horizontal || xy ? 0 : labelSize / 3 + (categoryAxis is null or { NoLabels: true } or { Deleted: true } ? 2 : 0)));
-        if (horizontal) { bottom -= valueAxis is { NoLabels: true } ? 0 : labelSize + 4; left += categoryAxis is { NoLabels: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
+        if (horizontal && crossings2D)
+        {
+            // Word keeps no room for labels that sit inside the plot; value labels on a value axis at the top get a row above it
+            if (valueAxis is not { NoLabels: true }) { if (valueCross >= 1 - 1e-9) top += labelSize + 3; else if (valueCross <= 1e-9) bottom -= labelSize + 4; }
+            if (categoryAxis is not { NoLabels: true } && categoryCross <= 1e-9) left += Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize));
+            else if (categoryCross > 1e-9) left += 5;
+            else left += categoryAxis is { NoLabels: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize));
+        }
+        else if (horizontal) { bottom -= valueAxis is { NoLabels: true } ? 0 : labelSize + 4; left += categoryAxis is { NoLabels: true } ? 0 : _plotLayout is not null && _plotLayoutInner ? Math.Min((right - left) / 2, CategoryLabelWidth(categories, labelSize)) : Math.Min((right - left) / 3, CategoryLabelWidth(categories, labelSize)); }
         CategoryLabelPlan? categoryPlan = null;
         if (!horizontal)
         {
-            left += valueLabelWidth;
+            if (crossings2D && valueCross > 1e-9)
+            {
+                // the value axis inside the plot or at its right: no room on the left (Word: 11 pt from the chart edge), at the right a column
+                left += 5;
+                if (valueCross >= 1 - 1e-9) right -= valueLabelWidth;
+            }
+            else left += valueLabelWidth;
             bool drawnIn3D = _is3D && _groups.Count == 1 && _groups[0].Kind is Kind.Bar or Kind.Line or Kind.Area;   // the 3-D paths place their own labels
             if (!xy && !drawnIn3D && categoryAxis is not { NoLabels: true })
             {
                 int slots = MidCategory() ? Math.Max(1, categoryCount - 1) : categoryCount;
                 categoryPlan = PlanCategoryLabels(Enumerable.Range(0, categoryCount).Select(i => i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture)).ToList(),
                                                   Math.Max(1, right - left) / slots, labelSize, categoryAxis);
-                bottom -= categoryPlan.Height;
+                if (!crossings2D || categoryCross <= 1e-9) bottom -= categoryPlan.Height;
+                else if (categoryCross >= 1 - 1e-9) top += labelSize + 3.5;   // the labels above an axis at the top (Word: 12.5 pt at 9 pt)
             }
             else bottom -= categoryAxis is { NoLabels: true } ? 0 : labelSize + 4;
         }
@@ -858,6 +897,28 @@ internal sealed partial class DocxChart
         }
         if (_is3D && !xy && !horizontal && _groups.Count == 1 && _groups[0].Kind is Kind.Line or Kind.Area)
         {
+            // Word scales a 3-D line / area value axis over the scene's front height, one tick per 1.55 label sizes (its PDFs of the
+            // 2026-11-13 probes: 0..5 by 1 up to a 124.5 pt front, by 0.5 from 137.4 pt; 3-D columns keep the plot height); the labels'
+            // width then moves the plot's left edge
+            if (valueAxis is not { Deleted: true } && valueAxis?.LogBase is null && !percent && valueAxis is not { MajorUnit: not null, Min: not null, Max: not null })
+            {
+                double frontHeight = Rows3DFrontHeight(categoryCount, _groups[0].Series.Count, left, top, right, bottom);
+                (vMin, vMax, valueTicks) = AxisScale(dataMin, dataMax, positiveMin, valueAxis, percent, frontHeight, axisLabelSize * 1.55);
+                double crossAgain = categoryAxis?.CrossesAt ?? (categoryAxis?.Crosses switch { "min" => vMin, "max" => vMax, _ => valueAxis?.LogBase is not null ? 1 : 0 });
+                _categoryCross = Math.Max(Math.Min(vMin, vMax), Math.Min(Math.Max(vMin, vMax), crossAgain));
+                valueLabels.Clear();
+                foreach (double v in valueTicks) valueLabels.Add((v, valueAxis is { NoLabels: true } ? "" : FormatNumber(Math.Round(v, 10), valueFormat)));
+                double newWidth = valueLabels.All(l => l.Text.Length == 0) ? 0 : valueLabels.Max(l => TextWidth(l.Text, labelSize)) + (_libreOfficeLayout ? 4 : 8.2);
+                left = Math.Min(right - 1, left + newWidth - valueLabelWidth);
+            }
+            // Word's 3-D line / area plot sits 2.8 pt further in at the left and 7.15 pt at the right than its 2-D plot (a last category
+            // label on the right edge: 2.35 pt beyond the 2-D rule) - its PDFs of the 2026-11-13 probes, where the scene's picture fills
+            // the same rectangle with right-angled axes and with perspective
+            if (!_libreOfficeLayout && _plotLayout is null)
+            {
+                left = Math.Min(right - 1, left + 2.8);
+                right = Math.Max(left + 1, right - (MidCategory() && categoryAxis is not { NoLabels: true } ? 2.35 : 7.15));
+            }
             Draw3DRows(svg, categoryCount, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { NoLabels: true }, textColor, gridColor, plotFill, labelSize);
             return;
         }
@@ -882,9 +943,9 @@ internal sealed partial class DocxChart
             double t = ValueToAxis(value);
             if (horizontal)
             {
-                double x = left + t * plotWidth;
+                double x = left + t * plotWidth, axisY = bottom - valueCross * plotHeight;
                 if (valueAxis?.Gridlines != false) svg.Append("<path d=\"M").Append(N(x)).Append(' ').Append(N(top)).Append('V').Append(N(bottom)).Append("\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
-                Text(svg, x, bottom + labelSize + 2, text, labelSize, valueAxis?.LabelColor ?? textColor, "middle");
+                Text(svg, x, valueCross >= 1 - 1e-9 && crossings2D ? axisY - labelSize : axisY + labelSize + 2, text, labelSize, valueAxis?.LabelColor ?? textColor, "middle");
             }
             else
             {
@@ -893,7 +954,9 @@ internal sealed partial class DocxChart
                 // LibreOffice centres the label's full text height on the tick (measured: baseline 0.08 x size above it); Word a third of the size below
                 // Word: 6.2 pt from the plot with outside tick marks (the LibreOffice-written charts), 8.2 pt without (Word's own charts,
                 // c:majorTickMark none) - both measured on Word's PDFs
-                Text(svg, left - (_libreOfficeLayout ? labelSize * 0.7 : valueAxis?.NoTickMarks == true ? 8.2 : 6.2), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, valueAxis?.LabelColor ?? textColor, "end");
+                double axisX = left + valueCross * plotWidth;
+                if (valueCross >= 1 - 1e-9 && crossings2D) Text(svg, axisX + (_libreOfficeLayout ? labelSize * 0.7 : 7.9), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, valueAxis?.LabelColor ?? textColor, "start");
+                else Text(svg, axisX - (_libreOfficeLayout ? labelSize * 0.7 : valueAxis?.NoTickMarks == true ? 8.2 : 6.2), y + (_libreOfficeLayout ? -0.08 * labelSize : labelSize / 3), text, labelSize, valueAxis?.LabelColor ?? textColor, "end");
             }
         }
         foreach ((double value, string text) in secondaryLabels)
@@ -904,19 +967,26 @@ internal sealed partial class DocxChart
             {
                 string label = i < categories.Count ? categories[i] : (i + 1).ToString(CultureInfo.InvariantCulture);
                 double centre = MidCategory() ? (categoryCount == 1 ? 0.5 : (double)i / (categoryCount - 1)) : (i + 0.5) / categoryCount;
-                if (horizontal) Text(svg, left - 4, bottom - centre * plotHeight + labelSize / 3, label, labelSize, categoryAxis?.LabelColor ?? textColor, "end");
+                double lineX = left + categoryCross * plotWidth, lineY = bottom - categoryCross * plotHeight;
+                if (horizontal && categoryCross > 1e-9 && !_is3D)
+                {
+                    bool after = categoryCross >= 1 - 1e-9;   // an axis at the right: labels right of it (Word: 8.3 pt from the line)
+                    Text(svg, after ? lineX + 8.3 : lineX - 8.3, bottom - centre * plotHeight + labelSize / 3, label, labelSize, categoryAxis?.LabelColor ?? textColor, after ? "start" : "end");
+                }
+                else if (horizontal) Text(svg, left - 4, bottom - centre * plotHeight + labelSize / 3, label, labelSize, categoryAxis?.LabelColor ?? textColor, "end");
                 else if (categoryPlan is { } plan)
                 {
                     if (i % plan.Rhythm != 0) continue;
                     double x = left + centre * plotWidth;
-                    if (plan.Rotated) Text(svg, x, bottom + labelSize, label, labelSize, categoryAxis?.LabelColor ?? textColor, "end", -45);
+                    if (plan.Rotated) Text(svg, x, lineY + labelSize, label, labelSize, categoryAxis?.LabelColor ?? textColor, "end", -45);
                     else
                     {
-                        double y = bottom + labelSize + 2 + (_libreOfficeLayout ? 0 : labelSize / 3) + (plan.Staggered && i % 2 == 1 ? labelSize * 1.2 : 0);   // Word: a third of the size lower (measured)
+                        double y = categoryCross >= 1 - 1e-9 && crossings2D ? lineY - labelSize - (plan.Lines[i].Length - 1) * labelSize * 1.2
+                                 : lineY + labelSize + 2 + (_libreOfficeLayout ? 0 : labelSize / 3) + (plan.Staggered && i % 2 == 1 ? labelSize * 1.2 : 0);   // Word: a third of the size lower (measured)
                         foreach (string line in plan.Lines[i]) { Text(svg, x, y, line, labelSize, categoryAxis?.LabelColor ?? textColor, "middle"); y += labelSize * 1.2; }
                     }
                 }
-                else Text(svg, left + centre * plotWidth, bottom + labelSize + 2, label, labelSize, categoryAxis?.LabelColor ?? textColor, "middle");
+                else Text(svg, left + centre * plotWidth, lineY + labelSize + 2, label, labelSize, categoryAxis?.LabelColor ?? textColor, "middle");
             }
         if (xy && categoryAxis is not { NoLabels: true })
             for (double x = xMin; x <= xMax + xStep / 1000; x += xStep)
@@ -935,7 +1005,8 @@ internal sealed partial class DocxChart
         }
         // axis lines
         string axisColor = gridColor;
-        svg.Append("<path d=\"M").Append(N(left)).Append(' ').Append(N(bottom)).Append('H').Append(N(right)).Append("\" stroke=\"").Append(axisColor).Append("\" stroke-width=\"0.75\"/>");
+        if (horizontal && !xy && (crossings2D || categoryAxisLine > 1e-9)) svg.Append("<path d=\"M").Append(N(left + categoryAxisLine * plotWidth)).Append(' ').Append(N(top)).Append('V').Append(N(bottom)).Append("\" stroke=\"").Append(axisColor).Append("\" stroke-width=\"0.75\"/>");
+        else svg.Append("<path d=\"M").Append(N(left)).Append(' ').Append(N(bottom - (horizontal ? 0 : categoryAxisLine) * plotHeight)).Append('H').Append(N(right)).Append("\" stroke=\"").Append(axisColor).Append("\" stroke-width=\"0.75\"/>");
     }
 
     /// <summary>c:crossBetween midCat (21.2.2.33): the value axis crosses at the categories, so points and labels sit on the category ticks, first and last at the plot's edges (only when no bars share the plot).</summary>
@@ -1273,7 +1344,7 @@ internal sealed partial class DocxChart
                 double value = percent ? (total == 0 ? 0 : raw / total) : raw;
                 double from, to;
                 if (stacked) { if (value >= 0) { from = positive; positive += value; to = positive; } else { from = negative; negative += value; to = negative; } }
-                else { from = 0; to = value; }
+                else { from = _categoryCross; to = value; }
                 double offset = i * slot + gap * barWidth / 2 + (stacked ? 0 : s * barWidth * (1 - overlap));
                 double a = axis(Math.Min(from, to)), b = axis(Math.Max(from, to));
                 DocxResolvedColor fill = FillOf(group, series, group.VaryColors && count == 1 ? i : -1, group.VaryColors && count == 1 ? categories : totalSeries);
@@ -1311,7 +1382,7 @@ internal sealed partial class DocxChart
                 if (series.Values[i] is not { } raw) continue;
                 double total = group.Series.Sum(x => Math.Abs(i < x.Values.Count ? x.Values[i] ?? 0 : 0));
                 double value = percent ? (total == 0 ? 0 : raw / total) : raw;
-                double from = stacked ? baseline[i] : Math.Max(vMin, Math.Min(vMax, 0));
+                double from = stacked ? baseline[i] : Math.Max(vMin, Math.Min(vMax, _categoryCross));
                 double to = stacked ? baseline[i] + value : value;
                 if (stacked) baseline[i] = to;
                 double x = left + (MidCategory() ? (categories == 1 ? 0.5 : (double)i / (categories - 1)) : (i + 0.5) / categories) * width;
