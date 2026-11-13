@@ -2064,8 +2064,28 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   Hindi words are Word's own 1..99 (CLDR differs at 6, 15...). Word refuses start values past 1000 (Vietnamese) / 9999 (Hindi, Greek);
   beyond those the words recurse (unverified - Word can only reach them by counting). Word saves its custom formats in .doc / RTF as
   decimal (nfc 0, \pntext 1.) and shows 1. itself on reopening, so only .docx keeps them. .odt: LibreOffice's num-format names for the
-  kana / Hangul / zero-padded orders map to the same tables; its CJK counting, Greek and Bulgarian names are LibreOffice's own
-  algorithms and stay decimal here.
+  kana / Hangul / zero-padded orders map to the same tables; its CJK counting, Greek and Bulgarian names: see the next item.
+- **.odt / .fodt number styles as LibreOffice** (`Html/ListNumberingTypes`, 2026-11-13): every type of LibreOffice's numbering
+  provider (i18npool defaultnumberingprovider.cxx:1078 aSupportedTypes, 72 incl. num-letter-sync) prints as LibreOffice prints it. A
+  style:num-format longer than one letter is the provider's identifier (makeNumberingIdentifier :1160: a fixed symbol, else the labels
+  for 1, 2, 3 + ", ..."; unknown = ARABIC, xmluconv.cxx:652); "a" / "A" count aa, ab unless style:num-letter-sync="true" (then aa, bb,
+  stored as the identifiers "aaa" / "AAA"). Ported: makeNumberingString (:642) with its letter walks (lcl_formatChars 1/2/3: bijective,
+  capital + small, repeated), toRoman (thousands as repeated M), Greek with U+0375 and myriads, Persian words, Korean legal words, the
+  bullet.h tables (circled numbers to 50 then decimal, heavenly stems / earthly branches not cycling, kana / Hangul cycling); the native
+  numbers of nativenumbersupplier.cxx: AsciiToNative (:187, NATNUM5 zh / zh-TW, NATNUM8 ja / ko, NATNUM11 ko - e.g. Japanese
+  traditional 10 = one zero, digit by digit inside a group of four), AsciiToNativeChar (Korean / Arabic / Persian / Devanagari digits)
+  and the Hebrew gematria (:1055 makeHebrewNumber: 15 / 16 = tet vav / tet zayin, 1000 = the word thousand, 2000 = bet + thousands, no
+  geresh); the spelled-out NATNUM12 types follow libnumbertext's Soros rules (data/en.sor: "One hundred one", "One thousand and one",
+  "Twenty-first", "21st"; zh.sor: 10 = shi, 110 = yi bai yi shi, zero runs once; hu_Hung.sor: Old Hungarian numerals). A Soros call
+  strips its argument's leading zeros. Locale: LibreOffice formats with the paragraph's language; we use "en" (so "Native Numbering"
+  and full-width Arabic print ASCII digits and the text numbers are English) - other paragraph languages are not followed yet.
+  Verified: test-data/odt-lists/make-list-formats.py writes one list per type with 163 start values (1..130, round numbers, to 32767),
+  soffice prints it to PDF and text, and the harness (--list-formats) compares all 11,736 labels: equal. The PDF agrees with the text
+  export for every one-line label except Myanmar / Tibetan, where pdftotext's extraction of the shaped glyphs differs.
+  Shared with Word where both draw the same: lowerLetter / upperLetter (repeated), roman up to 3999, ordinal, decimalZero, 001 / 0001 /
+  00001, hindiNumbers, koreanDigital / koreanDigital2, kana / Hangul orders and Korean legal 1..99 now call ListNumberingTypes; the
+  rest stay Word's own (Word's hebrew1 cycles after 392, hebrew2 repeats tav, circled numbers stop at 20, heavenly stems cycle,
+  Russian / Thai / Arabic letters repeat, Greek uses a comma, counting formats have Word's own rules).
 - **Symbol-font bullets** (`WordSymbolFontBullet`): Symbol is recoded with LibreOffice's Adobe Symbol table (unotools fontcvt.cxx:707
   aAdobeSymbolToAppleSymbolTab) and drawn in the text's font; Wingdings / Wingdings 2 / 3 / Webdings keep their U+F0xx code and their font, as Word
   draws them and as w:sym already did - LibreOffice's tables for those fonts (fontcvt.cxx:185-482) target OpenSymbol's private-use area (197 of 224
@@ -4529,8 +4549,28 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   Hindi words are Word's own 1..99 (CLDR differs at 6, 15...). Word refuses start values past 1000 (Vietnamese) / 9999 (Hindi, Greek);
   beyond those the words recurse (unverified - Word can only reach them by counting). Word saves its custom formats in .doc / RTF as
   decimal (nfc 0, \pntext 1.) and shows 1. itself on reopening, so only .docx keeps them. .odt: LibreOffice's num-format names for the
-  kana / Hangul / zero-padded orders map to the same tables; its CJK counting, Greek and Bulgarian names are LibreOffice's own
-  algorithms and stay decimal here.
+  kana / Hangul / zero-padded orders map to the same tables; its CJK counting, Greek and Bulgarian names: see the next item.
+- **.odt / .fodt number styles as LibreOffice** (`Html/ListNumberingTypes`, 2026-11-13): every type of LibreOffice's numbering
+  provider (i18npool defaultnumberingprovider.cxx:1078 aSupportedTypes, 72 incl. num-letter-sync) prints as LibreOffice prints it. A
+  style:num-format longer than one letter is the provider's identifier (makeNumberingIdentifier :1160: a fixed symbol, else the labels
+  for 1, 2, 3 + ", ..."; unknown = ARABIC, xmluconv.cxx:652); "a" / "A" count aa, ab unless style:num-letter-sync="true" (then aa, bb,
+  stored as the identifiers "aaa" / "AAA"). Ported: makeNumberingString (:642) with its letter walks (lcl_formatChars 1/2/3: bijective,
+  capital + small, repeated), toRoman (thousands as repeated M), Greek with U+0375 and myriads, Persian words, Korean legal words, the
+  bullet.h tables (circled numbers to 50 then decimal, heavenly stems / earthly branches not cycling, kana / Hangul cycling); the native
+  numbers of nativenumbersupplier.cxx: AsciiToNative (:187, NATNUM5 zh / zh-TW, NATNUM8 ja / ko, NATNUM11 ko - e.g. Japanese
+  traditional 10 = one zero, digit by digit inside a group of four), AsciiToNativeChar (Korean / Arabic / Persian / Devanagari digits)
+  and the Hebrew gematria (:1055 makeHebrewNumber: 15 / 16 = tet vav / tet zayin, 1000 = the word thousand, 2000 = bet + thousands, no
+  geresh); the spelled-out NATNUM12 types follow libnumbertext's Soros rules (data/en.sor: "One hundred one", "One thousand and one",
+  "Twenty-first", "21st"; zh.sor: 10 = shi, 110 = yi bai yi shi, zero runs once; hu_Hung.sor: Old Hungarian numerals). A Soros call
+  strips its argument's leading zeros. Locale: LibreOffice formats with the paragraph's language; we use "en" (so "Native Numbering"
+  and full-width Arabic print ASCII digits and the text numbers are English) - other paragraph languages are not followed yet.
+  Verified: test-data/odt-lists/make-list-formats.py writes one list per type with 163 start values (1..130, round numbers, to 32767),
+  soffice prints it to PDF and text, and the harness (--list-formats) compares all 11,736 labels: equal. The PDF agrees with the text
+  export for every one-line label except Myanmar / Tibetan, where pdftotext's extraction of the shaped glyphs differs.
+  Shared with Word where both draw the same: lowerLetter / upperLetter (repeated), roman up to 3999, ordinal, decimalZero, 001 / 0001 /
+  00001, hindiNumbers, koreanDigital / koreanDigital2, kana / Hangul orders and Korean legal 1..99 now call ListNumberingTypes; the
+  rest stay Word's own (Word's hebrew1 cycles after 392, hebrew2 repeats tav, circled numbers stop at 20, heavenly stems cycle,
+  Russian / Thai / Arabic letters repeat, Greek uses a comma, counting formats have Word's own rules).
 - **Symbol-font bullets** (`WordSymbolFontBullet`): Symbol is recoded with LibreOffice's Adobe Symbol table (unotools fontcvt.cxx:707
   aAdobeSymbolToAppleSymbolTab) and drawn in the text's font; Wingdings / Wingdings 2 / 3 / Webdings keep their U+F0xx code and their font, as Word
   draws them and as w:sym already did - LibreOffice's tables for those fonts (fontcvt.cxx:185-482) target OpenSymbol's private-use area (197 of 224

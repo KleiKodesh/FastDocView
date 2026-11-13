@@ -79,9 +79,9 @@ public sealed class OdtListStyle
             string local = reader.LocalName;
             bool isText = reader.NamespaceURI == textNs;
             var attributes = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (string name in new[] { "level", "num-prefix", "num-suffix", "num-format", "start-value", "display-levels", "bullet-char" })
+            foreach (string name in new[] { "level", "num-prefix", "num-suffix", "num-format", "num-letter-sync", "start-value", "display-levels", "bullet-char" })
             {
-                bool isStyle = name is "num-prefix" or "num-suffix" or "num-format";
+                bool isStyle = name is "num-prefix" or "num-suffix" or "num-format" or "num-letter-sync";
                 if (reader.GetAttribute(name, isStyle ? styleNs : textNs) is { } value) attributes[(isStyle ? "s:" : "t:") + name] = value;
             }
             string? mode = null, margin = null, indent = null, tab = null, follow = null;
@@ -263,7 +263,7 @@ public sealed class OdtListStyle
     {
         // attribute slots; text:bullet-char shares slot 0 with style:name (a level element has no style:name)
         public const int Name = 0, Mode = 7, MarginLeft = 8, TextIndent = 9, TabStop = 10, FollowedBy = 11, HasAlignment = 12,
-                         StyleName = 13, Href = 14, Width = 15, Height = 16, FontFamily = 17, FontName = 18, SlotCount = 19;
+                         StyleName = 13, Href = 14, Width = 15, Height = 16, FontFamily = 17, FontName = 18, LetterSync = 19, SlotCount = 20;
         // xlink:href is matched with the "xlink" prefix every ODF writer uses (the root's own prefix is not passed here)
         private static readonly (bool isStyle, bool isFo, string local)[] Slots =
         [
@@ -273,7 +273,7 @@ public sealed class OdtListStyle
             (false, false, "list-tab-stop-position"), (false, false, "label-followed-by"),
             (false, false, " has-alignment"),   // HasAlignment: no attribute (a name no tag can carry)
             (false, false, "style-name"), (false, false, "xlink:href"), (false, true, "width"), (false, true, "height"),
-            (false, true, "font-family"), (true, false, "font-name"),
+            (false, true, "font-family"), (true, false, "font-name"), (true, false, "num-letter-sync"),
         ];
         private static ParseNames? _last;
 
@@ -306,7 +306,7 @@ public sealed class OdtListStyle
         public static int? SlotOf(string local, bool isStyle) => (local, isStyle) switch
         {
             ("level", false) => 1, ("num-prefix", true) => 2, ("num-suffix", true) => 3, ("num-format", true) => 4,
-            ("start-value", false) => 5, ("display-levels", false) => 6, ("bullet-char", false) => Name,
+            ("start-value", false) => 5, ("display-levels", false) => 6, ("bullet-char", false) => Name, ("num-letter-sync", true) => LetterSync,
             _ => null,
         };
     }
@@ -374,7 +374,7 @@ public sealed class OdtListStyle
         bool isLatinBullet = false;     // the stored bullet had a strong left-to-right (symbol-font) code before recoding
         if (isTextNamespace && localName == "list-level-style-number")
         {
-            level.NumberFormat = attribute("num-format", true) ?? "1";
+            level.NumberFormat = NumberFormatOf(attribute("num-format", true), attribute("num-letter-sync", true));
             if (int.TryParse(attribute("start-value", false), NumberStyles.Integer, CultureInfo.InvariantCulture, out int start)) level.StartValue = start < 0 ? 1 : start;
             if (int.TryParse(attribute("display-levels", false), NumberStyles.Integer, CultureInfo.InvariantCulture, out int display)) level.DisplayLevels = Math.Max(1, display);
         }
@@ -474,32 +474,13 @@ public sealed class OdtListStyle
     }
 
     /// <summary>
-    /// style:num-format → text. "1 a A i I" and "" per xmloff/source/core/xmluconv.cxx
-    /// convertNumFormat; longer names come from the numbering provider
-    /// (i18npool defaultnumberingprovider.cxx): "א, י, ק, ..." is NUMBER_HEBREW (gematria).
-    /// "א, ב, ג, ..." (CHARS_HEBREW, letters) is unverified. Unknown → decimal, as LibreOffice falls back to ARABIC.
+    /// style:num-format as stored: style:num-letter-sync="true" turns "a" / "A" into the repeating letters (aa, bb), kept as
+    /// their provider identifiers "aaa" / "AAA" (xmloff xmluconv.cxx:652 convertNumFormat; defaultnumberingprovider.cxx:1093-1094).
     /// </summary>
-    public static string FormatNumber(int value, string format) => format switch
-    {
-        "" => "",
-        "1" => value.ToString(CultureInfo.InvariantCulture),
-        "a" => DocxNumberingDefinitions.FormatNumber(value, "lowerLetter"),
-        "A" => DocxNumberingDefinitions.FormatNumber(value, "upperLetter"),
-        "i" => DocxNumberingDefinitions.FormatNumber(value, "lowerRoman"),
-        "I" => DocxNumberingDefinitions.FormatNumber(value, "upperRoman"),
-        _ when format.StartsWith("א, י", StringComparison.Ordinal) => DocxNumberingDefinitions.FormatNumber(value, "hebrew1"),
-        _ when format.StartsWith("א, ב", StringComparison.Ordinal) => DocxNumberingDefinitions.FormatNumber(value, "hebrew2"),
-        // LibreOffice names these by their first three labels (defaultnumberingprovider.cxx:1160 makeNumberingIdentifier; :1154-1155
-        // ARABIC_ZERO3 / 4 with fixed names); its kana / Hangul tables and cycling are Word's (WordListNumberScripts)
-        "001, 002, 003, ..." => Html.WordListNumberScripts.Format(value, Html.WordListNumberScripts.CustomZero3)!,
-        "0001, 0002, 0003, ..." => Html.WordListNumberScripts.Format(value, Html.WordListNumberScripts.CustomZero4)!,
-        "00001, 00002, 00003, ..." => Html.WordListNumberScripts.Format(value, Html.WordListNumberScripts.CustomZero5)!,
-        "\uFF71, \uFF72, \uFF73, ..." => Html.WordListNumberScripts.Format(value, "aiueo")!,
-        "\u30A2, \u30A4, \u30A6, ..." => Html.WordListNumberScripts.Format(value, "aiueoFullWidth")!,
-        "\uFF72, \uFF9B, \uFF8A, ..." => Html.WordListNumberScripts.Format(value, "iroha")!,
-        "\u30A4, \u30ED, \u30CF, ..." => Html.WordListNumberScripts.Format(value, "irohaFullWidth")!,
-        "\uAC00, \uB098, \uB2E4, ..." => Html.WordListNumberScripts.Format(value, "ganada")!,
-        "\u3131, \u3134, \u3137, ..." => Html.WordListNumberScripts.Format(value, "chosung")!,
-        _ => value.ToString(CultureInfo.InvariantCulture),
-    };
+    public static string NumberFormatOf(string? format, string? letterSync)
+        => format is "a" or "A" && letterSync == "true" ? format + format + format : format ?? "1";
+
+    /// <summary>style:num-format -> label text, as LibreOffice draws it (<see cref="ListNumberingTypes"/>); "" = no number.</summary>
+    public static string FormatNumber(int value, string format)
+        => ListNumberingTypes.FromOdfNumberFormat(format, letterSync: false) is { } type ? ListNumberingTypes.Format(value, type) : "";
 }

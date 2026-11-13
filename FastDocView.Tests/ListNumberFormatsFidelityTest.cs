@@ -21,6 +21,7 @@ public static class ListNumberFormatsFidelityTest
         TestReport.Step("List number formats: every Word number style against Word 16's own labels (.docx, .doc, .rtf)");
         string folder = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-lists");
         RunWords(folder);
+        RunOdt(Path.Combine(folder, "..", "odt-lists"));
         foreach (string part in new[] { "a", "b" })
         {
             string expectedPath = Path.Combine(folder, $"list-formats-v1-{part}.expected.txt");
@@ -106,6 +107,41 @@ public static class ListNumberFormatsFidelityTest
         TestReport.Check(odtWrong == 0, $"odt: LibreOffice's kana / Hangul / 001 num-format names draw Word's labels ({odtWrong} wrong)");
     }
 
+    /// <summary>
+    /// .fodt against LibreOffice: test-data/odt-lists/list-formats-v1.fodt holds one list per LibreOffice numbering type (its
+    /// own style:num-format identifiers, plus style:num-letter-sync), each item restarted at a test value; make-list-formats.py
+    /// printed it with soffice to list-formats-v1.pdf and saved the labels LibreOffice drew (list-formats-v1.expected.txt).
+    /// Every label the .fodt reader draws must equal LibreOffice's.
+    /// </summary>
+    private static void RunOdt(string folder)
+    {
+        string expectedPath = Path.Combine(folder, "list-formats-v1.expected.txt"), path = Path.Combine(folder, "list-formats-v1.fodt");
+        if (!File.Exists(expectedPath) || !File.Exists(path)) { TestReport.Check(false, "missing fixture " + expectedPath); return; }
+        var expected = new List<(string type, string value, string label)>();
+        foreach (string line in File.ReadAllLines(expectedPath))
+        {
+            string[] fields = line.Split('	');
+            if (fields.Length == 3) expected.Add((fields[0], fields[1], Unescape(fields[2])));
+        }
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+        while (!document.IsIndexComplete) document.ScanAhead(10000);
+        var labels = new List<string>();
+        foreach (WordDocumentBlockHtml block in document.RenderBlocks(0, document.BlockCount))
+            if (block.Html.Contains("list-marker")) labels.Add(LabelOf(block.Html));
+        int wrong = 0;
+        var mismatches = new StringBuilder();
+        for (int i = 0; i < expected.Count; i++)
+        {
+            string actual = i < labels.Count ? labels[i] : "(missing)";
+            if (actual == expected[i].label) continue;
+            wrong++;
+            if (mismatches.Length < 3000)
+                mismatches.Append(" [").Append(expected[i].type).Append(" v").Append(expected[i].value).Append(": libreoffice ")
+                          .Append(Escape(expected[i].label)).Append(" got ").Append(Escape(actual)).Append(']');
+        }
+        TestReport.Check(expected.Count > 10000 && wrong == 0, $"fodt: {expected.Count - wrong}/{expected.Count} labels of every LibreOffice number style equal LibreOffice's" + mismatches);
+    }
+
     /// <summary>The text of a block's list label (tags stripped, the tab suffix and trailing spaces dropped).</summary>
     private static string LabelOf(string html)
     {
@@ -125,7 +161,9 @@ public static class ListNumberFormatsFidelityTest
     }
 
     private static string Unescape(string text)
-        => Regex.Replace(text.Replace(@"\u200F", ""), @"\\u([0-9A-F]{4})", m => ((char)int.Parse(m.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)).ToString())
+        => Regex.Replace(text.Replace(@"\u200F", ""), @"\\u([0-9A-F]{4})|\\U([0-9A-F]{8})", m => m.Groups[1].Success
+                ? ((char)int.Parse(m.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)).ToString()
+                : char.ConvertFromUtf32(int.Parse(m.Groups[2].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)))
                 .TrimEnd('\t', ' ');
 
     private static string Escape(string text)

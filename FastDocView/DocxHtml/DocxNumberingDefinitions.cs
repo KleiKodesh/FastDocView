@@ -349,23 +349,28 @@ public sealed class DocxNumberingDefinitions
     /// </summary>
     public static string FormatNumber(int value, string format) => format switch
     {
-        "lowerLetter" => Letters(value, 'a'),
-        "upperLetter" => Letters(value, 'A'),
+        // Where Word and LibreOffice draw the same labels, the shared LibreOffice formatter draws them (ListNumberingTypes):
+        // Word's letters repeat (CHARS_*_LETTER_N), its roman numerals are toRoman's up to 3999 (then decimal), its ordinals,
+        // zero-padded, Devanagari and Korean digit formats are TEXT_NUMBER, ARABIC_ZERO*, NUMBER_INDIC_DEVANAGARI and
+        // NUMBER_DIGITAL_KO / NUMBER_DIGITAL2_KO (checked against Word in test-data/word-lists, against LibreOffice in odt-lists)
+        "lowerLetter" => Html.ListNumberingTypes.Format(value, Html.ListNumberingType.CharsLowerLetterN),
+        "upperLetter" => Html.ListNumberingTypes.Format(value, Html.ListNumberingType.CharsUpperLetterN),
         "lowerRoman" => Roman(value).ToLowerInvariant(),
         "upperRoman" => Roman(value),
         "hebrew1" => HebrewNumeral(value),
         "hebrew2" => HebrewLetters(value),
-        "decimalZero" => value.ToString("00"),
+        "decimalZero" => value <= 0 ? value.ToString("00") : Html.ListNumberingTypes.Format(value, Html.ListNumberingType.ArabicZero),
         "none" => "",
-        "ordinal" => value.ToString() + EnglishOrdinalSuffix(value),
+        "ordinal" => value <= 0 ? value.ToString() + EnglishOrdinalSuffix(value) : Html.ListNumberingTypes.Format(value, Html.ListNumberingType.TextNumber),
         "cardinalText" => value < 0 ? value.ToString() : Capitalize(Fields.WordFieldFormat.CardinalText(value)),
         "ordinalText" => value < 0 ? value.ToString() : Capitalize(Fields.WordFieldFormat.OrdinalText(value)),
         "decimalFullWidth" or "decimalFullWidth2" => Digits(value, (char)0xFF10),
-        "hindiNumbers" => Digits(value, (char)0x0966),
+        "hindiNumbers" => value <= 0 ? Digits(value, (char)0x0966) : Html.ListNumberingTypes.Format(value, Html.ListNumberingType.NumberIndicDevanagari),
         "thaiNumbers" => Digits(value, (char)0x0E50),
         "ideographDigital" or "japaneseDigitalTenThousand" => Digits(value, '\0', IdeographDigits),
         "taiwaneseDigital" => Digits(value, '\0', (char)0x25CB + IdeographDigits.Substring(1)),     // Word 16: 10 = one + white circle
-        "koreanDigital2" => Digits(value, '\0', (char)0x96F6 + IdeographDigits.Substring(1)),       // Word 16: 10 = one + U+96F6
+        "koreanDigital2" => value <= 0 ? Digits(value, '\0', (char)0x96F6 + IdeographDigits.Substring(1))       // Word 16: 10 = one + U+96F6
+            : Html.ListNumberingTypes.Format(value, Html.ListNumberingType.NumberDigital2Ko),
         "decimalEnclosedCircle" or "decimalEnclosedCircleChinese" => value is >= 1 and <= 20 ? ((char)(0x2460 + value - 1)).ToString() : value.ToString(),
         "decimalEnclosedFullstop" => value is >= 1 and <= 20 ? ((char)(0x2488 + value - 1)).ToString() : value.ToString(),
         "decimalEnclosedParen" => value is >= 1 and <= 20 ? ((char)(0x2474 + value - 1)).ToString() : value.ToString(),
@@ -431,20 +436,11 @@ public sealed class DocxNumberingDefinitions
 
     private static string Capitalize(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text.Substring(1);
 
-    private static string Letters(int value, char first)
-    {
-        if (value <= 0) return "";
-        int repeat = (value - 1) / 26 + 1;
-        return new string((char)(first + (value - 1) % 26), repeat);
-    }
-
     private static string Roman(int value)
     {
+        // Word: decimal outside 1..3999; inside, LibreOffice's toRoman draws the same numerals
         if (value <= 0 || value >= 4000) return value.ToString();
-        (int number, string numeral)[] table = [(1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"), (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")];
-        var roman = new StringBuilder();
-        foreach ((int number, string numeral) in table) while (value >= number) { roman.Append(numeral); value -= number; }
-        return roman.ToString();
+        return Html.ListNumberingTypes.Roman(value);
     }
 
     private static readonly string[] HebrewOnes = ["", "א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט"];

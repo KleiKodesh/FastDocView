@@ -130,7 +130,7 @@ public sealed class OdtStyleCascade
             {
                 var configuration = new OdtNotesConfiguration
                 {
-                    NumberFormat = (string?)element.Attribute(Style + "num-format") ?? "1",
+                    NumberFormat = OdtListStyle.NumberFormatOf((string?)element.Attribute(Style + "num-format"), (string?)element.Attribute(Style + "num-letter-sync")),
                     Prefix = (string?)element.Attribute(Style + "num-prefix") ?? "",
                     Suffix = (string?)element.Attribute(Style + "num-suffix") ?? "",
                 };

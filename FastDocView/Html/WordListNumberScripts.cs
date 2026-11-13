@@ -34,22 +34,24 @@ public static class WordListNumberScripts
         "chineseLegalSimplified" => Counting(value, ChineseSimplifiedUpperDigits, (char)0x96F6, ChineseUpperUnits, ChineseLegalSimplifiedMyriads, CountingOne.Always),
         "chineseCountingThousand" => Counting(value, CjkLowerDigits, (char)0x3007, CjkLowerUnits, ChineseSimplifiedMyriads, CountingOne.OnlyTeens),
         "koreanCounting" => Counting(value, HangulDigits, '\0', HangulUnits, HangulMyriads, CountingOne.Korean),
-        "koreanDigital" => DigitByDigit(value, HangulDigits),
-        "koreanLegal" => value is >= 1 and <= 99 ? KoreanLegalWords(value) : Counting(value, HangulDigits, '\0', HangulUnits, HangulMyriads, CountingOne.Korean),
+        "koreanDigital" => value <= 0 ? DigitByDigit(value, HangulDigits) : ListNumberingTypes.Format(value, ListNumberingType.NumberDigitalKo),
+        // 1..99 in words as LibreOffice's NUMBER_LEGAL_KO; from 100 Word counts with its own "one" rule, LibreOffice does not
+        "koreanLegal" => value is >= 1 and <= 99 ? ListNumberingTypes.KoreanLegalWord(value) : Counting(value, HangulDigits, '\0', HangulUnits, HangulMyriads, CountingOne.Korean),
         "thaiCounting" => ThaiCounting(value),
         "vietnameseCounting" => VietnameseCounting(value),
         "hindiCounting" => HindiCounting(value),
-        "aiueo" => Cycle(value, AiueoHalfWidth),
-        "aiueoFullWidth" => Cycle(value, AiueoFullWidth),
-        "iroha" => Cycle(value, IrohaHalfWidth),
-        "irohaFullWidth" => Cycle(value, IrohaFullWidth),
-        "ganada" => Cycle(value, HangulSyllables),
-        "chosung" => Cycle(value, HangulJamo),
+        // the kana and Hangul orders cycle as LibreOffice's AIU / IROHA / HANGUL types (bRecycleSymbol)
+        "aiueo" => Cycle(value, ListNumberingType.AiuHalfwidthJa),
+        "aiueoFullWidth" => Cycle(value, ListNumberingType.AiuFullwidthJa),
+        "iroha" => Cycle(value, ListNumberingType.IrohaHalfwidthJa),
+        "irohaFullWidth" => Cycle(value, ListNumberingType.IrohaFullwidthJa),
+        "ganada" => Cycle(value, ListNumberingType.HangulSyllableKo),
+        "chosung" => Cycle(value, ListNumberingType.HangulJamoKo),
         CustomGreekLower => GreekNumeral(value, GreekLower),
         CustomGreekUpper => GreekNumeral(value, GreekUpper),
-        CustomZero3 => ZeroPadded(value, 3),
-        CustomZero4 => ZeroPadded(value, 4),
-        CustomZero5 => ZeroPadded(value, 5),
+        CustomZero3 => value <= 0 ? ZeroPadded(value, 3) : ListNumberingTypes.Format(value, ListNumberingType.ArabicZero3),
+        CustomZero4 => value <= 0 ? ZeroPadded(value, 4) : ListNumberingTypes.Format(value, ListNumberingType.ArabicZero4),
+        CustomZero5 => value <= 0 ? ZeroPadded(value, 5) : ListNumberingTypes.Format(value, ListNumberingType.ArabicZero5),
         CustomTurkishLower => RepeatedLetter(value, TurkishLower),
         CustomTurkishUpper => RepeatedLetter(value, TurkishUpper),
         CustomBulgarianLower => RepeatedLetter(value, BulgarianLower),
@@ -161,13 +163,6 @@ public static class WordListNumberScripts
         return result.ToString();
     }
 
-    // defaultnumberingprovider.cxx:310-332 table_KoreanLegalWord_decade1 / decade2, :512 lcl_formatKoreanLegalWord
-    private static readonly string[] KoreanLegalOnes = ["\uD558\uB098", "\uB458", "\uC14B", "\uB137", "\uB2E4\uC12F", "\uC5EC\uC12F", "\uC77C\uACF1", "\uC5EC\uB35F", "\uC544\uD649"];
-    private static readonly string[] KoreanLegalTens = ["\uC5F4", "\uC2A4\uBB3C", "\uC11C\uB978", "\uB9C8\uD754", "\uC270", "\uC608\uC21C", "\uC77C\uD754", "\uC5EC\uB4E0", "\uC544\uD754"];
-
-    private static string KoreanLegalWords(int value)
-        => (value / 10 > 0 ? KoreanLegalTens[value / 10 - 1] : "") + (value % 10 > 0 ? KoreanLegalOnes[value % 10 - 1] : "");
-
     // ── Thai, Vietnamese, Hindi counting words ────────────────────────────────────────────────────────────────────────────
 
     private static readonly string[] ThaiDigitWords =
@@ -278,22 +273,22 @@ public static class WordListNumberScripts
     // bullet.h:75 table_AIUHalfWidth_ja_JP, :26 table_AIUFullWidth_ja_JP, :175 table_IROHAHalfWidth_ja_JP (wi / we have no
     // half-width form: full-width ones), :124 table_IROHAFullWidth_ja_JP, :296 table_HangulSyllable_ko, :279 table_HangulJamo_ko.
     // LibreOffice cycles them (bRecycleSymbol, defaultnumberingprovider.cxx:829-858, :1054-1057) and so does Word.
-    private const string AiueoHalfWidth =
+    internal const string AiueoHalfWidth =
         "\uFF71\uFF72\uFF73\uFF74\uFF75\uFF76\uFF77\uFF78\uFF79\uFF7A\uFF7B\uFF7C\uFF7D\uFF7E\uFF7F\uFF80\uFF81\uFF82\uFF83\uFF84\uFF85\uFF86\uFF87"
         + "\uFF88\uFF89\uFF8A\uFF8B\uFF8C\uFF8D\uFF8E\uFF8F\uFF90\uFF91\uFF92\uFF93\uFF94\uFF95\uFF96\uFF97\uFF98\uFF99\uFF9A\uFF9B\uFF9C\uFF66\uFF9D";
-    private const string AiueoFullWidth =
+    internal const string AiueoFullWidth =
         "\u30A2\u30A4\u30A6\u30A8\u30AA\u30AB\u30AD\u30AF\u30B1\u30B3\u30B5\u30B7\u30B9\u30BB\u30BD\u30BF\u30C1\u30C4\u30C6\u30C8\u30CA\u30CB\u30CC"
         + "\u30CD\u30CE\u30CF\u30D2\u30D5\u30D8\u30DB\u30DE\u30DF\u30E0\u30E1\u30E2\u30E4\u30E6\u30E8\u30E9\u30EA\u30EB\u30EC\u30ED\u30EF\u30F2\u30F3";
-    private const string IrohaHalfWidth =
+    internal const string IrohaHalfWidth =
         "\uFF72\uFF9B\uFF8A\uFF86\uFF8E\uFF8D\uFF84\uFF81\uFF98\uFF87\uFF99\uFF66\uFF9C\uFF76\uFF96\uFF80\uFF9A\uFF7F\uFF82\uFF88\uFF85\uFF97\uFF91\uFF73"
         + "\u30F0\uFF89\uFF75\uFF78\uFF94\uFF8F\uFF79\uFF8C\uFF7A\uFF74\uFF83\uFF71\uFF7B\uFF77\uFF95\uFF92\uFF90\uFF7C\u30F1\uFF8B\uFF93\uFF7E\uFF7D\uFF9D";
-    private const string IrohaFullWidth =
+    internal const string IrohaFullWidth =
         "\u30A4\u30ED\u30CF\u30CB\u30DB\u30D8\u30C8\u30C1\u30EA\u30CC\u30EB\u30F2\u30EF\u30AB\u30E8\u30BF\u30EC\u30BD\u30C4\u30CD\u30CA\u30E9\u30E0\u30A6"
         + "\u30F0\u30CE\u30AA\u30AF\u30E4\u30DE\u30B1\u30D5\u30B3\u30A8\u30C6\u30A2\u30B5\u30AD\u30E6\u30E1\u30DF\u30B7\u30F1\u30D2\u30E2\u30BB\u30B9\u30F3";
-    private const string HangulSyllables = "\uAC00\uB098\uB2E4\uB77C\uB9C8\uBC14\uC0AC\uC544\uC790\uCC28\uCE74\uD0C0\uD30C\uD558";
-    private const string HangulJamo = "\u3131\u3134\u3137\u3139\u3141\u3142\u3145\u3147\u3148\u314A\u314B\u314C\u314D\u314E";
+    internal const string HangulSyllables = "\uAC00\uB098\uB2E4\uB77C\uB9C8\uBC14\uC0AC\uC544\uC790\uCC28\uCE74\uD0C0\uD30C\uD558";
+    internal const string HangulJamo = "\u3131\u3134\u3137\u3139\u3141\u3142\u3145\u3147\u3148\u314A\u314B\u314C\u314D\u314E";
 
-    private static string Cycle(int value, string symbols) => value <= 0 ? value.ToString(CultureInfo.InvariantCulture) : symbols[(value - 1) % symbols.Length].ToString();
+    private static string Cycle(int value, ListNumberingType type) => value <= 0 ? value.ToString(CultureInfo.InvariantCulture) : ListNumberingTypes.Format(value, type);
 
     // Word's Turkish letters (29, dotless and dotted i); Word's Bulgarian letters: defaultnumberingprovider.cxx:157-170 plus the short i Word counts (29)
     private const string TurkishLower = "abc\u00E7defg\u011Fh\u0131ijklmno\u00F6prs\u015Ftu\u00FCvyz";
