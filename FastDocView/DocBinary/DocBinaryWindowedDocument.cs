@@ -378,8 +378,11 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument
         => WordDocumentNoteSearch.Search(this, query, options, fromNote, maxNotesToScan);
 
     private WordDocumentSearchBatch SearchBlocks(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan, bool onePass)
+        => SearchBlocksWith(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan, onePass);
+
+    /// <summary>The same scan with a caller's matcher (<see cref="WordDocumentText"/> captures the text through it).</summary>
+    internal WordDocumentSearchBatch SearchBlocksWith(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan, bool onePass)
     {
-        var matcher = new WordDocumentSearchMatcher(query, options);
         if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
         fromBlock = Math.Max(0, fromBlock);
         lock (_readLock)

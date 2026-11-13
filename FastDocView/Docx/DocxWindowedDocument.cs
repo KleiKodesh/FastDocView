@@ -668,8 +668,11 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
     private const int SearchPieceBlocks = 1000;
 
     internal WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan, DocxSearchTextMode mode)
+        => SearchWith(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan, mode);
+
+    /// <summary>The same scan with a caller's matcher (<see cref="WordDocumentText"/> captures the text through it).</summary>
+    internal WordDocumentSearchBatch SearchWith(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan, DocxSearchTextMode mode)
     {
-        var matcher = new WordDocumentSearchMatcher(query, options);
         if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
         fromBlock = Math.Max(0, fromBlock);
         lock (_readLock)

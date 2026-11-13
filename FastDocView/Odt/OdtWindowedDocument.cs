@@ -328,7 +328,9 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     /// <summary>A block's chart texts fed to the matcher, its hits added to the batch's (merged with the block's own text hits).</summary>
     private void FeedChartTexts(int blockIndex, WordDocumentSearchMatcher matcher, List<int> hits, List<int> counts)
     {
+        int at = hits.BinarySearch(blockIndex);
         matcher.Reset();
+        if (matcher.IsCapturingText && at >= 0) matcher.ResumeCapture(counts[at]);   // the charts' text joins the block's own
         foreach ((_, XElement element) in _reader.ReadBlocks(blockIndex, 1))
             foreach (string text in ChartTexts(element))
             {
@@ -338,8 +340,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
         int count = matcher.Count;
         matcher.Reset();
         if (count == 0) return;
-        int at = hits.BinarySearch(blockIndex);
-        if (at >= 0) counts[at] += count;
+        if (at >= 0) { if (!matcher.IsCapturingText) counts[at] += count; }
         else { hits.Insert(~at, blockIndex); counts.Insert(~at, count); }
     }
 
@@ -600,8 +601,11 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument
     private const int SearchPieceBlocks = 1000;
 
     internal WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan, OdtSearchTextMode mode)
+        => SearchWith(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan, mode);
+
+    /// <summary>The same scan with a caller's matcher (<see cref="WordDocumentText"/> captures the text through it).</summary>
+    internal WordDocumentSearchBatch SearchWith(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan, OdtSearchTextMode mode)
     {
-        var matcher = new WordDocumentSearchMatcher(query, options);
         if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
         fromBlock = Math.Max(0, fromBlock);
         lock (_readLock)

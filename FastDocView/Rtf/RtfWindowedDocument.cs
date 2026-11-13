@@ -247,8 +247,11 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument
     /// Footnotes are groups inside the block and are skipped: the block's HTML shows only their reference mark.
     /// </summary>
     public WordDocumentSearchBatch Search(string query, WordDocumentSearchOptions options, int fromBlock, int maxBlocksToScan)
+        => SearchWith(new WordDocumentSearchMatcher(query, options), fromBlock, maxBlocksToScan);
+
+    /// <summary>The same scan with a caller's matcher (<see cref="WordDocumentText"/> captures the text through it).</summary>
+    internal WordDocumentSearchBatch SearchWith(WordDocumentSearchMatcher matcher, int fromBlock, int maxBlocksToScan)
     {
-        var matcher = new WordDocumentSearchMatcher(query, options);
         if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
         fromBlock = Math.Max(0, fromBlock);
         lock (_readLock)

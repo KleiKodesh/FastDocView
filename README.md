@@ -41,6 +41,18 @@ documents.Use(id, document => document.ScanFor(5000, TimeSpan.FromMilliseconds(2
 // WordDocumentClosedException from Use = closed, idle-closed or changed on disk: reopen
 ```
 
+Plain text (C# only; no positions or structure), read through the search's own text path, so it is exactly what
+the search finds and the view shows:
+
+```csharp
+string body  = WordDocumentText.GetText(path, cancellation);           // body only
+string notes = WordDocumentText.GetNotes(path, cancellation);          // footnotes + endnotes, one list in body order
+string all   = WordDocumentText.GetTextWithNotes(path, cancellation);  // body, a blank line, the notes
+```
+
+One line per paragraph / cell / line break; blocks without text are left out. Overloads take an open
+`IWordWindowedDocument`. Details: NOTES.md, "Plain-text API".
+
 `FastDocView.DevServer/Program.cs` is a complete host in ~150 lines.
 
 Design, measurements, limitations and the specifications used: [NOTES.md](NOTES.md).

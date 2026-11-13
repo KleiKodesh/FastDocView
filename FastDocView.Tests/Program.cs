@@ -158,7 +158,7 @@ if (rtfSearchGoldenPaths.Count > 0) { RtfSearchOnePassTest.Run(rtfSearchGoldenPa
 if (rereadPaths.Count > 0) { RereadCostTest.Run(rereadPaths.Where(File.Exists)); skipSynthetic = true; }
 if (docReadPaths.Count > 0) { DocBinaryReadCountTest.Run(docReadPaths.Where(File.Exists)); skipSynthetic = true; }
 if (compactReportPaths.Count > 0) { CompactIndexReport.Run(compactReportPaths.Where(File.Exists)); skipSynthetic = true; }
-if (searchOnly) { DocumentSearchTest.Run(searchPaths); skipSynthetic = true; }
+if (searchOnly) { DocumentSearchTest.Run(searchPaths); DocumentTextTest.Run(); skipSynthetic = true; }
 if (fidelityOnly) { CompactIndexTest.RunEliasFano(); DocxFidelityTest.Run(); DocxThemeAndUnderlineTest.Run(); DocBinaryBidiTest.Run(); DocBinaryListLayoutTest.Run(); ListLabelFormatsTest.Run(); PagePlacementFidelityTest.Run(); LineSpacingTest.Run(); LinksAllFormatsTest.Run(); DocBinaryLinksTest.Run(); WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); FormattingMarksFidelityTest.Run(); DocBinaryFloatingPicturesTest.Run(); OdtShapesFidelityTest.Run(); OdtChartsFidelityTest.Run(); BinaryChartsFidelityTest.Run(); BinaryChartsFidelityTest.RunLineChart(); BinaryChartsFidelityTest.RunTrendNames(); BinaryChartsFidelityTest.RunTrendLabelDefaults(); BinaryChartsFidelityTest.RunObjectPreviews(); OdtDrawingFidelityTest.Run(); RtfShapesFidelityTest.Run(); WrapSidesAndContourFidelityTest.Run(); WordOfficeArtGeometryTest.Run(); DocBinaryShapesFidelityTest.Run(); OdtFirstOpenTiming.RunSynthetic(); OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); OdtMeasureCaptionTest.Run(); OdtExtrusionTest.Run(); OdtShapeTextFidelityTest.Run(); TextEffectsFidelityTest.Run(); DropCapsAndHyphenationFidelityTest.Run(); ListNumberFormatsFidelityTest.Run(); ListBulletsFidelityTest.Run(); BodyScriptFidelityTest.Run(); WordTablesFidelityTest.Run(); NoteNumberingFidelityTest.Run(); WebArchivePicturesTest.Run(); OfficeMathFidelityTest.Run(); PictureCropFidelityTest.Run(); skipSynthetic = true; }
 if (pageWidthOnly) { PageWidthTest.Run(realPaths); skipSynthetic = true; realPaths.Clear(); }
 if (!skipSynthetic)
@@ -170,6 +170,7 @@ if (!skipSynthetic)
     TextEffectsFidelityTest.Run();
     DropCapsAndHyphenationFidelityTest.Run();
     DocumentSearchTest.Run([]);
+    DocumentTextTest.Run();
     PageWidthTest.Run([]);
     DocBinaryBidiTest.Run();
     DocBinaryListLayoutTest.Run();

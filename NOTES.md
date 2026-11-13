@@ -1132,6 +1132,25 @@ or resume point reads per-block ranges up to the next anchor. `FeedOdf` stays as
 
 `DocxNoteSearchTextScanner` fed note bodies into the block search from raw bytes; removed with the notes-in-blocks
 search (see "Notes are searched apart" above).
+### Plain-text API: WordDocumentText (2026-11-13)
+
+`WordDocumentText.GetText / GetNotes / GetTextWithNotes` (path or open document; C# only, no HTTP, no frontend) are a
+thin layer over the search: each format's block scan (`SearchWith` / `SearchBlocksWith`, the same code the public
+`Search` runs) and the shared notes scan (`WordDocumentNoteSearch`) are driven with a capturing matcher
+(`WordDocumentSearchMatcher.ForTextCapture`). It matches nothing; the first character after a `Reset` opens a text entry
+and `Count` becomes the entry's number, so every block / note with text comes back as a "hit" whose count names its
+text. Fallbacks that re-feed a block (the byte scanners' FallBack / RedoPiece) just open a fresh entry; the batch's final
+hit counts point at the right ones. Separators become line breaks. Differences from matching, capture only: characters
+are kept raw (Hebrew marks and quote glyphs as written), and an HTML entity (MHTML, notes) is decoded instead of the
+matcher's one sentinel character. .odt chart text joins its block's entry (`ResumeCapture`).
+- Windowed as the search is: batches of 1000 blocks / 200 notes, one capture matcher per batch; only the returned
+  string holds the whole text - the caller asked for it. GetNotes first finishes an on-demand index (`ScanAhead`, positions only).
+- Notes are the notes search's text: each note's displayed HTML walked as the highlighter walks it (that is how the
+  notes search reads them today); footnotes and endnotes are one list in body order, as the notes pane shows them.
+- Cancellation: checked between batches (and passed to the open). The index cache is the opener's usual one.
+- Harness: `DocumentTextTest` (in `--search` and the default run), one file per format: for words of the returned
+  text, the whole-document Search / SearchNotes count equals the count in the text.
+
 ## Bookmarks and in-document links in every format (branch work/bookmarks-all, 2026-10-29)
 
 `IWordWindowedDocument.FindBookmark(name)` returns the block a bookmark marks; links render as

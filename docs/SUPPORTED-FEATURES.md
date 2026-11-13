@@ -250,6 +250,7 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 | Windowed loading, streaming index, sidecar cache | yes | yes | yes | yes | yes | yes |
 | First open shows text from the partial index | yes | yes | yes | yes | yes | yes |
 | In-document search (byte-level; fields, notes, hidden text aware) | yes | yes | yes | yes | yes | yes |
+| Plain-text API, C# only: `WordDocumentText.GetText` / `GetNotes` / `GetTextWithNotes` (exactly the search's text; footnotes and endnotes as one list; cancellable) | yes | yes | yes | yes | yes | yes |
 | Dark theme (colour rewrite incl. shapes, text boxes, charts, SmartArt; pictures unchanged) | yes | yes | yes | yes | yes | yes |
 | Clear errors: encrypted, corrupt, online-only, not found, unsupported, access denied | yes | yes | yes | yes | yes | yes |
 | Malformed XML: content before the first error kept | yes | n.a. | n.a. | no | n.a. | n.a. |

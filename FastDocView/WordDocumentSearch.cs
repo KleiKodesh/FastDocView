@@ -52,6 +52,49 @@ public sealed class WordDocumentSearchMatcher
     private readonly int[] _fail;
     private readonly bool _foldCase;
     private int _state;
+    private readonly List<System.Text.StringBuilder>? _captured;   // text capture (WordDocumentText): one entry per block / note
+    private System.Text.StringBuilder? _entry;                       // the entry the current block / note writes to
+
+    /// <summary>
+    /// A matcher that matches nothing and instead keeps the raw text it is fed (<see cref="WordDocumentText"/>): the
+    /// first character after a <see cref="Reset"/> opens a new entry and <see cref="Count"/> becomes that entry's number
+    /// (1-based), so every block / note with text is a "hit" whose count names its text (<see cref="CapturedText"/>).
+    /// A block re-fed by a fallback simply opens a fresh entry; the batch's final counts point at the right ones.
+    /// Separators become line breaks inside the entry.
+    /// </summary>
+    internal static WordDocumentSearchMatcher ForTextCapture() => new(new List<System.Text.StringBuilder>());
+
+    private WordDocumentSearchMatcher(List<System.Text.StringBuilder> captured)
+    {
+        _needle = "";
+        _fail = [];
+        _captured = captured;
+    }
+
+    internal bool IsCapturingText => _captured is not null;
+
+    /// <summary>The text of capture entry <paramref name="count"/> (a batch's hit count), without trailing line breaks.</summary>
+    internal string CapturedText(int count) => _captured![count - 1].ToString().TrimEnd('\n');
+
+    /// <summary>Text capture: the next characters extend entry <paramref name="count"/> (a block's later texts, e.g. .odt charts).</summary>
+    internal void ResumeCapture(int count)
+    {
+        _entry = _captured![count - 1];
+        Count = count;
+        Separator();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Capture(char c)
+    {
+        if (_entry is null)
+        {
+            _entry = new System.Text.StringBuilder();
+            _captured!.Add(_entry);
+            Count = _captured.Count;
+        }
+        _entry.Append(c);
+    }
 
     public WordDocumentSearchMatcher(string query, WordDocumentSearchOptions? options = null)
     {
@@ -66,7 +109,7 @@ public sealed class WordDocumentSearchMatcher
         }
     }
 
-    public bool IsEmpty => _needle.Length == 0;
+    public bool IsEmpty => _needle.Length == 0 && _captured is null;
 
     /// <summary>How many (non-overlapping) occurrences of the needle were seen since the last <see cref="Reset"/>.</summary>
     public int Count { get; private set; }
@@ -74,7 +117,7 @@ public sealed class WordDocumentSearchMatcher
     /// <summary>True once the needle was seen since the last <see cref="Reset"/>.</summary>
     public bool Found => Count > 0;
 
-    public void Reset() { _state = 0; Count = 0; }
+    public void Reset() { _state = 0; Count = 0; _entry = null; }
 
     /// <summary>The partial match and count, to undo a feed that turned out to need another reader (<see cref="RestoreState"/>).</summary>
     internal (int state, int count) SaveState() => (_state, Count);
@@ -82,7 +125,11 @@ public sealed class WordDocumentSearchMatcher
     internal void RestoreState((int state, int count) saved) { _state = saved.state; Count = saved.count; }
 
     /// <summary>A paragraph / cell / line boundary: the partial match is dropped.</summary>
-    public void Separator() => _state = 0;
+    public void Separator()
+    {
+        _state = 0;
+        if (_entry is { Length: > 0 } entry && entry[entry.Length - 1] != '\n') entry.Append('\n');
+    }
 
     public static bool IsIgnoredMark(char c) => c >= '֑' && c <= 'ׇ' && c != '־';
 
@@ -110,6 +157,7 @@ public sealed class WordDocumentSearchMatcher
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Feed(char c)
     {
+        if (_captured is not null) { Capture(c); return; }
         if (IsIgnoredMark(c)) return;
         c = Fold(c);
         if (_foldCase) c = char.ToLowerInvariant(c);
@@ -203,6 +251,13 @@ public sealed class WordDocumentSearchMatcher
                 }
                 if (entityEnd >= 0)
                 {
+                    if (_captured is not null)
+                    {
+                        // the capture keeps the character the entity stands for (the matcher's one sentinel would be noise)
+                        foreach (char decoded in System.Net.WebUtility.HtmlDecode(html.Substring(i, entityEnd - i + 1))) Feed(decoded);
+                        i = entityEnd + 1;
+                        continue;
+                    }
                     Feed(html.Substring(i, entityEnd - i + 1).ToLowerInvariant() switch
                     {
                         "&quot;" or "&#34;" or "&#x22;" => '"',
@@ -248,8 +303,11 @@ internal static class WordDocumentNoteSearch
     private const int NotesPerRender = 50;
 
     public static WordDocumentSearchBatch Search(IWordWindowedDocument document, string query, WordDocumentSearchOptions options, int fromNote, int maxNotesToScan)
+        => Search(document, new WordDocumentSearchMatcher(query, options), fromNote, maxNotesToScan);
+
+    /// <summary>The same scan with a caller's matcher (<see cref="WordDocumentText"/> captures the text through it).</summary>
+    public static WordDocumentSearchBatch Search(IWordWindowedDocument document, WordDocumentSearchMatcher matcher, int fromNote, int maxNotesToScan)
     {
-        var matcher = new WordDocumentSearchMatcher(query, options);
         if (matcher.IsEmpty) return WordDocumentSearchBatch.Nothing;
         fromNote = Math.Max(0, fromNote);
         bool isIndexComplete = document.IsIndexComplete;       // read first: once complete, the note count below is final
