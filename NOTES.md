@@ -273,11 +273,11 @@ so the host lists the notes of the visible blocks without a second round trip.
   section starts a page): right on a section's first page, continuing on later pages where Word restarts.
   .odt: the citation text LibreOffice wrote is shown (its layout already applied the rule); without one,
   `text:start-numbering-at="chapter"` restarts footnotes at each outline-level-1 heading.
-  .docx first open: a section's properties come at its END, after its notes, so the windowed index cannot know them
-  in time. When the package has notes, `DocxSectionNotePropertiesScanner` streams document.xml once up front (tag
-  names only, IndexOf jumps, a kind stack; no text kept) and records each section's end offset and rules; a note's
-  section is found by its block's byte offset. Measured on the 87 MB sample body: first open 213-264 ms before,
-  ~850-1100 ms with the pass (mostly the second inflate of the body). Reopens read the rules from the index (v22).
+  .docx first open: a section's properties come at its END, after its notes. A block whose notes lie past the last
+  section the index has read is drawn with the defaults and marked provisional (`WordDocumentBlockHtml.IsProvisional`),
+  so the host fetches it again once the index is final - the same refresh as fields that need the whole index.
+  An up-front pass over the body was tried and dropped: it put a second inflate of the 87 MB sample body on the
+  open path (first open ~240 ms -> 0.85-1.1 s). Reopens read the rules from the index (v22).
 - **Bodies are streamed like blocks.** .docx: the index pass also scans footnotes.xml / endnotes.xml
   (`DocxNotesPartScanner`: note id → byte range, separators dropped) with deflate checkpoints
   (`DocxNotesPartIndex`, persisted in the sidecar, format v4); a note is read on demand from its
@@ -2756,11 +2756,11 @@ so the host lists the notes of the visible blocks without a second round trip.
   section starts a page): right on a section's first page, continuing on later pages where Word restarts.
   .odt: the citation text LibreOffice wrote is shown (its layout already applied the rule); without one,
   `text:start-numbering-at="chapter"` restarts footnotes at each outline-level-1 heading.
-  .docx first open: a section's properties come at its END, after its notes, so the windowed index cannot know them
-  in time. When the package has notes, `DocxSectionNotePropertiesScanner` streams document.xml once up front (tag
-  names only, IndexOf jumps, a kind stack; no text kept) and records each section's end offset and rules; a note's
-  section is found by its block's byte offset. Measured on the 87 MB sample body: first open 213-264 ms before,
-  ~850-1100 ms with the pass (mostly the second inflate of the body). Reopens read the rules from the index (v22).
+  .docx first open: a section's properties come at its END, after its notes. A block whose notes lie past the last
+  section the index has read is drawn with the defaults and marked provisional (`WordDocumentBlockHtml.IsProvisional`),
+  so the host fetches it again once the index is final - the same refresh as fields that need the whole index.
+  An up-front pass over the body was tried and dropped: it put a second inflate of the 87 MB sample body on the
+  open path (first open ~240 ms -> 0.85-1.1 s). Reopens read the rules from the index (v22).
 - **Bodies are streamed like blocks.** .docx: the index pass also scans footnotes.xml / endnotes.xml
   (`DocxNotesPartScanner`: note id → byte range, separators dropped) with deflate checkpoints
   (`DocxNotesPartIndex`, persisted in the sidecar, format v4); a note is read on demand from its

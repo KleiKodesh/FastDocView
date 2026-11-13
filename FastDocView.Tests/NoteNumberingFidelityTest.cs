@@ -68,8 +68,8 @@ internal static class NoteNumberingFidelityTest
     }
 
     /// <summary>
-    /// A .docx first open whose index has not reached the section's w:sectPr yet (it sits at the section's end): the notes in
-    /// the first window still show the section's numbers (DocxSectionNotePropertiesScanner). A w:sectPr inside a table cell is
+    /// A .docx first open (100,000 filler paragraphs, so the body is not scanned in one go) whose index has not reached the section's w:sectPr yet (it sits at the section's end): the notes in
+    /// the first window are drawn provisionally and show the section's numbers when fetched again after the index completes. A w:sectPr inside a table cell is
     /// not a section break and is ignored.
     /// </summary>
     private static void RunDocxFirstOpenBeforeSectionEnd()
@@ -80,7 +80,7 @@ internal static class NoteNumberingFidelityTest
         body.Append("<w:p><w:r><w:t>a</w:t></w:r>").Append(Reference("footnote", 1)).Append("</w:p>");
         body.Append("<w:p><w:r><w:t>b</w:t></w:r>").Append(Reference("footnote", 2)).Append("</w:p>");
         body.Append("<w:tbl><w:tr><w:tc><w:p><w:pPr><w:sectPr><w:footnotePr><w:numFmt w:val=\"upperRoman\"/></w:footnotePr></w:sectPr></w:pPr></w:p></w:tc></w:tr></w:tbl>");
-        for (int i = 0; i < 5000; i++) body.Append("<w:p><w:r><w:t>filler ").Append(i).Append("</w:t></w:r></w:p>");
+        for (int i = 0; i < 100_000; i++) body.Append("<w:p><w:r><w:t>filler ").Append(i).Append("</w:t></w:r></w:p>");
         body.Append("<w:p><w:pPr><w:sectPr><w:footnotePr><w:numFmt w:val=\"lowerLetter\"/><w:numStart w:val=\"5\"/><w:numRestart w:val=\"eachSect\"/></w:footnotePr></w:sectPr></w:pPr></w:p>");
         body.Append("<w:p><w:r><w:t>c</w:t></w:r>").Append(Reference("footnote", 3)).Append("</w:p>");
         body.Append("<w:sectPr><w:footnotePr><w:numFmt w:val=\"upperRoman\"/></w:footnotePr></w:sectPr>");
@@ -105,10 +105,15 @@ internal static class NoteNumberingFidelityTest
         var policy = new WordIndexPolicy { CacheDirectory = cache, ForcedMode = WordIndexMode.Sidecar, IndexesOnDemand = true };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
         bool wasPartial = !document.IsIndexComplete;
-        string first = string.Join(" ", document.RenderBlocks(0, 2).SelectMany(block => block.Notes).Select(note => note.Label));
+        IReadOnlyList<WordDocumentBlockHtml> firstWindow = document.RenderBlocks(0, 2);
         TestReport.Check(wasPartial, ".docx first open: the index is still building when the first window renders");
-        TestReport.Check(first == "e f", $".docx first open: notes before their section's w:sectPr show its numbers (lowerLetter from 5) (got [{first}])");
+        TestReport.Check(firstWindow.All(block => block.IsProvisional),
+                         ".docx first open: blocks whose notes' section is not indexed yet are drawn provisionally (fetched again when the index is final)");
         while (!document.IsIndexComplete) document.ScanAhead(1000);
+        IReadOnlyList<WordDocumentBlockHtml> again = document.RenderBlocks(0, 2);
+        string first = string.Join(" ", again.SelectMany(block => block.Notes).Select(note => note.Label));
+        TestReport.Check(first == "e f" && !again.Any(block => block.IsProvisional) && again[0].Html.Contains(">e<"),
+                         $".docx: fetched again once the index is final, the notes show their section's numbers (lowerLetter from 5) (got [{first}])");
         string all = string.Join(" ", document.RenderNotes(0, document.NoteReferences.Count).Select(note => note.Label));
         TestReport.Check(all == "e f III", $".docx: the same numbers once the index is complete; the last section continues (got [{all}])");
     }

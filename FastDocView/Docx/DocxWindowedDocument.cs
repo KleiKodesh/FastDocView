@@ -166,9 +166,6 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
         var document = new DocxWindowedDocument(displayPath, null, builder, DocxBlockXmlReader.OverIncrementalBuild(package, builder),
                                                 DocxNoteXmlReader.OverIncrementalParts(package, builder.Footnotes, builder.Endnotes),
                                                 parts, decision, sidecarPathToSave);
-        // notes show their printed numbers from the first window: the sections' note properties are read up front
-        if (!builder.IsBodyScanned && (builder.Footnotes is not null || builder.Endnotes is not null))
-            document._sectionNotesUpFront = DocxSectionNotePropertiesScanner.Scan(package, builder.BodyEntry);
         if (builder.IsBodyScanned) document.CompleteIndexLocked();      // a short body: done already
         return document;
     }
@@ -306,11 +303,12 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
             var neighbours = new DocxBlockNeighbours(ParagraphAt(groupStart - 1), ParagraphAt(blockIndex + 1), mergedBefore, IsFirstInContainer: groupStart == 0);
             string? previousStyleKey = blockIndex > 0 ? _blocks.StyleIdOf(blockIndex - 1) ?? "" : null;
             if (_renderer.FieldContext is { } fieldContext) { fieldContext.CurrentBlock = blockIndex; fieldContext.UsedIncompleteIndex = false; }
+            _usedUnknownNoteSection = false;
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
             _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             string html = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), previousStyleKey, neighbours with { OpenFields = _blocks.OpenFieldsAt(groupStart) });
             IReadOnlyList<WordDocumentNoteHtml> notes = RenderNotesOf(blockIndex);
-            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes, _renderer.FieldContext?.UsedIncompleteIndex == true));
+            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes, _renderer.FieldContext?.UsedIncompleteIndex == true || _usedUnknownNoteSection));
         }
         return result;
     }
@@ -485,31 +483,22 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument
 
     /// <summary>The number Word prints for a note: its section's w:footnotePr / w:endnotePr (<see cref="WordDocumentNoteNumbering"/>).</summary>
     private string NoteLabel(DocxNoteReference reference)
-        => _builder is not null && _sectionNotesUpFront is { } upFront
-            ? UpFrontNoteLabel(upFront, reference)
-            : NoteNumbering().Label(reference.Kind, reference.Number, reference.BlockIndex, NotesBefore);
-
-    /// <summary>While a first open's index builds: the section is found by byte offset in the up-front pass's section ends.</summary>
-    private DocxSectionNotePropertiesScanner.Result? _sectionNotesUpFront;
-
-    private string UpFrontNoteLabel(DocxSectionNotePropertiesScanner.Result sections, DocxNoteReference reference)
     {
-        if (reference.Number <= 0) return "*";
-        long blockOffset = _blocks.BlockStartOffset(reference.BlockIndex);
-        long[] ends = sections.SectionEndOffsets;
-        int low = 0, high = ends.Length;                          // the first section ending after the block's start
-        while (low < high) { int middle = (low + high) >> 1; if (ends[middle] <= blockOffset) low = middle + 1; else high = middle; }
-        WordDocumentNoteNumberRule rule = low >= ends.Length ? WordDocumentNoteNumberRule.Default(reference.Kind)
-            : reference.Kind == WordDocumentNoteKind.Footnote ? sections.Footnotes[low] : sections.Endnotes[low];
-        int before = 0;
-        if (rule.Restart != WordDocumentNoteRestart.Continuous && low > 0)
-        {
-            long sectionStart = ends[low - 1];
-            int first = 0, last = reference.BlockIndex;               // the section's first block: the first starting at or after its start
-            while (first < last) { int middle = (first + last) >> 1; if (_blocks.BlockStartOffset(middle) < sectionStart) first = middle + 1; else last = middle; }
-            before = NotesBefore(reference.Kind, first);
-        }
-        return DocxHtml.DocxNumberingDefinitions.FormatNumber(rule.Number(reference.Number, before), rule.Format);
+        // A section's w:footnotePr / w:endnotePr come at its END: while the index has not reached the note's section, the
+        // label uses the defaults and the block is drawn provisionally, so the host fetches it again once the index is final
+        // (WordDocumentBlockHtml.IsProvisional - the same refresh as fields that need the whole index). No second pass over
+        // the body on the open path (a pre-pass cost the 87 MB sample 0.6-0.9 s of its first open).
+        if (_builder is { } builder && !IsSectionKnown(builder, reference.BlockIndex)) _usedUnknownNoteSection = true;
+        return NoteNumbering().Label(reference.Kind, reference.Number, reference.BlockIndex, NotesBefore);
+    }
+
+    /// <summary>Set when a label was drawn for a note whose section's properties the index has not read yet; reset per block.</summary>
+    private bool _usedUnknownNoteSection;
+
+    private static bool IsSectionKnown(DocxIncrementalIndexBuilder builder, int blockIndex)
+    {
+        IReadOnlyList<int> lastBlocks = builder.KnownSectionLastBlocks;
+        return lastBlocks.Count > 0 && blockIndex <= lastBlocks[lastBlocks.Count - 1];
     }
 
     /// <summary>The sections' note numbering; while the index is building, blocks past the last section read so far take the
