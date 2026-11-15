@@ -130,7 +130,19 @@ public static class ListNumberingTypes
     };
 
     /// <summary>The label for <paramref name="value"/> (prefix and suffix not included), as makeNumberingString with the "en" locale.</summary>
-    public static string Format(int value, ListNumberingType type)
+    public static string Format(int value, ListNumberingType type) => Format(value, type, null);
+
+    /// <summary>True for the types whose label follows the paragraph's language (NATNUM1 / NATNUM3 / NATNUM12 with the paragraph locale).</summary>
+    public static bool DependsOnLanguage(ListNumberingType type)
+        => type is ListNumberingType.NativeNumbering or ListNumberingType.FullwidthArabic
+            or ListNumberingType.TextNumber or ListNumberingType.TextCardinal or ListNumberingType.TextOrdinal;
+
+    /// <summary>
+    /// The label for <paramref name="value"/> in <paramref name="language"/> (a BCP 47 tag: language[-Script][-Country]; null =
+    /// "en-US", LibreOffice's default here). As Writer, the language is the paragraph's at its first character
+    /// (sw ndtxt.cxx:3405 GetLang(0)).
+    /// </summary>
+    public static string Format(int value, ListNumberingType type, string? language)
     {
         if (type == ListNumberingType.Arabic) return value.ToString(CultureInfo.InvariantCulture);   // numitem.cxx:138 0 allowed
         if (value <= 0) return "";
@@ -139,17 +151,18 @@ public static class ListNumberingTypes
         {
             ListNumberingType.CharsUpperLetter => Bijective(value, UpperLetters),
             ListNumberingType.CharsLowerLetter => Bijective(value, LowerLetters),
-            ListNumberingType.TextNumber => EnglishOrdinalNumber(value),
-            ListNumberingType.TextCardinal => Capitalize(EnglishCardinal(digits, top: true)),
-            ListNumberingType.TextOrdinal => Capitalize(EnglishOrdinal(EnglishCardinal(digits, top: true))),
+            ListNumberingType.TextNumber => Capitalize(NumberText(digits, "ordinal-number", language ?? DefaultLanguage)),
+            ListNumberingType.TextCardinal => Capitalize(NumberText(digits, "", language ?? DefaultLanguage)),
+            ListNumberingType.TextOrdinal => Capitalize(NumberText(digits, "ordinal", language ?? DefaultLanguage)),
             ListNumberingType.RomanUpper => Roman(value),
             ListNumberingType.RomanLower => Roman(value).ToLowerInvariant(),
             ListNumberingType.NumberNone or ListNumberingType.CharSpecial or ListNumberingType.PageDescriptor or ListNumberingType.Bitmap => "",
             ListNumberingType.CharsUpperLetterN => Repeated(value, UpperLetters),
             ListNumberingType.CharsLowerLetterN => Repeated(value, LowerLetters),
-            ListNumberingType.NativeNumbering => digits,           // NATNUM1 for "en": no native digits (getLanguageNumber -1)
-            ListNumberingType.FullwidthArabic => digits,            // NATNUM3 for "en": getLanguageNumber -1 returns the ASCII digits (:785)
-            ListNumberingType.NumberLowerZh => ChineseText(digits, top: true),
+            ListNumberingType.NativeNumbering => NativeDigits(value, digits, language ?? DefaultLanguage),
+            // NATNUM3: full-width digits for a language with native numbers, else ASCII (getLanguageNumber -1 returns the input, :785)
+            ListNumberingType.FullwidthArabic => LanguageNumber(language ?? DefaultLanguage) >= 0 ? DigitByDigit(digits, FullWidthDigits) : digits,
+            ListNumberingType.NumberLowerZh => NumberText(digits, "", "zh"),
             ListNumberingType.NumberUpperZh => AsciiToNative(digits, NatNum5SimplifiedChinese),
             ListNumberingType.NumberUpperZhTw => AsciiToNative(digits, NatNum5TraditionalChinese),
             ListNumberingType.NumberTraditionalJa => AsciiToNative(digits, NatNum8Japanese),
@@ -207,7 +220,7 @@ public static class ListNumberingTypes
             ListNumberingType.ArabicZero3 => digits.PadLeft(3, '0'),
             ListNumberingType.ArabicZero4 => digits.PadLeft(4, '0'),
             ListNumberingType.ArabicZero5 => digits.PadLeft(5, '0'),
-            ListNumberingType.SzekelyRovas => OldHungarian(digits),
+            ListNumberingType.SzekelyRovas => NumberText(digits, "", "hu-Hung"),
             _ => digits,
         };
     }
@@ -303,6 +316,7 @@ public static class ListNumberingTypes
     private const string UpperZhDigits = "零壹贰叁肆伍陆柒捌玖";
     private const string UpperZhTwDigits = "零壹貳參肆伍陸柒捌玖";
     private const string TraditionalJaDigits = "零壱弐参四伍六七八九";
+    private const string FullWidthDigits = "\uFF10\uFF11\uFF12\uFF13\uFF14\uFF15\uFF16\uFF17\uFF18\uFF19";
     private const string KoreanLowerDigits = "零一二三四五六七八九";
     private const string KoreanUpperDigits = "零壹貳參四伍六七八九";
     private const string HangulDigits = "영일이삼사오육칠팔구";
@@ -478,105 +492,170 @@ public static class ListNumberingTypes
         return text.ToString();
     }
 
-    // libnumbertext data/en.sor (the default rules: "one hundred one", "one thousand and one", "one hundred thousand, two hundred").
-    // A Soros call strips the argument's leading zeros; "^" rules only match the whole input.
-    private static readonly string[] EnglishOnes =
-        ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
-    private static readonly string[] EnglishTens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
-    private static readonly string[] EnglishScales = ["thousand", "million", "billion"];
+    // ── language-dependent numbers (nativenumbersupplier.cxx) ───────────────────────────────────────────────────────────
 
-    private static string EnglishCardinal(string digits, bool top)
+    private const string DefaultLanguage = "en-US";
+
+    /// <summary>
+    /// getNumberText (:575) through libnumbertext (NumberTextModules): "[function ]number" in the language; a missing module gives
+    /// the input back (with its function word, as LibreOffice's NumberText service), an empty result the number itself.
+    /// </summary>
+    private static string NumberText(string digits, string function, string language)
     {
-        digits = digits.TrimStart('0');
-        if (digits.Length == 0) return top ? "zero" : "";
-        int length = digits.Length;
-        if (length <= 2)
+        string prefix = function.Length > 0 && function != "cardinal" ? function + " " : "";
+        string text = NumberTextModules.Run(prefix + digits, NumberTextLanguage(language)) ?? prefix + digits;
+        return text.Length == 0 ? digits : text;
+    }
+
+    /// <summary>The code LibreOffice hands libnumbertext: language[-Script][-Country] (lingucomponent numbertext.cxx:113-120).</summary>
+    private static string NumberTextLanguage(string tag)
+    {
+        (string language, string script, string country) = SplitTag(tag);
+        return language + (script.Length > 0 ? "-" + script : "") + (country.Length > 0 ? "-" + country : "");
+    }
+
+    private static (string language, string script, string country) SplitTag(string tag)
+    {
+        string[] parts = tag.Split('-', '_');
+        string language = parts[0].ToLowerInvariant(), script = "", country = "";
+        for (int i = 1; i < parts.Length; i++)
         {
-            int n = int.Parse(digits, CultureInfo.InvariantCulture);
-            if (n < 20) return EnglishOnes[n];
-            return EnglishTens[n / 10] + (n % 10 != 0 ? "-" + EnglishOnes[n % 10] : "");
+            string part = parts[i];
+            if (part.Length == 4 && script.Length == 0 && country.Length == 0) script = char.ToUpperInvariant(part[0]) + part.Substring(1).ToLowerInvariant();
+            else if (part.Length is 2 or 3 && country.Length == 0) country = part.ToUpperInvariant();
         }
-        if (length == 3)
+        return (language, script, country);
+    }
+
+    /// <summary>NATNUM12 "capitalize" (:690): the first character in title case, the rest as written.</summary>
+    private static string Capitalize(string text)
+    {
+        if (text.Length == 0) return text;
+        if (char.IsHighSurrogate(text[0]) && text.Length > 1)
         {
-            string rest = EnglishCardinal(digits.Substring(1), top: false);
-            return EnglishOnes[digits[0] - '0'] + " hundred" + (rest.Length > 0 ? " " + rest : "");
+            string first = char.ConvertFromUtf32(char.ConvertToUtf32(text[0], text[1])).ToUpperInvariant();
+            return first + text.Substring(2);
         }
-        if (length <= 5 && digits[length - 3] != '0')       // (\d{1,2})([1-9]\d\d) $1 thousand[ $2]
-            return EnglishCardinal(digits.Substring(0, length - 3), top: false) + " thousand " + EnglishCardinal(digits.Substring(length - 3), top: false);
-        int scale = (length - 4) / 3;                         // (\d{1,3})(\d{3k}) $1 <scale>$(:\2)$2
-        int tail = 3 * (scale + 1);
-        string low = digits.Substring(length - tail), lowText = EnglishCardinal(low, top: false);
-        string separator = low.TrimStart('0').Length == 0 ? "" : low.TrimStart('0').Length <= 2 ? " and " : ", ";
-        return EnglishCardinal(digits.Substring(0, length - tail), top: false) + " " + EnglishScales[scale] + separator + lowText;
+        return char.ToUpperInvariant(text[0]) + text.Substring(1);
     }
 
-    /// <summary>en.sor "== ordinal ==": the cardinal's last word made ordinal.</summary>
-    private static string EnglishOrdinal(string cardinal)
+    // :467-492 natnum1Locales (index order matters: 0 zh_CN, 1 zh_TW, then the two-letter languages)
+    private static readonly string[] NativeLanguages =
+        ["zh_CN", "zh_TW", "ja", "ko", "he", "ar", "th", "hi", "or", "mr", "bn", "pa", "gu", "ta", "te", "kn", "ml", "lo", "bo", "my", "km", "mn", "ne", "dz", "fa", "cu"];
+
+    /// <summary>getLanguageNumber (:537): zh is 1 for traditional Chinese (TW, HK, MO or Hant), else 0; others by their two-letter code; -1 none.</summary>
+    private static int LanguageNumber(string tag)
     {
-        foreach ((string ending, string replacement) in new[] { ("one", "first"), ("two", "second"), ("three", "third"), ("five", "fifth"), ("eight", "eighth"), ("nine", "ninth"), ("twelve", "twelfth") })
-            if (cardinal.EndsWith(ending, StringComparison.Ordinal)) return cardinal.Substring(0, cardinal.Length - ending.Length) + replacement;
-        return cardinal.EndsWith("y", StringComparison.Ordinal) ? cardinal.Substring(0, cardinal.Length - 1) + "ieth" : cardinal + "th";
+        (string language, string script, string country) = SplitTag(tag);
+        // A language LibreOffice knows only with a script (isolang.cxx aImplIsoLangScriptEntries, searched before lll-CC at :1015:
+        // every mn, pa-PK) or any tag with an explicit script becomes the Locale "qlt" + variant, which matches no entry (soffice
+        // prints mn-MN Native Numbering as 1, 2, 3; list-languages-v1).
+        if (script.Length > 0 || language == "mn" || (language == "pa" && country == "PK")) return -1;
+        if (language == "zh") return country is "TW" or "HK" or "MO" || script == "Hant" ? 1 : 0;
+        for (int i = 2; i < NativeLanguages.Length; i++)
+            if (language == NativeLanguages[i]) return i;
+        return -1;
     }
 
-    /// <summary>en.sor "== ordinal-number ==": 1st, 2nd, 3rd, 11th-19th, else th.</summary>
-    private static string EnglishOrdinalNumber(int value)
+    // numberchar.h:61-93 NumberChar rows for natnum1 (:494-519), in NativeLanguages order; he and cu are drawn by their own numerals.
+    // As LibreOffice: Odia uses U+0866.., Tamil's zero is the ASCII 0.
+    private static readonly string?[] NativeDigitRows =
+    [
+        "〇一二三四五六七八九",     // zh_CN: Chinese lower
+        "〇一二三四五六七八九",     // zh_TW
+        "〇一二三四五六七八九",     // ja: Japanese modern
+        "零一二三四五六七八九",     // ko: Korean lower
+        null,                                                               // he
+        "٠١٢٣٤٥٦٧٨٩",     // ar: Arabic-Indic
+        "๐๑๒๓๔๕๖๗๘๙",     // th
+        "०१२३४५६७८९",     // hi
+        "ࡦࡧࡨࡩࡪ࡫࡬࡭࡮࡯",     // or
+        "०१२३४५६७८९",     // mr
+        "০১২৩৪৫৬৭৮৯",     // bn
+        "੦੧੨੩੪੫੬੭੮੯",     // pa
+        "૦૧૨૩૪૫૬૭૮૯",     // gu
+        "0௧௨௩௪௫௬௭௮௯",     // ta
+        "౦౧౨౩౪౫౬౭౮౯",     // te
+        "೦೧೨೩೪೫೬೭೮೯",     // kn
+        "෦෧෨෩෪෫෬෭෮෯",     // ml
+        "໐໑໒໓໔໕໖໗໘໙",     // lo
+        "༠༡༢༣༤༥༦༧༨༩",     // bo
+        "၀၁၂၃၄၅၆၇၈၉",     // my
+        "០១២៣៤៥៦៧៨៩",     // km
+        "᠐᠑᠒᠓᠔᠕᠖᠗᠘᠙",     // mn
+        "०१२३४५६७८९",     // ne
+        "༠༡༢༣༤༥༦༧༨༩",     // dz
+        "۰۱۲۳۴۵۶۷۸۹",     // fa: East Arabic-Indic
+        null,                                                               // cu
+    ];
+
+    /// <summary>NATNUM1 (:734): the language's digits, Hebrew gematria, Church Slavonic numerals; ASCII for a language without them.</summary>
+    private static string NativeDigits(int value, string digits, string language)
     {
-        int lastTwo = value % 100, last = value % 10;
-        string suffix = lastTwo is >= 10 and <= 19 ? "th" : last switch { 1 => "st", 2 => "nd", 3 => "rd", _ => "th" };
-        return value.ToString(CultureInfo.InvariantCulture) + suffix;
-    }
-
-    private static string Capitalize(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text.Substring(1);
-
-    // libnumbertext data/zh.sor (simplified, the default section)
-    private const string ChineseDigits = "零一二三四五六七八九";
-    private const char ChineseZero = '零', ChineseTen = '十', ChineseHundred = '百', ChineseThousand = '千';
-    private const string ChineseGroups = "万亿兆";   // 10^4, 10^8, 10^12
-
-    private static string ChineseText(string digits, bool top)
-    {
-        digits = digits.TrimStart('0');
-        if (digits.Length == 0) return top ? ChineseZero.ToString() : "";
-        int length = digits.Length;
-        if (length == 1) return ChineseDigits[digits[0] - '0'].ToString();
-        if (length == 2)
-            return (top && digits[0] == '1' ? "" : ChineseDigits[digits[0] - '0'].ToString()) + ChineseTen + ChineseText(digits.Substring(1), top: false);
-        if (length <= 4)
+        int number = LanguageNumber(language);
+        if (number < 0) return digits;
+        return NativeLanguages[number] switch
         {
-            char unit = length == 3 ? ChineseHundred : ChineseThousand;
-            string rest = digits.Substring(1), head = ChineseDigits[digits[0] - '0'].ToString() + unit;
-            if (rest.TrimStart('0').Length == 0) return head;
-            return head + (rest[0] == '0' ? ChineseZero.ToString() : "") + ChineseText(rest, top: false);
+            "he" => HebrewNumber(value),
+            "cu" => digits.Length >= 8 ? digits : CyrillicNumber(value),     // :1222 more than 7 digits: unchanged
+            _ => DigitByDigit(digits, NativeDigitRows[number]!),
+        };
+    }
+
+    // :1187-1215 CyrillicNumberCharArray, thousands mark U+0482, titlo U+0483, ten U+0456 (UTN 41)
+    private static readonly (char letter, int value)[] CyrillicNumerals =
+    [
+        ('ц', 900), ('ѿ', 800), ('ѱ', 700), ('х', 600), ('ф', 500), ('у', 400), ('т', 300), ('с', 200),
+        ('р', 100), ('ч', 90), ('п', 80), ('ѻ', 70), ('ѯ', 60), ('н', 50), ('м', 40), ('л', 30),
+        ('к', 20), ('і', 10), ('ѳ', 9), ('и', 8), ('з', 7), ('ѕ', 6), ('є', 5), ('д', 4),
+        ('г', 3), ('в', 2), ('а', 1),
+    ];
+
+    private static string CyrillicNumber(int value)
+    {
+        var output = new StringBuilder();
+        CyrillicNumber(value, output, addTitlo: true);
+        return output.ToString();
+    }
+
+    /// <summary>makeCyrillicNumber (:1167).</summary>
+    private static void CyrillicNumber(long value, StringBuilder output, bool addTitlo)
+    {
+        int number = (int)(value % 1000);
+        if (value >= 1000)
+        {
+            output.Append('҂');
+            CyrillicNumber(value / 1000, output, false);
+            if (value >= 10000 && (value - 10000) % 1000 != 0) output.Append(' ');
+            if (value % 1000 == 0) addTitlo = false;
         }
-        int group = Math.Min((length - 1) / 4, ChineseGroups.Length);      // (\d{1,4})0?(\d{4k})
-        int tail = 4 * group;
-        string low = digits.Substring(length - tail), high = ChineseText(digits.Substring(0, length - tail), top: false);
-        if (low.TrimStart('0').Length == 0) return high + ChineseGroups[group - 1];
-        return high + ChineseGroups[group - 1] + (low[0] == '0' ? ChineseZero.ToString() : "") + ChineseText(low, top: false);
-    }
-
-    // libnumbertext data/hu_Hung.sor: Old Hungarian numerals (one, five, ten, fifty, hundred, thousand)
-    private const string RovasOne = "\U00010CFA", RovasFive = "\U00010CFB", RovasTen = "\U00010CFC", RovasFifty = "\U00010CFD",
-                         RovasHundred = "\U00010CFE", RovasThousand = "\U00010CFF";
-
-    private static string OldHungarian(string digits)
-    {
-        digits = digits.TrimStart('0');
-        int length = digits.Length;
-        if (length == 0) return "";
-        if (length == 1) return OldHungarianDigit(digits[0] - '0', RovasOne, RovasFive);
-        if (length == 2) return OldHungarianDigit(digits[0] - '0', RovasTen, RovasFifty) + OldHungarian(digits.Substring(1));
-        if (length == 3) return (digits[0] == '1' ? "" : OldHungarian(digits.Substring(0, 1))) + RovasHundred + OldHungarian(digits.Substring(1));
-        string thousands = digits.Substring(0, length - 3);
-        return (thousands == "1" ? "" : OldHungarian(thousands)) + RovasThousand + OldHungarian(digits.Substring(length - 3));
-    }
-
-    private static string OldHungarianDigit(int digit, string one, string five)
-    {
-        var text = new StringBuilder();
-        if (digit >= 5) { text.Append(five); digit -= 5; }
-        for (int i = 0; i < digit; i++) text.Append(one);
-        return text.ToString();
+        for (int j = 0; number > 0 && j < CyrillicNumerals.Length; j++)
+        {
+            if (number is < 20 and > 10)
+            {
+                number -= 10;
+                CyrillicNumber(number, output, false);
+                output.Append('і');
+                break;
+            }
+            if (CyrillicNumerals[j].value <= number)
+            {
+                output.Append(CyrillicNumerals[j].letter);
+                number -= CyrillicNumerals[j].value;
+            }
+        }
+        if (!addTitlo) return;
+        if (output.Length == 1) output.Append('҃');
+        else if (output.Length == 2)
+        {
+            if (value is > 800 and < 900) output.Append('҃');
+            else output.Insert(1, '҃');
+        }
+        else if (output.Length > 2)
+        {
+            if (output.ToString().IndexOf(' ') == output.Length - 2) output.Append('҃');
+            else output.Insert(output.Length - 1, '҃');
+        }
     }
 
     // ── Greek (:521-597) ────────────────────────────────────────────────────────────────────────────────────────────────

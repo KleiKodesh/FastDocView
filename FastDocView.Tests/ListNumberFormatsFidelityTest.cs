@@ -21,7 +21,8 @@ public static class ListNumberFormatsFidelityTest
         TestReport.Step("List number formats: every Word number style against Word 16's own labels (.docx, .doc, .rtf)");
         string folder = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-lists");
         RunWords(folder);
-        RunOdt(Path.Combine(folder, "..", "odt-lists"));
+        RunOdt(Path.Combine(folder, "..", "odt-lists"), "list-formats-v1");
+        RunOdt(Path.Combine(folder, "..", "odt-lists"), "list-languages-v1");
         foreach (string part in new[] { "a", "b" })
         {
             string expectedPath = Path.Combine(folder, $"list-formats-v1-{part}.expected.txt");
@@ -113,9 +114,10 @@ public static class ListNumberFormatsFidelityTest
     /// printed it with soffice to list-formats-v1.pdf and saved the labels LibreOffice drew (list-formats-v1.expected.txt).
     /// Every label the .fodt reader draws must equal LibreOffice's.
     /// </summary>
-    private static void RunOdt(string folder)
+    private static void RunOdt(string folder, string name)
     {
-        string expectedPath = Path.Combine(folder, "list-formats-v1.expected.txt"), path = Path.Combine(folder, "list-formats-v1.fodt");
+        // list-languages-v1 (make-list-languages.py): the number styles that follow the paragraph's language, in ~75 locales
+        string expectedPath = Path.Combine(folder, name + ".expected.txt"), path = Path.Combine(folder, name + ".fodt");
         if (!File.Exists(expectedPath) || !File.Exists(path)) { TestReport.Check(false, "missing fixture " + expectedPath); return; }
         var expected = new List<(string type, string value, string label)>();
         foreach (string line in File.ReadAllLines(expectedPath))
@@ -139,7 +141,7 @@ public static class ListNumberFormatsFidelityTest
                 mismatches.Append(" [").Append(expected[i].type).Append(" v").Append(expected[i].value).Append(": libreoffice ")
                           .Append(Escape(expected[i].label)).Append(" got ").Append(Escape(actual)).Append(']');
         }
-        TestReport.Check(expected.Count > 10000 && wrong == 0, $"fodt: {expected.Count - wrong}/{expected.Count} labels of every LibreOffice number style equal LibreOffice's" + mismatches);
+        TestReport.Check(expected.Count > 10000 && wrong == 0, $"fodt {name}: {expected.Count - wrong}/{expected.Count} labels equal LibreOffice's" + mismatches);
     }
 
     /// <summary>The text of a block's list label (tags stripped, the tab suffix and trailing spaces dropped).</summary>

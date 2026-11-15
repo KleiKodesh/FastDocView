@@ -452,7 +452,21 @@ public sealed class OdtListStyle
     /// The label of an item at <paramref name="level"/> given the current counters of its list:
     /// the last display-levels numbers joined with ".", wrapped in this level's prefix and suffix.
     /// </summary>
-    public string FormatLabel(int level, int[] counters)
+    public string FormatLabel(int level, int[] counters) => FormatLabel(level, counters, null);
+
+    /// <summary>True when a number this level shows follows the paragraph's language (<see cref="ListNumberingTypes.DependsOnLanguage"/>).</summary>
+    public bool DependsOnLanguage(int level)
+    {
+        Level current = LevelAt(level);
+        if (current.IsBullet) return false;
+        for (int i = Math.Max(0, level - current.DisplayLevels + 1); i <= level; i++)
+            if (!LevelAt(i).IsBullet && ListNumberingTypes.FromOdfNumberFormat(LevelAt(i).NumberFormat, letterSync: false) is { } type
+                && ListNumberingTypes.DependsOnLanguage(type)) return true;
+        return false;
+    }
+
+    /// <param name="language">The paragraph's language at its first character (BCP 47), null = the default.</param>
+    public string FormatLabel(int level, int[] counters, string? language)
     {
         Level current = LevelAt(level);
         // A bullet is drawn alone: LibreOffice's SwBulletPortion gets only the bullet character (sw/source/core/text/txtfld.cxx,
@@ -465,7 +479,7 @@ public sealed class OdtListStyle
         {
             Level part = LevelAt(i);
             if (part.IsBullet) continue;
-            string number = FormatNumber(counters[i] != OdtListNumbering.Unset ? counters[i] : part.StartValue, part.NumberFormat);
+            string number = FormatNumber(counters[i] != OdtListNumbering.Unset ? counters[i] : part.StartValue, part.NumberFormat, language);
             if (number.Length == 0) continue;
             if (label.Length > current.Prefix.Length) label.Append('.');
             label.Append(number);
@@ -481,6 +495,6 @@ public sealed class OdtListStyle
         => format is "a" or "A" && letterSync == "true" ? format + format + format : format ?? "1";
 
     /// <summary>style:num-format -> label text, as LibreOffice draws it (<see cref="ListNumberingTypes"/>); "" = no number.</summary>
-    public static string FormatNumber(int value, string format)
-        => ListNumberingTypes.FromOdfNumberFormat(format, letterSync: false) is { } type ? ListNumberingTypes.Format(value, type) : "";
+    public static string FormatNumber(int value, string format, string? language = null)
+        => ListNumberingTypes.FromOdfNumberFormat(format, letterSync: false) is { } type ? ListNumberingTypes.Format(value, type, language) : "";
 }

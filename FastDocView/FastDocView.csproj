@@ -29,6 +29,8 @@
   <!-- ECMA-376 Part 1 presetShapeDefinitions.xml as LibreOffice ships it (oox/source/drawingml/customshapes): every preset outline. -->
   <ItemGroup>
     <EmbeddedResource Include="DocxHtml\presetShapeDefinitions.xml" LogicalName="FastDocView.presetShapeDefinitions.xml" />
+    <!-- libnumbertext data (BSD / LGPL dual licence, Html/NumberText/COPYING): spelled-out list numbers as LibreOffice -->
+    <EmbeddedResource Include="Html\NumberText\*.sor" LogicalName="FastDocView.NumberText.%(Filename).sor" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)'=='net48'">

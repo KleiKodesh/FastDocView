@@ -144,11 +144,16 @@ internal sealed class OdtListNumbering
         block.IsRestartPending = false;
         for (int deeper = level + 1; deeper < counters.Length; deeper++) counters[deeper] = Unset;
         LastLayout = style?.LevelAt(level).Layout ?? "";
+        // a number that follows the paragraph's language is drawn again once the paragraph's first character is known
+        LastLanguageDependent = style is not null && style.DependsOnLanguage(level) ? (style, level, (int[])counters.Clone()) : null;
         return style?.FormatLabel(level, counters) ?? "•";
     }
 
     /// <summary>The label-alignment geometry of the level <see cref="ParagraphStarted"/> last numbered (<see cref="OdtListStyle.Level.Layout"/>).</summary>
     public string LastLayout { get; private set; } = "";
+
+    /// <summary>The style, level and counters of the label <see cref="ParagraphStarted"/> last made when it depends on the paragraph's language; else null.</summary>
+    public (OdtListStyle Style, int Level, int[] Counters)? LastLanguageDependent { get; private set; }
 
     private static int[] NewCounters()
     {

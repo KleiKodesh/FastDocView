@@ -2077,8 +2077,14 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   and the Hebrew gematria (:1055 makeHebrewNumber: 15 / 16 = tet vav / tet zayin, 1000 = the word thousand, 2000 = bet + thousands, no
   geresh); the spelled-out NATNUM12 types follow libnumbertext's Soros rules (data/en.sor: "One hundred one", "One thousand and one",
   "Twenty-first", "21st"; zh.sor: 10 = shi, 110 = yi bai yi shi, zero runs once; hu_Hung.sor: Old Hungarian numerals). A Soros call
-  strips its argument's leading zeros. Locale: LibreOffice formats with the paragraph's language; we use "en" (so "Native Numbering"
-  and full-width Arabic print ASCII digits and the text numbers are English) - other paragraph languages are not followed yet.
+  strips its argument's leading zeros. Locale: as Writer, the paragraph's language at its first character (sw ndtxt.cxx:3405 GetLang(0), thints.cxx:3557: the
+  script of the first strong character picks fo:language / style:language-asian / style:language-complex; a span opened there
+  wins; the label's own text style does not count). Native Numbering / full-width follow nativenumbersupplier.cxx
+  getLanguageNumber (:537; mn and pa-PK become the Locale "qlt" in isolang.cxx:1015, so ASCII); the text numbers run the
+  libnumbertext module of that language (Html/NumberText = LibreOffice 26.8's share/numbertext, no sk). The scanner draws the
+  label once the first strong character is seen; reopened spans scan with the index's style sections (format 17 keeps the
+  Asian / complex language attributes). Verified: make-list-languages.py (75 locales incl. he, ar, fa, th, Indic, CJK; a digit
+  first, a span first, an empty paragraph) - all 18,170 labels equal soffice's; Hebrew / Arabic checked in the PDF by code point.
   Verified: test-data/odt-lists/make-list-formats.py writes one list per type with 163 start values (1..130, round numbers, to 32767),
   soffice prints it to PDF and text, and the harness (--list-formats) compares all 11,736 labels: equal. The PDF agrees with the text
   export for every one-line label except Myanmar / Tibetan, where pdftotext's extraction of the shaped glyphs differs.
@@ -4562,8 +4568,14 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   and the Hebrew gematria (:1055 makeHebrewNumber: 15 / 16 = tet vav / tet zayin, 1000 = the word thousand, 2000 = bet + thousands, no
   geresh); the spelled-out NATNUM12 types follow libnumbertext's Soros rules (data/en.sor: "One hundred one", "One thousand and one",
   "Twenty-first", "21st"; zh.sor: 10 = shi, 110 = yi bai yi shi, zero runs once; hu_Hung.sor: Old Hungarian numerals). A Soros call
-  strips its argument's leading zeros. Locale: LibreOffice formats with the paragraph's language; we use "en" (so "Native Numbering"
-  and full-width Arabic print ASCII digits and the text numbers are English) - other paragraph languages are not followed yet.
+  strips its argument's leading zeros. Locale: as Writer, the paragraph's language at its first character (sw ndtxt.cxx:3405 GetLang(0), thints.cxx:3557: the
+  script of the first strong character picks fo:language / style:language-asian / style:language-complex; a span opened there
+  wins; the label's own text style does not count). Native Numbering / full-width follow nativenumbersupplier.cxx
+  getLanguageNumber (:537; mn and pa-PK become the Locale "qlt" in isolang.cxx:1015, so ASCII); the text numbers run the
+  libnumbertext module of that language (Html/NumberText = LibreOffice 26.8's share/numbertext, no sk). The scanner draws the
+  label once the first strong character is seen; reopened spans scan with the index's style sections (format 17 keeps the
+  Asian / complex language attributes). Verified: make-list-languages.py (75 locales incl. he, ar, fa, th, Indic, CJK; a digit
+  first, a span first, an empty paragraph) - all 18,170 labels equal soffice's; Hebrew / Arabic checked in the PDF by code point.
   Verified: test-data/odt-lists/make-list-formats.py writes one list per type with 163 start values (1..130, round numbers, to 32767),
   soffice prints it to PDF and text, and the harness (--list-formats) compares all 11,736 labels: equal. The PDF agrees with the text
   export for every one-line label except Myanmar / Tibetan, where pdftotext's extraction of the shaped glyphs differs.

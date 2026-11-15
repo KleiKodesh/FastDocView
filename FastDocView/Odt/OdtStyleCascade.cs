@@ -33,6 +33,9 @@ public sealed class OdtStyleCascade
         "style:font-name", "style:font-name-complex", "fo:font-family", "style:font-family-complex", "fo:color", "fo:background-color",
         "style:text-position", "fo:text-transform", "fo:font-variant", "fo:letter-spacing", "text:display", "style:text-outline",
         "fo:text-shadow", "style:font-relief", "fo:border", "style:text-emphasize", "style:text-scale", "fo:hyphenate", "fo:language", "fo:country",
+        // the three languages a list number follows (LanguagesOf)
+        "fo:script", "style:rfc-language-tag", "style:language-asian", "style:script-asian", "style:country-asian", "style:rfc-language-tag-asian",
+        "style:language-complex", "style:script-complex", "style:country-complex", "style:rfc-language-tag-complex",
     ];
 
     /// <summary>Attributes of style:paragraph-properties this cascade maps.</summary>
@@ -247,6 +250,44 @@ public sealed class OdtStyleCascade
         foreach (XElement style in Chain("graphic", graphicStyleName, includeDefault: false))
             ApplyTextProperties(run, style.Element(Style + "text-properties"), run.IsRightToLeft);
         return run;
+    }
+
+    /// <summary>The Western, Asian and complex-script language tags of a paragraph style, with a text style over it (null = none set).</summary>
+    public readonly record struct OdtLanguages(string? Latin, string? Asian, string? Complex);
+
+    private readonly Dictionary<(string?, string?), OdtLanguages> _languages = new();
+
+    /// <summary>
+    /// The three languages (fo:language / fo:script / fo:country, style:*-asian, style:*-complex, or style:rfc-language-tag*) the
+    /// default paragraph style, the paragraph style chain and the text style chain set, the last one winning per script
+    /// (xmloff: the CharLocale / CharLocaleAsian / CharLocaleComplex properties).
+    /// </summary>
+    public OdtLanguages LanguagesOf(string? paragraphStyleName, string? textStyleName)
+    {
+        if (_languages.TryGetValue((paragraphStyleName, textStyleName), out OdtLanguages cached)) return cached;
+        string? latin = null, asian = null, complex = null;
+        var chain = Chain("paragraph", paragraphStyleName);
+        if (textStyleName is not null) chain.AddRange(Chain("text", textStyleName, includeDefault: false));
+        foreach (XElement style in chain)
+        {
+            if (style.Element(Style + "text-properties") is not { } properties) continue;
+            latin = LanguageTag(properties, Style + "rfc-language-tag", Fo + "language", Fo + "script", Fo + "country") ?? latin;
+            asian = LanguageTag(properties, Style + "rfc-language-tag-asian", Style + "language-asian", Style + "script-asian", Style + "country-asian") ?? asian;
+            complex = LanguageTag(properties, Style + "rfc-language-tag-complex", Style + "language-complex", Style + "script-complex", Style + "country-complex") ?? complex;
+        }
+        var languages = new OdtLanguages(latin, asian, complex);
+        _languages[(paragraphStyleName, textStyleName)] = languages;
+        return languages;
+    }
+
+    private static string? LanguageTag(XElement properties, XName rfc, XName language, XName script, XName country)
+    {
+        if ((string?)properties.Attribute(rfc) is { Length: > 0 } tag) return tag;
+        if ((string?)properties.Attribute(language) is not { Length: > 0 } code) return null;
+        string result = code;
+        if ((string?)properties.Attribute(script) is { Length: > 0 } scriptCode) result += "-" + scriptCode;
+        if ((string?)properties.Attribute(country) is { Length: > 0 } countryCode && countryCode != "none") result += "-" + countryCode;
+        return result;
     }
 
     /// <summary>A text:span's formatting over its paragraph's base (family "text" chain); cached per pair.</summary>

@@ -97,7 +97,7 @@ separate paged view, which is not built yet.
 12. Torat Emet line marks.
 13. Counted RTF labels and ODT bullets take the label formatting rules, not a separate bullet colour / size.
 14. Word saves its custom formats (Greek, Turkish, Bulgarian, 001) in .doc and RTF as decimal and shows them so itself.
-15. ODT / FODT: every LibreOffice number style (CJK, Korean, Japanese, Greek, Cyrillic bg / ru / sr / uk, Hebrew, Arabic, Persian, Thai, Indic, Old Hungarian, ordinal and text numbers, num-letter-sync) as LibreOffice prints it, checked label by label against soffice; formatted for an English paragraph (see Unsupported).
+15. ODT / FODT: every LibreOffice number style (CJK, Korean, Japanese, Greek, Cyrillic bg / ru / sr / uk, Hebrew, Arabic, Persian, Thai, Indic, Old Hungarian, ordinal and text numbers, num-letter-sync) as LibreOffice prints it, checked label by label against soffice; Native Numbering, full-width digits and the text numbers follow the paragraph's language (75 locales checked, Hebrew and Arabic included).
 
 NOTES.md "List numbering" holds the audit of list number formats.
 

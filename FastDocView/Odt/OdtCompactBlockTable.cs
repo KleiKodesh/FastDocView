@@ -40,6 +40,8 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
         _index = index;
         _view = view;
         _scanStyles = new OdtStyleCascade();
+        // the paragraph / text styles too: a list number that follows the paragraph's language is drawn while the span is scanned
+        foreach (string section in index.StyleSections) _scanStyles.AddSection(OdtBodyBlockScanner.ParseSection(index.RootOpenTag, section));
         foreach (KeyValuePair<string, OdtListStyle> style in index.UsedListStyles) _scanStyles.AddListStyle(style.Key, style.Value);
     }
 

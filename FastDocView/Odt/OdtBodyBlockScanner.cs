@@ -104,6 +104,7 @@ internal sealed class OdtBodyBlockScanner
         int complete = BlockEndOffsets.Count;
         while (complete > 0 && BlockEndOffsets[complete - 1] < 0) complete--;
         if (complete == 0) return false;
+        _languageLabel = null;        // its paragraph never closed: dropped below
         int extra = BlockEndOffsets.Count - complete;
         if (extra > 0)
         {
@@ -453,6 +454,9 @@ internal sealed class OdtBodyBlockScanner
             {
                 string? label = isListItemParagraph ? _numbering.ParagraphStarted() : null;
                 StartBlock(WordDocumentBlockKind.Paragraph, isListItemParagraph || _numbering.IsInsideList ? (byte)_numbering.CurrentLevel : (byte)255, label);
+                // one pending label at a time: a list paragraph nested in one still waiting keeps the default language
+                if (label is not null && _languageLabel is null && _numbering.LastLanguageDependent is { } dependent)
+                    _languageLabel = new PendingLanguageLabel(_currentBlock, ListLabels.Count - 1, dependent.Style, dependent.Level, dependent.Counters, Attribute(tag, nameEnd, "text:style-name"));
                 NoteSectionStart("paragraph", Attribute(tag, nameEnd, "text:style-name"));
                 if (name == Name.Heading)
                 {
@@ -486,6 +490,9 @@ internal sealed class OdtBodyBlockScanner
 
     private Frame InsideBlock(Frame parent, Name name, ReadOnlySpan<byte> tag, int nameEnd)
     {
+        // a span opened before the paragraph's first character sets the language there (sw GetLang(0) reads the hints at 0)
+        if (_languageLabel is { HasText: false } pending && pending.Block == _currentBlock && parent is Frame.Block or Frame.Inner && tag.Slice(1, nameEnd - 1).SequenceEqual(SpanTagName))
+            pending.SpanStyle = Attribute(tag, nameEnd, "text:style-name") ?? pending.SpanStyle ?? "";     // the innermost styled span wins
         // ODF 1.3 part 3 6.2.1 / 6.2.2: text:bookmark, text:bookmark-start, text:reference-mark(-start) carry text:name; links
         // (text:a xlink:href "#name") and text:bookmark-ref / text:reference-ref (text:ref-name) point at them. One inside a
         // note body or a table cell marks the block that holds it.
@@ -544,6 +551,11 @@ internal sealed class OdtBodyBlockScanner
         if (top is not (Frame.Block or Frame.Inner)) { if (top == Frame.NoteCitation) AppendBounded(_citationText, text, MaxCitationBytes); return; }
         if (_currentBlock < 0) return;
         BlockTextLengths[_currentBlock] += text.Length;
+        if (_languageLabel is { } waiting && waiting.Block == _currentBlock)
+        {
+            waiting.HasText = true;     // a span opened after weak text does not cover the first character
+            if (FirstStrongScript(text) is { } script) SettleLanguageLabel(script);
+        }
         if (_headingLevel > 0) AppendBounded(_headingText, text, MaxHeadingTextBytes);
     }
 
@@ -567,6 +579,76 @@ internal sealed class OdtBodyBlockScanner
         else SectionStarts.Add(new WordDocumentSection(block, width, left));
     }
 
+    // ── list labels in the paragraph's language ─────────────────────────────────────
+
+    private enum ListScript : byte { Latin, Asian, Complex }
+
+    /// <summary>A label whose numbers follow the paragraph's language, waiting for the paragraph's first strong character.</summary>
+    private sealed class PendingLanguageLabel(int block, int labelIndex, OdtListStyle style, int level, int[] counters, string? paragraphStyle)
+    {
+        public readonly int Block = block, LabelIndex = labelIndex, Level = level;
+        /// <summary>True once the owning paragraph has text (weak only so far); a span opened later no longer counts.</summary>
+        public bool HasText;
+        public readonly OdtListStyle Style = style;
+        public readonly int[] Counters = counters;
+        public readonly string? ParagraphStyle = paragraphStyle;
+        /// <summary>The text:style-name of a span opened before any character ("" = a span without one); null = none.</summary>
+        public string? SpanStyle;
+    }
+
+    private PendingLanguageLabel? _languageLabel;
+    private static readonly byte[] SpanTagName = Encoding.ASCII.GetBytes("text:span");
+
+    /// <summary>
+    /// Writer draws a label with the language at the paragraph's first character (sw ndtxt.cxx:3405 GetLang(0)): the script of the
+    /// first non-weak character (SwBreakIt::GetRealScriptOfText, breakit.cxx:85) picks the Western, Asian or complex language.
+    /// </summary>
+    private void SettleLanguageLabel(ListScript script)
+    {
+        if (_languageLabel is not { } pending) return;
+        _languageLabel = null;
+        OdtStyleCascade.OdtLanguages languages = _styles.LanguagesOf(pending.ParagraphStyle, pending.SpanStyle is { Length: > 0 } span ? span : null);
+        string? language = script switch { ListScript.Asian => languages.Asian, ListScript.Complex => languages.Complex, _ => languages.Latin };
+        ListLabels[pending.LabelIndex] = pending.Style.FormatLabel(pending.Level, pending.Counters, language);
+    }
+
+    /// <summary>The script of the first non-weak character of an XML text run, or null when it has none.</summary>
+    private static ListScript? FirstStrongScript(ReadOnlySpan<byte> text)
+    {
+        int length = Math.Min(text.Length, 256);
+        while (length < text.Length && (text[length] & 0xC0) == 0x80) length++;     // whole UTF-8 sequences
+        string decoded = WebUtility.HtmlDecode(Encoding.UTF8.GetString(text.Slice(0, length).ToArray()));
+        for (int i = 0; i < decoded.Length; i++)
+        {
+            int code = decoded[i];
+            if (char.IsHighSurrogate(decoded[i]) && i + 1 < decoded.Length) { code = char.ConvertToUtf32(decoded[i], decoded[i + 1]); i++; }
+            if (ScriptClassOf(code) is { } script) return script;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// i18nutil scriptclass.cxx GetScriptClass by Unicode block (null = weak): Basic Latin to Spacing Modifiers, Greek to Armenian,
+    /// Georgian, Cherokee to Runic, Latin Extended Additional to Greek Extended, Latin Extended C / D: Latin; Hebrew to Myanmar,
+    /// Ethiopic, Khmer to Mongolian, Arabic presentation forms: complex; Hangul Jamo, CJK radicals to Hangul syllables, CJK
+    /// compatibility, half / full width forms, the supplementary ideographs: Asian. Space, no-break space, U+0001 / U+0002,
+    /// superscript 1-3 and Number Forms are weak; outside the listed blocks (UAX 24 there) a letter counts as Latin.
+    /// </summary>
+    private static ListScript? ScriptClassOf(int c)
+    {
+        if (c is 0x01 or 0x02 or 0x20 or 0xA0 or 0x2CA or 0x2CB or 0x2C7 or 0x2D9 or 0xB2 or 0xB3 or 0xB9) return null;
+        if (c is 0x09 or 0x0A or 0x0D) return null;
+        if (c is >= 0x2C80 and <= 0x2CE3) return ListScript.Latin;
+        if (c <= 0x02FF || c is >= 0x0370 and <= 0x058F || c is >= 0x10A0 and <= 0x10FF || c is >= 0x13A0 and <= 0x16FF
+            || c is >= 0x1E00 and <= 0x1FFF || c is >= 0x2C60 and <= 0x2C7F || c is >= 0xA720 and <= 0xA7FF) return ListScript.Latin;
+        if (c is >= 0x0590 and <= 0x109F || c is >= 0x1200 and <= 0x137F || c is >= 0x1780 and <= 0x18AF
+            || c is >= 0xFB50 and <= 0xFDFF || c is >= 0xFE70 and <= 0xFEFF) return ListScript.Complex;
+        if (c is >= 0x1100 and <= 0x11FF || c is >= 0x2E80 and <= 0xD7AF || c is >= 0xF900 and <= 0xFAFF
+            || c is >= 0xFE30 and <= 0xFE4F || c is >= 0xFF00 and <= 0xFFEF || c is >= 0x20000 and <= 0x2FA1F) return ListScript.Asian;
+        if (c is >= 0x2150 and <= 0x218F) return null;
+        return c <= 0xFFFF ? (char.IsLetter((char)c) ? ListScript.Latin : null) : ListScript.Latin;
+    }
+
     private void StartBlock(WordDocumentBlockKind kind, byte listLevel, string? label)
     {
         BlockStartOffsets.Add(_tagStartOffset);
@@ -584,6 +666,7 @@ internal sealed class OdtBodyBlockScanner
     private void FinishBlock(long tagEndOffset)
     {
         if (_currentBlock < 0) return;
+        if (_languageLabel?.Block == _currentBlock) SettleLanguageLabel(ListScript.Latin);     // no strong character: the application language's script (Latin here)
         BlockEndOffsets[_currentBlock] = tagEndOffset;
         if (_headingLevel > 0)
         {
