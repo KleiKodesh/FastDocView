@@ -56,7 +56,7 @@ public static class RtfIndexAndRenderTest
         bool labelsMatch = true;
         foreach ((int block, string? label) in SyntheticRtfGenerator.ExpectedPrefixLabels)
             if (document.ListLabelOf(block) != label) { labelsMatch = false; Console.WriteLine($"      block {block}: label '{document.ListLabelOf(block)}', expected '{label}'"); }
-        TestReport.Check(labelsMatch, $"{what}: list labels counted from the list table (1., 1.1, bullet), none where \\listtext gives it");
+        TestReport.Check(labelsMatch, $"{what}: list labels counted from the list table (1., 1.1, bullet), also beside a saved \\listtext copy (Word re-counts)");
         TestReport.Check(document.BlockKindOf(6) == WordDocumentBlockKind.TableRow && document.BlockKindOf(7) == WordDocumentBlockKind.TableRow
                          && document.BlockKindOf(14) == WordDocumentBlockKind.TableRow && document.BlockKindOf(5) == WordDocumentBlockKind.Paragraph,
                          $"{what}: table rows are blocks of their own");

@@ -4,7 +4,8 @@ namespace FastDocView.Tests;
 /// RTF list cases against Word 16's print (test-data/word-lists/make-list-overrides.py): a level whose restart limit Word saves as
 /// \levelnorestart alone (never restarts: 2.1.4), a list linked to a numbering style (\liststyleid; the emptied linked list draws the
 /// style's levels and still counts on its own), an \lfolevel holding a whole \listlevel ((e), (f), (g)), and counted labels in the level's
-/// own colour and size. Plus the .odt side of label colour / size: LibreOffice Writer prints a bullet level's fo:color, fo:font-size
+/// own colour and size. Word's own save (list-overrides-v1.rtf) carries {\listtext} copies with the stale 2.1.1; Word re-counts
+/// and prints 2.1.4, and so must the reader. Plus the .odt side of label colour / size: LibreOffice Writer prints a bullet level's fo:color, fo:font-size
 /// percentage and text:bullet-relative-size as the plain label (soffice PDF: black 12 pt; sw/source/core/text/txtfld.cxx builds the
 /// bullet font from the paragraph and the character style only), so FastDocView ignores them too.
 /// </summary>
@@ -19,7 +20,7 @@ public static class ListOverridesFidelityTest
         // Word's printed labels for every item line except the bullets (pdftotext gives their glyphs as private-use codes)
         List<string> expected = File.ReadAllLines(expectedPath).Where(line => line.Contains("item ") && !line.StartsWith("item", StringComparison.Ordinal)
                                                                           && line[0] < 0x80).Select(line => line.Trim()).ToList();
-        foreach (string name in new[] { "list-overrides-nolisttext-v1.rtf", "list-overrides-stylelink-v1.rtf" })
+        foreach (string name in new[] { "list-overrides-v1.rtf", "list-overrides-nolisttext-v1.rtf", "list-overrides-stylelink-v1.rtf" })
         {
             string path = Path.Combine(folder, name);
             if (!File.Exists(path)) { TestReport.Check(false, "test-data/word-lists/" + name + " present"); continue; }

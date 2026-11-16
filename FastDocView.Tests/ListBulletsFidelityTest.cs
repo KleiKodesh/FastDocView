@@ -64,7 +64,11 @@ public static class ListBulletsFidelityTest
         TestReport.Check(label.Contains("#FF0000") && !label.Contains("font-weight:bold") && !label.Contains("font-size:11pt"),
                          $"{format}: the numbered label is red, complex-script size and not bold, as Word draws it (got [{Shorten(label)}])");
         // Word 16's re-save of the label-less .rtf writes the label's complex-script font as the mark's (\af0), not Arial: no font check
-        if (format is ".doc" || (format == ".rtf" && hasFlatLabels))
+        // Word 16 printing the .rtf itself re-counts the label (its {listtext} copy is ignored) and draws "1." in the level's
+        // complex-script font (af0 = Times New Roman 12; Word PDF of list-bullets-v1.rtf, 2026-11-16), not the saved copy's Arial
+        if (format == ".rtf")
+            TestReport.Check(!label.Contains("font-family:'Arial'"), $"{format}: the counted label draws in the level's complex-script font, as Word prints the .rtf (got [{Shorten(label)}])");
+        if (format is ".doc")
             TestReport.Check(label.Contains("font-family:'Arial'") || (format == ".doc" && Regex.IsMatch(styled, "<p [^>]*font-family:'Arial'")),
                              $"{format}: the numbered label draws in the complex-script font Arial (got [{Shorten(styled)}])");
     }

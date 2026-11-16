@@ -61,6 +61,6 @@ public static class SyntheticRtfGenerator
         file.Write("}");
     }
 
-    /// <summary>The labels the index must store (null = rendered from \listtext or not a list).</summary>
-    public static readonly (int block, string? label)[] ExpectedPrefixLabels = [(2, "1."), (3, "1.1"), (4, null), (5, "\u2022"), (8, null)];
+    /// <summary>The labels the index must store (null = not a list); a paragraph with a saved \listtext copy is counted too: Word re-counts it.</summary>
+    public static readonly (int block, string? label)[] ExpectedPrefixLabels = [(2, "1."), (3, "1.1"), (4, "2."), (5, "\u2022"), (8, null)];
 }

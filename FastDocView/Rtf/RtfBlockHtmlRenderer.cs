@@ -785,6 +785,10 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         StringBuilder? label = _listTextTarget;
         _listTextTarget = null;
         if (label is null) return;
+        // a list paragraph the index counted: Word prints its re-counted label, not this saved copy (EmitParagraph draws the
+        // counted one); a picture bullet's copy is still drawn as the level's picture (Picture above). Without a list Word can
+        // resolve, the saved copy stays.
+        if (ReferenceEquals(_flow, _bodyFlow) && _isFirstParagraph && _indexListLabel is { } counted && WordListLabelHtml.PictureOf(counted) is null) { _flow.HasInline = true; return; }
         string text = label.ToString();
         string html = text.Replace("\t", "");
         if (html.Length == 0) return;

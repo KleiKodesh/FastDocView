@@ -105,7 +105,6 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     private int _textLength;
     private readonly StringBuilder _paragraphText = new();
     private readonly StringBuilder _listText = new();
-    private bool _hasListText;
     private int _rowCells;
     private int _rightToLeftParagraphs, _paragraphs;
     /// <summary>Blocks the direction majority is counted over (= the on-demand first open's first blocks).</summary>
@@ -359,7 +358,6 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _blockList = -1;
         _rowCells = 0;
         _paragraphText.Clear();
-        _hasListText = false;
         _listText.Clear();
         if (!_isSpanScan && (_starts.Count == 0 || _start >= _nextAnchorAt))
             _pendingAnchor = (_starts.Count, _start, WordIndexScanState.Join(AnchorHead(_states[_stateId], _fieldStates[_fieldStateId]), _lists?.ExportState() ?? []));
@@ -508,7 +506,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _textLength += length;
     }
 
-    public override void ListTextStart() { if (!_parser.IsInTextBox) { _hasListText = true; _listText.Clear(); } }
+    public override void ListTextStart() { if (!_parser.IsInTextBox) _listText.Clear(); }
 
     /// <summary>A drawing object counts as the placeholder it was before shapes were read (block values unchanged); its text-box text is searched only.</summary>
     public override void ShapeStart(in RtfGroupState state) { if (IsSearching) _search!.Separator(); Embedded(RtfEmbeddedKind.Picture, state); }
@@ -630,7 +628,6 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         {
             _isRow = true;
             _paragraphText.Clear();
-            _hasListText = false;
             if (isSectionEnd) _isSectionEndPending = true;          // the section ends with this row
             return;
         }
@@ -647,9 +644,9 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             string text = _paragraphText.ToString().Trim();
             if (text.Length > 0) _headings.Add(new WordDocumentHeading(_starts.Count, outline + 1, text));
         }
-        // a picture bullet's label is stored even beside Word's flat {\listtext}: the renderer draws that copy as the picture bullet
-        string? storedLabel = _hasListText && !(label is not null && Html.WordListLabelHtml.PictureOf(label) is not null) ? null : label;
-        EndBlock(_parser.Position, listLabel: storedLabel, listLevel: hasListParagraph ? state.ListLevel : -1);
+        // the counted label is stored even beside Word's flat {\listtext}: Word re-counts from the list table when it opens the file
+        // and prints that, not the saved copy (list-overrides-v1.rtf: the saved "2.1.1." prints 2.1.4); the renderer draws it instead
+        EndBlock(_parser.Position, listLabel: label, listLevel: hasListParagraph ? state.ListLevel : -1);
         if (isSectionEnd) EndSection();
     }
 

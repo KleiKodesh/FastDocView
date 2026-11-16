@@ -93,7 +93,7 @@ separate paged view, which is not built yet.
 | Legacy numbering (Word 6 levels, \pn, w:legacy) | yes | yes | yes | n.a. | n.a. | n.a. |
 
 10. Word writes the label into the HTML; it is shown as written.
-11. RTF, as Word 16 prints it: `\levelnorestart` never restarts (RTF has no restart-limit level: Word saves a limit as `\levelnorestart` and prints the .rtf that way); an `\lfolevel` holding a whole `\listlevel` replaces that level; a list with `\liststyleid` and no levels of its own draws the list style's levels and counts on its own. A label Word saved in `{\listtext}` is drawn as written (see the unsupported list).
+11. RTF, as Word 16 prints it: `\levelnorestart` never restarts (RTF has no restart-limit level: Word saves a limit as `\levelnorestart` and prints the .rtf that way); an `\lfolevel` holding a whole `\listlevel` replaces that level; a list with `\liststyleid` and no levels of its own draws the list style's levels and counts on its own. Every list paragraph Word can count shows the re-counted label, as Word prints it (its saved `{\listtext}` copy is used only for a paragraph without a list Word can resolve, and for a picture bullet).
 12. Torat Emet line marks.
 13. RTF: counted labels take the level's own `\cf` / `\fs` over the mark's formatting, as Word prints them. ODT: a level's `fo:color`, `fo:font-size` percentage and `text:bullet-relative-size` are ignored, as LibreOffice Writer prints them (the label is the paragraph's font plus the level's character style).
 14. Word saves its custom formats (Greek, Turkish, Bulgarian, 001) in .doc and RTF as decimal and shows them so itself.

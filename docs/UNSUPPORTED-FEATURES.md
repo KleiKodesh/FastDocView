@@ -37,7 +37,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| A stale `{\listtext}` label (Word re-counts from the list table when it opens the file; e.g. a restart limit Word dropped on save prints 2.1.4 where the saved label says 2.1.1) | rtf | Word's flat label copy is drawn as written (its text and formatting); drawing every RTF label from the count instead is a wider change, not yet measured on the corpus | deferred |
 | ApplyParagraphMarkFormatToNumbering setting | docx | Not read (LibreOffice writes it only for Word imports) | won't do |
 
 ## Tables

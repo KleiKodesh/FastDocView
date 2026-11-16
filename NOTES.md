@@ -2025,7 +2025,7 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 
 | Feature | .docx | .doc | RTF | ODT |
 |---|---|---|---|---|
-| Number formats (ST_NumberFormat / MSONFC / \levelnfc(n)) | partial: 37 of Word's 60 styles exact, rest decimal | same table | Word's \listtext drawn as written (any format); counted labels use the .doc table | partial: 1 a A i I, hebrew1 / hebrew2 |
+| Number formats (ST_NumberFormat / MSONFC / \levelnfc(n)) | partial: 37 of Word's 60 styles exact, rest decimal | same table | counted labels use the .doc table (a saved \listtext is used only without a resolvable list) | partial: 1 a A i I, hebrew1 / hebrew2 |
 | Start at (w:start, LVLF iStartAt, \levelstartat, start-value) | yes | yes | yes | yes |
 | lvlRestart (after a higher level / never) | yes | yes (fNoRestart + ilvlRestartLim) | yes: \levelnorestart = never (RTF has no limit level; Word prints it so) | yes (nested-list rules) |
 | lvlOverride / startOverride (LFOLVL, \lfolevel) | yes | yes | yes (start-at; a \listlevel inside \lfolevel replaces the level) | text:start-value on the item |
@@ -2034,7 +2034,7 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 | isLgl | yes | yes | yes (\levellegal) | n/a |
 | Suffix tab / space / nothing | yes | yes | yes | yes (label-followed-by) |
 | lvlJc, level indents / tab | yes | yes | yes (\leveljc) | yes (label-alignment) |
-| Label rPr (font, size, colour, b, i, u) | yes | yes (grpprlChpx) | yes (\listlevel group: \f \af \fs \afs \cf \b \i over the mark); \listtext runs keep their formatting | yes (text:style-name) |
+| Label rPr (font, size, colour, b, i, u) | yes | yes (grpprlChpx) | yes (\listlevel group: \f \af \fs \afs \cf \b \i over the mark); a saved \listtext copy is used only without a resolvable list | yes (text:style-name) |
 | Legacy numbering (w:legacy) | yes (legacySpace / legacyIndent) | yes (LVLF 0x40, dxaSpace / dxaIndent) | yes (\levelold \levelspace \levelindent) | n/a |
 | Style-linked numbering (pStyle in lvl, numStyleLink / styleLink) | yes | yes (rgistdPara) | yes (\liststyleid: an empty linked list draws the style list's levels) | n/a |
 | Symbol-font bullets | yes | yes | yes | yes (text-properties fo:font-family / style:font-name) |
@@ -2125,8 +2125,13 @@ both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Ch
   (xmlnumi.cxx:613-631, :518-526) but Writer never draws them: sw/source/core/text/txtfld.cxx:569-600 builds the bullet font from
   the paragraph font plus the character style; text:bullet-relative-size is not read at all. soffice's PDF of
   list-bullet-look-v1.fodt: both labels black 12 pt. FastDocView ignores them too.
-- Unchanged: a Word-saved `{\listtext}` is drawn as written, while Word re-counts on open (the restart-limit file shows the saved
-  2.1.1, Word prints 2.1.4). Listed as deferred.
+- `{\listtext}` (2026-11-16, RTF index format 21): Word ignores the saved label when it opens an .rtf and re-counts (Word's own
+  save of the restart-limit file says 2.1.1, it prints 2.1.4; a probe whose {\listtext} said "1." in Courier New printed in the
+  level's font). LibreOffice skips the group too (rtfdispatchdestination.cxx:496-500: "Should be ignored by any reader that
+  understands Word 97 through Word 2007 numbering"). So the index stores the counted label for every list paragraph and the
+  renderer draws it, dropping the saved copy; the copy stays where nothing was counted (no resolvable \ls, rows) and for a
+  picture bullet. The label font is the level's (list-bullets-v1.rtf: "1." in Times New Roman = \af0 in Word's PDF, not the
+  copy's Arial).
 
 ## Picture bullets, ODT symbol bullets and label styles (2026-11-09; index formats .docx 19, ODT 14)
 
@@ -4533,91 +4538,6 @@ archives open on demand from 2 MB: the open returns in 5-7 ms, the first window 
   knows. Hebrew has no hyphenation dictionary, so this matters for LTR text only.
 - Test: `DropCapsAndHyphenationFidelityTest` (`--fidelity`) over test-data/drop-caps-hyphenation/drop-caps-hyphenation-v1.docx / .doc / .rtf / .odt
   (Word 16 via COM, make-drop-caps-hyphenation-fixtures.ps1).
-
-## List numbering and bullets: audit and Word-verified number formats (all formats, 2026-11-09; RTF index format 13)
-
-Audit (yes / partial / no per .docx | .doc | RTF | ODT):
-
-| Feature | .docx | .doc | RTF | ODT |
-|---|---|---|---|---|
-| Number formats (ST_NumberFormat / MSONFC / \levelnfc(n)) | partial: 37 of Word's 60 styles exact, rest decimal | same table | Word's \listtext drawn as written (any format); counted labels use the .doc table | partial: 1 a A i I, hebrew1 / hebrew2 |
-| Start at (w:start, LVLF iStartAt, \levelstartat, start-value) | yes | yes | yes | yes |
-| lvlRestart (after a higher level / never) | yes | yes (fNoRestart + ilvlRestartLim) | yes: \levelnorestart = never (RTF has no limit level; Word prints it so) | yes (nested-list rules) |
-| lvlOverride / startOverride (LFOLVL, \lfolevel) | yes | yes | yes (start-at; a \listlevel inside \lfolevel replaces the level) | text:start-value on the item |
-| Restart at a section break | n/a: Word has no such list setting (restart per section exists for pages, line numbers and notes only) |
-| Continue a list across other lists | yes (shared abstractNum) | yes (lsid) | yes (\listid) | yes (continue-numbering / continue-list) |
-| isLgl | yes | yes | yes (\levellegal) | n/a |
-| Suffix tab / space / nothing | yes | yes | yes | yes (label-followed-by) |
-| lvlJc, level indents / tab | yes | yes | yes (\leveljc) | yes (label-alignment) |
-| Label rPr (font, size, colour, b, i, u) | yes | yes (grpprlChpx) | yes (\listlevel group: \f \af \fs \afs \cf \b \i over the mark); \listtext runs keep their formatting | yes (text:style-name) |
-| Legacy numbering (w:legacy) | yes (legacySpace / legacyIndent) | yes (LVLF 0x40, dxaSpace / dxaIndent) | yes (\levelold \levelspace \levelindent) | n/a |
-| Style-linked numbering (pStyle in lvl, numStyleLink / styleLink) | yes | yes (rgistdPara) | yes (\liststyleid: an empty linked list draws the style list's levels) | n/a |
-| Symbol-font bullets | yes | yes | yes | yes (text-properties fo:font-family / style:font-name) |
-| Picture bullets (numPicBullet, \listpicture, list-level-style-image) | yes (VML / DrawingML) | yes (_PictureBullets) | yes (\listpicture) | yes (package picture) |
-| Bullet colour and size | yes (level rPr) | yes | yes (\cf \fs on counted labels) | ignored, as LibreOffice prints |
-
-- **Number formats**: `DocxNumberingDefinitions.FormatNumber` gained ordinal, cardinalText, ordinalText, decimalFullWidth(2), decimalHalfWidth,
-  hindiNumbers, thaiNumbers, ideographDigital / japaneseDigitalTenThousand / taiwaneseDigital / koreanDigital2, decimalEnclosedCircle(Chinese) /
-  Fullstop / Paren, ideographEnclosedCircle, ideographTraditional / Zodiac / ZodiacTraditional, numberInDash, russianLower / Upper (29 letters),
-  thaiLetters (LibreOffice defaultnumberingprovider.cxx:103 less U+0E24 / U+0E26), arabicAlpha / arabicAbjad (defaultnumberingprovider.cxx:89 / :96,
-  with Word's ZWNJ after / before each letter). Word repeats the letter past the end of an alphabet (aa, bb), LibreOffice counts (aa, ab): Word wins.
-  hebrew2 in a list is Word's field algorithm (one tav per full 22, then the letter: 27 = tav he), not a repeated letter; Word's ListString starts it
-  with U+200F, which is not drawn. MSONFC -> name is one table (`DocBinaryListDefinitions.NumberFormatName`), the .docx numFmt Word 16 writes for
-  each code; RTF uses it too, with 8 / 9 = none (rtfdispatchvalue.cxx:39-50 getNumberFormat).
-- **Script formats** (`Html/WordListNumberScripts`, 2026-11-10): counting words (japaneseCounting / Legal, chineseCounting / Thousand /
-  LegalSimplified, taiwaneseCounting / Thousand, ideographLegalTraditional, koreanCounting / Legal, thaiCounting, vietnameseCounting,
-  hindiCounting), kana orders (aiueo, iroha, half and full width), ganada / chosung, koreanDigital and Word's custom formats (.docx
-  numFmt custom w:format: Greek numerals, Turkish / Bulgarian letters, 001 / 0001 / 00001) now match Word. Tables from LibreOffice
-  (bullet.h kana / Hangul, numberchar.h CJK digits + multipliers, defaultnumberingprovider.cxx Korean legal words, Greek gr_smallNum,
-  Bulgarian letters); the rules from Word 16's ListString (make-list-formats-words.ps1: values 1..129 + large starts per format), since
-  LibreOffice draws all six counting formats as one NUMBER_LOWER_ZH (ConversionHelper.cxx:592-598) and has no Thai / Vietnamese / Hindi
-  counting. Word's rules: "one" before ten / hundred is dropped in Japanese / Korean counting (before thousand only in the leading four
-  digits; Korean also before a lone myriad: 10000 = man), only for 10..19 in Chinese / Taiwanese counting, never in the legal formats;
-  zero runs are written once in the Chinese "thousand" and legal formats (U+96F6, U+3007 in chineseCountingThousand); chinese /
-  taiwaneseCounting go digit by digit with U+25CB from 100; chineseLegalSimplified's myriad is U+842C; Greek thousands take a comma
-  (LibreOffice U+0375) and the upper koppa is U+03DE; Word's Bulgarian has 29 letters (LibreOffice's table lacks the short i); the
-  Hindi words are Word's own 1..99 (CLDR differs at 6, 15...). Word refuses start values past 1000 (Vietnamese) / 9999 (Hindi, Greek);
-  beyond those the words recurse (unverified - Word can only reach them by counting). Word saves its custom formats in .doc / RTF as
-  decimal (nfc 0, \pntext 1.) and shows 1. itself on reopening, so only .docx keeps them. .odt: LibreOffice's num-format names for the
-  kana / Hangul / zero-padded orders map to the same tables; its CJK counting, Greek and Bulgarian names: see the next item.
-- **.odt / .fodt number styles as LibreOffice** (`Html/ListNumberingTypes`, 2026-11-13): every type of LibreOffice's numbering
-  provider (i18npool defaultnumberingprovider.cxx:1078 aSupportedTypes, 72 incl. num-letter-sync) prints as LibreOffice prints it. A
-  style:num-format longer than one letter is the provider's identifier (makeNumberingIdentifier :1160: a fixed symbol, else the labels
-  for 1, 2, 3 + ", ..."; unknown = ARABIC, xmluconv.cxx:652); "a" / "A" count aa, ab unless style:num-letter-sync="true" (then aa, bb,
-  stored as the identifiers "aaa" / "AAA"). Ported: makeNumberingString (:642) with its letter walks (lcl_formatChars 1/2/3: bijective,
-  capital + small, repeated), toRoman (thousands as repeated M), Greek with U+0375 and myriads, Persian words, Korean legal words, the
-  bullet.h tables (circled numbers to 50 then decimal, heavenly stems / earthly branches not cycling, kana / Hangul cycling); the native
-  numbers of nativenumbersupplier.cxx: AsciiToNative (:187, NATNUM5 zh / zh-TW, NATNUM8 ja / ko, NATNUM11 ko - e.g. Japanese
-  traditional 10 = one zero, digit by digit inside a group of four), AsciiToNativeChar (Korean / Arabic / Persian / Devanagari digits)
-  and the Hebrew gematria (:1055 makeHebrewNumber: 15 / 16 = tet vav / tet zayin, 1000 = the word thousand, 2000 = bet + thousands, no
-  geresh); the spelled-out NATNUM12 types follow libnumbertext's Soros rules (data/en.sor: "One hundred one", "One thousand and one",
-  "Twenty-first", "21st"; zh.sor: 10 = shi, 110 = yi bai yi shi, zero runs once; hu_Hung.sor: Old Hungarian numerals). A Soros call
-  strips its argument's leading zeros. Locale: as Writer, the paragraph's language at its first character (sw ndtxt.cxx:3405 GetLang(0), thints.cxx:3557: the
-  script of the first strong character picks fo:language / style:language-asian / style:language-complex; a span opened there
-  wins; the label's own text style does not count). Native Numbering / full-width follow nativenumbersupplier.cxx
-  getLanguageNumber (:537; mn and pa-PK become the Locale "qlt" in isolang.cxx:1015, so ASCII); the text numbers run the
-  libnumbertext module of that language (Html/NumberText = LibreOffice 26.8's share/numbertext, no sk). The scanner draws the
-  label once the first strong character is seen; reopened spans scan with the index's style sections (format 17 keeps the
-  Asian / complex language attributes). Verified: make-list-languages.py (75 locales incl. he, ar, fa, th, Indic, CJK; a digit
-  first, a span first, an empty paragraph) - all 18,170 labels equal soffice's; Hebrew / Arabic checked in the PDF by code point.
-  Verified: test-data/odt-lists/make-list-formats.py writes one list per type with 163 start values (1..130, round numbers, to 32767),
-  soffice prints it to PDF and text, and the harness (--list-formats) compares all 11,736 labels: equal. The PDF agrees with the text
-  export for every one-line label except Myanmar / Tibetan, where pdftotext's extraction of the shaped glyphs differs.
-  Shared with Word where both draw the same: lowerLetter / upperLetter (repeated), roman up to 3999, ordinal, decimalZero, 001 / 0001 /
-  00001, hindiNumbers, koreanDigital / koreanDigital2, kana / Hangul orders and Korean legal 1..99 now call ListNumberingTypes; the
-  rest stay Word's own (Word's hebrew1 cycles after 392, hebrew2 repeats tav, circled numbers stop at 20, heavenly stems cycle,
-  Russian / Thai / Arabic letters repeat, Greek uses a comma, counting formats have Word's own rules).
-- **Symbol-font bullets** (`WordSymbolFontBullet`): Symbol is recoded with LibreOffice's Adobe Symbol table (unotools fontcvt.cxx:707
-  aAdobeSymbolToAppleSymbolTab) and drawn in the text's font; Wingdings / Wingdings 2 / 3 / Webdings keep their U+F0xx code and their font, as Word
-  draws them and as w:sym already did - LibreOffice's tables for those fonts (fontcvt.cxx:185-482) target OpenSymbol's private-use area (197 of 224
-  Wingdings codes), which a browser cannot draw. Any other font: a plain bullet. RTF levels now keep their \f (index format 13).
-- Test: `ListNumberFormatsFidelityTest` (`--list-formats`, in `--fidelity`) over test-data/word-lists/list-formats-v1-a / -b .docx / .doc / .rtf
-  (Word 16 via COM, make-list-formats-fixture.ps1: every WdListNumberStyle x 13 start values, Word's ListString saved beside). Word 16's RTF writer
-  leaves an empty `{\*\pn` group open for MSONFC 36 and up (52 unclosed groups in -b; Word 16 itself refuses to reopen the file, error 5151).
-  Fixed: `\pn` is now a pass-through destination as in LibreOffice (rtfdispatchdestination.cxx:505-507; text falls to the body,
-  rtfdocumentimpl.cxx:1695-1697), so those paragraphs keep their text and are checked again. Symbol / Wingdings
-  bullets: DocxFidelityTest list labels.
-- Drop caps (.doc): notes referenced inside the initial now come with the paragraph that draws it, not the empty frame block.
 
 ## Picture bullets, ODT symbol bullets and label styles (2026-11-09; index formats .docx 19, ODT 14)
 
