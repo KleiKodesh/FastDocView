@@ -203,6 +203,7 @@ public sealed class DocxStyleCascade
     public WordRunFormatting ResolveRun(WordRunFormatting paragraphBase, XElement? directRunProperties)
     {
         WordRunFormatting formatting = paragraphBase.Clone();
+        formatting.IsParagraphShapedAsComplexScript = false;
         string? characterStyleId = (string?)directRunProperties?.Element(W + "rStyle")?.Attribute(W + "val") ?? _defaultCharacterStyleId;
         foreach (XElement style in StyleChain(characterStyleId)) ApplyRunProperties(formatting, style.Element(W + "rPr"), _theme, WordStyleLayer.CharacterStyle);
         ApplyRunProperties(formatting, directRunProperties, _theme, WordStyleLayer.Direct);

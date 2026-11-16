@@ -11,12 +11,23 @@ namespace FastDocView.Html;
 /// </summary>
 public static class WordDocumentHtmlStylesheet
 {
+    /// <summary>A copy of a .doc / RTF document's default run that asks for Word's shaping (no ligatures, no contextual
+    /// alternates): those formats cannot set them, and Word draws neither.</summary>
+    public static WordRunFormatting WithWordShaping(WordRunFormatting run)
+    {
+        WordRunFormatting copy = run.Clone();
+        copy.UsesWordOpenTypeDefaults = true;
+        return copy;
+    }
+
     public static string Build(WordRunFormatting documentDefaultRun, bool isRightToLeft)
     {
         string font = documentDefaultRun.EffectiveFontName ?? (isRightToLeft ? "David" : "Calibri");
         double sizePt = documentDefaultRun.EffectiveFontSizeHalfPoints > 0 ? documentDefaultRun.EffectiveFontSizeHalfPoints / 2.0 : 11;
+        // Word's shaping (.docx, .doc, RTF): no ligatures, no contextual alternates unless a .docx run sets them (WordRunFormatting.OpenTypeCss)
+        string shaping = documentDefaultRun.UsesWordOpenTypeDefaults ? " " + WordRunFormatting.WordComplexScriptLigaturesCss : "";
         return $$"""
-            .word-document { font-family: '{{font.Replace("'", "")}}', 'Times New Roman', serif; font-size: {{sizePt.ToString("0.#", CultureInfo.InvariantCulture)}}pt; line-height: 1.15; color: var(--fdv-text, #000); }
+            .word-document { font-family: '{{font.Replace("'", "")}}', 'Times New Roman', serif; font-size: {{sizePt.ToString("0.#", CultureInfo.InvariantCulture)}}pt; line-height: 1.15; color: var(--fdv-text, #000);{{shaping}} }
             .word-document p, .word-document .word-paragraph-block { margin: 0; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1em; }
             .word-document h1, .word-document h2, .word-document h3, .word-document h4, .word-document h5, .word-document h6 { margin: 0; font-size: inherit; font-weight: inherit; white-space: pre-wrap; }
             .word-document table { border-collapse: collapse; margin: 0; }

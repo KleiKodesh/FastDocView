@@ -41,7 +41,7 @@ separate paged view, which is not built yet.
 | Emphasis marks | yes | yes | yes | yes | n.a. | n.a. |
 | Legacy effects: outline, shadow, emboss, imprint / engrave | yes | yes | yes | yes | n.a. | n.a. |
 | w14 text effects: textFill solid / gradient, glow, shadow, textOutline, reflection | partial (4) | n.a. | n.a. | n.a. | n.a. | n.a. |
-| OpenType typography: ligatures, number forms and spacing, contextual alternates, stylistic sets (w14; Word's default of no ligatures and no contextual alternates) | yes (5) | n.a. | n.a. | n.a. | n.a. | n.a. |
+| OpenType typography: ligatures, number forms and spacing, contextual alternates, stylistic sets (w14; Word's default of no ligatures and no contextual alternates) | yes (5) | default only (5) | default only (5) | n.a. | n.a. | n.a. |
 | Hidden text (vanish) kept hidden; webHidden | yes | yes | yes | yes | n.a. | n.a. |
 | RTL runs and bidi embedding inside LTR paragraphs | yes | yes | yes | yes | yes | yes |
 | Symbol characters (w:sym, sprmCSymbol, symbol fonts to Unicode) | yes | yes | yes | yes | n.a. | n.a. |
@@ -51,7 +51,7 @@ separate paged view, which is not built yet.
 2. MHTML: the head sheet's rules (type, class, id, descendant / child selectors, :link, :first-child) are resolved per element into checked inline styles with the element's own style last; only print properties pass (no url(), expression, behavior, @import or position), and lengths are kept in bounds (margins down to -1 in, as Word's table margin-left:-5.4pt needs; no negative padding; indents at most 1.5 in outwards; sizes at most 20 in, fonts 1-400 pt; calc() is dropped). Attribute / sibling selectors, :last-child and pseudo-elements are not read.
 3. Drawn as a plain underline: CSS has no skip-the-spaces underline (LibreOffice does the same).
 4. Shadow / glow offset and blur are drawn; shadow scale and skew (sx, sy, kx, ky) are not (CSS text-shadow cannot transform). Reflection: a mirror image under each line from the baseline, its fade and distance as Word draws them; its blur is not drawn. 3-D text (props3d / scene3d) shows as its plain letters (see UNSUPPORTED-FEATURES.md).
-5. Number forms, number spacing and stylistic sets are drawn on Latin runs only (Word 16 ignored the number form on right-to-left digits); the ligature and contextual-alternates settings apply to every run. .doc and RTF cannot store these settings (Word drops them on save).
+5. The settings apply to Latin runs only: Word ignores all of them on complex-script runs and draws Hebrew without ligatures or contextual alternates and Arabic with its ligatures (Word 16 XPS glyphs, test-data/word-text-effects/w14-scripts-v1.docx). .doc and RTF cannot store the settings (Word drops them on save); they get the same default: no ligatures or contextual alternates, Arabic with ligatures.
 
 ## Paragraphs
 

@@ -587,6 +587,17 @@ overloads. Every rule below was read from the source named, not from memory:
   extrusion is hidden and the bevel only shades the face (blue bevelled text came out as darker / lighter blues of the
   run colour), so the plain letters are the nearest CSS. .doc and RTF saved by Word keep none of these (round trip checked).
   Test: `TextEffectsFidelityTest` (DocxOpenTypeTypography, DocxReflection).
+- **Word's shaping per script, .doc / RTF default (2026-11-16)** - Word 16 XPS of test-data/word-text-effects/w14-scripts-v1.docx
+  (make-w14-scripts-fixture.ps1): Hebrew in David Libre (its hebr liga: vav + U+05C2) and Arabic in Arial (arab liga: the
+  Allah ligature; arab calt), each with ligatures none + no cntxtAlts and with all + cntxtAlts: **identical glyph indices
+  for both settings**. Word ignores w14 typography on complex-script runs: Hebrew never gets liga (vav + U+05C2 stays two
+  glyphs; ccmp and mark positioning still apply), Arabic always gets its ligatures (Allah = 4 characters to 1 glyph). So
+  complex-script runs get `font-variant-ligatures:no-common-ligatures no-contextual` whatever they set, and each stretch of
+  Arabic letters is wrapped in a `font-variant-ligatures:normal` span (`WordHtmlText.WithWordArabicShaping`, .docx / .doc /
+  RTF; text with no Arabic letter is returned as it is). Whether Word applies calt to Arabic was not visible (none of the
+  installed Hebrew fonts has calt; Arial's Arabic calt gave the same glyphs either way), so Arabic keeps the browser default.
+  .doc and RTF store no typography settings; the document style sheet carries Word's default for them
+  (`WordDocumentHtmlStylesheet.WithWordShaping`), .docx too.
 
 
 ## OpenDocument text (Odt/, 2026-10-28)

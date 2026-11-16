@@ -218,7 +218,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         _tableField = null!;
         RefreshIndex(index);
         _renderer.FieldContext = _fieldContext;
-        Stylesheet = WordDocumentHtmlStylesheet.Build(RtfBlockHtmlRenderer.DocumentRunFormatting(index.Tables), IsRightToLeft);
+        Stylesheet = WordDocumentHtmlStylesheet.Build(WordDocumentHtmlStylesheet.WithWordShaping(RtfBlockHtmlRenderer.DocumentRunFormatting(index.Tables)), IsRightToLeft);
     }
 
     /// <summary>Exact once the block's span has been rescanned (a window near it was read), else its 64-block group's average.</summary>

@@ -300,6 +300,7 @@ public sealed class DocxBlockHtmlRenderer
         XElement? dropCapParagraph = formatting.DropCapLines == 0 && DropCapOf(neighbours.Previous) is not null ? neighbours.Previous : null;
         int headingLevel = formatting.OutlineLevel is >= 0 and <= 8 ? formatting.OutlineLevel + 1 : _styles.HeadingLevelOf(styleId);
         string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
+        formatting.RunFormatting.IsParagraphShapedAsComplexScript = formatting.IsRightToLeft;
         string css = formatting.ToCss(_previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : "");
         // The paragraph mark's own run properties (pPr/rPr) format the list label and give an empty paragraph its height.
         // Resolved only when used: for a label, or when the paragraph is empty.
@@ -431,7 +432,7 @@ public sealed class DocxBlockHtmlRenderer
                     break;
                 case "oMath" or "oMathPara" when WordOfficeMathHtml.IsMathZone(child):
                     // Office Math (ECMA-376 22.1) as MathML; a math run's w:rPr resolves like any run's
-                    WordOfficeMathHtml.Append(html, child, runProperties => _styles.ResolveRun(paragraphBase, runProperties).ToCss(paragraphBase, WordDecorationOutput.StrikeOnly) is { Length: > 0 } css ? css : null, _styles.Compatibility.Math);
+                    WordOfficeMathHtml.Append(html, child, runProperties => MathRunCss(paragraphBase, runProperties), _styles.Compatibility.Math);
                     break;
                 // Tracked changes show as Word's "final" view: w:del / w:moveFrom hidden, w:ins / w:moveTo shown.
                 // w:pPr, bookmarks, proofErr, commentRange, move ranges… render nothing.
@@ -811,11 +812,20 @@ public sealed class DocxBlockHtmlRenderer
         return _paragraphEndTexts.Contains(textElement);
     }
 
+    /// <summary>A math run's CSS against its paragraph. Math is drawn by its own font rules, not by the run's OpenType settings, so
+    /// it keeps the paragraph's shaping form (no ligature CSS of its own).</summary>
+    private string? MathRunCss(WordRunFormatting paragraphBase, XElement? runProperties)
+    {
+        WordRunFormatting run = _styles.ResolveRun(paragraphBase, runProperties);
+        run.IsParagraphShapedAsComplexScript = paragraphBase.IsParagraphShapedAsComplexScript;
+        return run.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly) is { Length: > 0 } css ? css : null;
+    }
+
     /// <summary>Text; CJK characters switch to the run's eastAsia face when it differs (see <see cref="WordRunFormatting.EastAsianFontSwitch"/>).</summary>
     private static void AppendScriptText(StringBuilder html, string text, WordRunFormatting formatting)
     {
         string? eastAsianFont = formatting.EastAsianFontSwitch;
-        if (eastAsianFont is null) { WordHtmlText.AppendScaled(html, WordHtmlText.Encode(text), formatting.CharacterScalePercent, formatting.ReflectionCss); return; }
+        if (eastAsianFont is null) { WordHtmlText.AppendScaled(html, WordHtmlText.WithWordArabicShaping(WordHtmlText.Encode(text)), formatting.CharacterScalePercent, formatting.ReflectionCss); return; }
         var pieces = new StringBuilder();
         for (int start = 0; start < text.Length;)
         {
@@ -827,7 +837,7 @@ public sealed class DocxBlockHtmlRenderer
             else pieces.Append(piece);
             start = end;
         }
-        WordHtmlText.AppendScaled(html, pieces.ToString(), formatting.CharacterScalePercent, formatting.ReflectionCss);
+        WordHtmlText.AppendScaled(html, WordHtmlText.WithWordArabicShaping(pieces.ToString()), formatting.CharacterScalePercent, formatting.ReflectionCss);
     }
 
     private IEnumerable<RenderStep> RenderRunChildren(XElement run, StringBuilder html, WordRunFormatting formatting)

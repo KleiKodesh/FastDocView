@@ -162,7 +162,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
         // the document default in the set its (mostly right-to-left) text draws in: sprmPFBiDi no longer makes runs complex
         WordRunFormatting defaultRun = _styles.ResolveParagraphStyle(0).RunFormatting;
         if (IsRightToLeft && !defaultRun.IsRightToLeft) { defaultRun = defaultRun.Clone(); defaultRun.IsRightToLeft = true; }
-        Stylesheet = WordDocumentHtmlStylesheet.Build(defaultRun, IsRightToLeft);
+        Stylesheet = WordDocumentHtmlStylesheet.Build(WordDocumentHtmlStylesheet.WithWordShaping(defaultRun), IsRightToLeft);
     }
 
     private Fields.WordFieldContext FieldContext(string path)

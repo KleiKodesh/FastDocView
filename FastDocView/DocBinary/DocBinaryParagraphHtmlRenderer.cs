@@ -887,7 +887,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
         {
             if (visible.Length == 0) return;
             if (css.Length > 0) html.Append("<span style=\"").Append(css).Append("\">");
-            WordHtmlText.AppendScaled(html, visible.ToString(), formatting.CharacterScalePercent);
+            WordHtmlText.AppendScaled(html, WordHtmlText.WithWordArabicShaping(visible.ToString()), formatting.CharacterScalePercent);
             if (css.Length > 0) html.Append("</span>");
             visible.Clear();
         }

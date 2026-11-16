@@ -66,6 +66,9 @@ public sealed class WordRunFormatting
     /// <summary>The run follows Word's OpenType defaults (.docx): no ligatures and no contextual alternates unless the run sets
     /// them, where a browser applies both by default. Set on the .docx document defaults and inherited from there.</summary>
     public bool UsesWordOpenTypeDefaults;
+    /// <summary>.docx: this is the base of a right-to-left paragraph, so its OpenType CSS takes the complex-script form its
+    /// Hebrew runs use (they then repeat nothing; a Latin run there writes its own). Not inherited by runs (ResolveRun clears it).</summary>
+    public bool IsParagraphShapedAsComplexScript;
     /// <summary>.docx w14:reflection as a -webkit-box-reflect value; null = none. Drawn per word by
     /// <see cref="WordHtmlText.AppendScaled"/>, not by <see cref="ToCss(WordRunFormatting?, WordDecorationOutput)"/>.</summary>
     public string? ReflectionCss;
@@ -104,6 +107,9 @@ public sealed class WordRunFormatting
         return IsTextFillNone ? css + "color:transparent;" : css;
     }
 
+    /// <summary>Word's ligature default, also what it draws on Hebrew whatever the run sets.</summary>
+    public const string WordComplexScriptLigaturesCss = "font-variant-ligatures:no-common-ligatures no-contextual;";
+
     /// <summary>
     /// Word's OpenType typography (.docx w14:ligatures, numForm, numSpacing, cntxtAlts, stylisticSets) as three CSS declarations
     /// (font-variant-ligatures, font-variant-numeric, font-feature-settings), each "" when it is the browser default. Word draws
@@ -118,6 +124,10 @@ public sealed class WordRunFormatting
     private (string ligatures, string numeric, string features) OpenTypeCss()
     {
         if (!UsesWordOpenTypeDefaults) return ("", "", "");
+        // Word ignores all five settings on complex-script runs and shapes them its own way (XPS glyphs of w14-scripts-v1.docx:
+        // ligatures none vs all + cntxtAlts give the same glyphs): Hebrew without the font's liga (David Libre's vav + U+05C2
+        // stays two glyphs), Arabic with it (WordHtmlText.WithWordArabicShaping turns it back on for Arabic letters)
+        if (UsesComplexScriptProperties || IsParagraphShapedAsComplexScript) return (WordComplexScriptLigaturesCss, "", "");
         string value = Ligatures ?? "none";
         bool all = value == "all";
         bool standard = all || value.Contains("standard"), contextual = all || value.Contains("ontextual");
@@ -127,7 +137,6 @@ public sealed class WordRunFormatting
                            + (IsContextualAlternates ? " contextual" : " no-contextual") + ";";
         string numeric = (NumberForm switch { "lining" => " lining-nums", "oldStyle" => " oldstyle-nums", _ => "" })
                          + (NumberSpacing switch { "proportional" => " proportional-nums", "tabular" => " tabular-nums", _ => "" });
-        if (UsesComplexScriptProperties) return (ligatures, "", "");
         if (numeric.Length > 0) numeric = "font-variant-numeric:" + numeric.Substring(1) + ";";
         string features = standard != contextual ? "'liga' " + (standard ? "1" : "0") + ",'clig' " + (contextual ? "1" : "0") : "";
         if (StylisticSetsCss is not null) features = features.Length == 0 ? StylisticSetsCss : features + "," + StylisticSetsCss;

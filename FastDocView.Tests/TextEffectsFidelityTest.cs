@@ -25,6 +25,7 @@ public static class TextEffectsFidelityTest
         DocxGlowAndShadow();
         DocxOpenTypeTypography();
         DocxReflection();
+        WordScriptShaping();
     }
 
     private static void WordHtmlTextScale()
@@ -167,5 +168,33 @@ public static class TextEffectsFidelityTest
         WordHtmlText.AppendScaled(plain, "a<b>x y</b>", 100, "below 0");
         TestReport.Check(plain.ToString() == "<span class=\"text-reflection\" style=\"display:inline-block;text-box:trim-both text alphabetic;text-decoration:inherit;-webkit-box-reflect:below 0\">a<b>x y</b></span>",
                          "reflection: a space inside an open tag does not split the box: " + plain);
+    }
+    /// <summary>Word's shaping per script (Word 16 XPS of test-data/word-text-effects/w14-scripts-v1.docx: the same glyphs with
+    /// w14:ligatures none and all + cntxtAlts): Hebrew without ligatures, Arabic with them; .doc and RTF get the same default.</summary>
+    private static void WordScriptShaping()
+    {
+        var html = new System.Text.StringBuilder();
+        string arabic = "\u0627\u0644\u0644\u0647 \u0628\u0633\u0645";
+        TestReport.Check(WordHtmlText.WithWordArabicShaping("abc \u05D0") == "abc \u05D0", "no Arabic letter: text unchanged");
+        const string Normal = "<span style=\"font-variant-ligatures:normal\">";
+        TestReport.Check(WordHtmlText.WithWordArabicShaping("a " + arabic + " b") == "a " + Normal + arabic.Replace(" ", "</span> " + Normal) + "</span> b",
+                         "each Arabic word gets the browser's ligatures back, one span per word");
+        html.Clear();
+        WordHtmlText.AppendScaled(html, WordHtmlText.WithWordArabicShaping(arabic), 80);
+        TestReport.Check(html.ToString().Split("class=\"char-scale\"").Length - 1 == 2, "scaled Arabic: still one box per word: " + html);
+        TestReport.Check(WordHtmlText.WithWordArabicShaping("<i title=\"\u0627\">x</i>") == "<i title=\"\u0627\">x</i>", "Arabic inside a tag is left alone");
+        List<string> docx = DocxFidelityTest.RenderAll("script-shaping-v1",
+            "<w:p>" + Run($"<w:rtl/><w14:ligatures {W14} w14:val=\"all\"/><w14:cntxtAlts {W14}/>", "\u05D5\u05C2") + "</w:p>"
+          + "<w:p>" + Run("<w:rtl/>", arabic) + "</w:p>");
+        TestReport.Check(!docx[0].Contains("common-ligatures discretionary") && !docx[0].Contains(" contextual;"), "Hebrew run: w14:ligatures all + cntxtAlts ignored, as Word does: " + docx[0]);
+        TestReport.Check(docx[1].Contains(Normal + arabic.Substring(0, 4) + "</span>"), "Arabic run keeps its ligatures");
+        string rtfPath = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-rtf-shaping.rtf");
+        File.WriteAllText(rtfPath, @"{\rtf1\ansi{\fonttbl{\f0 Arial;}}\pard\f0 office\par}");
+        using IWordWindowedDocument rtf = WordWindowedDocumentOpener.Open(rtfPath);
+        TestReport.Check(rtf.Stylesheet.Contains("font-variant-ligatures:no-common-ligatures no-contextual;"), "RTF: Word's no-ligature default in the document style sheet");
+        string docPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-text-effects", "text-effects-v1.doc"));
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-text-effects-doc") };
+        using IWordWindowedDocument doc = WordWindowedDocumentOpener.Open(docPath, policy);
+        TestReport.Check(doc.Stylesheet.Contains("font-variant-ligatures:no-common-ligatures no-contextual;"), ".doc: Word's no-ligature default in the document style sheet");
     }
 }

@@ -9,6 +9,37 @@ public static class WordHtmlText
 {
     public static string Encode(string text) => WebUtility.HtmlEncode(text);
 
+    /// <summary>
+    /// Encoded Word run text with each stretch of Arabic letters wrapped in a span that gives the browser's ligatures back:
+    /// Word draws no ligatures by default (the document's font-variant-ligatures), but Arabic always with them, whatever
+    /// w14:ligatures says (Word 16 XPS: Arial's Allah ligature, 4 characters to 1 glyph, with ligatures none and all alike).
+    /// One span per word (a space ends it). Text inside tags is left alone; text with no Arabic letter is returned as it is.
+    /// </summary>
+    public static string WithWordArabicShaping(string encoded)
+    {
+        int first = -1;
+        for (int i = 0; i < encoded.Length; i++) if (IsArabicLetter(encoded[i])) { first = i; break; }
+        if (first < 0) return encoded;
+        var html = new StringBuilder(encoded.Length + 64);
+        bool inTag = false, inArabic = false;
+        for (int i = 0; i < encoded.Length; i++)
+        {
+            char c = encoded[i];
+            if (c == '<') inTag = true;
+            // marks and joiners stay inside the stretch; a space ends it, so AppendScaled can still box each word on its own
+            bool arabic = !inTag && (IsArabicLetter(c) || (inArabic && (c is '‌' or '‍' || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.NonSpacingMark)));
+            if (arabic && !inArabic) { html.Append("<span style=\"font-variant-ligatures:normal\">"); inArabic = true; }
+            else if (!arabic && inArabic) { html.Append("</span>"); inArabic = false; }
+            html.Append(c);
+            if (c == '>') inTag = false;
+        }
+        if (inArabic) html.Append("</span>");
+        return html.ToString();
+    }
+
+    private static bool IsArabicLetter(char c)
+        => c is (>= '؀' and <= 'ۿ') or (>= 'ݐ' and <= 'ݿ') or (>= 'ࢠ' and <= 'ࣿ') or (>= 'ﭐ' and <= '﷿') or (>= 'ﹰ' and <= '﻿');
+
     public static void AppendOpenTag(StringBuilder html, string tag, string? css, string? className, bool? isRightToLeft, string? extraAttributes = null)
     {
         html.Append('<').Append(tag);
