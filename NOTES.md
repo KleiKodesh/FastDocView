@@ -5182,3 +5182,14 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   the probes, but most of it is our plot rectangle with deleted axes (8.8 pt chart inset vs Word's 16.4); on word-charts-3d-rows-v1's
   labels it moved Line3D Persp from 3.5 to 6.5 pt (uniform x shift: the label rectangle was tuned with the old camera). Next: calibrate
   the 3-D plot rectangle against Word's scene picture bounds, then switch the camera.
+- Follow-up (same day): our 3-D rectangle (the right-angled fill rectangle) vs Word's scene picture: Word's perspective box fits
+  about 3.5 pt further in on every side (word-charts-3d-rows-v1: plot area 19.6..404.2 x 37..196.9 pt from the chart corner; ours
+  21.6..402.2 x 35.7..196.1). With that and the camera + centred fit, labels vs Word: Line3D Persp 3.5 / 1.5 -> 0.75 / 0.6 pt,
+  Area3D Persp 3.2 / 0.8 -> 0.6 / 0.8, but Line3D Deep (rotX 30, rotY 40, perspective 60, depth 200) 8.6 / 19.8 -> 20.9 / 11.4
+  (max dx 12 -> 22), so the camera is NOT switched (rule: every chart improves or holds). Placement residual pattern (fitted vs
+  centred projected box, bbox centre - plot centre): in the non-limiting direction only; vertical (width-limited) -1.5 / -3.6 /
+  -7.9 / +1.2 / +3.6 pt at perspective 15 / 30 / 60 / 90 / 120 (rotX 15, rotY 20), -3..-4.5 for depth 50..500; horizontal
+  (height-limited) -15 pt at rotY 80, -13 / -30 at rotX 40 rotY 50 perspective 60 / 120, -11 at perspective 90 with hPercent 200.
+  Not explained by a fixed anchor point (best corner: 10.8 pt median), the drawn faces' box, or one- to three-pass fits.
+- Shown series axis (c:serAx): Word keeps the series names' room right of a 3-D line / area plot (Line3D SerAx: plot 34.3 pt
+  narrower = widest name + 5.75 pt); the labels themselves are not drawn yet. Labels 6.7 / 1.8 -> 2.1 / 2.3 pt.

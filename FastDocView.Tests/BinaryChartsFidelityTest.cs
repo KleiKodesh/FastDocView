@@ -171,6 +171,8 @@ public static class BinaryChartsFidelityTest
         TestReport.Check(Near(flat, "Q1", -186.0, 178.7, 2) && Near(flat, "Q4", 161.7, 178.7, 2), "right-angled 3-D area, depth 60 %: Word's scene");
         var perspective = ChartTexts(html, "Area3D Persp");
         TestReport.Check(Near(perspective, "Q1", -153.7, 150.2, 5) && Near(perspective, "Q4", 136.4, 187.6, 5) && !perspective.Any(t => t.Text == "0.5"), "3-D area with perspective: Word's scene within 5 pt, ticks by 1");
+        var seriesAxis = ChartTexts(html, "Line3D SerAx");
+        TestReport.Check(Near(seriesAxis, "0", -170.8, 140.6, 4) && Near(seriesAxis, "5", -177.1, 48.1, 4), "3-D line with a shown series axis: Word's room for the series names on the right (value labels within 4 pt)");
         html = Render(crosses);
         var columnMax = ChartTexts(html, "Col CrossMax");
         TestReport.Check(Near(columnMax, "Q1", null, 19.3, 1.5), "category axis at the maximum: its labels above the plot");

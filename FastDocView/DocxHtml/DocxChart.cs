@@ -60,7 +60,7 @@ internal sealed partial class DocxChart
     private sealed class Axis
     {
         public string Id = "";
-        public bool IsCategory, Deleted, Horizontal;
+        public bool IsCategory, IsSeries, Deleted, Horizontal;
         /// <summary>No tick labels: a deleted axis, or c:tickLblPos none (21.2.2.207; LibreOffice oox axisconverter.cxx: none = no labels, the axis line stays).</summary>
         public bool NoLabels;
         /// <summary>The tick labels' own colour (c:txPr a:defRPr a:solidFill); null = the chart's text colour.</summary>
@@ -154,7 +154,7 @@ internal sealed partial class DocxChart
             {
                 var axis = new Axis
                 {
-                    Id = Value(element.Element("axId")) ?? "", IsCategory = name != "valAx", Deleted = Value(element.Element("delete")) is "1" or "true",
+                    Id = Value(element.Element("axId")) ?? "", IsCategory = name != "valAx", IsSeries = name == "serAx", Deleted = Value(element.Element("delete")) is "1" or "true",
                     NoLabels = Value(element.Element("delete")) is "1" or "true" || Value(element.Element("tickLblPos")) == "none",
                     LabelColor = TextColorOf(element.Element("txPr"), theme),
                     Min = Number(element.Element("scaling")?.Element("min")), Max = Number(element.Element("scaling")?.Element("max")),
@@ -930,6 +930,10 @@ internal sealed partial class DocxChart
             {
                 left = Math.Min(right - 1, left + 2.8);
                 right = Math.Max(left + 1, right - (MidCategory() && categoryAxis is not { NoLabels: true } ? 2.35 : 7.15));
+                // a shown series axis (c:serAx, its labels not drawn yet): Word keeps the series names' room on the right (its PDF of
+                // word-charts-3d-rows-v1's Line3D SerAx: plot 34.3 pt narrower)
+                if (_axes.Values.Any(a => a.IsSeries && !a.NoLabels))
+                    right = Math.Max(left + 1, right - _groups[0].Series.Max(x => TextWidth(x.Name ?? "", labelSize)) - SeriesAxisGap);
             }
             Draw3DRows(svg, categoryCount, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { NoLabels: true }, textColor, gridColor, plotFill, labelSize);
             return;
@@ -1072,6 +1076,8 @@ internal sealed partial class DocxChart
     /// advance widths (DocxChartFontWidths: the hmtx tables of Calibri, Cambria, Times New Roman and Arial; metric-compatible fonts map
     /// to them); characters outside ASCII take the font's average width.
     /// </summary>
+    private const double SeriesAxisGap = 5.75;   // Word 16 PDF, word-charts-3d-rows-v1 Line3D SerAx
+
     private double TextWidth(string text, double size)
     {
         if (_libreOfficeLayout) return text.Length * size * 0.55;
