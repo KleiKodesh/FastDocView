@@ -2245,6 +2245,16 @@ both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Ch
 - ODT symbol-font bullets: the level's style:text-properties fo:font-family (or style:font-name, taken as the family) goes through
   `WordSymbolFontBullet` as in .docx (xmlnumi.cxx:579-583, :645-694). ODT label style: text:style-name (xmlnumi.cxx:276-278) applied over the paragraph's
   run formatting; both ride in `OdtListStyle.Level.Layout` after U+0001.
+- ODT bullet style:font-name (2026-11-16) is a font-face-decls name, not a family: `OdtListStyle.ResolveFontNames` looks it up
+  (svg:font-family; an undeclared name stays the family, as for runs) when the cascade hands the list style out - the styles.xml
+  byte filter can parse a list style before the XmlReader has read the declarations. fo:font-family still wins (xmlnumi.cxx:645-694:
+  font-name first, then fo:font-family over it). Check: `RubyAndBulletFontFidelityTest` (bullet-font-name-v1.fodt / .odt;
+  LibreOffice's PDF draws Wingdings U+F0A7 and SymbolMT U+F0B7).
+- .doc / RTF ruby (2026-11-16): Word 16 saves a phonetic guide as `EQ \* jcN \* "Font:F" \* hpsN \o\aX(\s\up N(guide),base)` in both
+  (checked with SaveAs2; no sprmCFRuby, no RTF ruby destination). `Fields.WordFieldRuby` recognises the form as LibreOffice does
+  (ww8par5.cxx:2746 Read_SubF_Ruby) and draws `<ruby>base<rt style="font-size;font-family;ruby-align">guide</rt></ruby>`, the
+  .docx markup; jc and .docx w:rubyAlign map to ruby-align alike (ww8par5.cxx:2832-2851, DomainMapper.cxx:3905). Any other EQ stays
+  MathML. Check: `RubyAndBulletFontFidelityTest` (test-data/word-ruby/ruby-v1, Word's PDF: guide in Arial at hps/2 pt).
 - .doc (render time, no index change): sprmCPbiGrf 0x4888 bit 0 + sprmCPbiIBullet 0x6887 (4 bytes) in the LVL grpprlChpx (ww8par3.cxx:808-819,
   :839-845; writer wrtw8num.cxx:355-358) name picture N of the paragraph holding the "_PictureBullets" bookmark, counted from the bookmark start
   (ww8par.cxx:5302-5348); that paragraph's runs are read once per renderer, the id is the PICF offset as for any inline picture. Hidden (vanish)

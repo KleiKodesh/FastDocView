@@ -92,7 +92,7 @@ separate paged view, which is not built yet.
 | Suffix (tab / space / nothing) and label alignment | yes | yes | yes | yes | n.a. | n.a. |
 | Label styling (paragraph-mark formatting, complex-script set) | yes | yes | yes | yes | n.a. | n.a. |
 | Style-linked numbering | yes | yes | yes (11) | n.a. | n.a. | n.a. |
-| Bullets, symbol bullets (Symbol / Wingdings mapped to Unicode) | yes | yes | yes | yes | yes (12) | yes (10) |
+| Bullets, symbol bullets (Symbol / Wingdings mapped to Unicode; ODT style:font-name resolved through the font-face declarations) | yes | yes | yes | yes | yes (12) | yes (10) |
 | Picture bullets | yes | yes | yes | yes | n.a. | n.a. |
 | Bullet colour and size | yes | yes | yes (13) | yes (13) | n.a. | n.a. |
 | Legacy numbering (Word 6 levels, \pn, w:legacy) | yes | yes | yes | n.a. | n.a. | n.a. |
@@ -248,8 +248,10 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
 | Tracked changes as Word's final view (deletions hidden) | yes | yes | yes | yes | n.a. | n.a. |
-| Ruby (as HTML ruby; search reads the base) | yes | n.a. | n.a. | yes | n.a. | n.a. |
+| Ruby (as HTML ruby: guide font, size and alignment; search reads the base) | yes | partial (14) | partial (14) | yes | n.a. | n.a. |
 | EQ field equations (MathML Core) | yes | yes | yes | n.a. | n.a. | n.a. |
+
+14. Word saves a phonetic guide to .doc and RTF as an EQ field (`EQ \* jcN \* "Font:..." \* hpsN \o(\s\up N(guide),base)`); it is drawn as HTML ruby, but the base sits in the field code, so search does not find it (as Word's own field-result text is empty).
 
 ## Document level
 

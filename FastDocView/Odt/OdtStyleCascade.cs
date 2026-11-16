@@ -209,7 +209,13 @@ public sealed class OdtStyleCascade
     /// <summary>A list style read without a DOM (styles.xml pass, see OdtPackage.ReadStyles); later ones win on name clashes.</summary>
     internal void AddListStyle(string name, OdtListStyle style) => _listStyles[name] = style;
 
-    public OdtListStyle? ListStyle(string? name) => name is not null && _listStyles.TryGetValue(name, out OdtListStyle? style) ? style : null;
+    /// <summary>A list style, its bullet style:font-name values resolved through the font-face-decls read so far (all of them by now).</summary>
+    public OdtListStyle? ListStyle(string? name)
+    {
+        if (name is null || !_listStyles.TryGetValue(name, out OdtListStyle? style)) return null;
+        style.ResolveFontNames(_fontFamilies);
+        return style;
+    }
 
     public XElement? StyleElement(string family, string? name)
         => name is not null && _styles.TryGetValue((family, name), out XElement? style) ? style : null;

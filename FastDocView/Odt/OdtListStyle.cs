@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Globalization;
 using System.Text;
 using System.Xml;
@@ -26,6 +27,8 @@ public sealed class OdtListStyle
         public string Suffix = "";
         public int StartValue = 1;
         public int DisplayLevels = 1;
+        /// <summary>A bullet font given by style:font-name until <see cref="ResolveFontNames"/> looks it up (not saved: list styles are resolved before the index is written).</summary>
+        internal UnresolvedBulletFont? Unresolved;
         /// <summary>
         /// The level's label-alignment geometry (ODF 1.2 19.880 style:list-level-properties with
         /// text:list-level-position-and-space-mode="label-alignment", 19.881 style:list-level-label-alignment): fo:margin-left,
@@ -55,7 +58,7 @@ public sealed class OdtListStyle
                                      (string?)alignment?.Attribute(text + "list-tab-stop-position"), (string?)alignment?.Attribute(text + "label-followed-by"));
             XElement? textProperties = element.Element(style + "text-properties");
             var extras = new LevelExtras((string?)element.Attribute(text + "style-name"), (string?)element.Attribute(Xlink + "href"),
-                                         BulletFont((string?)textProperties?.Attribute(fo + "font-family") ?? (string?)textProperties?.Attribute(style + "font-name")),
+                                         BulletFont((string?)textProperties?.Attribute(fo + "font-family")), (string?)textProperties?.Attribute(style + "font-name"),
                                          (string?)properties?.Attribute(fo + "width"), (string?)properties?.Attribute(fo + "height"));
             AddLevel(element.Name.LocalName, element.Name.Namespace == text, (local, isStyle) => (string?)element.Attribute((isStyle ? style : text) + local), layout, extras);
         }
@@ -86,7 +89,7 @@ public sealed class OdtListStyle
             }
             string? mode = null, margin = null, indent = null, tab = null, follow = null;
             string? labelStyle = reader.GetAttribute("style-name", textNs), href = reader.GetAttribute("href", Xlink.NamespaceName);
-            string? fontFamily = null, width = null, height = null;
+            string? fontFamily = null, fontName = null, width = null, height = null;
             bool hasAlignment = false;
             int levelDepth = reader.Depth;
             if (reader.IsEmptyElement) reader.Read();
@@ -104,7 +107,10 @@ public sealed class OdtListStyle
                             height = reader.GetAttribute("height", foNs);
                         }
                         else if (reader.LocalName == "text-properties" && reader.Depth == levelDepth + 1)
-                            fontFamily = BulletFont(reader.GetAttribute("font-family", foNs) ?? reader.GetAttribute("font-name", styleNs));
+                        {
+                            fontFamily = BulletFont(reader.GetAttribute("font-family", foNs));
+                            fontName = reader.GetAttribute("font-name", styleNs);
+                        }
                         else if (reader.LocalName == "list-level-label-alignment" && reader.Depth == levelDepth + 2)
                         {
                             hasAlignment = true;
@@ -119,7 +125,7 @@ public sealed class OdtListStyle
                 if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == levelDepth) reader.Read();
             }
             listStyle.AddLevel(local, isText, (name, isStyle) => attributes.TryGetValue((isStyle ? "s:" : "t:") + name, out string? value) ? value : null,
-                               LayoutOf(mode, hasAlignment, margin, indent, tab, follow), new LevelExtras(labelStyle, href, fontFamily, width, height));
+                               LayoutOf(mode, hasAlignment, margin, indent, tab, follow), new LevelExtras(labelStyle, href, fontFamily, fontName, width, height));
         }
         if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth) reader.Read();
         return listStyle;
@@ -210,7 +216,10 @@ public sealed class OdtListStyle
                 level[ParseNames.Height] = tag[ParseNames.Height];
             }
             else if (levelLocalName is not null && qualifiedName.SequenceEqual(names.TextProperties))
-                level[ParseNames.FontFamily] = tag[ParseNames.FontFamily] ?? tag[ParseNames.FontName];
+            {
+                level[ParseNames.FontFamily] = BulletFont(tag[ParseNames.FontFamily]);
+                level[ParseNames.FontName] = tag[ParseNames.FontName];
+            }
             else if (levelLocalName is not null && qualifiedName.SequenceEqual(names.Alignment))
             {
                 level[ParseNames.HasAlignment] = "";
@@ -220,12 +229,12 @@ public sealed class OdtListStyle
         if (levelLocalName is null) return (-1, new Level());
         string layout = LayoutOf(level[ParseNames.Mode], level[ParseNames.HasAlignment] is not null, level[ParseNames.MarginLeft],
                                  level[ParseNames.TextIndent], level[ParseNames.TabStop], level[ParseNames.FollowedBy]);
-        var extras = new LevelExtras(level[ParseNames.StyleName], level[ParseNames.Href], level[ParseNames.FontFamily], level[ParseNames.Width], level[ParseNames.Height]);
+        var extras = new LevelExtras(level[ParseNames.StyleName], level[ParseNames.Href], level[ParseNames.FontFamily], level[ParseNames.FontName], level[ParseNames.Width], level[ParseNames.Height]);
         return BuildLevel(levelLocalName, true, (local, isStyle) => ParseNames.SlotOf(local, isStyle) is { } slot ? level[slot] : null, layout, extras) ?? (-1, new Level());
     }
 
     /// <summary>
-    /// Levels parsed so far, by their bytes (one cache per styles.xml pass). Levels are never changed after they are built,
+    /// Levels parsed so far, by their bytes (one cache per styles.xml pass). Levels are only changed by ResolveFontNames, which gives equal bytes equal results,
     /// so equal definitions share one <see cref="Level"/>.
     /// </summary>
     internal sealed class ParsedLevels
@@ -357,10 +366,11 @@ public sealed class OdtListStyle
     /// <summary>
     /// A level's label look (xmloff xmlnumi.cxx): text:style-name, the label's character style (:276-278); xlink:href of a
     /// list-level-style-image (:285-287); the bullet font from style:text-properties fo:font-family / style:font-name (:579-583,
-    /// :645-694 - a font-name is a font-face-decls name, taken here as the family it nearly always equals); the image's
-    /// fo:width / fo:height on style:list-level-properties (:604-611).
+    /// :645-694 - a style:font-name is an office:font-face-decls name, resolved to its svg:font-family like a run's font by
+    /// <see cref="ResolveFontNames"/>; fo:font-family, read after it there, wins); the image's fo:width / fo:height on
+    /// style:list-level-properties (:604-611).
     /// </summary>
-    private readonly record struct LevelExtras(string? StyleName, string? ImageHref, string? FontFamily, string? Width, string? Height);
+    private readonly record struct LevelExtras(string? StyleName, string? ImageHref, string? FontFamily, string? FontName, string? Width, string? Height);
 
     /// <summary>Separates <see cref="Level.Layout"/>'s geometry from the label's text style name and kept bullet font.</summary>
     public const char LayoutLabelLookSeparator = '\u0001';
@@ -370,8 +380,6 @@ public sealed class OdtListStyle
         if (!int.TryParse(attribute("level", false), NumberStyles.Integer, CultureInfo.InvariantCulture, out int levelNumber)) return null;
         int index = Math.Max(1, Math.Min(MaxLevels, levelNumber)) - 1;
         var level = new Level { Prefix = attribute("num-prefix", true) ?? "", Suffix = attribute("num-suffix", true) ?? "" };
-        string? bulletFont = null;
-        bool isLatinBullet = false;     // the stored bullet had a strong left-to-right (symbol-font) code before recoding
         if (isTextNamespace && localName == "list-level-style-number")
         {
             level.NumberFormat = NumberFormatOf(attribute("num-format", true), attribute("num-letter-sync", true));
@@ -382,13 +390,11 @@ public sealed class OdtListStyle
         {
             level.IsBullet = true;
             string bullet = attribute("bullet-char", false) ?? "";
-            // A symbol-font bullet (U+F0xx) as in .docx: Symbol recoded to Unicode, Wingdings / Webdings keep their code and font,
-            // any other font a plain bullet (WordSymbolFontBullet; LibreOffice: xmlnumi.cxx:456-480 recodes StarBats / StarMath only)
-            string? font = extras.FontFamily?.Trim('\'', '"');
-            (string resolved, bool keepsFont) = bullet.Length == 0 ? ("\u2022", false) : WordSymbolFontBullet.Resolve(bullet, font);
-            level.BulletCharacter = resolved;
-            if (keepsFont) bulletFont = font;
-            isLatinBullet = bullet.Length > 0 && resolved != bullet && !WordListLabelScript.UsesComplexScript(bullet, isParagraphRightToLeft: true);
+            // a style:font-name: its family is known once the font-face-decls are read (ResolveFontNames); until then the name
+            if (extras.FontFamily is null && extras.FontName is not null)
+                level.Unresolved = new UnresolvedBulletFont(extras.FontName, bullet, layout, extras.StyleName);
+            ApplyBullet(level, bullet, extras.FontFamily ?? BulletFont(extras.FontName), layout, extras.StyleName);
+            return (index, level);
         }
         else
         {
@@ -400,11 +406,58 @@ public sealed class OdtListStyle
             level.BulletCharacter = WordListLabelHtml.PictureLabel(href is not null && WordPictureHtml.ContentTypeOf(href) is not null ? OdtBlockHtmlRenderer.PackagePicturePrefix + href : null,
                                                                    width, height);
         }
-        level.Layout = extras.StyleName is null && bulletFont is null && !isLatinBullet ? layout
-            : layout + LayoutLabelLookSeparator + (extras.StyleName ?? "") + LayoutLabelLookSeparator + (bulletFont ?? "")
-              + (isLatinBullet ? LayoutLabelLookSeparator + "L" : "");
+        // a number or picture label: only its character style (same layout string as before: an empty bullet-font slot)
+        level.Layout = extras.StyleName is null ? layout : layout + LayoutLabelLookSeparator + extras.StyleName + LayoutLabelLookSeparator;
         return (index, level);
     }
+
+    /// <summary>
+    /// A bullet level's character and label look. A symbol-font bullet (U+F0xx) as in .docx: Symbol recoded to Unicode,
+    /// Wingdings / Webdings keep their code and font, any other font a plain bullet (WordSymbolFontBullet; LibreOffice:
+    /// xmlnumi.cxx:456-480 recodes StarBats / StarMath only).
+    /// </summary>
+    private static void ApplyBullet(Level level, string bullet, string? fontFamily, string layout, string? styleName)
+    {
+        string? font = fontFamily?.Trim('\'', '"');
+        (string resolved, bool keepsFont) = bullet.Length == 0 ? ("\u2022", false) : WordSymbolFontBullet.Resolve(bullet, font);
+        level.BulletCharacter = resolved;
+        string? bulletFont = keepsFont ? font : null;
+        // the stored bullet had a strong left-to-right (symbol-font) code before recoding
+        bool isLatinBullet = bullet.Length > 0 && resolved != bullet && !WordListLabelScript.UsesComplexScript(bullet, isParagraphRightToLeft: true);
+        level.Layout = styleName is null && bulletFont is null && !isLatinBullet ? layout
+            : layout + LayoutLabelLookSeparator + (styleName ?? "") + LayoutLabelLookSeparator + (bulletFont ?? "")
+              + (isLatinBullet ? LayoutLabelLookSeparator + "L" : "");
+    }
+
+    /// <summary>A bullet level whose style:font-name still has to be looked up in office:font-face-decls.</summary>
+    internal sealed record UnresolvedBulletFont(string FontName, string Bullet, string Layout, string? StyleName);
+
+    /// <summary>
+    /// Resolves the bullet levels' style:font-name through office:font-face-decls (name -> svg:font-family; a name with no
+    /// declaration is taken as the family, as for runs: OdtStyleCascade.FontName). Called by the cascade when the list style
+    /// is handed out, after the sections are read: the styles.xml byte filter parses a list style before the XmlReader has
+    /// necessarily read the declarations. A level shared by several list styles (ParsedLevels) resolves once.
+    /// </summary>
+    internal void ResolveFontNames(IReadOnlyDictionary<string, string> fontFamilies)
+    {
+        if (Volatile.Read(ref _isFontNamesResolved)) return;
+        // one lock for all styles: ParsedLevels shares Level objects between list styles, and the index builder and the renderer can ask at once
+        lock (FontNameResolution)
+        {
+            if (_isFontNamesResolved) return;
+            foreach (Level level in _levels)
+            {
+                if (level.Unresolved is not { } pending) continue;
+                string family = fontFamilies.TryGetValue(pending.FontName, out string? declared) ? declared : pending.FontName;
+                ApplyBullet(level, pending.Bullet, BulletFont(family), pending.Layout, pending.StyleName);
+                level.Unresolved = null;
+            }
+            Volatile.Write(ref _isFontNamesResolved, true);
+        }
+    }
+
+    private static readonly object FontNameResolution = new();
+    private bool _isFontNamesResolved;
 
     private static string LayoutOf(string? mode, bool hasAlignment, string? marginLeft, string? textIndent, string? tabStop, string? followedBy)
     {

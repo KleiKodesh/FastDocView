@@ -127,7 +127,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Comments | docx, doc, rtf, odt | Comments do not print (references skipped) | won't do (not printed) |
 | Equations: a stretched operator around content whose ink lands right at a variant boundary can take the next size (the 3-row brace in Cambria Math, 1.48 x Word's width; 29 of 30 test cases within 15%); a host without font files falls back to tables for Cambria Math and DejaVu Math TeX Gyre; heights of single-line equations read ~0.85 of Word's PDF by the measuring method | docx, doc, rtf | Ink is read from the browser's text metrics, not Word's own layout | deferred |
 | Equations in .doc saved without equationXML (Word 2003 and older) | doc | No OMML in the file; the saved picture is shown | won't do |
-| Ruby | doc, rtf | Not read (EQ \o fields still compute) | deferred |
+| Search inside a ruby base | doc, rtf | Word stores the ruby as an EQ field: the base is field code, which search skips (the ruby is drawn) | deferred |
 
 ## Document level
 

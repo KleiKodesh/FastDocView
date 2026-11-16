@@ -887,7 +887,9 @@ public sealed class DocxBlockHtmlRenderer
                     if (child.Element(W + "rubyBase") is { } rubyBase) yield return new(RenderInlineChildren(rubyBase, html, formatting));
                     if (child.Element(W + "rt") is { } rubyText)
                     {
-                        html.Append("<rt>");
+                        // w:rubyAlign as .doc / RTF's EQ jc (Fields.WordFieldRuby: the same markup for all three)
+                        string align = Fields.WordFieldRuby.AlignCss((string?)child.Element(W + "rubyPr")?.Element(W + "rubyAlign")?.Attribute(W + "val"));
+                        html.Append(align.Length > 0 ? "<rt style=\"" + align + "\">" : "<rt>");
                         yield return new(RenderInlineChildren(rubyText, html, formatting));
                         html.Append("</rt>");
                     }

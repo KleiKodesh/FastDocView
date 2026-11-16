@@ -109,7 +109,7 @@ public static class WordFieldEvaluator
         }
         switch (instruction.Name)
         {
-            case "EQ": return new(null, WordFieldEquation.ToHtml(EquationCode(instruction.Code)), false);
+            case "EQ": return new(null, WordFieldRuby.ToHtml(EquationCode(instruction.Code)) ?? WordFieldEquation.ToHtml(EquationCode(instruction.Code)), false);
             case "SYMBOL": return Symbol(instruction);
             case "FORMCHECKBOX":
                 return new(null, "<span class=\"form-checkbox\" role=\"img\" aria-label=\"" + (form?.IsChecked == true ? "checked" : "unchecked") + "\">"
