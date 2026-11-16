@@ -16,7 +16,10 @@ internal static class WebArchiveCssLength
     private readonly record struct Bounds(double MinimumPoints, double MaximumPoints, double MinimumPercent, double MaximumPercent,
                                           double MinimumNumber = 0, double MaximumNumber = 0);
 
-    private static readonly Bounds Spacing = new(0, 720, 0, 50);                 // margins, padding: never negative, at most 10 in
+    private static readonly Bounds Padding = new(0, 720, 0, 50);                 // never negative, at most 10 in
+    // margins: Word writes small negative ones (a table's margin-left:-5.4pt pulls its cell text in line with the body text;
+    // its table indent goes down to about -1 in in the UI), so down to -1 in / -15 % (about 1 in of a 6.5 in text column) - no further out of the document area
+    private static readonly Bounds Margin = new(-72, 720, -15, 50);
     private static readonly Bounds Indent = new(-108, 720, -50, 50);             // a hanging indent, at most 1.5 in out
     private static readonly Bounds Box = new(0, 1440, 0, 100);                   // width / height: at most 20 in, a full line
     private static readonly Bounds FontSize = new(1, 400, 10, 1000);
@@ -27,7 +30,8 @@ internal static class WebArchiveCssLength
 
     private static Bounds? BoundsOf(string property) => property switch
     {
-        _ when property.StartsWith("margin", StringComparison.Ordinal) || property.StartsWith("padding", StringComparison.Ordinal) => Spacing,
+        _ when property.StartsWith("margin", StringComparison.Ordinal) => Margin,
+        _ when property.StartsWith("padding", StringComparison.Ordinal) => Padding,
         "text-indent" => Indent,
         "width" or "height" or "min-width" or "min-height" or "max-width" or "max-height" => Box,
         "font-size" or "font" => FontSize,

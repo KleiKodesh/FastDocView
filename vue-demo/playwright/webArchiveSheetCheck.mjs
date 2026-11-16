@@ -1,8 +1,8 @@
 // Live check: a Word web archive's class styles resolved inline, and the ODT paragraph-wide script split (ASCII output).
-//   node playwright/webArchiveSheetCheck.mjs <word-saved .mht> <odt-paragraph-script .fodt>
+//   node playwright/webArchiveSheetCheck.mjs <word-saved .mht> <odt-paragraph-script .fodt> [<table-margin .mht>]
 import { chromium } from 'playwright'
 const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? `http://localhost:${process.env.FASTDOCVIEW_DEMO_PORT ?? 5189}/`
-const [mht, fodt] = process.argv.slice(2)
+const [mht, fodt, tableMht] = process.argv.slice(2)
 let failures = 0
 const check = (ok, what) => { console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${what}`); if (!ok) failures++ }
 const browser = await chromium.launch()
@@ -37,6 +37,18 @@ await page.waitForFunction(() => [...document.querySelectorAll('.word-document')
 const digits = await styleOf(' 2024'), english = await styleOf('English')
 console.log('  ' + JSON.stringify({ digits, english }))
 check(digits && english && digits.size === english.size && digits.size === '14.6667px', 'fodt: digits after an English word keep the Latin size across a span (LibreOffice)')
+if (tableMht) {
+  // Word's PDF (test-data/word-mhtml/table-margin-v1.pdf): body text at 90.05 pt, cell text at 90.29 pt, table border at 84.7 pt
+  await page.evaluate(path => window.__fastDocViewDemo.open(path, { rebuildIndex: true }), tableMht)
+  await page.waitForFunction(() => [...document.querySelectorAll('.word-document')].some(e => e.textContent.includes('CellA')), null, 30_000)
+  const x = await page.evaluate(() => {
+    const left = t => { for (const root of document.querySelectorAll('.word-document')) { const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+      for (let n; (n = w.nextNode());) if (n.data.includes(t)) { const r = document.createRange(); r.setStart(n, n.data.indexOf(t)); r.setEnd(n, n.data.indexOf(t) + 1); return r.getBoundingClientRect().left } } return NaN }
+    return { body: left('Body line'), cell: left('CellA'), border: document.querySelector('.word-document table td')?.getBoundingClientRect().left }
+  })
+  console.log('  ' + JSON.stringify(x))
+  check(Math.abs(x.cell - x.body) <= 1.5 && Math.abs((x.body - x.border) - 7.2) <= 1.5, 'table mht: cell text lines up with the body text, border 5.4 pt to the left (Word PDF)')
+}
 check(errors.length === 0, `no console errors ${JSON.stringify(errors)}`)
 await browser.close()
 console.log(failures === 0 ? 'ALL PASSED' : `${failures} FAILED`)

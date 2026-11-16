@@ -47,7 +47,7 @@ separate paged view, which is not built yet.
 | Language ids (for hyphenation) | yes | yes | yes | yes | n.a. | n.a. |
 
 1. ODT has no per-run script flag; the script split runs over the whole paragraph text, as LibreOffice's SwScriptInfo does, so a run broken by a span stays one run.
-2. MHTML: the head sheet's rules (type, class, id, descendant / child selectors, :link, :first-child) are resolved per element into checked inline styles with the element's own style last; only print properties pass (no url(), expression, behavior, @import or position), and lengths are kept in bounds (no negative margins or padding, indents at most 1.5 in outwards, sizes at most 20 in, fonts 1-400 pt; calc() is dropped). Attribute / sibling selectors, :last-child and pseudo-elements are not read.
+2. MHTML: the head sheet's rules (type, class, id, descendant / child selectors, :link, :first-child) are resolved per element into checked inline styles with the element's own style last; only print properties pass (no url(), expression, behavior, @import or position), and lengths are kept in bounds (margins down to -1 in, as Word's table margin-left:-5.4pt needs; no negative padding; indents at most 1.5 in outwards; sizes at most 20 in, fonts 1-400 pt; calc() is dropped). Attribute / sibling selectors, :last-child and pseudo-elements are not read.
 3. Drawn as a plain underline: CSS has no skip-the-spaces underline (LibreOffice does the same).
 4. Shadow / glow offset and blur are drawn; shadow scale and skew (sx, sy, kx, ky) are not (CSS text-shadow cannot transform).
 

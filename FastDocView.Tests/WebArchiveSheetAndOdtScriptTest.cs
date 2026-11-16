@@ -69,7 +69,7 @@ public static class WebArchiveSheetAndOdtScriptTest
         Expect(Tag("Deep").Contains("font-style:italic;text-decoration:underline;") && !Tag("Deep").Contains("letter-spacing"), "descendant, not first child", "Deep");
         Expect(Tag("Link").Contains("color:blue;") && !Tag("Link").Contains("purple"), ":link prints, :visited does not", "Link");
         Expect(Tag("Tight").StartsWith("<p ", StringComparison.Ordinal) && Tag("Tight").Contains("class=\"Big\" style=\"font-size:20.0pt;color:teal;\""), "style removed without joining the next attribute", "Tight");
-        Expect(Tag("Huge").Contains("style=\"margin-left:0in;padding:1cm 10in;text-indent:-1.5in;width:1920px;font-size:400pt;letter-spacing:-0.706cm;margin-right:0cm;line-height:10;\""),
+        Expect(Tag("Huge").Contains("style=\"margin-left:-1in;padding:1cm 10in;text-indent:-1.5in;width:1920px;font-size:400pt;letter-spacing:-0.706cm;margin-right:-2cm;line-height:10;\""),
                "lengths from the sheet and the element's own style kept in bounds, calc() dropped", "Huge");
         Expect(Tag("Evil").Contains("style=\"color:navy;\"") && !Tag("Evil").Contains("url") && !Tag("Evil").Contains("javascript"), "only safe declarations", "Evil");
         TestReport.Check(!all.Contains("orange") && !all.Contains("@") && !all.Contains("behavior") && !all.Contains("expression"), "mhtml sheet: no :hover / attribute / pseudo-element rule, nothing unsafe");
@@ -104,6 +104,15 @@ public static class WebArchiveSheetAndOdtScriptTest
                          $"Word .mht: Heading 1 as the PDF prints it (Calibri Light 20 pt #2F5496) [{heading}]");
         TestReport.Check(greenRun.Contains("color:green;font-style:italic;") && greenRun.Contains("font-size:16.0pt"), "Word .mht: character style as the PDF prints it (green italic 16 pt)");
         TestReport.Check(!document.Stylesheet.Contains("MsoNormal") && !document.Stylesheet.Contains("FancyPara"), "Word .mht: the archive sheet is not in the page stylesheet");
+
+        // table-margin-v1.mht / .pdf (make-table-margin-fixture.ps1): Word's PDF draws the table border 5.4 pt left of the body
+        // text (84.7 pt vs 90.05 pt), so the cell text lines up with it - the table's margin-left:-5.4pt must survive the bounds
+        string tablePath = Path.Combine(Path.GetDirectoryName(path)!, "table-margin-v1.mht");
+        using IWordWindowedDocument table = WordWindowedDocumentOpener.Open(tablePath, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+        string tableHtml = string.Join("\n", table.RenderBlocks(0, table.BlockCount).Select(block => block.Html));
+        int tableAt = tableHtml.IndexOf("<table", StringComparison.Ordinal);
+        string tableTag = tableAt < 0 ? "" : tableHtml.Substring(tableAt, tableHtml.IndexOf('>', tableAt) + 1 - tableAt);
+        TestReport.Check(tableTag.Contains("margin-left:-5.4pt;"), $"Word .mht: a table's negative margin is kept, as Word prints it [{tableTag}]");
     }
 
     private static void OdtParagraphScript()

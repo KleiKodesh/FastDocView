@@ -2833,3 +2833,8 @@ text out of the document area: margins / padding 0..10 in (0..50 %), text-indent
 gaps 0..72 pt, offsets (vertical-align, shadows) +-200 pt; em / ex / ch measured at a 12 pt font. A token in range is
 kept as written; calc() and other functions in a length drop the declaration. Word's own fixture
 test-data/word-mhtml/class-styles-v1.mht + .pdf (make-class-styles-fixture.ps1) is checked in WebArchiveSheetAndOdtScriptTest.
+Update 2 (same day): margins may be negative down to -1 in (-15 %): Word writes a table's margin-left:-5.4pt so its cell
+text lines up with the body text (and its table-indent field goes to about -1 in). test-data/word-mhtml/table-margin-v1.mht
++ .pdf (make-table-margin-fixture.ps1, Rows.LeftIndent -5.4): Word's PDF has the body text at 90.05 pt, the cell text at
+90.29 pt and the table border at 84.7 pt; the live rig draws the cell text 1 px from the body text, the border 8 px left.
+Padding stays >= 0.
