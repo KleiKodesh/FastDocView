@@ -25,6 +25,9 @@ public static class BordersAndCellDirectionFidelityTest
             CheckCells(path, extension);
             if (extension == ".rtf") CheckRtfBorders(path);
         }
+        string groups = Path.Combine(Folder, "borders-cell-groups-v1.rtf");
+        if (File.Exists(groups)) CheckRtfGroupsInCellsAndTextBoxes(groups);
+        else TestReport.Check(false, "test-data/borders-cell-direction/borders-cell-groups-v1.rtf present");
         string spans = Path.Combine(Folder, "drop-cap-spans-v1.fodt");
         if (File.Exists(spans)) CheckDropCapSpans(spans);
         else TestReport.Check(false, "test-data/borders-cell-direction/drop-cap-spans-v1.fodt present");
@@ -90,5 +93,24 @@ public static class BordersAndCellDirectionFidelityTest
         string table = string.Join("\n", blocks);
         TestReport.Check(CellStyle(table, "Down").Contains("writing-mode:vertical-rl;") && CellStyle(table, "Up").Contains("writing-mode:sideways-lr;")
                          && !CellStyle(table, "Flat").Contains("writing-mode"), $".fodt: style:writing-mode tb-rl and loext:writing-mode bt-lr cells");
+    }
+
+    /// <summary>Word's PDF of borders-cell-groups-v1: one box around "Cell one" + "Cell two" (no line between), one around "Box one" + "Box two".</summary>
+    private static void CheckRtfGroupsInCellsAndTextBoxes(string path)
+    {
+        string html = string.Join(" ", Render(path, "rtf-cell-groups"));
+        string Open(string text)
+        {
+            int at = html.IndexOf(text, StringComparison.Ordinal);
+            if (at < 0) return "(missing)";
+            int open = Math.Max(html.LastIndexOf("<p ", at, StringComparison.Ordinal), html.LastIndexOf("<span class=\"text-box-paragraph\"", at, StringComparison.Ordinal));
+            return open < 0 ? "(no tag)" : html.Substring(open, html.IndexOf('>', open) - open);
+        }
+        foreach ((string first, string second) in new[] { ("Cell one", "Cell two"), ("Box one", "Box two") })
+        {
+            string one = Open(first), two = Open(second);
+            TestReport.Check(one.Contains("border-top:") && !one.Contains("border-bottom:") && !two.Contains("border-top:") && two.Contains("border-bottom:"),
+                             $".rtf: {first} and {second} share one box (got [{one}] [{two}])");
+        }
     }
 }

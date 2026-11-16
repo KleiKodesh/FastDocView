@@ -98,6 +98,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _renderedNotes = notes.Length == 0 ? null : new List<WordDocumentNoteHtml>(notes.Length);
         _indexListLabel = table.ListLabelOf(blockIndex);
         _cellsMergedBelow = index.CellsMergedBelow(blockIndex);
+        _lastBordered = null;
         _isBorderJoinedAbove = index.IsBorderJoinedToNext(blockIndex - 1);
         _isBorderJoinedBelow = index.IsBorderJoinedToNext(blockIndex);
         _isFirstParagraph = true;
@@ -320,8 +321,9 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (isTopLevel) { IncomingDropCap = null; PendingDropCap = null; }
         var html = new StringBuilder(_flow.Inline.Length + 64);
         if (state.Has(RtfStateFlags.PageBreakBefore) && isTopLevel) html.Append("<span class=\"page-break\"></span>");
-        WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss() + (_flow.IsTextBox ? "display:block;" : ""), _flow.IsTextBox ? "text-box-paragraph" : null, formatting.IsRightToLeft,
-                                   formatting.HyphenationLanguageAttribute);
+        int tagStart = html.Length;
+        AppendParagraphTag(html, tag, formatting, _flow.IsTextBox);
+        int tagLength = html.Length - tagStart;
         if (dropCap is { } initial)
         {
             WordDropCapHtml.Open(html, initial.format);
@@ -360,9 +362,47 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         {
             int level = Math.Max(1, (int)state.NestingLevel);
             FlushNestedTablesAbove(level);                                // a nested table ended: the cell goes on below it
-            CellOf(level).Cell.Append(html);
+            StringBuilder cell = CellOf(level).Cell;
+            JoinBorderGroup(cell, html, tagStart, tagLength, tag, formatting);
+            cell.Append(html);
         }
-        else _flow.Output.Append(html);
+        else
+        {
+            if (!isTopLevel) JoinBorderGroup(_flow.Output, html, tagStart, tagLength, tag, formatting);
+            _flow.Output.Append(html);
+        }
+    }
+
+    private void AppendParagraphTag(StringBuilder html, string tag, WordParagraphFormatting formatting, bool isTextBox)
+        => WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss() + (isTextBox ? "display:block;" : ""), isTextBox ? "text-box-paragraph" : null, formatting.IsRightToLeft,
+                                      formatting.HyphenationLanguageAttribute);
+
+    /// <summary>The last bordered paragraph written inside a cell, text box or note: where its open tag is, to re-draw it joined.</summary>
+    private sealed record BorderedParagraph(StringBuilder Target, int TagStart, int TagLength, int End, string Tag, bool IsTextBox, WordParagraphFormatting Formatting, string Key);
+    private BorderedParagraph? _lastBordered;
+
+    /// <summary>
+    /// Border groups inside a cell, a text box or a note (the block itself is read whole, so no index is needed): a paragraph with
+    /// the same borders and indents right after the last one written to the same place joins its box, as Word prints them
+    /// (borders-cell-groups-v1 Word PDF) and LibreOffice frmtool.cxx SwBorderAttrs::JoinWithCmp :2566-2582. The previous
+    /// paragraph's open tag is re-drawn open at the bottom, this one's open at the top.
+    /// </summary>
+    private void JoinBorderGroup(StringBuilder target, StringBuilder html, int tagStart, int tagLength, string tag, WordParagraphFormatting formatting)
+    {
+        string? key = formatting.BorderGroupKey;
+        if (key is not null && _lastBordered is { } last && ReferenceEquals(last.Target, target) && last.End == target.Length && last.Key == key)
+        {
+            last.Formatting.IsBorderJoinedBelow = true;
+            var previous = new StringBuilder();
+            AppendParagraphTag(previous, last.Tag, last.Formatting, last.IsTextBox);
+            target.Remove(last.TagStart, last.TagLength).Insert(last.TagStart, previous.ToString());
+            formatting.IsBorderJoinedAbove = true;
+            var current = new StringBuilder();
+            AppendParagraphTag(current, tag, formatting, _flow.IsTextBox);
+            html.Remove(tagStart, tagLength).Insert(tagStart, current.ToString());
+            tagLength = current.Length;
+        }
+        _lastBordered = key is null ? null : new BorderedParagraph(target, target.Length + tagStart, tagLength, target.Length + html.Length, tag, _flow.IsTextBox, formatting, key);
     }
 
     /// <summary>A picture bullet drawn from {\listtext}: the paragraph mark's run size and font (the state at its \par), which its height follows.</summary>
@@ -622,7 +662,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         FlushRun();
         _textBoxShape = shape;
         _textBoxOuterFlow = _flow;
-        _flow = new Flow { IsTextBox = true };
+        _flow = new Flow { IsTextBox = true }; _lastBordered = null;
     }
 
     public override void TextBoxParagraphEnd(in RtfGroupState state)
@@ -639,7 +679,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (_flow.HasInline) EmitParagraph(_parser.Current, isSectionEnd: false);
         CloseOpenTables();
         string html = _flow.Output.ToString();
-        _flow = _textBoxOuterFlow;
+        _flow = _textBoxOuterFlow; _lastBordered = null;
         _textBoxOuterFlow = null;
         if (_textBoxShape is not null) _textBoxShape.TextHtml = html;
         _textBoxShape = null;
@@ -855,7 +895,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         FlushNestedTablesAbove(level);
         TableLevel table = CellOf(level);
         table.Cells.Add(table.Cell.ToString());
-        table.Cell.Clear();
+        table.Cell.Clear(); _lastBordered = null;              // a new cell: no border group across cells
     }
 
     public override void RowEnd(in RtfGroupState state, bool isNested)
@@ -906,7 +946,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     private void CloseRow(int level)
     {
         TableLevel table = CellOf(level);
-        if (table.Cell.Length > 0) { table.Cells.Add(table.Cell.ToString()); table.Cell.Clear(); }
+        if (table.Cell.Length > 0) { table.Cells.Add(table.Cell.ToString()); table.Cell.Clear(); _lastBordered = null; }
         string[] cellsHtml = table.Cells.ToArray();
         table.Cells.Clear();
         if (level > 1)

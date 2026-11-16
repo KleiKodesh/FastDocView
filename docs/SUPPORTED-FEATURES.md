@@ -60,7 +60,7 @@ separate paged view, which is not built yet.
 | Indents (start, end, first line, hanging) | yes | yes | yes | yes | n.a. | partial (2) |
 | Spacing before / after, contextual spacing | yes | yes | yes | yes | n.a. | partial (2) |
 | Line spacing (auto, exact, at least) | yes | yes | yes | yes | n.a. | partial (2) |
-| Paragraph borders | yes | yes | partial (5) | yes | n.a. | partial (2) |
+| Paragraph borders | yes | yes | yes (5) | yes | n.a. | partial (2) |
 | Paragraph shading | yes | yes | yes | yes | n.a. | partial (2) |
 | Tab stops | partial (6) | partial (6) | partial (6) | partial (6) | n.a. | n.a. |
 | Drop caps | yes | yes | yes | yes (7) | n.a. | n.a. |
@@ -69,8 +69,8 @@ separate paged view, which is not built yet.
 | Frames (framePr) | partial (9) | partial (9) | partial (9) | n.a. | n.a. | n.a. |
 
 5. RTF: `\brsp` spacing, the border shadow (`\brdrsh`), the line between (`\brdrbtw`) and border groups (adjacent body
-   paragraphs with the same borders and indents share one box, as Word draws them; found at index time) are drawn. Paragraphs
-   inside table cells and text boxes are boxed alone.
+   paragraphs with the same borders and indents share one box, as Word draws them; found at index time) are drawn; inside table cells,
+   text boxes and notes the block itself joins them.
 6. Tab stops become `tab-size`; leaders and right / centre / decimal alignment are not laid out as Word does.
 7. ODT: the initial is the paragraph's first `style:length` characters (or its first word) wherever they run, across
    text nodes and spans, each piece in its span's look; a tab, a line break or a note ends it, as LibreOffice does.

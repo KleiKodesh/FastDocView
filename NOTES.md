@@ -2797,7 +2797,9 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   shadow, between) and indents with the paragraph block right before it and stores the blocks joined to the next one
   (`RtfRandomAccessIndex.BorderJoinedBlocks`, delta varints); the renderer sets IsBorderJoinedAbove / Below as the .docx path
   does (LibreOffice frmtool.cxx SwBorderAttrs::JoinWithCmp :2566-2582). A partial index lists a join once the next block is
-  known. Paragraphs in cells and text boxes are not joined yet.
+  known. Inside a cell, a text box or a note the row / shape is one block, so the renderer joins them itself: the last
+  bordered paragraph written to the same place has its open tag re-drawn (RtfBlockHtmlRenderer.JoinBorderGroup). Word's PDF of
+  borders-cell-groups-v1: one box around both cell paragraphs and both text-box paragraphs.
 - ODT drop caps take the paragraph's first style:length characters (or its first word) across text nodes, spans and text:s
   spaces; each piece keeps its span's look but the paragraph's size, and the initial is inserted at the paragraph's start.
   A tab, line break or note ends it (txtdrop.cxx SwTextNode::GetDropLen :157-165). LibreOffice's PDF of drop-cap-spans-v1:

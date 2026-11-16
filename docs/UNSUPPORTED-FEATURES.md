@@ -28,7 +28,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Tab leaders and right / centre / decimal tab alignment | docx, doc, rtf, odt | Flow HTML has only `tab-size`; true tab layout needs a line layout engine | deferred |
 | Keep with next, keep lines, widow / orphan control, page break before | docx, doc, rtf, odt | Pagination: belongs to the paged view | planned (paged view) |
 | Frames (framePr) other than drop caps: absolute position, wrap | docx, doc, rtf | Frames flow as paragraphs; positioning is page-bound | planned (paged view) |
-| Border groups inside table cells and text boxes | rtf | A cell's or text box's paragraphs are boxed one by one (body paragraphs are joined) | deferred |
 | Hebrew hyphenation | all | Chromium has no Hebrew hyphenation dictionary | won't do |
 | Line numbering, snap to grid, document grid | docx, doc, rtf, odt | Page-bound / East-Asian layout | planned (paged view) |
 
