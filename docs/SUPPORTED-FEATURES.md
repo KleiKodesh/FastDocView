@@ -63,14 +63,17 @@ separate paged view, which is not built yet.
 | Paragraph borders | yes | yes | partial (5) | yes | n.a. | partial (2) |
 | Paragraph shading | yes | yes | yes | yes | n.a. | partial (2) |
 | Tab stops | partial (6) | partial (6) | partial (6) | partial (6) | n.a. | n.a. |
-| Drop caps | yes | yes | yes | partial (7) | n.a. | n.a. |
+| Drop caps | yes | yes | yes | yes (7) | n.a. | n.a. |
 | Automatic hyphenation (by language; Hebrew has no dictionary) | yes | yes | yes | yes | n.a. | n.a. |
 | Headings as h1-h6 and the navigation tree | yes | yes | yes | yes | partial (8) | yes |
 | Frames (framePr) | partial (9) | partial (9) | partial (9) | n.a. | n.a. | n.a. |
 
-5. RTF: `\brsp` spacing, border shadow and border groups are not drawn (each paragraph is boxed alone).
+5. RTF: `\brsp` spacing, the border shadow (`\brdrsh`), the line between (`\brdrbtw`) and border groups (adjacent body
+   paragraphs with the same borders and indents share one box, as Word draws them; found at index time) are drawn. Paragraphs
+   inside table cells and text boxes are boxed alone.
 6. Tab stops become `tab-size`; leaders and right / centre / decimal alignment are not laid out as Word does.
-7. ODT: only the paragraph's first text node is wrapped; a drop cap split across spans is not joined.
+7. ODT: the initial is the paragraph's first `style:length` characters (or its first word) wherever they run, across
+   text nodes and spans, each piece in its span's look; a tab, a line break or a note ends it, as LibreOffice does.
 8. Torat Emet markup gives headings; plain .txt has none.
 9. Drop-cap frames are drawn; other frames flow as ordinary paragraphs (no positioning).
 
@@ -114,7 +117,7 @@ NOTES.md "List numbering" holds the audit of list number formats.
 | Direction (bidiVisual / RTL rows) | yes | yes | yes | yes | n.a. | yes |
 | Vertical alignment in cells | yes | yes | yes | yes | n.a. | partial (2) |
 | Row height (at least / exact, exact clips the cell) | yes | yes | yes | yes | n.a. | no |
-| Cell text direction (vertical text) | yes | no | no | no | n.a. | n.a. |
+| Cell text direction (vertical text) | yes | yes | yes | yes (T4) | n.a. | n.a. |
 | Big tables split into row blocks (windowed) | yes | yes | yes | yes | n.a. | yes |
 | Tracked row deletion hidden | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
 
@@ -125,6 +128,9 @@ T2. RTF and .doc: an outer row is one block, so a cell merged down (\clvmgf / \c
 T3. Borders and colours as Word 16 shows them: a cell's explicit "no border" (brcNil) hides the table's line; .doc border
     colours outside the 16-colour palette come from sprmTBrcTopCv / LeftCv / BottomCv / RightCv (LibreOffice ignores them);
     two tables Word joined (no paragraph between) are one table: inside lines where they meet.
+T4. ODT: style:writing-mode / loext:writing-mode on the cell (tb-rl, bt-lr, tb-rl90, tb-lr), as LibreOffice reads them;
+    style:direction ttb (stacked letters) is not read by Writer for cells and is not drawn either. .doc reads sprmTTextFlow,
+    else the cell's TC bits; RTF \cltx*. All draw through the .docx w:textDirection mapping.
 
 ## Sections and pages
 

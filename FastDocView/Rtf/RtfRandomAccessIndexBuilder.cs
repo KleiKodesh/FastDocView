@@ -320,6 +320,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             IndexEntries = _indexEntries.ToArray(),      // entries of the block being read too: an INDEX lists them as found so far
             MergedRowBlocks = _mergedRowBlocks.Where(block => block < known).ToArray(),
             MergedRowCells = _mergedRowCells.Where((_, i) => _mergedRowBlocks[i] < known).ToArray(),
+            BorderJoinedBlocks = _borderJoinedBlocks.Where(block => block + 1 < known).ToArray(),
         };
     }
 
@@ -644,10 +645,40 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             string text = _paragraphText.ToString().Trim();
             if (text.Length > 0) _headings.Add(new WordDocumentHeading(_starts.Count, outline + 1, text));
         }
+        NoteBorderGroup(state);
         // the counted label is stored even beside Word's flat {\listtext}: Word re-counts from the list table when it opens the file
         // and prints that, not the saved copy (list-overrides-v1.rtf: the saved "2.1.1." prints 2.1.4); the renderer draws it instead
         EndBlock(_parser.Position, listLabel: label, listLevel: hasListParagraph ? state.ListLevel : -1);
-        if (isSectionEnd) EndSection();
+        if (isSectionEnd) { EndSection(); _lastBorderKey = null; }      // a section break ends a border group
+    }
+
+    // border groups (index pass): the border key of the last paragraph block and that block
+    private string? _lastBorderKey;
+    private int _lastBorderKeyBlock = -1;
+    private readonly List<int> _borderJoinedBlocks = new();
+
+    /// <summary>
+    /// A paragraph block with the same borders (lines, \brsp, \brdrsh, \brdrbtw) and indents as the paragraph block right before it
+    /// joins its border group (ECMA-376 17.3.1.24 pBdr "the same set of paragraph border settings"; LibreOffice frmtool.cxx
+    /// SwBorderAttrs::JoinWithCmp :2566-2582 compares the lines, the shadow and the left / right edges): the block before is marked.
+    /// </summary>
+    private void NoteBorderGroup(in RtfGroupState state)
+    {
+        int blockIndex = _starts.Count;                                   // the block this paragraph ends
+        string? key = BorderGroupKey(state);
+        if (key is not null && key == _lastBorderKey && _lastBorderKeyBlock == blockIndex - 1) _borderJoinedBlocks.Add(blockIndex - 1);
+        _lastBorderKey = key;
+        _lastBorderKeyBlock = blockIndex;
+    }
+
+    private static string? BorderGroupKey(in RtfGroupState state)
+    {
+        static bool IsDrawn(in RtfBorder border) => border.Style is not (RtfBorderStyle.Absent or RtfBorderStyle.None);
+        if (!IsDrawn(state.BorderTop) && !IsDrawn(state.BorderBottom) && !IsDrawn(state.BorderLeft) && !IsDrawn(state.BorderRight) && !IsDrawn(state.BorderBetween)) return null;
+        static string Of(in RtfBorder border) => $"{(byte)border.Style},{border.Width},{border.Color},{border.Space},{border.IsShadowed}";
+        return string.Join("|", Of(state.BorderTop), Of(state.BorderBottom), Of(state.BorderLeft), Of(state.BorderRight), Of(state.BorderBetween),
+                           state.LeftIndent, state.RightIndent, state.StartIndent, state.EndIndent,
+                           state.Has(RtfStateFlags.HasStartIndent), state.Has(RtfStateFlags.HasEndIndent), state.Has(RtfStateFlags.RightToLeftParagraph));
     }
 
     /// <summary>Runs the list counter for a list paragraph; returns its label when the index should store one.</summary>

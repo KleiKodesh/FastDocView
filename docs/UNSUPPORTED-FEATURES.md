@@ -28,8 +28,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Tab leaders and right / centre / decimal tab alignment | docx, doc, rtf, odt | Flow HTML has only `tab-size`; true tab layout needs a line layout engine | deferred |
 | Keep with next, keep lines, widow / orphan control, page break before | docx, doc, rtf, odt | Pagination: belongs to the paged view | planned (paged view) |
 | Frames (framePr) other than drop caps: absolute position, wrap | docx, doc, rtf | Frames flow as paragraphs; positioning is page-bound | planned (paged view) |
-| RTF border spacing (\brsp), border shadow, border groups | rtf | Each paragraph is boxed alone | deferred |
-| ODT drop cap split across spans | odt/fodt | Only the first text node is wrapped | deferred |
+| Border groups inside table cells and text boxes | rtf | A cell's or text box's paragraphs are boxed one by one (body paragraphs are joined) | deferred |
 | Hebrew hyphenation | all | Chromium has no Hebrew hyphenation dictionary | won't do |
 | Line numbering, snap to grid, document grid | docx, doc, rtf, odt | Page-bound / East-Asian layout | planned (paged view) |
 
@@ -44,7 +43,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
 | Floating table position (tblpPr) and text wrap around tables | docx, doc, rtf | Ignored by design (frame / table positioning) | planned (paged view) |
-| Vertical cell text direction | doc, rtf, odt | Not drawn (docx w:textDirection is) | deferred |
+| Stacked cell text (style:direction ttb) | odt | LibreOffice Writer does not read it on cells either (the reference print is horizontal) | won't do |
 | Cells merged down drawn as one cell | rtf, doc | An outer row is one block (windowed): a cell merged down is cells without the line between them, not one rowspan cell (a nested table gets a real rowspan) | won't do (windowed rule) |
 | Repeat header row, row "can't split" | all | Page-bound | planned (paged view) |
 | Row heights in .mhtml | mhtml | The page's own HTML heights are kept as written; no Word row-height rule is applied | won't do |

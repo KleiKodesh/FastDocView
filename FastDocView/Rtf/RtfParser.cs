@@ -1072,6 +1072,11 @@ internal sealed class RtfParser
             case RtfWord.CellAlignTop: PendingCell.VerticalAlignment = 0; return;
             case RtfWord.CellAlignCenter: PendingCell.VerticalAlignment = 1; return;
             case RtfWord.CellAlignBottom: PendingCell.VerticalAlignment = 2; return;
+            case RtfWord.CellTextLeftToRight: PendingCell.TextDirection = RtfCellTextDirection.LeftToRightTopToBottom; return;
+            case RtfWord.CellTextTopToBottom: PendingCell.TextDirection = RtfCellTextDirection.TopToBottomRightToLeft; return;
+            case RtfWord.CellTextBottomToTop: PendingCell.TextDirection = RtfCellTextDirection.BottomToTopLeftToRight; return;
+            case RtfWord.CellTextLeftToRightVertical: PendingCell.TextDirection = RtfCellTextDirection.LeftToRightTopToBottomVertical; return;
+            case RtfWord.CellTextTopToBottomVertical: PendingCell.TextDirection = RtfCellTextDirection.TopToBottomRightToLeftVertical; return;
             // \clbrdr* / \trbrdr*: the \brdr* words after them describe that border (LibreOffice rtfdocumentimpl.cxx:196 RTFBorderState::CELL);
             // named without a line style it is no line (\brdrtbl, Word's "no border" in a cell, is read as \brdrnone)
             case RtfWord.CellBorderTop: PendingCell.Top = default; state.BorderTarget = RtfBorderTarget.CellTop; return;
@@ -1167,7 +1172,10 @@ internal sealed class RtfParser
                 state.BorderTop = state.BorderLeft = state.BorderBottom = state.BorderRight = new RtfBorder { Style = RtfBorderStyle.Single };
                 state.BorderTarget = RtfBorderTarget.Box;
                 return;
+            case RtfWord.ParagraphBorderBetween: state.BorderBetween = new RtfBorder { Style = RtfBorderStyle.Single }; state.BorderTarget = RtfBorderTarget.Between; return;
             case RtfWord.OtherBorder: state.BorderTarget = RtfBorderTarget.Other; return;
+            case RtfWord.BorderSpacing: ModifyBorder(ref state, (ref RtfBorder border, int value) => border.Space = (short)Math.Max(0, Math.Min(short.MaxValue, value)), parameter); return;
+            case RtfWord.BorderShadow: ModifyBorder(ref state, (ref RtfBorder border, int _) => border.IsShadowed = 1, 0); return;
             case RtfWord.BorderWidth: ModifyBorder(ref state, (ref RtfBorder border, int value) => border.Width = (short)Math.Max(0, Math.Min(short.MaxValue, value)), parameter); return;
             case RtfWord.BorderColor: ModifyBorder(ref state, (ref RtfBorder border, int value) => border.Color = ColorIndex(value), parameter); return;
             case RtfWord.BorderSingle: ModifyBorder(ref state, (ref RtfBorder border, int _) => border.Style = RtfBorderStyle.Single, 0); return;
@@ -1230,6 +1238,7 @@ internal sealed class RtfParser
             case RtfBorderTarget.Left: modify(ref state.BorderLeft, value); break;
             case RtfBorderTarget.Bottom: modify(ref state.BorderBottom, value); break;
             case RtfBorderTarget.Right: modify(ref state.BorderRight, value); break;
+            case RtfBorderTarget.Between: modify(ref state.BorderBetween, value); break;
             case RtfBorderTarget.Box:
                 modify(ref state.BorderTop, value); modify(ref state.BorderLeft, value);
                 modify(ref state.BorderBottom, value); modify(ref state.BorderRight, value);

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Xml.Linq;
+using FastDocView.DocxHtml;
 using FastDocView.Html;
 
 namespace FastDocView.Odt;
@@ -22,6 +23,7 @@ public sealed class OdtStyleCascade
     public static readonly XNamespace Fo = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
     public static readonly XNamespace Svg = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
     public static readonly XNamespace Draw = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+    public static readonly XNamespace LoExt = "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0";
     public static readonly XNamespace Xml = XNamespace.Xml;
 
     /// <summary>Attributes of style:text-properties this cascade maps (the audit counts the rest).</summary>
@@ -52,6 +54,7 @@ public sealed class OdtStyleCascade
         "style:width", "style:rel-width", "table:align", "style:writing-mode", "fo:margin-left", "fo:margin-right", "fo:background-color",
         "style:column-width", "style:rel-column-width", "fo:border", "fo:border-top", "fo:border-bottom", "fo:border-left", "fo:border-right",
         "fo:padding", "fo:padding-top", "fo:padding-bottom", "fo:padding-left", "fo:padding-right", "style:vertical-align", "style:row-height", "style:min-row-height",
+        "loext:writing-mode",
     ];
 
     /// <summary>Attributes of style:graphic-properties (frames: pictures, text boxes) the frame renderer maps.</summary>
@@ -199,7 +202,7 @@ public sealed class OdtStyleCascade
     private static string QualifiedName(XName name)
     {
         string prefix = name.Namespace == Fo ? "fo" : name.Namespace == Style ? "style" : name.Namespace == Text ? "text"
-                      : name.Namespace == Table ? "table" : name.Namespace == Svg ? "svg" : name.Namespace == Draw ? "draw" : "?";
+                      : name.Namespace == Table ? "table" : name.Namespace == Svg ? "svg" : name.Namespace == Draw ? "draw" : name.Namespace == LoExt ? "loext" : "?";
         return prefix + ":" + name.LocalName;
     }
 
@@ -561,7 +564,28 @@ public sealed class OdtStyleCascade
         if ((string?)properties.Attribute(Fo + "background-color") is { } background && ColorHex(background) is { } hex) css.Append("background-color:").Append(WordHtmlColor.Css(hex)).Append(';');
         if ((string?)properties.Attribute(Style + "vertical-align") is "middle" or "bottom" or "top")
             css.Append("vertical-align:").Append((string?)properties.Attribute(Style + "vertical-align")).Append(';');
+        if (CellTextDirectionName((string?)properties.Attribute(LoExt + "writing-mode") ?? (string?)properties.Attribute(Style + "writing-mode")) is { } name
+            && DocxTableFormatting.TextDirectionCss(name) is { } direction)
+            css.Append(direction);
         return css.ToString();
+    }
+
+    /// <summary>
+    /// A cell's writing mode as the .docx ST_TextDirection it draws like (the .docx cell mapping is reused). As LibreOffice reads a
+    /// cell (sw/source/filter/xml/xmlitemm.cxx :280-282 style: / loext:writing-mode -> RES_FRAMEDIR; xmlimpit.cxx :1008-1032: loext
+    /// bt-lr -> Vertical_LR_BT, tb-rl90 -> Vertical_RL_TB90, else the writing-mode handler: tb-rl / tb -> Vertical_RL_TB, tb-lr ->
+    /// Vertical_LR_TB). style:direction (ttb, stacked letters) is not read by Writer for cells, so it is not drawn either.
+    /// </summary>
+    private static string? CellTextDirectionName(string? writingMode)
+    {
+        return writingMode switch
+        {
+            "tb-rl" or "tb" => "tbRl",
+            "tb-rl90" => "tbRlV",
+            "bt-lr" => "btLr",
+            "tb-lr" => "tbLrV",
+            _ => null,
+        };
     }
 
     /// <summary>A column's width in points (style:column-width), or null.</summary>

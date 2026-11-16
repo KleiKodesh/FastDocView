@@ -18,7 +18,7 @@ public readonly record struct RtfNoteReference(int BlockIndex, WordDocumentNoteK
 public sealed class RtfRandomAccessIndex
 {
     private const string Magic = "KHRTFIDX";
-    private const int FormatVersion = 21;    // 21: counted list labels stored beside {\listtext}; 20: list style links (\liststyleid), whole levels in list overrides; 19: note labels by section (\sftn* \saftn*), document restart words; 18: {\mmathPr} math settings in the header tables; 17: row height (\trrh) in the snapshot; 16: row definitions carry merges, vertical alignment, cell + row borders (snapshot), rows merged down; 15: list level character formatting, Word 6 levels; 14: list picture bullets; 13: list level fonts; 12: drop caps, hyphenation, language (group state + header); 11: gutter placement (rtlgutter, gutterprl) in section widths; 10: group state carries borders, shading, underline colour, emphasis; 9: section column lefts; 8: XE / TA entries;     // 7: anchor heads hold the open fields + field counters (RtfFieldTracker)
+    private const int FormatVersion = 22;    // 22: border groups (paragraphs joined to the next), cell text direction, border spacing / shadow / between (snapshot); 21: counted list labels stored beside {\listtext}; 20: list style links (\liststyleid), whole levels in list overrides; 19: note labels by section (\sftn* \saftn*), document restart words; 18: {\mmathPr} math settings in the header tables; 17: row height (\trrh) in the snapshot; 16: row definitions carry merges, vertical alignment, cell + row borders (snapshot), rows merged down; 15: list level character formatting, Word 6 levels; 14: list picture bullets; 13: list level fonts; 12: drop caps, hyphenation, language (group state + header); 11: gutter placement (rtlgutter, gutterprl) in section widths; 10: group state carries borders, shading, underline colour, emphasis; 9: section column lefts; 8: XE / TA entries;     // 7: anchor heads hold the open fields + field counters (RtfFieldTracker)
      // 4: compact block tables; 5: no per-block tables - span anchors + parser snapshot + list state, Elias-Fano lists; 6: row indent + alignment in the snapshot
     /// <summary>File bytes between span anchors: a random block rescans at most this much.</summary>
     public const long AnchorSpanBytes = 256 << 10;
@@ -58,6 +58,16 @@ public sealed class RtfRandomAccessIndex
         int at = Array.BinarySearch(MergedRowBlocks, blockIndex);
         return at >= 0 ? MergedRowCells[at] : 0;
     }
+
+    /// <summary>
+    /// Paragraph blocks in one border group with the next block (the same borders, spacing, shadow and indents: Word boxes them
+    /// together, LibreOffice frmtool.cxx SwBorderAttrs::JoinWithCmp :2566-2582 the same way). A paragraph is one block, so whether
+    /// the next one continues the box is found at index time; sorted.
+    /// </summary>
+    public int[] BorderJoinedBlocks { get; init; } = [];
+
+    /// <summary>Block <paramref name="blockIndex"/> and the block after it are one border group.</summary>
+    public bool IsBorderJoinedToNext(int blockIndex) => blockIndex >= 0 && Array.BinarySearch(BorderJoinedBlocks, blockIndex) >= 0;
     private readonly WordListCounterState.DeltaChain _scanStates;
 
     public RtfRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, RtfDocumentTables tables, bool isRightToLeft,
@@ -173,6 +183,8 @@ public sealed class RtfRandomAccessIndex
         IndexBinaryArrays.WriteDeltaVarints(writer, MergedRowBlocks);
         foreach (ulong cells in MergedRowCells) writer.Write(cells);
         Section($"rows merged down ({MergedRowBlocks.Length})");
+        IndexBinaryArrays.WriteDeltaVarints(writer, BorderJoinedBlocks);
+        Section($"border groups ({BorderJoinedBlocks.Length})");
         writer.Flush();
     }
 
@@ -233,6 +245,8 @@ public sealed class RtfRandomAccessIndex
         if (mergedRowBlocks.Any(block => (uint)block >= (uint)blockCount)) throw new InvalidDataException("RTF index: merged rows do not match the blocks.");
         var mergedRowCells = new ulong[mergedRowBlocks.Length];
         for (int i = 0; i < mergedRowCells.Length; i++) mergedRowCells[i] = reader.ReadUInt64();
+        int[] borderJoinedBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
+        if (borderJoinedBlocks.Any(block => (uint)block >= (uint)blockCount)) throw new InvalidDataException("RTF index: border groups do not match the blocks.");
         return new RtfRandomAccessIndex(sourceLength, sourceTicks, tables, isRightToLeft, blockCount, lastBlockEnd, anchors, groupTotals, headings, notes)
         {
             SectionLastBlocks = sectionLastBlocks,
@@ -242,6 +256,7 @@ public sealed class RtfRandomAccessIndex
             IndexEntries = indexEntries,
             MergedRowBlocks = mergedRowBlocks,
             MergedRowCells = mergedRowCells,
+            BorderJoinedBlocks = borderJoinedBlocks,
         };
     }
 

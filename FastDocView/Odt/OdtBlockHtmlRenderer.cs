@@ -162,8 +162,10 @@ public sealed partial class OdtBlockHtmlRenderer
         bool outerIsRightToLeft = _isParagraphRightToLeft;
         int outerDropCap = _dropCapRemaining;
         WordParagraphFormatting? outerDropCapFormat = _dropCapFormat;
+        (StringBuilder? target, int insertAt, StringBuilder? captured) outerDropCapCapture = (_dropCapTarget, _dropCapInsertAt, _dropCapCaptured);
         _dropCapRemaining = formatting.DropCapLines > 0 ? formatting.DropCapCharacterCount : 0;
         _dropCapFormat = formatting;
+        _dropCapCaptured = null;
         _isParagraphRightToLeft = formatting.IsRightToLeft;
         bool hasLabel = false;
         if (isTopLevel && _listLabel is { Length: > 0 } label)
@@ -175,22 +177,77 @@ public sealed partial class OdtBlockHtmlRenderer
             else WordListLabelHtml.Append(html, label, labelCss, WordListLabelSuffix.Space, formatting, WordListLabelHtml.DefaultTabStopTwips);
             hasLabel = true;
         }
+        _dropCapTarget = html;
+        _dropCapInsertAt = html.Length;                       // the initial goes here, before any span the paragraph opens
         RenderInline(paragraph, html, styleName, formatting.RunFormatting, formatting.RunFormatting, hasLabel);
+        FinishDropCap();                                      // a paragraph shorter than the drop cap: what there is
         _dropCapRemaining = outerDropCap;
         _dropCapFormat = outerDropCapFormat;
+        (_dropCapTarget, _dropCapInsertAt, _dropCapCaptured) = outerDropCapCapture;
         _isParagraphRightToLeft = outerIsRightToLeft;
         html.Append("</").Append(tag).Append('>');
     }
 
     private int _dropCapRemaining;                       // characters of the paragraph drop cap still to wrap (-1 = the first word)
     private WordParagraphFormatting? _dropCapFormat;
+    private StringBuilder? _dropCapTarget, _dropCapCaptured;   // the paragraph's html and the initial's characters taken so far (each piece in its span's look)
+    private int _dropCapInsertAt;
 
-    /// <summary>style:length="word": the first word (up to the first white space; LibreOffice SwFormatDrop WholeWord).</summary>
-    private static int DropCapWordLength(string text)
+    /// <summary>
+    /// Takes the paragraph drop cap's characters from the start of <paramref name="value"/> (style:length characters, or the first
+    /// word), wherever they are: they may run across several text nodes and spans (LibreOffice SwDropPortion takes the first
+    /// characters of the paragraph text whatever their attributes - sw/source/core/text/txtdrop.cxx SwTextFormatter::CalcDropLen /
+    /// NewDropPortion count over the paragraph string). Returns the rest of the text.
+    /// </summary>
+    private string TakeDropCap(string value, WordRunFormatting current)
     {
-        int end = 0;
-        while (end < text.Length && !char.IsWhiteSpace(text[end])) end++;
-        return Math.Max(1, end);
+        int take;
+        bool isDone;
+        if (_dropCapRemaining < 0)
+        {
+            take = 0;
+            while (take < value.Length && !char.IsWhiteSpace(value[take])) take++;
+            isDone = take < value.Length;
+        }
+        else
+        {
+            take = Math.Min(_dropCapRemaining, value.Length);
+            if (take > 0 && take < value.Length && char.IsHighSurrogate(value[take - 1])) take++;
+            _dropCapRemaining -= take;
+            isDone = _dropCapRemaining <= 0;
+        }
+        if (take > 0)
+        {
+            _dropCapCaptured ??= new StringBuilder();
+            // the piece in its span's look, at the paragraph's size: the drop-cap span sets the initial's size
+            WordRunFormatting look = current;
+            if (current.FontSizeHalfPoints != _dropCapFormat!.RunFormatting.FontSizeHalfPoints
+                || current.ComplexScriptFontSizeHalfPoints != _dropCapFormat.RunFormatting.ComplexScriptFontSizeHalfPoints)
+            {
+                look = current.Clone();
+                look.FontSizeHalfPoints = _dropCapFormat.RunFormatting.FontSizeHalfPoints;
+                look.ComplexScriptFontSizeHalfPoints = _dropCapFormat.RunFormatting.ComplexScriptFontSizeHalfPoints;
+            }
+            string css = look.ToCss(_dropCapFormat.RunFormatting);
+            if (css.Length > 0) _dropCapCaptured.Append("<span style=\"").Append(css).Append("\">");
+            WordHtmlText.AppendScaled(_dropCapCaptured, WordHtmlText.Encode(value.Substring(0, take)), current.CharacterScalePercent);
+            if (css.Length > 0) _dropCapCaptured.Append("</span>");
+        }
+        if (isDone) FinishDropCap();
+        return value.Substring(take);
+    }
+
+    /// <summary>Puts the captured initial in its drop-cap span at the paragraph's start; nothing when none was captured.</summary>
+    private void FinishDropCap()
+    {
+        _dropCapRemaining = 0;
+        if (_dropCapCaptured is not { Length: > 0 } captured || _dropCapTarget is null) { _dropCapCaptured = null; return; }
+        var span = new StringBuilder(captured.Length + 96);
+        WordDropCapHtml.Open(span, _dropCapFormat!);
+        span.Append(captured);
+        WordDropCapHtml.Close(span);
+        _dropCapTarget.Insert(Math.Min(_dropCapInsertAt, _dropCapTarget.Length), span.ToString());
+        _dropCapCaptured = null;
     }
 
     /// <summary>
@@ -266,17 +323,8 @@ public sealed partial class OdtBlockHtmlRenderer
             if (node is XText text)
             {
                 string value = text.Value;
-                if (_dropCapRemaining != 0 && value.Length > 0)
-                {
-                    // the paragraph drop cap: its first characters (or first word) in the drop-cap span, taken from the first text
-                    int take = _dropCapRemaining < 0 ? DropCapWordLength(value) : Math.Min(_dropCapRemaining, value.Length);
-                    if (take < value.Length && char.IsLowSurrogate(value[take])) take++;
-                    _dropCapRemaining = 0;
-                    WordDropCapHtml.Open(html, _dropCapFormat!);
-                    WordHtmlText.AppendScaled(html, WordHtmlText.Encode(value.Substring(0, take)), current.CharacterScalePercent);
-                    WordDropCapHtml.Close(html);
-                    value = value.Substring(take);
-                }
+                // the paragraph drop cap: its first characters (or first word) in the drop-cap span, across text nodes and spans
+                if (_dropCapRemaining != 0 && value.Length > 0) value = TakeDropCap(value, current);
                 AppendScriptPieces(html, value, current);
                 continue;
             }
@@ -301,17 +349,22 @@ public sealed partial class OdtBlockHtmlRenderer
                     case "s":
                     {
                         int spaces = int.TryParse((string?)element.Attribute(TextNs + "c"), out int c) && c > 0 ? Math.Min(c, 1000) : 1;
+                        if (_dropCapRemaining != 0)                            // spaces are characters of the paragraph text: counted, or end the word
+                        {
+                            string rest = TakeDropCap(new string(' ', spaces), current);
+                            spaces = rest.Length;
+                        }
                         html.Append(' ', spaces);
                         continue;
                     }
-                    case "tab": html.Append('\t'); continue;
-                    case "line-break": html.Append("<br>"); continue;
+                    // a tab, a line break or a note ends the drop cap (LibreOffice txtdrop.cxx SwTextNode::GetDropLen :157-165 stops at
+                    // CH_TAB, CH_BREAK and text attributes such as a note's anchor)
+                    case "tab": if (_dropCapRemaining != 0) FinishDropCap(); html.Append('\t'); continue;
+                    case "line-break": if (_dropCapRemaining != 0) FinishDropCap(); html.Append("<br>"); continue;
                     case "note":
                     {
-                        int dropCap = _dropCapRemaining;                       // a citation is not the paragraph's initial
-                        _dropCapRemaining = 0;
+                        if (_dropCapRemaining != 0) FinishDropCap();
                         AppendNote(element, html);
-                        _dropCapRemaining = dropCap;
                         continue;
                     }
                     case "number": if (!hasLabel) html.Append(WordHtmlText.Encode(element.Value)).Append(' '); continue;

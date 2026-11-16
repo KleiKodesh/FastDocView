@@ -1,4 +1,5 @@
 using System.Text;
+using FastDocView.DocxHtml;
 using FastDocView.Html;
 
 namespace FastDocView.DocBinary;
@@ -135,6 +136,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
         string?[]? shading = null;
         string?[]? borders = null, borders80 = null;
         List<(byte[] grpprl, int at, int length, bool isBrc80)>? setBorders = null;
+        List<(int first, int limit, int flow)>? textFlows = null;
         var borderColors = new (byte[] grpprl, int at, int length)?[4];
         int rowHeight = 0;
         int justification = 0, gapHalf = 0;
@@ -181,6 +183,9 @@ public sealed class DocBinaryParagraphHtmlRenderer
                     case 0xD61D: borderColors[DocBinaryTableCell.Right] = (grpprl, operandAt, operandLength); break;
                     case 0xD620: (setBorders ??= new()).Add((grpprl, operandAt, operandLength, true)); break;    // sprmTSetBrc80
                     case 0xD62F: (setBorders ??= new()).Add((grpprl, operandAt, operandLength, false)); break;   // sprmTSetBrc
+                    case 0x7629:                                                                 // sprmTTextFlow: itcFirst, itcLim, grpfTextFlow (ww8par2.cxx ProcessDirection)
+                        if (operandLength >= 4) (textFlows ??= new()).Add((grpprl[operandAt], grpprl[operandAt + 1], BitConverter.ToUInt16(grpprl, operandAt + 2)));
+                        break;
                 }
             }
         }
@@ -193,6 +198,9 @@ public sealed class DocBinaryParagraphHtmlRenderer
         if (cells is not null)
             for (int side = 0; side < 4; side++)
                 if (borderColors[side] is { } colors) ApplyBorderColors(cells, side, colors.grpprl, colors.at, colors.length);
+        if (cells is not null && textFlows is not null)
+            foreach ((int firstCell, int limit, int flow) in textFlows)
+                for (int i = firstCell; i < limit && i < cells.Length; i++) cells[i].TextFlowOverride = flow;
         if (cells is not null && setBorders is not null)
             foreach ((byte[] grpprl, int at, int length, bool isBrc80) in setBorders) SetCellBorders(cells, grpprl, at, length, isBrc80);
         // sprmTDxaLeft moves the row so its first cell boundary is dxaLeft - dxaGapHalf (LibreOffice ww8par2.cxx WW8TabDesc:
@@ -597,6 +605,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
             if (row.CellShadingHex is { } shading && i < shading.Length && shading[i] is { } fill)
                 css.Append("background:").Append(WordHtmlColor.Css(fill)).Append(';');
             if (cell is { VerticalAlignment: 1 or 2 } aligned) css.Append("vertical-align:").Append(aligned.VerticalAlignment == 1 ? "middle" : "bottom").Append(';');
+            if (DocxTableFormatting.TextDirectionCss(cell?.TextDirectionName) is { } direction) css.Append(direction);
             if (hasBorders)
             {
                 string?[] table = row.DefaultBorders ?? new string?[6];

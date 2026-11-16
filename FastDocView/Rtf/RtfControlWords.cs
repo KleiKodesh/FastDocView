@@ -40,6 +40,7 @@ internal enum RtfWord : ushort
     // ── table row ──
     RowDefault, CellBoundary, CellShading, RightToLeftRow, LeftToRightRow, RowLeft, RowHeight, RowAlignLeft, RowAlignCenter, RowAlignRight,
     CellMergeFirst, CellMergeContinue, CellVerticalMergeFirst, CellVerticalMergeContinue, CellAlignTop, CellAlignCenter, CellAlignBottom, CellShadingPercent,
+    CellTextLeftToRight, CellTextTopToBottom, CellTextBottomToTop, CellTextLeftToRightVertical, CellTextTopToBottomVertical,
     CellBorderTop, CellBorderLeft, CellBorderBottom, CellBorderRight, RowBorderTop, RowBorderLeft, RowBorderBottom, RowBorderRight, RowBorderHorizontal, RowBorderVertical,
     // ── character ──
     Plain, Bold, Italic, AssociatedBold, AssociatedItalic, Underline, UnderlineDouble, UnderlineDotted, UnderlineDashed, UnderlineWave,
@@ -49,8 +50,8 @@ internal enum RtfWord : ushort
     UnderlineColor, CharacterPatternColor, CharacterShadingPercent, CharacterShadingPattern, Language,
     EmphasisNone, EmphasisDot, EmphasisComma, EmphasisCircle, EmphasisUnderDot,
     // ── borders and paragraph shading ──
-    CharacterBorder, ParagraphBorderTop, ParagraphBorderLeft, ParagraphBorderBottom, ParagraphBorderRight, ParagraphBorderBox, OtherBorder,
-    BorderWidth, BorderColor, BorderSingle, BorderDouble, BorderDotted, BorderDashed, BorderNone,
+    CharacterBorder, ParagraphBorderTop, ParagraphBorderLeft, ParagraphBorderBottom, ParagraphBorderRight, ParagraphBorderBox, ParagraphBorderBetween, OtherBorder,
+    BorderWidth, BorderColor, BorderSpacing, BorderShadow, BorderSingle, BorderDouble, BorderDotted, BorderDashed, BorderNone,
     ParagraphBackgroundColor, ParagraphPatternColor, ParagraphShadingPercent, ParagraphShadingPattern,
 }
 
@@ -155,6 +156,9 @@ internal static class RtfControlWords
         // rtfdispatchvalue.cxx:477 CLSHDNG)
         ("clmgf", RtfWord.CellMergeFirst), ("clmrg", RtfWord.CellMergeContinue), ("clvmgf", RtfWord.CellVerticalMergeFirst), ("clvmrg", RtfWord.CellVerticalMergeContinue),
         ("clvertalt", RtfWord.CellAlignTop), ("clvertalc", RtfWord.CellAlignCenter), ("clvertalb", RtfWord.CellAlignBottom), ("clshdng", RtfWord.CellShadingPercent),
+        // cell text direction (rtfdispatchflag.cxx:486-500 CLTX* -> ST_TextDirection)
+        ("cltxlrtb", RtfWord.CellTextLeftToRight), ("cltxtbrl", RtfWord.CellTextTopToBottom), ("cltxbtlr", RtfWord.CellTextBottomToTop),
+        ("cltxlrtbv", RtfWord.CellTextLeftToRightVertical), ("cltxtbrlv", RtfWord.CellTextTopToBottomVertical),
         // cell borders (rtfdispatchflag.cxx:702-730 CLBRDR*, RTFBorderState::CELL) and row borders (\trbrdr*: not read by LibreOffice; Word is the reference)
         ("clbrdrt", RtfWord.CellBorderTop), ("clbrdrl", RtfWord.CellBorderLeft), ("clbrdrb", RtfWord.CellBorderBottom), ("clbrdrr", RtfWord.CellBorderRight),
         ("trbrdrt", RtfWord.RowBorderTop), ("trbrdrl", RtfWord.RowBorderLeft), ("trbrdrb", RtfWord.RowBorderBottom), ("trbrdrr", RtfWord.RowBorderRight),
@@ -181,9 +185,9 @@ internal static class RtfControlWords
         ("chbrdr", RtfWord.CharacterBorder), ("brdrt", RtfWord.ParagraphBorderTop), ("brdrl", RtfWord.ParagraphBorderLeft), ("brdrb", RtfWord.ParagraphBorderBottom),
         ("brdrr", RtfWord.ParagraphBorderRight), ("box", RtfWord.ParagraphBorderBox),
         // borders this reader does not draw: the \brdr* modifiers after them must not reach a paragraph or character border
-        ("brdrbtw", RtfWord.OtherBorder), ("brdrbar", RtfWord.OtherBorder), ("pgbrdrt", RtfWord.OtherBorder), ("pgbrdrl", RtfWord.OtherBorder),
+        ("brdrbtw", RtfWord.ParagraphBorderBetween), ("brdrbar", RtfWord.OtherBorder), ("pgbrdrt", RtfWord.OtherBorder), ("pgbrdrl", RtfWord.OtherBorder),
         ("pgbrdrb", RtfWord.OtherBorder), ("pgbrdrr", RtfWord.OtherBorder),
-        ("brdrw", RtfWord.BorderWidth), ("brdrcf", RtfWord.BorderColor),
+        ("brdrw", RtfWord.BorderWidth), ("brdrcf", RtfWord.BorderColor), ("brsp", RtfWord.BorderSpacing), ("brdrsh", RtfWord.BorderShadow),
         ("brdrs", RtfWord.BorderSingle), ("brdrhair", RtfWord.BorderSingle), ("brdrth", RtfWord.BorderSingle), ("brdrtriple", RtfWord.BorderSingle),
         ("brdrtnthsg", RtfWord.BorderSingle), ("brdrthtnsg", RtfWord.BorderSingle), ("brdrtnthtnsg", RtfWord.BorderSingle), ("brdrtnthmg", RtfWord.BorderSingle),
         ("brdrthtnmg", RtfWord.BorderSingle), ("brdrtnthtnmg", RtfWord.BorderSingle), ("brdrtnthlg", RtfWord.BorderSingle), ("brdrthtnlg", RtfWord.BorderSingle),

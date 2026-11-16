@@ -78,7 +78,7 @@ internal enum RtfAlignment : byte { Unset, Left, Right, Center, Justify }
 /// <summary>Where the \brdr* modifiers that follow go (LibreOffice RTFBorderState, rtfdocumentimpl.cxx:169-203 putBorderProperty).</summary>
 internal enum RtfBorderTarget : byte
 {
-    None, Character, Top, Left, Bottom, Right, Box, Other,
+    None, Character, Top, Left, Bottom, Right, Box, Other, Between,
     // the row definition's (parser state, not group state): the next \cellx's sides, the row's outer sides and inner lines
     CellTop, CellLeft, CellBottom, CellRight, RowTop, RowLeft, RowBottom, RowRight, RowHorizontal, RowVertical,
 }
@@ -87,7 +87,7 @@ internal enum RtfBorderTarget : byte
 [Flags]
 internal enum RtfCellMerge : byte { None = 0, First = 1, Continue = 2, VerticalFirst = 4, VerticalContinue = 8 }
 
-/// <summary>One cell of a row definition: its right edge (\cellx), fill (\clcbpat, \clshdng), merge marks, vertical alignment and borders.</summary>
+/// <summary>One cell of a row definition: its right edge (\cellx), fill (\clcbpat, \clshdng), merge marks, vertical alignment, text direction and borders.</summary>
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 internal struct RtfCellDefinition
 {
@@ -96,18 +96,26 @@ internal struct RtfCellDefinition
     public short ShadingPercent;     // \clshdng in hundredths of a percent
     public RtfCellMerge Merge;
     public byte VerticalAlignment;   // 0 top, 1 centre, 2 bottom
+    public RtfCellTextDirection TextDirection;   // \cltx*
     public RtfBorder Top, Left, Bottom, Right;
 }
 
 internal enum RtfBorderStyle : byte { Absent, Single, Double, Dotted, Dashed, None }
 
-/// <summary>One border: its line (Absent = not set), width in twips (\brdrwN, 0 = not given) and colour (\brdrcfN).</summary>
+/// <summary>\cltxlrtb / \cltxtbrl / \cltxbtlr / \cltxlrtbv / \cltxtbrlv: LibreOffice rtfdispatchflag.cxx:486-500 maps them to the .docx
+/// ST_TextDirection values lrTb / tbRl / btLr / lrTbV / tbRlV, drawn here by the .docx mapping (DocxTableFormatting.TextDirectionCss).</summary>
+internal enum RtfCellTextDirection : byte { LeftToRightTopToBottom, TopToBottomRightToLeft, BottomToTopLeftToRight, LeftToRightTopToBottomVertical, TopToBottomRightToLeftVertical }
+
+/// <summary>One border: its line (Absent = not set), width in twips (\brdrwN, 0 = not given), colour (\brdrcfN), distance from the
+/// text in twips (\brspN; rtfdispatchvalue.cxx:1049-1055 BRSP -> w:space) and shadow (\brdrsh; rtfdispatchflag.cxx:1288-1290 -> w:shadow).</summary>
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 internal struct RtfBorder
 {
     public RtfBorderStyle Style;
     public short Width;
     public short Color;
+    public short Space;
+    public byte IsShadowed;
 }
 
 /// <summary>
@@ -145,6 +153,7 @@ internal struct RtfGroupState
     public short CharacterShading;         // \chshdng, hundredths of a percent (a \chbg* pattern = 3333)
     public RtfBorder CharacterBorder;      // \chbrdr
     public RtfBorder BorderTop, BorderLeft, BorderBottom, BorderRight;   // \brdrt / \brdrl / \brdrb / \brdrr / \box (physical sides)
+    public RtfBorder BorderBetween;        // \brdrbtw: between the paragraphs of one border group (rtfdispatchflag.cxx:766-787 -> w:pBdr between)
     public short ParagraphBackgroundColor, ParagraphPatternColor;       // \cbpat (the fill), \cfpat (the pattern colour)
     public short ParagraphShading;         // \shading, hundredths of a percent (a \bg* pattern = 3333)
     public short FrameHorizontalDistance;  // \dxfrtext / \dfrmtxtx twips: a frame's gap to the text (a drop cap's distance)
@@ -184,7 +193,7 @@ internal struct RtfGroupState
         Alignment = RtfAlignment.Unset;
         ListLevel = 0; ListOverride = 0; OutlineLevel = -1; NestingLevel = 0; Style = 0;
         LeftIndent = RightIndent = StartIndent = EndIndent = FirstLineIndent = SpaceBefore = SpaceAfter = LineSpacing = 0;
-        BorderTop = BorderLeft = BorderBottom = BorderRight = default;
+        BorderTop = BorderLeft = BorderBottom = BorderRight = BorderBetween = default;
         ParagraphBackgroundColor = ParagraphPatternColor = ParagraphShading = 0;
         DropCapLines = 0; FrameHorizontalDistance = 0;
         if (BorderTarget != RtfBorderTarget.Character) BorderTarget = RtfBorderTarget.None;

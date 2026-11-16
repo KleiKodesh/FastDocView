@@ -59,8 +59,8 @@ public static class RtfFormattingAudit
             "yts", "ilfomacatclnup", "nestinglevel"]),
         ("tab stops (CSS has no positioned tabs; the default tab-size is used)", [
             "tx", "tb", "tqr", "tqc", "tqdec", "tldot", "tlhyph", "tlul", "tlth", "tleq", "tlmdot", "jclisttab"]),
-        ("border details not drawn: spacing to the text, shadow, table-only and art borders, the dash-dot lines LibreOffice does not read either", [
-            "brsp", "brdrsh", "brdrtbl", "brdrdashdot", "brdrdashdotdot", "brdrart"]),
+        ("border details not drawn: table-only and art borders, the dash-dot lines LibreOffice does not read either", [
+            "brdrtbl", "brdrdashdot", "brdrdashdotdot", "brdrart"]),
         ("table geometry beyond cell widths (gaps, heights, merges, cell borders, autofit, banding, preferred widths)", [
             "trgaph", "trrh", "trhdr", "trkeep", "trkeepfollow", "trbrdrt", "trbrdrb", "trbrdrl", "trbrdrr", "trbrdrh", "trbrdrv",
             "trautofit", "trftsWidth", "trwWidth", "trftsWidthB", "trwWidthB", "trftsWidthA", "trwWidthA", "trpaddl", "trpaddr", "trpaddt", "trpaddb",

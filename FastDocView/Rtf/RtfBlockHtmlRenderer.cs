@@ -98,6 +98,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _renderedNotes = notes.Length == 0 ? null : new List<WordDocumentNoteHtml>(notes.Length);
         _indexListLabel = table.ListLabelOf(blockIndex);
         _cellsMergedBelow = index.CellsMergedBelow(blockIndex);
+        _isBorderJoinedAbove = index.IsBorderJoinedToNext(blockIndex - 1);
+        _isBorderJoinedBelow = index.IsBorderJoinedToNext(blockIndex);
         _isFirstParagraph = true;
         _fields.Restore(table.FieldStateOf(blockIndex));
         _fieldLinks.Clear();
@@ -250,6 +252,25 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         return points.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "pt " + style + " " + (HexCss(_tables.ColorHex(border.Color)) ?? "#000");
     }
 
+    /// <summary>A drawn border's \brsp (twips), else null (the default padding).</summary>
+    private static int? BorderSpace(in RtfBorder border) => border.Style is RtfBorderStyle.Absent or RtfBorderStyle.None || border.Space == 0 ? null : border.Space;
+
+    /// <summary>
+    /// \brdrsh on any drawn side shadows the box (Word has one shadow per paragraph box: .docx w:shadow, which LibreOffice turns into
+    /// one SvxShadowItem, DomainMapper / PropertyMap "ParaShadowFormat"): as wide as the widest shadowed line, in that line's colour.
+    /// </summary>
+    private void SetBorderShadow(WordParagraphFormatting formatting, in RtfGroupState state)
+    {
+        foreach (RtfBorder border in new[] { state.BorderRight, state.BorderBottom, state.BorderTop, state.BorderLeft })
+        {
+            if (border.IsShadowed == 0 || border.Style is RtfBorderStyle.Absent or RtfBorderStyle.None) continue;
+            double points = border.Width > 0 ? Math.Max(0.25, border.Width / 20.0) : 0.5;
+            if (points <= formatting.BorderShadowWidthPt) continue;
+            formatting.BorderShadowWidthPt = points;
+            formatting.BorderShadowColorCss = HexCss(_tables.ColorHex(border.Color)) ?? "#000";
+        }
+    }
+
     /// <summary>\highlightN — the RTF 1.5 spec's fixed palette (LibreOffice's RTF export writes the same ico numbers).</summary>
     private static string? HighlightCss(byte index) => index switch
     {
@@ -274,6 +295,11 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         WordParagraphFormatting formatting = ParagraphFormatting(state);
         int outline = isTopLevel ? (state.OutlineLevel is >= 0 and <= 8 ? state.OutlineLevel : state.OutlineLevel == 9 ? -1 : _tables.OutlineLevelOfStyle(state.Style)) : -1;
         string tag = _flow.IsTextBox ? "span" : outline is >= 0 and <= 5 ? "h" + (outline + 1) : "p";
+        if (isTopLevel && formatting.BorderGroupKey is not null)
+        {
+            formatting.IsBorderJoinedAbove = _isBorderJoinedAbove;
+            formatting.IsBorderJoinedBelow = _isBorderJoinedBelow;
+        }
 
         // a link field whose result spans paragraphs: closed with each paragraph and reopened in the next
         string? openLink = _flow.OpenLink;
@@ -410,12 +436,18 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             BorderBottomCss = BorderCss(state.BorderBottom),
             BorderStartCss = BorderCss(state.BorderLeft),
             BorderEndCss = BorderCss(state.BorderRight),
+            BorderBetweenCss = BorderCss(state.BorderBetween),
+            BorderTopSpaceTwips = BorderSpace(state.BorderTop),
+            BorderBottomSpaceTwips = BorderSpace(state.BorderBottom),
+            BorderStartSpaceTwips = BorderSpace(state.BorderLeft),
+            BorderEndSpaceTwips = BorderSpace(state.BorderRight),
             DropCapLines = state.DropCapLines,
             IsDropCapInMargin = state.Has(RtfStateFlags.DropCapInMargin),
             DropCapDistanceTwips = state.FrameHorizontalDistance,
             IsAutoHyphenationSuppressed = state.Has(RtfStateFlags.NoAutoHyphenation),
         };
         formatting.IsHyphenated = _tables.IsAutoHyphenation && !formatting.IsAutoHyphenationSuppressed;
+        SetBorderShadow(formatting, state);
         formatting.RunFormatting.Language = WordLanguageIds.TagOf(state.Language != 0 ? state.Language : _tables.DefaultLanguage);
         // \slN: none / 1000 = auto; with \slmult1 a multiple of 240; else negative = exactly, positive = at least (RTF 1.5 spec)
         if (state.LineSpacing != 0 && state.LineSpacing != 1000)
@@ -493,6 +525,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     public override bool WantsPictureData => _capturedPictureOrdinal >= 0;
 
     private int _blockIndex;
+    private bool _isBorderJoinedAbove, _isBorderJoinedBelow;   // the block's paragraph shares its border box with the block before / after (from the index)
     private ulong _cellsMergedBelow;     // the outer row's cells that the next row continues (\clvmrg), from the index
     private int _pictureOrdinal;                 // pictures met in this block so far (their ids count them)
     private bool _hasDrawnListTextBullet;        // the {\listtext} picture bullet is drawn once per block
@@ -970,6 +1003,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
                 if (width > 0) css.Append("width:").Append(WordParagraphFormatting.TwipsToPt(width)).Append("pt;");
                 if (CellFillCss(cell) is { } fill) css.Append("background:").Append(fill).Append(';');
                 if (cell.VerticalAlignment != 0) css.Append("vertical-align:").Append(cell.VerticalAlignment == 1 ? "middle" : "bottom").Append(';');
+                if (DocxTableFormatting.TextDirectionCss(TextDirectionName(cell.TextDirection)) is { } direction) css.Append(direction);
                 bool isFirst = i == 0, isLast = last >= cells.Count - 1;
                 RtfCellDefinition lastCell = cells[Math.Min(last, cells.Count - 1)];
                 if (hasBorders) AppendCellBorders(css, cell, lastCell, rowBorders, isFirst, isLast, isCoveredBelow, (mergedBelow & (1UL << Math.Min(i, 63))) != 0);
@@ -985,6 +1019,16 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             html.Append("</td>");
         }
     }
+
+    /// <summary>\cltx* as the .docx ST_TextDirection name LibreOffice maps it to (rtfdispatchflag.cxx:486-500).</summary>
+    private static string? TextDirectionName(RtfCellTextDirection direction) => direction switch
+    {
+        RtfCellTextDirection.TopToBottomRightToLeft => "tbRl",
+        RtfCellTextDirection.BottomToTopLeftToRight => "btLr",
+        RtfCellTextDirection.LeftToRightTopToBottomVertical => "lrTbV",
+        RtfCellTextDirection.TopToBottomRightToLeftVertical => "tbRlV",
+        _ => null,
+    };
 
     private void AppendCellBorders(StringBuilder css, in RtfCellDefinition cell, in RtfCellDefinition lastCell, IReadOnlyList<RtfBorder> rowBorders,
                                    bool isFirst, bool isLast, bool isCoveredBelow, bool isMergedBelow)

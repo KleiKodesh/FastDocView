@@ -56,6 +56,15 @@ public sealed class WordParagraphFormatting
     public bool IsBorderJoinedBelow;        // same border group as the paragraph after: no bottom border, its spacing inside the box
     public string? BorderStartCss;
     public string? BorderEndCss;
+    /// <summary>
+    /// The distance between the text and each border, twips (.docx w:space, RTF \brsp); null = the default padding (1 pt above and
+    /// below, 4 pt at the sides). Word measures it from the text to the line (ECMA-376 17.3.4 space: "the spacing offset ... between
+    /// the text and this border").
+    /// </summary>
+    public int? BorderTopSpaceTwips, BorderBottomSpaceTwips, BorderStartSpaceTwips, BorderEndSpaceTwips;
+    /// <summary>The border box's shadow (.docx w:shadow, RTF \brdrsh): Word draws it right and below the box, as wide as the line; null = none.</summary>
+    public string? BorderShadowColorCss;
+    public double BorderShadowWidthPt;
     public WordRunFormatting RunFormatting = new();
 
     /// <summary>
@@ -129,9 +138,18 @@ public sealed class WordParagraphFormatting
         }
         if (hasBorder || IsBorderJoinedAbove || IsBorderJoinedBelow)
         {
-            string paddingTop = IsBorderJoinedAbove ? TwipsToPt(SpaceBeforeTwips) + "pt" : "1pt";
-            string paddingBottom = IsBorderJoinedBelow ? TwipsToPt(SpaceAfterTwips) + "pt" : "1pt";
-            css.Append("padding:").Append(paddingTop).Append(" 4pt ").Append(paddingBottom).Append(';');
+            string paddingTop = IsBorderJoinedAbove ? TwipsToPt(SpaceBeforeTwips) + "pt" : Space(BorderTopSpaceTwips, "1pt");
+            string paddingBottom = IsBorderJoinedBelow ? TwipsToPt(SpaceAfterTwips) + "pt" : Space(BorderBottomSpaceTwips, "1pt");
+            string paddingStart = Space(BorderStartSpaceTwips, "4pt"), paddingEnd = Space(BorderEndSpaceTwips, "4pt");
+            if (paddingStart == paddingEnd) css.Append("padding:").Append(paddingTop).Append(' ').Append(paddingStart).Append(' ').Append(paddingBottom).Append(';');
+            else css.Append("padding-top:").Append(paddingTop).Append(";padding-bottom:").Append(paddingBottom)
+                    .Append(";padding-inline-start:").Append(paddingStart).Append(";padding-inline-end:").Append(paddingEnd).Append(';');
+            // the shadow runs along the right and the bottom of the box; inside a border group only the group's last paragraph has the bottom one
+            if (BorderShadowColorCss is { } shadow && BorderShadowWidthPt > 0)
+            {
+                string width = BorderShadowWidthPt.ToString("0.##", CultureInfo.InvariantCulture) + "pt";
+                css.Append("box-shadow:").Append(width).Append(' ').Append(IsBorderJoinedBelow ? "0" : width).Append(" 0 0 ").Append(shadow).Append(';');
+            }
         }
         if (LineSpacingTwipsOrAuto > 0)
         {
@@ -154,7 +172,10 @@ public sealed class WordParagraphFormatting
         => BorderTopCss is null or "none" && BorderBottomCss is null or "none" && BorderStartCss is null or "none" && BorderEndCss is null or "none"
            && BorderBetweenCss is null or "none"
             ? null
-            : string.Join("|", BorderTopCss, BorderBottomCss, BorderStartCss, BorderEndCss, BorderBetweenCss, LeftIndentTwips, RightIndentTwips);
+            : string.Join("|", BorderTopCss, BorderBottomCss, BorderStartCss, BorderEndCss, BorderBetweenCss, LeftIndentTwips, RightIndentTwips,
+                          BorderTopSpaceTwips, BorderBottomSpaceTwips, BorderStartSpaceTwips, BorderEndSpaceTwips, BorderShadowColorCss, BorderShadowWidthPt);
+
+    private static string Space(int? twips, string fallback) => twips is { } value ? TwipsToPt(value) + "pt" : fallback;
 
     /// <summary>The lang attribute for a hyphenated paragraph (Chromium hyphenates only text whose language it knows); null otherwise.</summary>
     public string? HyphenationLanguageAttribute
