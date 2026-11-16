@@ -42,7 +42,7 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
     /// Every block is known: the body has closed (what follows it in the file is only closing tags) or
     /// the input has ended. <see cref="Complete"/> still reads to the end, so the checkpoints match the one-go build.
     /// </summary>
-    public bool IsEveryBlockKnown => IsBodyScanned || _scanner.IsBodyComplete;
+    public bool IsEveryBlockKnown => IsBodyScanned || _scanner.IsBodyComplete || _scanner.IsMalformed;
     public OdtRandomAccessIndex? CompletedIndex { get; private set; }
 
     /// <param name="styles">The indexing cascade (styles.xml already added for a package); the scanner adds the sections it captures.</param>
@@ -130,6 +130,7 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
 
     private void AdvanceOneChunk()
     {
+        if (_scanner.IsMalformed) { IsBodyScanned = true; return; }      // the scan stopped at the first error: nothing after it is read
         int read;
         if (_contentCursor is not null)
         {

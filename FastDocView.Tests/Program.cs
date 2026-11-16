@@ -68,6 +68,8 @@ for (int i = 0; i < args.Length; i++)
         case "--index-cache": WordDocumentIndexCacheTest.Run(); skipSynthetic = true; break;   // sidecar cache LRU: eviction, caps, stale / orphan cleanup, concurrency (seconds)
         case "--connector-route": OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); skipSynthetic = true; break;   // only the connector routing checks (seconds)
         case "--mhtml-pictures": WebArchivePicturesTest.Run(); skipSynthetic = true; break;   // web archive pictures (seconds)
+        case "--word-xml": WordXmlFormatsTest.Run(); skipSynthetic = true; break;
+        case "--odt-malformed": OdtMalformedRecoveryTest.Run(); skipSynthetic = true; break;   // only the malformed .odt / .fodt checks (seconds)   // only the Flat OPC / Word 2003 XML checks (seconds)
         case "--tables": WordTablesFidelityTest.Run(); skipSynthetic = true; break;   // only the table checks (seconds)
         case "--note-numbering": NoteNumberingFidelityTest.Run(); skipSynthetic = true; break;   // only the note numbering checks (seconds)
         case "--picture-crop": PictureCropFidelityTest.Run(); skipSynthetic = true; break;   // only the picture crop checks (seconds)
@@ -179,6 +181,8 @@ if (!skipSynthetic)
     ListLabelFormatsTest.Run();
     LineSpacingTest.Run();
     MalformedXmlRecoveryTest.Run();
+    WordXmlFormatsTest.Run();
+    OdtMalformedRecoveryTest.Run();
     CompactIndexTest.RunEliasFano();
     DocxIndexAndRenderTest.Run(blocks);
 }

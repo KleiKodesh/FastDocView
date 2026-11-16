@@ -22,6 +22,9 @@ public sealed class WordDocumentFileStream : Stream
 
     public string Path { get; }
 
+    /// <summary>The file whose change <see cref="HasSourceChanged"/> reports: <see cref="Path"/>, or the document a translated copy was made from.</summary>
+    public string WatchedPath { get; }
+
     // process-wide counters (tests measure what a window, search or notes page costs in file opens, reads and stats)
     private static long _processOpenCount, _processBytesRead, _processSourceChecks;
     public static long ProcessOpenCount => Interlocked.Read(ref _processOpenCount);
@@ -36,14 +39,20 @@ public sealed class WordDocumentFileStream : Stream
         return file;
     }
 
-    public WordDocumentFileStream(string path)
+    public WordDocumentFileStream(string path, string? watchedPath = null)
     {
         Path = path;
+        WatchedPath = watchedPath ?? path;
         var info = new FileInfo(path);
         if (!info.Exists) throw new FileNotFoundException("Document not found.", path);
-        _lengthAtOpen = info.Length;
-        _lastWriteTicksAtOpen = info.LastWriteTimeUtc.Ticks;
+        _length = info.Length;
+        var watched = WatchedPath == path ? info : new FileInfo(WatchedPath);
+        if (!watched.Exists) throw new FileNotFoundException("Document not found.", WatchedPath);
+        _lengthAtOpen = watched.Length;
+        _lastWriteTicksAtOpen = watched.LastWriteTimeUtc.Ticks;
     }
+
+    private readonly long _length;
 
     /// <summary>True when the file on disk is no longer the version this stream was opened on (or is gone).</summary>
     public bool HasSourceChanged
@@ -51,7 +60,7 @@ public sealed class WordDocumentFileStream : Stream
         get
         {
             Interlocked.Increment(ref _processSourceChecks);
-            var info = new FileInfo(Path);
+            var info = new FileInfo(WatchedPath);
             return !info.Exists || info.Length != _lengthAtOpen || info.LastWriteTimeUtc.Ticks != _lastWriteTicksAtOpen;
         }
     }
@@ -88,7 +97,7 @@ public sealed class WordDocumentFileStream : Stream
         {
             SeekOrigin.Begin => offset,
             SeekOrigin.Current => _position + offset,
-            _ => _lengthAtOpen + offset,
+            _ => _length + offset,
         };
         return _position;
     }
@@ -96,7 +105,7 @@ public sealed class WordDocumentFileStream : Stream
     public override bool CanRead => true;
     public override bool CanSeek => true;
     public override bool CanWrite => false;
-    public override long Length => _lengthAtOpen;
+    public override long Length => _length;
     public override long Position { get => _position; set => _position = value; }
     public override void Flush() { }
     public override void SetLength(long value) => throw new NotSupportedException();

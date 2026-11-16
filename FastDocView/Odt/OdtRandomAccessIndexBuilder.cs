@@ -61,8 +61,17 @@ public static class OdtRandomAccessIndexBuilder
                                                long sourceLength, long sourceLastWriteTicksUtc, bool isFlat,
                                                ZipEntryLocation? content, List<DeflateCheckpoint> checkpoints)
     {
-        if (!scanner.IsBodyComplete && !scanner.KeepCompleteBlocks())
-            throw new InvalidDataException("OpenDocument: no complete office:text body.");
+        // A body that breaks off (cut short, or a mismatched end tag - the first fatal XML error) keeps the blocks complete
+        // before the break and marks the rest unreadable: the reader shows them, then the "could not be read" placeholder, as a
+        // malformed .docx part keeps what precedes its first error. A file broken before office:text has nothing to show.
+        bool hasUnreadableRest = !scanner.IsBodyComplete;
+        if (hasUnreadableRest)
+        {
+            if (!scanner.HasTextBodyStarted)
+                throw new InvalidDataException(scanner.IsMalformed ? "OpenDocument: the XML is not well-formed before the office:text body (a mismatched end tag)."
+                                                                   : "OpenDocument: no complete office:text body.");
+            scanner.KeepCompleteBlocks();
+        }
         int blockCount = scanner.BlockStartOffsets.Count;
         long lastEnd = blockCount > 0 ? scanner.BlockEndOffsets[blockCount - 1] : 0;
         return new OdtRandomAccessIndex(sourceLength, sourceLastWriteTicksUtc, isFlat, content, checkpoints, scanner.RootOpenTag,
@@ -76,6 +85,7 @@ public static class OdtRandomAccessIndexBuilder
             Bookmarks = new WordDocumentBookmarkTable(scanner.BookmarkNames.ToArray(), scanner.BookmarkBlocks.ToArray()),
             ConnectedShapeBlocks = scanner.ConnectedShapeBlocks.ToArray(),
             ConnectedShapes = scanner.ConnectedShapeBlocks.Count == 0 ? OdtConnectedShapeTable.Empty : null,
+            HasUnreadableRest = hasUnreadableRest,
         };
     }
 }

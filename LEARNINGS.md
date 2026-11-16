@@ -478,3 +478,15 @@ window) and the p95 (a slow path hit by more than one window in twenty); the wor
   `playwright/toratEmetGapCheck.mjs` (it lists every contributor); the wrapper's height was far larger than its heading's.
 - Corpus: 1,246 books have a title and a later section heading; 416 have plain short lines between them, 603 distinct texts, 523 of them in one book only.
   47 texts occur in 3 or more books (the notes list). Many are credits ("Rav X shlita"), not remarks about the book.
+
+## 2026-11-16: Word's XML formats and malformed ODT
+
+- Word 2016 still saves both: SaveAs2 FileFormat 19 = Flat OPC ("Word XML Document", pkg:package), 11 = Word 2003 XML.
+  Flat OPC parts carry their own namespace declarations, so a pkg:xmlData's inner bytes parse alone; binary parts are
+  base64 with line breaks.
+- Word 2003 XML writes `xml:space="preserve"` once, on the root: split into parts, every w:t needs its own or leading /
+  trailing spaces vanish. The run fonts of complex-script text come from w:fonts/w:defaultFonts (docDefaults in .docx);
+  without them a right-to-left run loses its font.
+- The ODT body scanner never checked end-tag names: a mismatched end tag silently closed the wrong element and could end
+  office:text early, dropping the rest of the body without any sign. Name hashes per frame catch it.
+

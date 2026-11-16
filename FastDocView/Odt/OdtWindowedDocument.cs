@@ -40,14 +40,14 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
     {
         lock (_readLock)
         {
-            if (_builder is not { } builder) return _index!.BlockCount;
+            if (_builder is not { } builder) return _index!.BlockCount + UnreadableRestBlocks;
             if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
             try
             {
                 builder.AdvanceUntilKnown((int)Math.Min(int.MaxValue, (long)builder.KnownBlockCount + Math.Max(1, blocks)));
                 if (builder.IsEveryBlockKnown) CompleteIndexLocked();
                 else CountNewNoteReferences();
-                return _builder?.KnownBlockCount ?? _index!.BlockCount;
+                return _builder?.KnownBlockCount ?? _index!.BlockCount + UnreadableRestBlocks;
             }
             finally { _releasableFile?.Release(); }
         }
@@ -57,8 +57,11 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
 
     public int KnownBlockCount
     {
-        get { lock (_readLock) return _builder?.KnownBlockCount ?? _index!.BlockCount; }
+        get { lock (_readLock) return _builder?.KnownBlockCount ?? _index!.BlockCount + UnreadableRestBlocks; }
     }
+
+    /// <summary>1 when the body broke off (<see cref="OdtRandomAccessIndex.HasUnreadableRest"/>): one more block, the "could not be read" placeholder, follows the last one.</summary>
+    private int UnreadableRestBlocks => _index is { HasUnreadableRest: true } ? 1 : 0;
 
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
     public bool IsRightToLeft { get; }
@@ -558,7 +561,9 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                     if (builder.IsEveryBlockKnown) CompleteIndexLocked();
                     else CountNewNoteReferences();
                 }
-                return _blockRenderGuard.Render(firstBlockIndex, count, _blocks.BlockCount, RenderBlocksLocked, _blocks.BlockKindOf);
+                IReadOnlyList<WordDocumentBlockHtml> blocks = _blockRenderGuard.Render(firstBlockIndex, count, _blocks.BlockCount, RenderBlocksLocked, _blocks.BlockKindOf);
+                if (UnreadableRestBlocks == 0 || firstBlockIndex > _index!.BlockCount || (long)firstBlockIndex + count <= _index.BlockCount) return blocks;
+                return [.. blocks, new WordDocumentBlockHtml(_index.BlockCount, WordDocumentBlockKind.Paragraph, WordDocumentBlockRenderGuard.PlaceholderHtml, [])];
             }
             finally { _releasableFile?.Release(); }
         }

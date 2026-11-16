@@ -8,7 +8,8 @@ namespace FastDocView;
 
 /// <summary>
 /// File-system entry point. Picks the format by signature (zip → .docx family, or OpenDocument text
-/// when its `mimetype` entry says so; OLE compound file → .doc; XML rooted in office:document → .fodt; `{\rtf` → RTF),
+/// when its `mimetype` entry says so; OLE compound file → .doc; XML rooted in office:document → .fodt, in pkg:package →
+/// Flat OPC (Word XML Document), in the 2003 w:wordDocument → Word 2003 XML; `{\rtf` → RTF),
 /// never by extension, and lets the <see cref="WordIndexPolicy"/> decide whether an index
 /// is worth building. <see cref="Decide"/> answers the same question without opening the document,
 /// for the host's "which files to index" picker.
@@ -18,9 +19,9 @@ public static class WordWindowedDocumentOpener
     // No loose .html / .htm (decided 2026-11-03): real web pages often need scripts, external CSS and live resources a
     // static windowed reader does not run, so they would render broken. Word web archives (.mht/.mhtml) stay: they are
     // self-contained static documents.
-    public static readonly string[] SupportedExtensions = [".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot", ".odt", ".ott", ".fodt", ".mht", ".mhtml", ".txt", ".rtf"];
+    public static readonly string[] SupportedExtensions = [".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot", ".odt", ".ott", ".fodt", ".mht", ".mhtml", ".txt", ".rtf", ".xml"];
 
-    public enum WordFileFormat { Docx, DocBinary, WebArchive, RichText, OpenDocument, FlatOpenDocument, Unknown, PlainText }
+    public enum WordFileFormat { Docx, DocBinary, WebArchive, RichText, OpenDocument, FlatOpenDocument, Unknown, PlainText, FlatXmlPackage, Word2003Xml }
 
     public static WordFileFormat DetectFormat(string filePath)
     {
@@ -30,8 +31,15 @@ public static class WordWindowedDocumentOpener
         if (Path.GetExtension(filePath).Equals(".txt", StringComparison.OrdinalIgnoreCase)) return WordFileFormat.PlainText;   // any bytes are text; no signature applies
         if (header[0] == (byte)'P' && header[1] == (byte)'K')
             return OdtPackage.IsOpenDocumentTextPackage(file) ? WordFileFormat.OpenDocument : WordFileFormat.Docx;
-        if ((header[0] == (byte)'<' || (header[0] == 0xEF && header[1] == 0xBB && header[2] == 0xBF)) && OdtPackage.IsFlatOpenDocumentText(file))
-            return WordFileFormat.FlatOpenDocument;
+        if (header[0] == (byte)'<' || (header[0] == 0xEF && header[1] == 0xBB && header[2] == 0xBF))
+        {
+            if (OdtPackage.IsFlatOpenDocumentText(file)) return WordFileFormat.FlatOpenDocument;
+            switch (DocxFlatPackageStream.RootElement(file))
+            {
+                case (DocxFlatPackageStream.PackageNamespace, "package"): return WordFileFormat.FlatXmlPackage;
+                case (Word2003XmlTranslator.WordNamespace, "wordDocument"): return WordFileFormat.Word2003Xml;
+            }
+        }
         if (header[0] == 0xD0 && header[1] == 0xCF && header[2] == 0x11 && header[3] == 0xE0) return WordFileFormat.DocBinary;
         if (header[0] == (byte)'M' && header[1] == (byte)'I' && header[2] == (byte)'M' && header[3] == (byte)'E') return WordFileFormat.WebArchive;
         if (header[0] == (byte)'{' && header[1] == (byte)'\\') return WordFileFormat.RichText;
@@ -57,6 +65,8 @@ public static class WordWindowedDocumentOpener
         return DetectFormat(filePath) switch
         {
             WordFileFormat.Docx => DocxWindowedDocument.Open(filePath, policy, progress, cancellation),
+            WordFileFormat.FlatXmlPackage => DocxWindowedDocument.Open(filePath, DocxWindowedDocument.DocxPackageForm.FlatXml, filePath, policy, progress, cancellation),
+            WordFileFormat.Word2003Xml => Word2003XmlTranslator.Open(filePath, policy, progress, cancellation),
             WordFileFormat.DocBinary => DocBinaryWindowedDocument.Open(filePath, policy, progress, cancellation),
             WordFileFormat.OpenDocument => OdtWindowedDocument.Open(filePath, isFlat: false, policy, progress, cancellation),
             WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Open(filePath, isFlat: true, policy, progress, cancellation),
@@ -84,8 +94,7 @@ public static class WordWindowedDocumentOpener
         + $"{cause.Message} Make it available offline, or start the cloud app, then open it again.", cause);
 
     /// <summary>
-    /// The error for a file no reader takes, naming what it is when its first bytes tell: Word 2003
-    /// XML, HTML, or a Word for Windows 1.x / 2.0 file (a FIB with no compound file around it; wIdent
+    /// The error for a file no reader takes, naming what it is when its first bytes tell: HTML, or a Word for Windows 1.x / 2.0 file (a FIB with no compound file around it; wIdent
     /// 0xA59B/0xA59C = Word 1, 0xA5DB = Word 2 per LibreOffice ww8scan.cxx WW8Fib::GetFIBVersion).
     /// </summary>
     private static Exception DescribeUnknown(string filePath)
@@ -97,8 +106,6 @@ public static class WordWindowedDocumentOpener
         if (identifier is 0xA59B or 0xA59C) return new NotSupportedException("Word for Windows 1.x documents are not supported.");
         if (identifier == 0xA5DB) return new NotSupportedException("Word for Windows 2.0 documents are not supported.");
         string text = System.Text.Encoding.UTF8.GetString(head, 0, count);
-        if (text.Contains("schemas.microsoft.com/office/word/2003/wordml"))
-            return new NotSupportedException("Word 2003 XML documents (WordprocessingML 2003) are not supported.");
         if (text.IndexOf("<html", StringComparison.OrdinalIgnoreCase) >= 0 || text.IndexOf("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) >= 0)
             return new NotSupportedException("HTML pages saved with a Word extension are not supported.");
         return new InvalidDataException("Not a Word, RTF, text or OpenDocument file (no known signature).");
@@ -117,6 +124,8 @@ public static class WordWindowedDocumentOpener
         return DetectFormat(filePath) switch
         {
             WordFileFormat.Docx => DocxWindowedDocument.Decide(filePath, policy),
+            WordFileFormat.FlatXmlPackage => DocxWindowedDocument.Decide(filePath, policy, DocxWindowedDocument.DocxPackageForm.FlatXml),
+            WordFileFormat.Word2003Xml => Word2003XmlTranslator.Decide(filePath, policy),
             WordFileFormat.DocBinary => DocBinaryWindowedDocument.Decide(filePath, policy),
             WordFileFormat.OpenDocument => OdtWindowedDocument.Decide(filePath, policy, isFlat: false),
             WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Decide(filePath, policy, isFlat: true),

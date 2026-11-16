@@ -18,7 +18,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 18;    // 18: style sections keep loext:writing-mode on cells; 17: style sections keep the Asian / complex languages and the script / rfc tags (list numbers in the paragraph language); 16: style sections keep table row heights (style:row-height / min-row-height); 15: list levels mark a recoded symbol bullet (Latin label script); 14: list levels keep picture bullets, symbol-font bullets and the label text style; 13: style sections keep fo:hyphenate, fo:language / fo:country and style:drop-cap; 12: loext:margin-gutter no longer added twice to section widths; 11: section column lefts (+1, 0 = unknown); 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
+    private const int FormatVersion = 19;    // 19: HasUnreadableRest (a body cut short or malformed); 18: style sections keep loext:writing-mode on cells; 17: style sections keep the Asian / complex languages and the script / rfc tags (list numbers in the paragraph language); 16: style sections keep table row heights (style:row-height / min-row-height); 15: list levels mark a recoded symbol bullet (Latin label script); 14: list levels keep picture bullets, symbol-font bullets and the label text style; 13: style sections keep fo:hyphenate, fo:language / fo:country and style:drop-cap; 12: loext:margin-gutter no longer added twice to section widths; 11: section column lefts (+1, 0 = unknown); 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
     /// <summary>Body bytes between span anchors: a random block rescans at most this much on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
 
@@ -45,6 +45,8 @@ public sealed class OdtRandomAccessIndex
     public int[] SectionColumnLefts { get; init; } = [];
     /// <summary>Bookmarks and reference marks (name -> block), see OdtBodyBlockScanner.BookmarkNames.</summary>
     public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
+    /// <summary>The body broke off after the last block (cut short, or a mismatched end tag): the reader shows one "could not be read" block after it.</summary>
+    public bool HasUnreadableRest { get; init; }
     /// <summary>The blocks holding shapes with an id (OdtBodyBlockScanner.ConnectedShapeBlocks) - only while <see cref="ConnectedShapes"/> is still to be recorded; not stored.</summary>
     internal int[] ConnectedShapeBlocks { get; init; } = [];
     /// <summary>The shapes connectors may be glued to, by id; null until recorded from <see cref="ConnectedShapeBlocks"/> (OdtWindowedDocument, before the index is saved).</summary>
@@ -184,6 +186,7 @@ public sealed class OdtRandomAccessIndex
         Section($"bookmarks ({Bookmarks.Names.Length})");
         (ConnectedShapes ?? throw new InvalidOperationException("OpenDocument index: connected shapes not recorded yet.")).Write(writer);
         Section($"connected shapes ({ConnectedShapes.Count})");
+        writer.Write(HasUnreadableRest);
         writer.Flush();
     }
 
@@ -246,6 +249,7 @@ public sealed class OdtRandomAccessIndex
         if (bookmarkBlocks.Length != bookmarkNames.Length || bookmarkBlocks.Any(block => block < 0 || block >= Math.Max(1, blockCount)))
             throw new InvalidDataException("OpenDocument index: bookmark table does not match the blocks.");
         OdtConnectedShapeTable connectedShapes = OdtConnectedShapeTable.Read(reader);
+        bool hasUnreadableRest = reader.ReadBoolean();
         return new OdtRandomAccessIndex(sourceLength, sourceTicks, isFlat, entry, checkpoints, rootOpenTag, styleSections, usedListStyles,
                                         blockCount, lastBlockEnd, anchors, groupTotals, headings, notes)
         {
@@ -254,6 +258,7 @@ public sealed class OdtRandomAccessIndex
             SectionColumnLefts = sectionColumnLefts,
             Bookmarks = new WordDocumentBookmarkTable(bookmarkNames, bookmarkBlocks),
             ConnectedShapes = connectedShapes,
+            HasUnreadableRest = hasUnreadableRest,
         };
     }
 

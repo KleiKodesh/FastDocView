@@ -79,9 +79,18 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
     /// <summary>The blocks known so far while an on-demand index is scanning (only grows), exact once complete.</summary>
     public int BlockCount => KnownBlockCount;
 
-    public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
+    public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy) => Decide(filePath, policy, DocxPackageForm.Zip);
+
+    /// <summary>How a .docx-model file is stored: a zip package, or a Flat OPC XML file read through <see cref="DocxFlatPackageStream"/>.</summary>
+    internal enum DocxPackageForm { Zip, FlatXml }
+
+    internal static WordIndexDecision Decide(string filePath, WordIndexPolicy policy, DocxPackageForm form)
     {
-        using FileStream file = WordDocumentFileStream.OpenShared(filePath);
+        FileStream shared = WordDocumentFileStream.OpenShared(filePath);
+        Stream file;
+        try { file = form == DocxPackageForm.FlatXml ? new DocxFlatPackageStream(shared) : shared; }
+        catch { shared.Dispose(); throw; }
+        using Stream disposed = file;
         long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(file);       // body + footnotes + endnotes
         bool hasCachedIndex = DocxRandomAccessIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
         return policy.Decide(filePath, textBytes, hasCachedIndex);
@@ -90,14 +99,25 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
     public static DocxWindowedDocument Open(string filePath, WordIndexPolicy? policy = null,
                                             IProgress<WordDocumentIndexProgress>? progress = null,
                                             CancellationToken cancellation = default)
+        => Open(filePath, DocxPackageForm.Zip, packagePath: filePath, policy, progress, cancellation);
+
+    /// <summary>
+    /// The file-system open for every .docx-model file. <paramref name="packagePath"/> is the file read (a Word 2003 XML
+    /// file's translated package; else <paramref name="filePath"/> itself); the index is keyed by, and checked against,
+    /// <paramref name="filePath"/>, the document the reader opened, and a change to it is what <see cref="HasSourceChanged"/> reports.
+    /// </summary>
+    internal static DocxWindowedDocument Open(string filePath, DocxPackageForm form, string packagePath, WordIndexPolicy? policy,
+                                              IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
     {
         policy ??= WordIndexPolicy.Default;
         var info = new FileInfo(filePath);
         string indexPath = policy.IndexPathFor(filePath);
         DocxRandomAccessIndex? cached = DocxRandomAccessIndex.TryLoad(indexPath, filePath);
-        var package = new WordDocumentFileStream(filePath);
+        var file = new WordDocumentFileStream(packagePath, watchedPath: filePath);
+        Stream package = file;
         try
         {
+            if (form == DocxPackageForm.FlatXml) package = new DocxFlatPackageStream(file);
             long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(package);
             WordIndexDecision decision = policy.Decide(filePath, textBytes, cached is not null);
             DocxWindowedDocument document;
@@ -108,9 +128,9 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
                 document = OpenFromStream(package, filePath, decision, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
                 if (decision.Mode == WordIndexMode.Sidecar && cached is null) document.Index.Save(indexPath);
             }
-            document._releasableFile = package;
+            document._releasableFile = file;
             document._isReadingFromFile = decision.Mode == WordIndexMode.Sidecar || cached is not null;
-            package.Release();                                // no handle on the file between windows (Word must be able to save it)
+            file.Release();                                   // no handle on the file between windows (Word must be able to save it)
             return document;
         }
         catch

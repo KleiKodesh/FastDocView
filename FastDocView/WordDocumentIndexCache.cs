@@ -45,6 +45,11 @@ public static class WordDocumentIndexCache
     public const string SidecarExtension = ".wordindex";
     public const string RecordExtension = ".wordindex.source";
     private const string TempExtension = ".tmp";
+    /// <summary>A Word 2003 XML file's translated .docx package, beside its sidecar (deleted with it; an orphan goes like an abandoned temp file).</summary>
+    public const string TranslatedPackageExtension = ".wordindex.package";
+
+    /// <summary>Where the translated package of the document whose sidecar is <paramref name="indexPath"/> lives.</summary>
+    public static string TranslatedPackagePathFor(string indexPath) => indexPath + TranslatedPackageExtension.Substring(SidecarExtension.Length);
     private static readonly TimeSpan TrimAfterSaveInterval = TimeSpan.FromMinutes(10);
 
     /// <summary>The caps and the automatic trim; the host sets them (before opening documents).</summary>
@@ -226,6 +231,7 @@ public static class WordDocumentIndexCache
 
         var entries = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
         var records = new List<FileInfo>();
+        var packages = new List<FileInfo>();
         DateTime now = DateTime.UtcNow;
         foreach (FileInfo file in new DirectoryInfo(directory).EnumerateFiles())
         {
@@ -237,6 +243,7 @@ public static class WordDocumentIndexCache
                     if (now - file.LastWriteTimeUtc >= limits.AbandonedTempAge) Count(TryDelete(file, null), ref orphans, ref inUse);
                 }
                 else if (name.EndsWith(RecordExtension, StringComparison.OrdinalIgnoreCase)) records.Add(file);
+                else if (name.EndsWith(TranslatedPackageExtension, StringComparison.OrdinalIgnoreCase)) packages.Add(file);
                 else if (name.EndsWith(SidecarExtension, StringComparison.OrdinalIgnoreCase)) entries[file.FullName] = new Entry(file);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }   // vanished while listing
@@ -246,6 +253,12 @@ public static class WordDocumentIndexCache
             string sidecarPath = record.FullName.Substring(0, record.FullName.Length - RecordExtension.Length) + SidecarExtension;
             if (entries.TryGetValue(sidecarPath, out Entry? entry)) entry.Record = record;
             else if (now - record.LastWriteTimeUtc >= limits.AbandonedTempAge) Count(TryDelete(record, null), ref orphans, ref inUse);   // its sidecar's write was interrupted (or the sidecar went)
+        }
+
+        foreach (FileInfo package in packages)
+        {
+            string sidecarPath = package.FullName.Substring(0, package.FullName.Length - TranslatedPackageExtension.Length) + SidecarExtension;
+            if (!entries.ContainsKey(sidecarPath) && now - package.LastWriteTimeUtc >= limits.AbandonedTempAge) Count(TryDelete(package, null), ref orphans, ref inUse);
         }
 
         var kept = new List<Entry>();
@@ -319,6 +332,11 @@ public static class WordDocumentIndexCache
     {
         DeleteResult result = TryDelete(entry.Sidecar, entry.LastUseUtc);
         if (result == DeleteResult.Deleted && entry.Record is not null) TryDelete(entry.Record, null);
+        if (result == DeleteResult.Deleted)
+        {
+            var package = new FileInfo(entry.Sidecar.FullName.Substring(0, entry.Sidecar.FullName.Length - SidecarExtension.Length) + TranslatedPackageExtension);
+            if (package.Exists) TryDelete(package, null);
+        }
         return result;
     }
 

@@ -69,7 +69,7 @@ as "won't do (not printed)" in docs/UNSUPPORTED-FEATURES.md, and don't build the
 |---|---|
 | `SeekableDeflate\` (own repo, submodule of this repo) | managed RFC 1951 inflater with zran checkpoints, seekable stream, zip-entry location — referenced as a `ProjectReference`, no NuGet. `git submodule update --init` fetches it. |
 | `TextEncodingDetection\` (own repo, submodule of this repo) | .txt encoding detection identical to Notepad++ (ported Notepad++ uchardet) — `ProjectReference`, no NuGet. `git submodule update --init` fetches it (in a worktree too). |
-| `…/Docx` | body + notes scanners, index (format v4) + builder, block / note readers, drawing stripper, `DocxWindowedDocument` |
+| `…/Docx` | body + notes scanners, index (format v4) + builder, block / note readers, drawing stripper, `DocxWindowedDocument`; Word XML Document (Flat OPC) as a virtual stored zip (`DocxFlatPackageStream`), Word 2003 XML translated to a .docx package (`Word2003XmlTranslator`) |
 | `…/Html`, `…/DocxHtml` | format-neutral formatting models + CSS; styles / table styles cascade; block, table, note → HTML |
 | `…/Odt` | OpenDocument text (.odt/.ott/.fodt): package detection, body scanner, list numbering, index + builder, style cascade, block reader + renderer, `OdtWindowedDocument` |
 | `…/Markup` | .txt read as HTML (one block per line, encoding by TextEncodingDetection = Notepad++) and Word web archives (MHTML: streaming quoted-printable / base64 with per-block resume points); scanner, renderer, index + builder, `MarkupWindowedDocument` |

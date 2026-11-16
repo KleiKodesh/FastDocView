@@ -261,7 +261,19 @@ SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKI
 | Plain-text API, C# only: `WordDocumentText.GetText` / `GetNotes` / `GetTextWithNotes` (exactly the search's text; footnotes and endnotes as one list; cancellable) | yes | yes | yes | yes | yes | yes |
 | Dark theme (colour rewrite incl. shapes, text boxes, charts, SmartArt; pictures unchanged) | yes | yes | yes | yes | yes | yes |
 | Clear errors: encrypted, corrupt, online-only, not found, unsupported, access denied | yes | yes | yes | yes | yes | yes |
-| Malformed XML: content before the first error kept | yes | n.a. | n.a. | no | n.a. | n.a. |
+| Malformed XML: content before the first error kept | yes | n.a. | n.a. | yes (1) | n.a. | n.a. |
 | A block that fails becomes a placeholder, reported once | yes | yes | yes | yes | yes | yes |
 | Word coexistence: shared read while Word holds or saves the file; changed file reopens | yes | yes | yes | yes | yes | yes |
 | Variants: .docm / .dotx / .dotm, .ott, RTF saved as .doc | yes | n.a. | yes | yes | n.a. | n.a. |
+| Word XML Document (Flat OPC, `pkg:package`): read by the .docx reader through its parts, windowed (2) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
+| Word 2003 XML Document (`w:wordDocument`): translated once into a .docx package beside the sidecar (3) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
+
+1. ODT / FODT: a body cut short or broken by a mismatched end tag (the first fatal XML error) keeps every block complete
+   before it, followed by one "[this part of the document could not be read]" block; a malformed styles.xml keeps the styles
+   before its error; an error the block scan does not see (an illegal character, a duplicate attribute) costs only the block
+   that holds it, as in .docx. A .fodt broken before office:text fails with a clear "not well-formed" error.
+2. Detected by content (any extension). One pass at open records where each pkg:part's bytes are; XML parts are read in
+   place, base64 parts (pictures) decoded when first asked for. UTF-8 only (Word writes UTF-8).
+3. Detected by content (Tika's sample is named .doc). Styles, default fonts, lists (w:listDef / w:list), footnotes and
+   endnotes (inline in the run), hyperlinks, bookmarks, tables, VML pictures (w:binData), sections; tracked insertions kept,
+   deletions and comments dropped. Re-translated only when the file changes.

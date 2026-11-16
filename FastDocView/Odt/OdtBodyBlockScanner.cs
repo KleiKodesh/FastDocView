@@ -95,15 +95,29 @@ internal sealed class OdtBodyBlockScanner
     public bool IsBodyComplete { get; private set; }
 
     /// <summary>
+    /// An end tag that does not close the element open at that point (a mismatched or misnested end tag: XML 1.0 3 "Element
+    /// Type Match", a fatal error). The scan stops there, as the XML parsers do at their first fatal error (LibreOffice's fast
+    /// parser, sax/source/fastparser/fastparser.cxx parseStream: the error ends the import, the elements delivered before it
+    /// stay); the index keeps the complete blocks before it (<see cref="KeepCompleteBlocks"/>). Only end tags of elements
+    /// opened during this scan are checked (a span rescan seeded at an anchor does not know the names of the frames it starts in).
+    /// </summary>
+    public bool IsMalformed { get; private set; }
+
+    /// <summary>True once office:text has opened: a body that then breaks off still has a place for the "could not be read" rest.</summary>
+    public bool HasTextBodyStarted { get; private set; }
+
+    private readonly List<int> _openNames = new();   // per frame: the hash of its element's qualified name (0 = unknown, a seeded frame)
+    private int _tagNameHash;
+
+    /// <summary>
     /// A body that ends before its closing tag (a truncated or malformed content.xml): keeps the blocks that
     /// were complete, the way a .docx part keeps what precedes its first error, and drops a block left open
-    /// at the end with its headings and note references. False when no block was complete.
+    /// at the end with its headings and note references (every list keeps nothing past them). False when no block was complete.
     /// </summary>
     public bool KeepCompleteBlocks()
     {
         int complete = BlockEndOffsets.Count;
         while (complete > 0 && BlockEndOffsets[complete - 1] < 0) complete--;
-        if (complete == 0) return false;
         _languageLabel = null;        // its paragraph never closed: dropped below
         int extra = BlockEndOffsets.Count - complete;
         if (extra > 0)
@@ -122,8 +136,10 @@ internal sealed class OdtBodyBlockScanner
             NoteReferences.RemoveAll(reference => reference.BlockIndex >= complete);
             int keptBookmarks = BookmarkBlocks.FindIndex(block => block >= complete);
             if (keptBookmarks >= 0) { BookmarkNames.RemoveRange(keptBookmarks, BookmarkNames.Count - keptBookmarks); BookmarkBlocks.RemoveRange(keptBookmarks, BookmarkBlocks.Count - keptBookmarks); }
+            ConnectedShapeBlocks.RemoveAll(block => block >= complete);
+            SectionStarts.RemoveAll(section => section.FirstBlockIndex >= complete && section.FirstBlockIndex > 0);
         }
-        return true;
+        return complete > 0;
     }
 
     /// <summary>Block-level elements skipped because no rule handles them (element name → count) — for the audit.</summary>
@@ -195,6 +211,7 @@ internal sealed class OdtBodyBlockScanner
         _offset = offset;
         _state = State.Text;
         _frames.Clear();
+        _openNames.Clear();
         (byte[] frames, byte[] numbering) = SplitScanState(scanState);
         int position = 0;
         int count = frames.Length == 0 ? 0 : (int)IndexBinaryArrays.ReadVarint(frames, ref position);
@@ -203,6 +220,7 @@ internal sealed class OdtBodyBlockScanner
             byte frame = frames[position++];
             if (frame > (byte)Frame.NoteBody) throw new InvalidDataException("OpenDocument index: scan state damaged.");
             _frames.Add((Frame)frame);
+            _openNames.Add(0);
         }
         _numbering.ImportState(numbering);
     }
@@ -222,7 +240,7 @@ internal sealed class OdtBodyBlockScanner
         _chunkCount = count;
         var span = new ReadOnlySpan<byte>(chunk, 0, count);
         int position = 0;
-        while (position < count)
+        while (position < count && !IsMalformed)
         {
             switch (_state)
             {
@@ -374,10 +392,19 @@ internal sealed class OdtBodyBlockScanner
         int nameEnd = nameStart;
         while (nameEnd < tag.Length && tag[nameEnd] is not ((byte)' ' or (byte)'>' or (byte)'/' or (byte)'\t' or (byte)'\r' or (byte)'\n')) nameEnd++;
         Name name = Classify(tag.Slice(nameStart, nameEnd - nameStart));
+        _tagNameHash = NameHash(tag.Slice(nameStart, nameEnd - nameStart));
 
         if (isClosing) { OnClose(name, tagEndOffset); return; }
         OnOpen(name, tag, nameEnd, tagEndOffset, isSelfClosing);
         if (isSelfClosing) OnClose(name, tagEndOffset);
+    }
+
+    /// <summary>FNV-1a of a qualified name, never 0 (0 marks a frame whose name is unknown).</summary>
+    private static int NameHash(ReadOnlySpan<byte> qualifiedName)
+    {
+        uint hash = 2166136261;
+        foreach (byte b in qualifiedName) hash = (hash ^ b) * 16777619;
+        return (int)(hash | 1);
     }
 
     private Name Classify(ReadOnlySpan<byte> qualifiedName)
@@ -398,6 +425,7 @@ internal sealed class OdtBodyBlockScanner
             if (RootOpenTag.EndsWith("/>", StringComparison.Ordinal)) RootOpenTag = RootOpenTag.Substring(0, RootOpenTag.Length - 2) + ">";
             _namesByLength = BuildNames(RootOpenTag);
             _frames.Add(Frame.Root);
+            _openNames.Add(_tagNameHash);
             return;
         }
 
@@ -438,6 +466,8 @@ internal sealed class OdtBodyBlockScanner
                 break;
         }
         _frames.Add(frame);
+        _openNames.Add(_tagNameHash);
+        if (frame == Frame.Text) HasTextBodyStarted = true;
         // a drawing object with an id (draw:id / xml:id - LibreOffice writes one only on a shape something refers to, such as a connector's
         // draw:start-shape) - its block is read once the index is final to record the shape's geometry (OdtConnectedShapeTable)
         if (name == Name.Drawing && _currentBlock >= 0 && (ConnectedShapeBlocks.Count == 0 || ConnectedShapeBlocks[ConnectedShapeBlocks.Count - 1] != _currentBlock)
@@ -531,8 +561,11 @@ internal sealed class OdtBodyBlockScanner
     private void OnClose(Name name, long tagEndOffset)
     {
         if (_frames.Count == 0) return;
+        int openName = _openNames[_openNames.Count - 1];
+        if (openName != 0 && openName != _tagNameHash) { IsMalformed = true; return; }
         Frame frame = _frames[_frames.Count - 1];
         _frames.RemoveAt(_frames.Count - 1);
+        _openNames.RemoveAt(_openNames.Count - 1);
         switch (frame)
         {
             case Frame.Capture: FinishCapture(tagEndOffset); break;

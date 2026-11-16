@@ -956,8 +956,7 @@ What we do:
   XmlException is that block / note / part re-read by `WordDocumentXml.LoadUntilFirstError`: the
   tree of every node delivered before the first error, open elements closed there. Same reader
   settings (DtdProcessing.Ignore — nothing external is ever fetched or expanded).
-- Applies to .docx body blocks, notes, styles, theme, settings, numbering. ODF is unchanged (fails,
-  as LibreOffice does).
+- Applies to .docx body blocks, notes, styles, theme, settings, numbering. ODF since 2026-11-16: see below.
 - The body / notes scanners step over `<!DOCTYPE … [internal subset]>` (DocxDocumentTypeDeclarationSkipper);
   it was taken for an unterminated comment, which swallowed the body.
 - Differences from LibreOffice: (1) recovery is per block — LibreOffice drops everything after the
@@ -968,6 +967,56 @@ What we do:
 - Corpus: math-malformed_xml.docx, tdf165348_broken_package.docx, ExternalEntityInText.docx and
   clusterfuzz POIXWPFFuzzer-6733884933668864.docx (theme1.xml) now open. Speed on well-formed input:
   index build / scanner on the 87 MB sample within run-to-run noise (scanner 187–233 MB/s both).
+
+### ODT / FODT malformed XML (2026-11-16)
+
+LibreOffice fails the whole .odt on a content.xml / styles.xml error (swxml.cxx above); we now keep what precedes it,
+as for .docx:
+- The body scanner (OdtBodyBlockScanner) keeps one name hash per open frame and checks every end tag against it: a
+  mismatched end tag (libxml2 XML_ERR_TAG_NAME_MISMATCH, fatal) stops the scan (`IsMalformed`). A body cut short ends
+  the same way (no `</office:text>`). Both keep the blocks complete before the break (`KeepCompleteBlocks`, now also
+  when none is complete) and set `OdtRandomAccessIndex.HasUnreadableRest` (index format 19): the document then has one
+  more block, the render guard's "could not be read" placeholder. Frames seeded at a span anchor have no name (0) and
+  are not checked; span rescans never pass the cut, which is the index's last block end.
+- Errors the byte scanner does not see (an illegal character, a duplicate attribute) are left to the per-block parse,
+  as in .docx: the block keeps the content before its error.
+- styles.xml keeps the styles before its error (unchanged). In a .fodt the same error precedes office:text, so nothing
+  can be kept: a clear "not well-formed before the office:text body" error.
+- Harness: `--odt-malformed` (six cases x .odt / .fodt x in memory / sidecar / on demand).
+
+## Word XML formats: Flat OPC and Word 2003 XML (2026-11-16)
+
+Both are sniffed from the root element (WordWindowedDocumentOpener.DetectFormat: pkg:package in
+http://schemas.microsoft.com/office/2006/xmlPackage; w:wordDocument in http://schemas.microsoft.com/office/word/2003/wordml),
+never the extension (Tika's Word 2003 sample is named .doc). LibreOffice reads Word 2003 XML through an XSLT filter
+(filter/source/xslt/import/wordml/) and has no Flat OPC import for Writer (oox filterdetect.cxx looks only inside zips).
+
+- Flat OPC (`Docx/DocxFlatPackageStream`): the file is shown to the unchanged .docx reader as a zip of STORED entries.
+  One byte-scanning pass at open finds each pkg:part (pkg:name, pkg:contentType) and the byte range of its pkg:xmlData
+  content or its pkg:binaryData base64 text (characters counted for the decoded size). A stored entry's data is then a
+  window onto the file itself (so the index's offsets are file offsets and every read is windowed as for a stored .docx
+  part); a binary part is decoded from base64 only when a read reaches it (the last one cached). Local headers, the
+  central directory and a [Content_Types].xml from the parts' content types are synthesized. UTF-8 only.
+- Word 2003 XML (`Docx/Word2003XmlTranslator`): a streaming XmlReader -> XmlWriter translation into a .docx package
+  written once beside the document's sidecar (`<hash>.wordindex.package`, deleted with the sidecar or as an orphan by
+  the cache trim, re-made when the file's size or time changes - a stamp entry inside records them). Passes: header
+  (w:styles, w:lists, w:docPr, w:fonts/w:defaultFonts as small trees), body -> document.xml, footnotes, endnotes,
+  pictures. Deterministic output (fixed entry times), so a saved index matches a re-made package. The document's
+  index is keyed by and checked against the .xml file itself (WordDocumentFileStream.WatchedPath).
+  Mapping (LibreOffice wordml2ooo*.xsl and Word's own .docx save of the same document): wx:sect / wx:sub-section /
+  wx:pBdrGroup unwrapped, other wx: dropped; w:listPr/w:ilfo -> w:numPr/w:numId; w:lists/w:listDef/w:list/w:ilst/w:lsid/
+  w:plt/w:nfc -> w:numbering/w:abstractNum/w:num/w:abstractNumId/w:nsid/w:multiLevelType/w:numFmt (MS-DOC codes via
+  DocBinaryListDefinitions); w:footnote / w:endnote inline in the run -> a reference + the note in its own part (ids in
+  document order); w:hlink -> w:hyperlink (external relationship per target, w:bookmark -> w:anchor); aml:annotation
+  bookmarks -> w:bookmarkStart/End, insertions unwrapped, deletions / comments / formatting changes dropped; w:binData
+  "wordml://..." -> word/media + v:imagedata r:id; hyphenated names to camel case (b-cs, first-line, line-rule, h-ansi),
+  fareast -> eastAsia, vmerge -> vMerge, on/off -> 1/0; w:defaultFonts -> styles docDefaults; xml:space="preserve" on
+  every w:t (the 2003 root's attribute is not inherited by a separate part).
+- Check (`--word-xml`): test-data/word-xml (made by Word: make-word-xml-fixtures.ps1, SaveAs2 19 / 11, PDF by
+  ExportAsFixedFormat). The Flat OPC file renders exactly as the .docx (in memory, sidecar, reopen, on demand); the 2003
+  file has the .docx's text, formatting, list labels, notes, table, link and picture (Word's PDF text, pdftotext, has the
+  same lines). Remaining differences against the .docx come from what 2003 XML cannot hold: theme colours (a literal
+  colour instead), Word 2010 ligatures, the picture's DrawingML extent (150 pt vs 149.98 pt).
 
 ## Word fidelity pass (.docx, branch work/oxpt-ideas, 2026-10-28/29)
 

@@ -35,7 +35,6 @@ public static class CorpusRegressionTest
         (@"libreoffice\sw\qa\core\data\odt\fail\tdf102018.odt", typeof(InvalidDataException), "office:text body"),   // styles.xml is repaired (content before the first error); the body never closes
         (@"apache-poi\52117.doc", typeof(NotSupportedException), "Word 6.0 / Word 95"),
         (@"apache-poi\word2.doc", typeof(NotSupportedException), "Word for Windows 2.0"),
-        (@"apache-tika\testWORDML_tableInsideParagraph.doc", typeof(NotSupportedException), "Word 2003 XML"),
         (@"libreoffice\sw\qa\extras\ooxmlexport\data\Encrypted_MSO2007_abc.docx", typeof(WordDocumentEncryptedException), "Encrypted"),
     ];
 
