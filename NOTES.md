@@ -568,6 +568,25 @@ overloads. Every rule below was read from the source named, not from memory:
   a transformed copy would need a second positioned text layer per line, which breaks wrapping and the windowed render. **w14:alpha is transparency**, the opposite of a:alpha
   (LibreOffice DomainMapper.cxx:3733-3737, docxattributeoutput.cxx:3825-3828). Test: `TextEffectsFidelityTest`
   (+ test-data/word-text-effects, Word 16 COM), live: `vue-demo/playwright/textEffectsCheck.mjs`.
+- **w14 OpenType typography, reflection, 3-D text (2026-11-16)** - checked against Word 16's XPS output (glyph indices per
+  run; its PDF export writes plain WinAnsi text and draws neither reflection nor 3-D, so XPS is the reference).
+  `w14:ligatures` ([MS-DOCX] 2.6.4.3: standard = liga, contextual = clig, historical = hlig, discretional = dlig, all),
+  `w14:numForm` / `w14:numSpacing`, `w14:cntxtAlts` (calt), `w14:stylisticSets` (ssNN) -> `font-variant-ligatures`,
+  `font-variant-numeric`, `font-feature-settings` (`WordRunFormatting.OpenTypeCss`). **Word applies no ligatures and no
+  calt unless set** ("fl" stays two glyphs without the property; Word 16's own new documents carry standardContextual in
+  docDefaults), so .docx runs turn both off where a browser applies them, complex-script runs included (otherwise every
+  Hebrew run in a Latin-based paragraph would carry a reset; required shaping - ccmp, rlig, init/medi/fina, mark - is not
+  affected). numForm / numSpacing / stylistic sets are drawn on Latin runs only (Word ignored numForm on rtl digits). A `font-variant` shorthand (small caps) resets the longhands, so
+  they are written again after it. LibreOffice keeps all of them in the grab bag only (DomainMapper.cxx:3749-3757).
+  `w14:reflection`: Word draws it per line as a faded mirror image starting at the baseline, as tall as the text above it.
+  `-webkit-box-reflect` draws nothing on a wrapping inline, so each word is an inline-block trimmed with
+  `text-box:trim-both text alphabetic` (box = ascent..baseline, line height unchanged) with
+  `-webkit-box-reflect:below dist linear-gradient(to top, stA stPos, endA endPos)` (the mask is applied before mirroring:
+  its bottom is next to the text). Lines still break between words; blur / sx / sy / kx / ky are not drawn.
+  3-D text (`w14:scene3d` / `w14:props3d`): Word rasterises the whole run as a lit picture; with its front camera the
+  extrusion is hidden and the bevel only shades the face (blue bevelled text came out as darker / lighter blues of the
+  run colour), so the plain letters are the nearest CSS. .doc and RTF saved by Word keep none of these (round trip checked).
+  Test: `TextEffectsFidelityTest` (DocxOpenTypeTypography, DocxReflection).
 
 
 ## OpenDocument text (Odt/, 2026-10-28)

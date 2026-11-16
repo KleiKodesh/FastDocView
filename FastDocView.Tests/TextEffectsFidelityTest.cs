@@ -15,7 +15,7 @@ public static class TextEffectsFidelityTest
 
     public static void Run()
     {
-        TestReport.Step("Text effects: character scale (docx, doc, rtf, odt), w14 text fill, glow, shadow");
+        TestReport.Step("Text effects: character scale (docx, doc, rtf, odt), w14 text fill, glow, shadow, OpenType typography, reflection");
         WordHtmlTextScale();
         DocxScale();
         DocScale();
@@ -23,6 +23,8 @@ public static class TextEffectsFidelityTest
         OdtScale();
         DocxTextFill();
         DocxGlowAndShadow();
+        DocxOpenTypeTypography();
+        DocxReflection();
     }
 
     private static void WordHtmlTextScale()
@@ -127,5 +129,43 @@ public static class TextEffectsFidelityTest
         TestReport.Check(html[0].Contains("text-shadow:0 0 5pt rgba(0,176,240,0.4),0 0 10pt rgba(0,176,240,0.4);"), "w14:glow rad 10pt, 60% transparent: " + html[0]);
         TestReport.Check(html[1].Contains("text-shadow:1.41pt 1.41pt 3pt rgba(0,0,0,0.4);"), "w14:shadow dist 2pt dir 45 deg (down-right), blur 3pt, 60% transparent: " + html[1]);
         TestReport.Check(html[2].Contains("text-shadow:1px 1px 1px rgba(0,0,0,.45);"), "legacy w:shadow keeps the generic shadow");
+    }
+    /// <summary>w14 ligatures / numForm / numSpacing / cntxtAlts / stylisticSets, as Word 16 writes them (Font.Ligatures,
+    /// NumberForm, NumberSpacing, ContextualAlternates, StylisticSet; Word's docDefaults carry standardContextual).</summary>
+    private static void DocxOpenTypeTypography()
+    {
+        List<string> html = DocxFidelityTest.RenderAll("opentype-v1",
+            "<w:p>" + Run("", "plain") + "</w:p>"
+          + "<w:p>" + Run($"<w14:ligatures {W14} w14:val=\"standard\"/>", "office") + "</w:p>"
+          + "<w:p>" + Run($"<w14:ligatures {W14} w14:val=\"all\"/><w14:cntxtAlts {W14}/>", "all") + "</w:p>"
+          + "<w:p>" + Run($"<w14:numForm {W14} w14:val=\"oldStyle\"/><w14:numSpacing {W14} w14:val=\"tabular\"/>", "0123") + "</w:p>"
+          + "<w:p>" + Run($"<w14:stylisticSets {W14}><w14:styleSet w14:id=\"2\"/><w14:styleSet w14:id=\"3\" w14:val=\"0\"/><w14:styleSet w14:id=\"14\"/></w14:stylisticSets>", "Gabriola") + "</w:p>"
+          + "<w:p>" + Run($"<w:rtl/><w14:numForm {W14} w14:val=\"oldStyle\"/>", "123") + "</w:p>"
+          + $"<w:p><w:pPr><w:rPr><w14:ligatures {W14} w14:val=\"standardContextual\"/></w:rPr></w:pPr>" + Run($"<w14:ligatures {W14} w14:val=\"standardContextual\"/>", "a") + Run("<w:smallCaps/>", "b") + "</w:p>",
+            styles: $"<w:docDefaults><w:rPrDefault><w:rPr><w14:numForm {W14} w14:val=\"lining\"/></w:rPr></w:rPrDefault></w:docDefaults>");
+        TestReport.Check(html[0].Contains("font-variant-ligatures:no-common-ligatures no-contextual;"), "no w14:ligatures: Word draws no ligatures and no contextual alternates: " + html[0]);
+        TestReport.Check(html[0].Contains("font-variant-numeric:lining-nums;"), "docDefaults numForm lining reaches the paragraph: " + html[0]);
+        TestReport.Check(html[1].Contains("font-variant-ligatures:common-ligatures no-contextual;font-feature-settings:'liga' 1,'clig' 0;"), "standard = liga only: " + html[1]);
+        TestReport.Check(html[2].Contains("font-variant-ligatures:common-ligatures discretionary-ligatures historical-ligatures contextual;") && !html[2].Contains("'liga'"), "all + cntxtAlts: " + html[2]);
+        TestReport.Check(html[3].Contains("font-variant-numeric:oldstyle-nums tabular-nums;"), "oldStyle + tabular: " + html[3]);
+        TestReport.Check(html[4].Contains("font-feature-settings:'ss02' 1,'ss14' 1;"), "stylistic sets 2 and 14 on, 3 off: " + html[4]);
+        TestReport.Check(!html[5].Contains("oldstyle-nums"), "a right-to-left run keeps the browser's shaping (Word ignores numForm there): " + html[5]);
+        TestReport.Check(html[6].Contains("font-variant:small-caps;font-variant-ligatures:no-common-ligatures no-contextual;"), "small caps shorthand: the ligature setting is written again after it: " + html[6]);
+    }
+
+    /// <summary>w14:reflection as Word 16 writes its "tight reflection, touching" preset: per-word mirror boxes.</summary>
+    private static void DocxReflection()
+    {
+        const string Preset = "w14:blurRad=\"6350\" w14:stA=\"60000\" w14:stPos=\"0\" w14:endA=\"900\" w14:endPos=\"58000\" w14:dist=\"0\" w14:dir=\"5400000\" w14:fadeDir=\"5400000\" w14:sx=\"100000\" w14:sy=\"-100000\" w14:kx=\"0\" w14:ky=\"0\" w14:algn=\"bl\"";
+        List<string> html = DocxFidelityTest.RenderAll("reflection-v1",
+            "<w:p>" + Run($"<w14:reflection {W14} {Preset}/>", "two words") + "</w:p>"
+          + "<w:p>" + Run($"<w:w w:val=\"80\"/><w14:reflection {W14} {Preset.Replace("w14:dist=\"0\"", "w14:dist=\"50800\"")}/>", "scaled") + "</w:p>");
+        const string Box = "<span class=\"text-reflection\" style=\"display:inline-block;text-box:trim-both text alphabetic;text-decoration:inherit;-webkit-box-reflect:below 0 linear-gradient(to top,rgba(0,0,0,0.6) 0%,rgba(0,0,0,0.009) 58%)\">";
+        TestReport.Check(html[0].Contains(Box + "two</span> " + Box + "words</span>"), "reflection: one mirror box per word, the space between them: " + html[0]);
+        TestReport.Check(html[1].Contains("scaleX(0.8);text-box:trim-both text alphabetic;text-decoration:inherit;-webkit-box-reflect:below 4pt linear-gradient(") && html[1].Contains("class=\"char-scale\""), "reflection + scale: on the scaled word box, dist 4pt: " + html[1]);
+        var plain = new System.Text.StringBuilder();
+        WordHtmlText.AppendScaled(plain, "a<b>x y</b>", 100, "below 0");
+        TestReport.Check(plain.ToString() == "<span class=\"text-reflection\" style=\"display:inline-block;text-box:trim-both text alphabetic;text-decoration:inherit;-webkit-box-reflect:below 0\">a<b>x y</b></span>",
+                         "reflection: a space inside an open tag does not split the box: " + plain);
     }
 }

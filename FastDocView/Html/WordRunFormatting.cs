@@ -52,6 +52,23 @@ public sealed class WordRunFormatting
     public string? TextFillCss;
     /// <summary>Word 2010 w14:shadow and w14:glow as CSS text-shadow layers (comma-separated); null = none.</summary>
     public string? TextEffectShadowCss;
+    /// <summary>.docx w14:ligatures ([MS-DOCX] 2.6.4.3 ST_Ligatures: none, standard, contextual, historical, discretional, their
+    /// combinations, all); null = not set, which Word draws as none.</summary>
+    public string? Ligatures;
+    /// <summary>.docx w14:numForm: "lining" / "oldStyle"; null = the font's default.</summary>
+    public string? NumberForm;
+    /// <summary>.docx w14:numSpacing: "proportional" / "tabular"; null = the font's default.</summary>
+    public string? NumberSpacing;
+    /// <summary>.docx w14:cntxtAlts: OpenType contextual alternates (calt) on. Word applies them only when set.</summary>
+    public bool IsContextualAlternates;
+    /// <summary>.docx w14:stylisticSets as font-feature-settings entries ("'ss02' 1,'ss03' 1"); null = none.</summary>
+    public string? StylisticSetsCss;
+    /// <summary>The run follows Word's OpenType defaults (.docx): no ligatures and no contextual alternates unless the run sets
+    /// them, where a browser applies both by default. Set on the .docx document defaults and inherited from there.</summary>
+    public bool UsesWordOpenTypeDefaults;
+    /// <summary>.docx w14:reflection as a -webkit-box-reflect value; null = none. Drawn per word by
+    /// <see cref="WordHtmlText.AppendScaled"/>, not by <see cref="ToCss(WordRunFormatting?, WordDecorationOutput)"/>.</summary>
+    public string? ReflectionCss;
     public bool IsEmboss;
     public bool IsImprint;
     public string? BorderCss;               // a border around the run (w:bdr / sprmCBrc)
@@ -85,6 +102,54 @@ public sealed class WordRunFormatting
         string colorHex = TextOutlineColorHex ?? ColorHex ?? "000000";
         string css = "-webkit-text-stroke:" + TextOutlineWidthPt.ToString("0.##", CultureInfo.InvariantCulture) + "pt " + WordHtmlColor.Css(colorHex) + ";";
         return IsTextFillNone ? css + "color:transparent;" : css;
+    }
+
+    /// <summary>
+    /// Word's OpenType typography (.docx w14:ligatures, numForm, numSpacing, cntxtAlts, stylisticSets) as three CSS declarations
+    /// (font-variant-ligatures, font-variant-numeric, font-feature-settings), each "" when it is the browser default. Word draws
+    /// no ligatures and no contextual alternates unless they are set (Word 16 XPS output, 2026-11-16: "fl" stays two glyphs
+    /// without w14:ligatures, Gabriola's calt alternates appear only with w14:cntxtAlts), so a .docx run turns both off
+    /// where a browser would apply them - complex-script runs too, so a Hebrew run in a paragraph does not have to switch them
+    /// back (the scripts' required shaping, ccmp / rlig / init / medi / fina / mark, is not affected). The number form and
+    /// spacing and the feature list are drawn on Latin runs only: Word 16 ignored w14:numForm on right-to-left digits in the
+    /// same check. ST_Ligatures "contextual" is the clig feature, which CSS can only switch together with liga
+    /// (common-ligatures), so the two are set apart in font-feature-settings when they differ.
+    /// </summary>
+    private (string ligatures, string numeric, string features) OpenTypeCss()
+    {
+        if (!UsesWordOpenTypeDefaults) return ("", "", "");
+        string value = Ligatures ?? "none";
+        bool all = value == "all";
+        bool standard = all || value.Contains("standard"), contextual = all || value.Contains("ontextual");
+        bool historical = all || value.Contains("istorical"), discretional = all || value.Contains("iscretional");
+        string ligatures = "font-variant-ligatures:" + (standard || contextual ? "common-ligatures" : "no-common-ligatures")
+                           + (discretional ? " discretionary-ligatures" : "") + (historical ? " historical-ligatures" : "")
+                           + (IsContextualAlternates ? " contextual" : " no-contextual") + ";";
+        string numeric = (NumberForm switch { "lining" => " lining-nums", "oldStyle" => " oldstyle-nums", _ => "" })
+                         + (NumberSpacing switch { "proportional" => " proportional-nums", "tabular" => " tabular-nums", _ => "" });
+        if (UsesComplexScriptProperties) return (ligatures, "", "");
+        if (numeric.Length > 0) numeric = "font-variant-numeric:" + numeric.Substring(1) + ";";
+        string features = standard != contextual ? "'liga' " + (standard ? "1" : "0") + ",'clig' " + (contextual ? "1" : "0") : "";
+        if (StylisticSetsCss is not null) features = features.Length == 0 ? StylisticSetsCss : features + "," + StylisticSetsCss;
+        if (features.Length > 0) features = "font-feature-settings:" + features + ";";
+        return (ligatures, numeric, features);
+    }
+
+    /// <summary>Appends the OpenType declarations that differ from <paramref name="baseline"/>'s (all of them when
+    /// <paramref name="isReset"/>: a font-variant shorthand written before them reset the longhands); a declaration the
+    /// baseline had and this run has not is set back to normal.</summary>
+    private void AppendOpenTypeCss(StringBuilder css, WordRunFormatting? baseline, bool isReset)
+    {
+        (string ligatures, string numeric, string features) own = OpenTypeCss();
+        (string ligatures, string numeric, string features) inherited = baseline is null || isReset ? ("", "", "") : baseline.OpenTypeCss();
+        void Append(string mine, string theirs, string property)
+        {
+            if (mine == theirs) return;
+            css.Append(mine.Length > 0 ? mine : property + ":normal;");
+        }
+        Append(own.ligatures, inherited.ligatures, "font-variant-ligatures");
+        Append(own.numeric, inherited.numeric, "font-variant-numeric");
+        Append(own.features, inherited.features, "font-feature-settings");
     }
 
     /// <summary>Shadow / emboss / imprint as CSS text-shadow (Word draws them as offset copies of the glyphs).</summary>
@@ -184,7 +249,10 @@ public sealed class WordRunFormatting
         else if (IsSubscript && (baseline is null || !baseline.IsSubscript)) css.Append("vertical-align:sub;font-size:smaller;");
         else if (baseline is not null && (baseline.IsSuperscript || baseline.IsSubscript) && !IsSuperscript && !IsSubscript) css.Append("vertical-align:baseline;");
         if (IsHidden) css.Append("display:none;");
-        if (IsSmallCaps && (baseline is null || !baseline.IsSmallCaps)) css.Append("font-variant:small-caps;");
+        bool isFontVariantReset = IsSmallCaps && (baseline is null || !baseline.IsSmallCaps);
+        if (isFontVariantReset) css.Append("font-variant:small-caps;");
+        // after the font-variant shorthand, which resets the ligature and numeric longhands
+        AppendOpenTypeCss(css, baseline, isFontVariantReset && baseline is not null);
         if (IsAllCaps && (baseline is null || !baseline.IsAllCaps)) css.Append("text-transform:uppercase;");
         if (PositionHalfPoints != 0 && (baseline is null || PositionHalfPoints != baseline.PositionHalfPoints))
             css.Append("vertical-align:").Append((PositionHalfPoints / 2.0).ToString("0.#", CultureInfo.InvariantCulture)).Append("pt;");

@@ -33,6 +33,7 @@ public sealed class DocxStyleCascade
     public DocxStyleCascade(XDocument? stylesDocument, DocxTheme? theme = null)
     {
         _theme = theme;
+        DocumentDefaults.RunFormatting.UsesWordOpenTypeDefaults = true;
         XElement? root = stylesDocument?.Root;
         if (root is null) return;
 
@@ -239,7 +240,7 @@ public sealed class DocxStyleCascade
     public string LevelRunCss(XElement? levelRunProperties, bool isBulletMapped)
     {
         if (levelRunProperties is null) return "";
-        var empty = new WordRunFormatting();
+        var empty = new WordRunFormatting { UsesWordOpenTypeDefaults = true };   // Word's OpenType defaults diff away; only what the level sets is written
         WordRunFormatting formatting = empty.Clone();
         ApplyRunProperties(formatting, levelRunProperties, _theme, WordStyleLayer.Direct);
         ResolveToggles(formatting);
@@ -249,7 +250,7 @@ public sealed class DocxStyleCascade
         WordRunFormatting complex = formatting.Clone();
         complex.IsRightToLeft = true;
         ResolveToggles(complex);
-        string complexCss = complex.ToCss(new WordRunFormatting { IsRightToLeft = true });
+        string complexCss = complex.ToCss(new WordRunFormatting { IsRightToLeft = true, UsesWordOpenTypeDefaults = true });
         string css = complexCss == latin ? latin : latin + LevelCssComplexSeparator + complexCss;
         return isBulletMapped ? LevelCssLatinLabel + css : css;    // a recoded symbol bullet stays Latin (its symbol code is strong LTR)
     }
@@ -472,6 +473,26 @@ public sealed class DocxStyleCascade
                     formatting.TextOutlineWidthPt = outlineFill is null || outlineFill.Name.LocalName == "noFill" ? 0 : outlineEmu / 12700.0;
                     formatting.TextOutlineColorHex = outlineFill is null ? null : TextEffectColorHex(outlineFill, theme);
                     break;
+                // Word 2010 OpenType typography ([MS-DOCX] 2.6.3 CT_Ligatures / CT_NumForm / CT_NumSpacing / CT_OnOff / CT_StylisticSets,
+                // w14-namespaced val attributes): drawn by WordRunFormatting.OpenTypeCss. LibreOffice keeps all five only in the
+                // character grab bag (DomainMapper.cxx:3753-3757, TextEffectsHandler.cxx:420-463, 726-751) and draws none of them.
+                case "ligatures": formatting.Ligatures = AnyNamespaceValue(property); break;
+                case "numForm": formatting.NumberForm = AnyNamespaceValue(property) is { } form && form is "lining" or "oldStyle" ? form : null; break;
+                case "numSpacing": formatting.NumberSpacing = AnyNamespaceValue(property) is { } spacing && spacing is "proportional" or "tabular" ? spacing : null; break;
+                case "cntxtAlts": formatting.IsContextualAlternates = IsOnValue(AnyNamespaceValue(property)); break;
+                case "stylisticSets":
+                    // CT_StyleSet: id = the set number (ssNN, 1..20 in OpenType), val = on / off (default on)
+                    var sets = new List<string>();
+                    foreach (XElement set in property.Elements().Where(e => e.Name.LocalName == "styleSet"))
+                        if (int.TryParse(set.Attributes().FirstOrDefault(a => a.Name.LocalName == "id")?.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int setId)
+                            && setId is >= 1 and <= 20 && IsOnValue(AnyNamespaceValue(set)))
+                            sets.Add("'ss" + setId.ToString("00", CultureInfo.InvariantCulture) + "' 1");
+                    formatting.StylisticSetsCss = sets.Count == 0 ? null : string.Join(",", sets);
+                    break;
+                case "reflection": formatting.ReflectionCss = ReflectionCss(property); break;
+                // w14:scene3d / w14:props3d (3-D text: camera, light rig, bevel, extrusion, contour, material): not drawn - see NOTES.md
+                // "3-D text". Word 16 rasterises the whole run as a lit 3-D picture; with Word's own front camera the extrusion is
+                // hidden behind the letters and the bevel only shades their face, so the plain letters in the run colour are the nearest CSS.
                 case "caps": formatting.Toggles.Set(layer, WordToggleProperty.Caps, IsOn(property.Attribute(W + "val"))); break;
                 case "spacing": formatting.CharacterSpacingTwips = TwipsAttribute(property, "val") ?? formatting.CharacterSpacingTwips; break;
                 case "rtl": formatting.IsRightToLeft = IsOn(property.Attribute(W + "val")); break;
@@ -703,6 +724,35 @@ public sealed class DocxStyleCascade
         new(element.Name.LocalName,
             element.Attributes().Where(a => !a.IsNamespaceDeclaration).Select(a => new XAttribute(a.Name.LocalName, a.Value)),
             element.Elements().Select(WithoutAttributeNamespaces));
+
+    /// <summary>The val attribute of a w14 element, whatever its namespace prefix.</summary>
+    private static string? AnyNamespaceValue(XElement element) => element.Attributes().FirstOrDefault(a => a.Name.LocalName == "val")?.Value;
+
+    /// <summary>An ST_OnOff value: missing = on.</summary>
+    private static bool IsOnValue(string? value) => value is null || value is "1" or "true" or "on";
+
+    /// <summary>
+    /// w14:reflection ([MS-DOCX] CT_Reflection, DrawingML's a:reflection: stA / endA opacity and stPos / endPos position of the
+    /// fade, in 1000ths of a percent of the reflected text's height; dist in EMU; dir the offset direction in 60000ths of a
+    /// degree) as a -webkit-box-reflect value: a mirror image below the text (above for dir 270 degrees), its fade a mask that
+    /// starts at the baseline. Word 16 draws the reflection per line, mirrored at the baseline, as tall as the text above it
+    /// (XPS output, 2026-11-16). blurRad, sx / sy / kx / ky (Word's presets keep sx 100 %, sy -100 %, no skew) and fadeDir
+    /// are not drawn. LibreOffice keeps w14:reflection only in the grab bag (DomainMapper.cxx:3749, TextEffectsHandler.cxx:566-612).
+    /// </summary>
+    private static string ReflectionCss(XElement reflection)
+    {
+        double Value(string name, double fallback)
+            => double.TryParse(reflection.Attributes().FirstOrDefault(a => a.Name.LocalName == name)?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : fallback;
+        static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+        double startOpacity = Math.Max(0, Math.Min(1, Value("stA", 100000) / 100000)), endOpacity = Math.Max(0, Math.Min(1, Value("endA", 0) / 100000));
+        double startPosition = Math.Max(0, Math.Min(100, Value("stPos", 0) / 1000)), endPosition = Math.Max(0, Math.Min(100, Value("endPos", 100000) / 1000));
+        double distance = Value("dist", 0) / 12700;
+        double direction = ((Value("dir", 5400000) / 60000) % 360 + 360) % 360;
+        string side = direction is > 180 and < 360 ? "above" : "below";
+        // the mask is laid over the text before it is mirrored: its bottom edge (the baseline) is the side next to the text
+        return side + " " + (Math.Abs(distance) < 0.005 ? "0" : Number(distance) + "pt") + " linear-gradient(to " + (side == "below" ? "top" : "bottom")
+               + ",rgba(0,0,0," + Number(startOpacity) + ") " + Number(startPosition) + "%,rgba(0,0,0," + Number(endOpacity) + ") " + Number(endPosition) + "%)";
+    }
 
     public static bool IsOn(XAttribute? value)
     {

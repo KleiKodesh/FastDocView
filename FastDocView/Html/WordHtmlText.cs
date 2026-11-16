@@ -57,13 +57,32 @@ public static class WordHtmlText
     /// Lines still break between words; spaces are scaled in boxes of their own. Tags inside a word stay inside its box; a space inside an
     /// open tag does not split.
     /// </summary>
-    public static void AppendScaled(StringBuilder html, string encoded, int scalePercent)
+    /// <param name="reflectionCss">A -webkit-box-reflect value (.docx w14:reflection) or null. A reflection mirrors a box, and
+    /// an inline box that wraps has none to mirror (Chromium draws nothing), so each word gets its own inline-block, trimmed by
+    /// text-box to the text above the baseline: the mirror image then starts at the baseline and sits under its own line,
+    /// as Word draws it, while lines still break between words and the line height is unchanged.</param>
+    public static void AppendScaled(StringBuilder html, string encoded, int scalePercent, string? reflectionCss = null)
     {
-        if (scalePercent is 0 or 100 or < 1 or > 600) { html.Append(encoded); return; }
-        string factor = (scalePercent / 100.0).ToString("0.##", CultureInfo.InvariantCulture);
-        string open = "<span class=\"char-scale\" style=\"display:inline-flex;justify-content:center;width:calc-size(max-content,size * " + factor
-                      + ");text-decoration:inherit\"><span style=\"display:inline-block;flex:none;transform:scaleX(" + factor + ");text-decoration:inherit\">";
-        string spaceOpen = open.Replace("class=\"char-scale\"", "class=\"char-scale-space\"").Replace("flex:none;", "flex:none;white-space:pre;");
+        bool isScaled = scalePercent is not (0 or 100 or < 1 or > 600);
+        if (!isScaled && reflectionCss is null) { html.Append(encoded); return; }
+        string reflection = reflectionCss is null ? "" : ";-webkit-box-reflect:" + reflectionCss;
+        string open, close;
+        string? spaceOpen = null;
+        if (isScaled)
+        {
+            string factor = (scalePercent / 100.0).ToString("0.##", CultureInfo.InvariantCulture);
+            open = "<span class=\"char-scale\" style=\"display:inline-flex;justify-content:center;width:calc-size(max-content,size * " + factor
+                   + ");text-decoration:inherit\"><span style=\"display:inline-block;flex:none;transform:scaleX(" + factor + ");text-decoration:inherit\">";
+            close = "</span></span>";
+            spaceOpen = open.Replace("class=\"char-scale\"", "class=\"char-scale-space\"").Replace("flex:none;", "flex:none;white-space:pre;");
+            // the mirror goes on the scaled word itself, trimmed to the baseline as in the unscaled path (spaces have nothing to mirror)
+            if (reflectionCss is not null) open = open.Replace("transform:scaleX(" + factor + ");text-decoration:inherit", "transform:scaleX(" + factor + ");text-box:trim-both text alphabetic;text-decoration:inherit" + reflection);
+        }
+        else
+        {
+            open = "<span class=\"text-reflection\" style=\"display:inline-block;text-box:trim-both text alphabetic;text-decoration:inherit" + reflection + "\">";
+            close = "</span>";
+        }
         int depth = 0, wordStart = -1;
         for (int i = 0; i < encoded.Length; i++)
         {
@@ -76,7 +95,7 @@ public static class WordHtmlText
                 if (isClose && depth == 0)
                 {
                     // a close tag opened before this text: end the word box first, so the boxes stay balanced
-                    if (wordStart >= 0) { html.Append(open).Append(encoded, wordStart, i - wordStart).Append("</span></span>"); wordStart = -1; }
+                    if (wordStart >= 0) { html.Append(open).Append(encoded, wordStart, i - wordStart).Append(close); wordStart = -1; }
                     html.Append(encoded, i, end - i + 1);
                     i = end;
                     continue;
@@ -90,15 +109,15 @@ public static class WordHtmlText
             bool isSeparator = depth == 0 && c is ' ' or '\t' or '\n';
             if (isSeparator)
             {
-                if (wordStart >= 0) { html.Append(open).Append(encoded, wordStart, i - wordStart).Append("</span></span>"); wordStart = -1; }
+                if (wordStart >= 0) { html.Append(open).Append(encoded, wordStart, i - wordStart).Append(close); wordStart = -1; }
                 // Word scales the spaces too: a space gets its own scaled box (white-space:pre keeps it from collapsing),
                 // and <wbr> after it keeps the line break opportunity the plain space gave
-                if (c == ' ') html.Append(spaceOpen).Append(' ').Append("</span></span><wbr>");
+                if (c == ' ' && spaceOpen is not null) html.Append(spaceOpen).Append(' ').Append("</span></span><wbr>");
                 else html.Append(c);
             }
             else if (wordStart < 0) wordStart = i;
         }
-        if (wordStart >= 0) html.Append(open).Append(encoded, wordStart, encoded.Length - wordStart).Append("</span></span>");
+        if (wordStart >= 0) html.Append(open).Append(encoded, wordStart, encoded.Length - wordStart).Append(close);
     }
 
     private static bool IsVoidTag(string html, int nameStart)

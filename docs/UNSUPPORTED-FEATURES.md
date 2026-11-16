@@ -13,7 +13,9 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Underline words only (skip spaces) | docx, doc, rtf, odt | No CSS equivalent; drawn as a plain underline (LibreOffice does the same) | won't do |
 | w14 shadow scale / skew (sx, sy, kx, ky), perspective shadows | docx | CSS text-shadow can only offset and blur; a transformed copy needs a second text layer per line, which breaks wrapping and windowing | won't do |
-| w14 reflection, 3-D text (props3d / scene3d), ligatures / number forms / stylistic sets | docx | Not read | deferred |
+| w14 3-D text (props3d / scene3d): bevel, extrusion, contour, material, lighting, camera | docx | Word 16 draws 3-D text as a lit raster picture of the run (XPS output). With Word's front camera the extrusion is hidden behind the letters and the bevel only shades their face; CSS has no lighting or bevel for text, so the plain letters in the run colour are shown. .doc / RTF do not store it | won't do |
+| w14 reflection blur, scale / skew (sx, sy, kx, ky), fade direction | docx | box-reflect mirrors a box as it is: it can fade but not blur or transform the mirror image (Word's presets blur 0.5-10 pt and keep sx 100 %, sy -100 %) | won't do |
+| Word's no-ligature default in .doc / RTF | doc, rtf | Word draws no ligatures or contextual alternates there either; the browser's defaults apply | deferred |
 | Kerning | docx, doc, rtf, odt | Ignored by design (audit set); the browser's own kerning applies | won't do |
 | East-Asian font slot (eastAsiaTheme, east-asian fonts), eastAsianLayout, fitText | docx, doc | Model has no East-Asian slot; not needed for Hebrew books | deferred |
 | Web archive sheet rules with attribute or sibling selectors, :last-child, pseudo-elements, @media | mhtml | The sheet is resolved per element into inline styles by a small checked grammar; Word's own sheets do not use these | deferred |

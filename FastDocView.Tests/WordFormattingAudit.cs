@@ -23,8 +23,9 @@ public static class WordFormattingAudit
         ["lang", "noProof", "kern", "widowControl", "keepNext", "keepLines", "pageBreakBefore", "suppressLineNumbers",
          "suppressAutoHyphens", "textAlignment", "snapToGrid", "adjustRightInd", "autoSpaceDE", "autoSpaceDN", "tblLook",
          "rsid", "rsidR", "rsidRPr", "w", "eastAsianLayout", "specVanish", "oMath", "framePr",
-         // Word 2010+ typography (w14): OpenType ligatures / number forms / spacing / contextual alternates, text outline
-         "ligatures", "numForm", "numSpacing", "cntxtAlts", "textOutline", "effect", "stylisticSets",
+         // w14 text outline (drawn by DocxStyleCascade, listed here since the audit predates it); w:effect (animated text, not printed);
+         // w14 3-D text: Word rasterises it as a lit 3-D picture, the plain letters are the nearest CSS (NOTES.md "3-D text")
+         "textOutline", "effect", "props3d", "scene3d",
          // table style banding and floating-table placement, alt text, conditional-format marks (table styles' base is applied)
          "tblStyleRowBandSize", "tblStyleColBandSize", "tblpPr", "tblOverlap", "tblDescription", "tblCaption", "cnfStyle", "hideMark", "tblPrEx",
          // East-Asian line breaking, mirrored indents, collapsed headings (w15), revision history of properties
@@ -37,7 +38,8 @@ public static class WordFormattingAudit
          "tblHeader", "cantSplit"];
     private static readonly HashSet<string> HandledRunProperties =
         ["rStyle", "b", "bCs", "i", "iCs", "u", "strike", "dstrike", "vanish", "webHidden", "rtl", "vertAlign", "sz", "szCs", "color",
-         "highlight", "shd", "rFonts", "smallCaps", "caps", "spacing", "cs", "position", "outline", "shadow", "emboss", "imprint", "bdr", "textFill", "em"];
+         "highlight", "shd", "rFonts", "smallCaps", "caps", "spacing", "cs", "position", "outline", "shadow", "emboss", "imprint", "bdr", "textFill", "em", "glow",
+         "ligatures", "numForm", "numSpacing", "cntxtAlts", "stylisticSets", "reflection"];
     private static readonly HashSet<string> HandledParagraphProperties =
         ["pStyle", "bidi", "jc", "ind", "spacing", "outlineLvl", "numPr", "rPr", "ilvl", "numId", "contextualSpacing", "shd", "tabs", "sectPr", "pBdr"];
     private static readonly HashSet<string> HandledRunChildren =
