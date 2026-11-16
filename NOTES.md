@@ -5158,3 +5158,27 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   printed a chart with all six trend types and no c:name as: Linear, Expon., Log., Poly., Power, "3 per. Mov. Avg." - each
   followed by " (series)". Identical to the English set DocxChart.TrendLineName already used (it was from memory). Harness:
   RunTrendNamesEnglish (--charts / --fidelity).
+
+## Chart: Word's 3-D perspective camera, measured from wall corners (2026-11-16)
+
+- Fixtures: test-data/word-charts-binary/word-charts-perspective-v1-1..5 (.docx from scripts/make-word-charts-perspective-v1.py,
+  PDFs by scripts/save-word-charts-perspective.ps1): 29 minimal 3-D line charts, one parameter varied at a time (perspective
+  0/15/30/60/90/120/240, rotX 0/30/60/-20, rotY 0/45/80/160, depthPercent 50/200/500, hPercent 50/100/200, two chart sizes, some
+  combinations), no axes / title / legend, walls filled red / green / blue. Word draws the scene as one picture covering the plot
+  area (chart inset about 11 pt); scripts/measure-word-chart-perspective-walls.py takes each face's corners (largest-area
+  quadrilateral on the coloured region, about 0.2 pt) and scripts/word_chart_camera_fit.py holds the fitting helpers.
+- Scene confirmed: width 1, depth = series x depthPercent / 100 / categories, height = floor((categories + series) / 2) /
+  categories x hPercent / 100, or x plot height / plot width with no hPercent (all 29 probes within 1 %).
+- Camera (solved, 0.1-0.8 pt rms per probe with 4 free numbers): a pinhole whose axis goes through the plot area's centre, vertical
+  field of view = c:perspective / 2 degrees over the plot area's height, i.e. eye distance = plot height / 2 / tan(perspective / 4
+  deg) in POINTS, independent of the scene's size (Epage x tan(p/4) = 109-111 pt for a 220 pt plot, 64 for 128, 138 for 278).
+  [MS-OI29500] 2.1.1516: Office writes twice the angle. Perspective 0 = parallel, box centred, 5.5 pt / 3.3 pt inside the plot.
+- Not solved: where the scene sits. With the screen plane through the box centre the scale equals the parallel fit's when height
+  limits it, a bit less (0.99 .. 0.82 at perspective 15 .. 120) when width limits it, and the scene is shifted across the view by
+  tens of points; the limiting side touches (left 5.5 pt), but the free direction is NOT centred (bbox off-centre by up to 8 pt
+  vertically, 15-23 pt horizontally at rotY 50-80). Rules tried: centred projected box (median 2.1 pt rms, max 5-40 pt at rotY 50+ /
+  strong perspective), drawn-faces-only box (2.9), fixed scene aim point with touch fit (10.5), one / two / three pass fits (2.4-2.7).
+- A renderer trial of the camera + centred fit (kept out): wall corners 7.0 / 10.3 pt (median / median max) vs 9.1 / 17.4 before on
+  the probes, but most of it is our plot rectangle with deleted axes (8.8 pt chart inset vs Word's 16.4); on word-charts-3d-rows-v1's
+  labels it moved Line3D Persp from 3.5 to 6.5 pt (uniform x shift: the label rectangle was tuned with the old camera). Next: calibrate
+  the 3-D plot rectangle against Word's scene picture bounds, then switch the camera.

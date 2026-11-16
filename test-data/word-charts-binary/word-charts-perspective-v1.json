@@ -1,0 +1,326 @@
+[
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 0,
+"depth": 100,
+"name": "p0",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 15,
+"depth": 100,
+"name": "p15",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 30,
+"depth": 100,
+"name": "p30",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 60,
+"depth": 100,
+"name": "p60",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 90,
+"depth": 100,
+"name": "p90",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 120,
+"depth": 100,
+"name": "p120",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 240,
+"depth": 100,
+"name": "p240",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 0,
+"rotY": 20,
+"perspective": 30,
+"depth": 100,
+"name": "x0",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 30,
+"depth": 100,
+"name": "x30",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 60,
+"rotY": 20,
+"perspective": 30,
+"depth": 100,
+"name": "x60",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": -20,
+"rotY": 20,
+"perspective": 30,
+"depth": 100,
+"name": "x-20",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 0,
+"perspective": 30,
+"depth": 100,
+"name": "y0",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 45,
+"perspective": 30,
+"depth": 100,
+"name": "y45",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 80,
+"perspective": 30,
+"depth": 100,
+"name": "y80",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 160,
+"perspective": 30,
+"depth": 100,
+"name": "y160",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 30,
+"depth": 50,
+"name": "d50",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 30,
+"depth": 200,
+"name": "d200",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 30,
+"depth": 500,
+"name": "d500",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 30,
+"depth": 100,
+"h": 50,
+"name": "h50",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 30,
+"depth": 100,
+"h": 100,
+"name": "h100",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 30,
+"depth": 100,
+"h": 200,
+"name": "h200",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 30,
+"depth": 100,
+"name": "s-wide",
+"size": [
+415,
+150
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 30,
+"depth": 100,
+"name": "s-square",
+"size": [
+300,
+300
+]
+},
+{
+"rotX": 40,
+"rotY": 50,
+"perspective": 60,
+"depth": 100,
+"name": "p60-x40y50",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 40,
+"rotY": 50,
+"perspective": 120,
+"depth": 100,
+"name": "p120-x40y50",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 90,
+"depth": 200,
+"name": "p90-d200",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 90,
+"depth": 100,
+"h": 200,
+"name": "p90-h200",
+"size": [
+415,
+242
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 120,
+"depth": 100,
+"name": "p120-square",
+"size": [
+300,
+300
+]
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 60,
+"depth": 100,
+"series": 3,
+"name": "p60-s3",
+"size": [
+415,
+242
+]
+}
+]
