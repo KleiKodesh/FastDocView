@@ -167,6 +167,8 @@ public sealed partial class OdtBlockHtmlRenderer
         _dropCapFormat = formatting;
         _dropCapCaptured = null;
         _isParagraphRightToLeft = formatting.IsRightToLeft;
+        (Dictionary<XText, int>? offsets, bool[]? complex) outerScript = (_paragraphTextOffsets, _paragraphTextIsComplex);
+        ClassifyParagraphScript(paragraph);
         bool hasLabel = false;
         if (isTopLevel && _listLabel is { Length: > 0 } label)
         {
@@ -185,6 +187,7 @@ public sealed partial class OdtBlockHtmlRenderer
         _dropCapFormat = outerDropCapFormat;
         (_dropCapTarget, _dropCapInsertAt, _dropCapCaptured) = outerDropCapCapture;
         _isParagraphRightToLeft = outerIsRightToLeft;
+        (_paragraphTextOffsets, _paragraphTextIsComplex) = outerScript;
         html.Append("</").Append(tag).Append('>');
     }
 
@@ -291,9 +294,26 @@ public sealed partial class OdtBlockHtmlRenderer
     /// the complex-script set, so an English piece switches to the western font / size / weight; in a left-to-right paragraph a
     /// Hebrew piece switches to the complex-script set.
     /// </summary>
-    private void AppendScriptPieces(StringBuilder html, string value, WordRunFormatting current)
+    private void AppendScriptPieces(StringBuilder html, string value, WordRunFormatting current, int paragraphOffset)
     {
         if (value.Length == 0) return;
+        if (paragraphOffset >= 0 && _paragraphTextIsComplex is { } complex && paragraphOffset + value.Length <= complex.Length)
+        {
+            // the paragraph-wide split (ClassifyParagraphScript): a piece may start or end inside this text node
+            for (int start = 0; start < value.Length;)
+            {
+                bool isComplex = complex[paragraphOffset + start];
+                int end = start + 1;
+                while (end < value.Length && complex[paragraphOffset + end] == isComplex) end++;
+                string piece = WordHtmlText.Encode(value.Substring(start, end - start));
+                string css = isComplex == current.UsesComplexScriptProperties ? "" : WordListLabelScript.WithScript(current, isComplex).ToCss(current);
+                if (css.Length > 0) html.Append("<span style=\"").Append(css).Append("\">");
+                WordHtmlText.AppendScaled(html, piece, current.CharacterScalePercent);
+                if (css.Length > 0) html.Append("</span>");
+                start = end;
+            }
+            return;
+        }
         if (WordTextScript.PieceEnd(value, 0, _isParagraphRightToLeft, out bool firstIsComplex) == value.Length && firstIsComplex == current.UsesComplexScriptProperties)
         {
             WordHtmlText.AppendScaled(html, WordHtmlText.Encode(value), current.CharacterScalePercent);
@@ -311,6 +331,63 @@ public sealed partial class OdtBlockHtmlRenderer
         }
     }
 
+    private Dictionary<XText, int>? _paragraphTextOffsets;     // each text node of the current paragraph -> its offset in the paragraph text
+    private bool[]? _paragraphTextIsComplex;                    // per character of the paragraph text: drawn in the complex-script set
+
+    /// <summary>
+    /// The script split over the whole paragraph text, as LibreOffice does it: SwScriptInfo::InitScriptInfo runs one
+    /// direction / script scanner over the text node's whole string (sw/source/core/text/porlay.cxx:1368, 1467-1469), not per
+    /// portion, so an English run broken by a span is still one left-to-right run. The text is built in the order RenderInline
+    /// visits it; notes, frames and shapes stand as one neutral anchor character (CH_TXTATR_BREAKWORD), as in the node text.
+    /// </summary>
+    private void ClassifyParagraphScript(XElement paragraph)
+    {
+        var text = new StringBuilder();
+        var offsets = new Dictionary<XText, int>();
+        var pending = new Stack<IEnumerator<XNode>>();
+        pending.Push(paragraph.Nodes().GetEnumerator());
+        while (pending.Count > 0)
+        {
+            IEnumerator<XNode> nodes = pending.Peek();
+            if (!nodes.MoveNext()) { pending.Pop(); continue; }
+            if (nodes.Current is XText node) { offsets[node] = text.Length; text.Append(node.Value); continue; }
+            if (nodes.Current is not XElement element) continue;
+            XName name = element.Name;
+            if (name.Namespace == TextNs)
+            {
+                switch (name.LocalName)
+                {
+                    case "s": text.Append(' ', int.TryParse((string?)element.Attribute(TextNs + "c"), out int c) && c > 0 ? Math.Min(c, 1000) : 1); continue;
+                    case "tab": text.Append('\t'); continue;
+                    case "line-break": text.Append('\n'); continue;
+                    case "note": case "number": text.Append('\u0001'); continue;
+                    case "bookmark": case "bookmark-start": case "reference-mark": case "reference-mark-start":
+                    case "soft-page-break": case "bookmark-end":
+                    case "reference-mark-end": case "change": case "change-start": case "change-end": case "toc-mark": case "toc-mark-start": case "toc-mark-end":
+                    case "alphabetical-index-mark": case "alphabetical-index-mark-start": case "alphabetical-index-mark-end": case "user-index-mark":
+                    case "user-index-mark-start": case "user-index-mark-end": case "bibliography-mark": case "ruby-text": case "hidden-text": case "hidden-paragraph":
+                        continue;
+                    default: pending.Push(element.Nodes().GetEnumerator()); continue;
+                }
+            }
+            if (name.Namespace == DrawNs)
+            {
+                if (name.LocalName == "a") pending.Push(element.Nodes().GetEnumerator());
+                else text.Append('\u0001');
+            }
+        }
+        string value = text.ToString();
+        var isComplex = new bool[value.Length];
+        for (int start = 0; start < value.Length;)
+        {
+            int end = WordTextScript.PieceEnd(value, start, _isParagraphRightToLeft, out bool complex);
+            if (complex) for (int k = start; k < end; k++) isComplex[k] = true;
+            start = end;
+        }
+        _paragraphTextOffsets = offsets;
+        _paragraphTextIsComplex = isComplex;
+    }
+
     private void RenderInline(XElement container, StringBuilder html, string? paragraphStyle, WordRunFormatting paragraphBase,
                               WordRunFormatting current, bool hasLabel)
         => RenderInline(container.Nodes(), html, paragraphStyle, paragraphBase, current, hasLabel);
@@ -323,9 +400,10 @@ public sealed partial class OdtBlockHtmlRenderer
             if (node is XText text)
             {
                 string value = text.Value;
+                int offset = _paragraphTextOffsets is not null && _paragraphTextOffsets.TryGetValue(text, out int at) ? at : -1;
                 // the paragraph drop cap: its first characters (or first word) in the drop-cap span, across text nodes and spans
                 if (_dropCapRemaining != 0 && value.Length > 0) value = TakeDropCap(value, current);
-                AppendScriptPieces(html, value, current);
+                AppendScriptPieces(html, value, current, offset < 0 ? -1 : offset + text.Value.Length - value.Length);
                 continue;
             }
             if (node is not XElement element) continue;

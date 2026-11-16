@@ -175,7 +175,7 @@ internal sealed class MarkupIncrementalIndexBuilder
                                                _done, _done, _isPlainTextRightToLeft, "", _bomLength, _sampleLength, known, FinishAnchors(_anchors, known),
                                                FinishGroups(groups, known), stacks, headings, _toratEmet) { IsPartial = true };
         return new MarkupRandomAccessIndex(MarkupSourceKind.WebArchive, _sourceLength, _sourceTicks, _codePage, _reason, _part!.TransferEncoding,
-                                           _decodedTotal, _file.Length, WebArchiveRightToLeft(), WebArchiveStylesheet.Scope(_scanner.StyleText), _startResume, 0,
+                                           _decodedTotal, _file.Length, WebArchiveRightToLeft(), WebArchiveStylesheet.Normalize(_scanner.StyleText), _startResume, 0,
                                            known, FinishAnchors(_anchors, known), FinishGroups(groups, known), stacks, headings) { IsPartial = true };
     }
 
@@ -273,7 +273,7 @@ internal sealed class MarkupIncrementalIndexBuilder
         AddToGroups(_groupTotals, _scanner.BlockTextLengths.Count);
         _progress?.Report(new WordDocumentIndexProgress(_file.Length - _part!.BodyStart, _file.Length - _part.BodyStart, blockCount));
         return new MarkupRandomAccessIndex(MarkupSourceKind.WebArchive, _sourceLength, _sourceTicks, _codePage, _reason, _part!.TransferEncoding,
-                                           textEnd, _encodedEnd, WebArchiveRightToLeft(), WebArchiveStylesheet.Scope(_scanner.StyleText), _startResume, 0,
+                                           textEnd, _encodedEnd, WebArchiveRightToLeft(), WebArchiveStylesheet.Normalize(_scanner.StyleText), _startResume, 0,
                                            blockCount, FinishAnchors(_anchors, blockCount), FinishGroups(_groupTotals, blockCount), _scanner.Stacks,
                                            _scanner.Headings.ToArray());
     }

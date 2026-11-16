@@ -43,11 +43,15 @@ public static class MarkupBlockRenderer
     }
 
     /// <param name="drawsPictures">A web archive: its &lt;img&gt; parts are read on request. Plain text has no parts, so an &lt;img&gt; typed in it stays the placeholder.</param>
-    public static string Render(string openTags, string content, bool drawsPictures = false)
+    /// <param name="stylesheet">A web archive's head sheet (<see cref="WebArchiveStylesheet"/>): its rules are resolved per element into the element's inline style.</param>
+    public static string Render(string openTags, string content, bool drawsPictures = false, WebArchiveStylesheet? stylesheet = null)
     {
         string text = openTags + content;
         var html = new StringBuilder(text.Length + 32);
         var open = new List<string>();
+        // the open elements as the sheet sees them, under the document's html / body (dropped from the output, still ancestors)
+        var elements = new List<WebArchiveElement>
+            { new("html", null, [], false, false, false), new("body", null, [], false, false, false) };
         int i = 0;
         while (i < text.Length)
         {
@@ -81,6 +85,7 @@ public static class MarkupBlockRenderer
                 if (at < 0) continue;
                 for (int k = open.Count - 1; k >= at; k--) html.Append("</").Append(open[k]).Append('>');
                 open.RemoveRange(at, open.Count - at);
+                elements.RemoveRange(at + 2, elements.Count - at - 2);
                 continue;
             }
             if (DroppedWithContent.Contains(name) || MarkupBlockScanner.RawTextElements.Contains(name))
@@ -93,11 +98,20 @@ public static class MarkupBlockRenderer
             }
             // Word's web archive writes each picture twice: VML (v:imagedata) and an <img> fallback inside <![if !vml]>, which is
             // what a browser shows (it has no VML). The <img> is drawn through the picture pipeline; the VML copy is skipped.
+            WebArchiveElement parent = elements[elements.Count - 1];
+            bool isFirstChild = parent.AreChildrenKnown && parent.ElementChildren == 0;
+            parent.ElementChildren++;                                  // every start tag counts, drawn or not
             if (name == "v:imagedata") continue;
             if (name == "img") { if (drawsPictures) AppendPicture(html, tag); else html.Append(ImagePlaceholder); continue; }
             if (DroppedTags.Contains(name)) continue;
-            html.Append(Sanitize(tag, name));
+            var element = new WebArchiveElement(name, Decoded(AttributeValue(tag, "id")),
+                Decoded(AttributeValue(tag, "class"))?.Split(ClassSeparators, StringSplitOptions.RemoveEmptyEntries) ?? [],
+                name == "a" && AttributeValue(tag, "href") is not null, isFirstChild,
+                areChildrenKnown: i > openTags.Length);
+            elements.Add(element);
+            html.Append(WithStyle(Sanitize(tag, name), stylesheet is null ? "" : stylesheet.StyleFor(elements)));
             if (!VoidElements.Contains(name) && !isSelfClosing) open.Add(name);
+            else elements.RemoveAt(elements.Count - 1);
         }
         for (int k = open.Count - 1; k >= 0; k--) html.Append("</").Append(open[k]).Append('>');
         return html.ToString();
@@ -117,13 +131,42 @@ public static class MarkupBlockRenderer
         WordPictureHtml.Append(html, layout, WebArchivePicturePrefix + System.Net.WebUtility.HtmlDecode(source!.Trim()));
     }
 
-    /// <summary>One attribute's value in a start tag (quoted or bare, names case-insensitive), or null - the same rules as <see cref="Sanitize"/>.</summary>
-    private static string? AttributeValue(string tag, string wanted)
+    private static readonly char[] ClassSeparators = [' ', (char)9, (char)10, (char)12, (char)13];
+
+    private static string? Decoded(string? value) => value is null ? null : System.Net.WebUtility.HtmlDecode(value).Trim() is { Length: > 0 } decoded ? decoded : null;
+
+    /// <summary>
+    /// The tag with one style="": the sheet's declarations for the element first, its own style after them (it wins, as in the
+    /// cascade), both through the sheet's checks (<see cref="WebArchiveStylesheet.SanitizeInline"/>) - nothing passes through raw.
+    /// </summary>
+    private static string WithStyle(string tag, string sheetCss)
     {
+        string? inline = AttributeValue(tag, "style", out int attributeStart, out int attributeEnd);
+        if (inline is null && sheetCss.Length == 0) return tag;
+        string css = sheetCss + (inline is null ? "" : WebArchiveStylesheet.SanitizeInline(System.Net.WebUtility.HtmlDecode(inline)));
+        while (attributeStart >= 0)                 // every style="" goes (a browser reads the first; a second must not take its place)
+        {
+            tag = tag.Remove(attributeStart, attributeEnd - attributeStart).Insert(attributeStart, " ");   // keep the name apart from the next attribute
+            AttributeValue(tag, "style", out attributeStart, out attributeEnd);
+        }
+        if (css.Length == 0) return tag;
+        int end = tag.EndsWith("/>", StringComparison.Ordinal) ? tag.Length - 2 : tag.Length - 1;
+        while (end > 0 && char.IsWhiteSpace(tag[end - 1])) end--;
+        return tag.Substring(0, end) + " style=\"" + css.Replace("&", "&amp;").Replace("\"", "&quot;").Replace("<", "&lt;") + "\"" + tag.Substring(end).TrimStart();
+    }
+
+    /// <summary>One attribute's value in a start tag (quoted or bare, names case-insensitive), or null - the same rules as <see cref="Sanitize"/>.</summary>
+    private static string? AttributeValue(string tag, string wanted) => AttributeValue(tag, wanted, out _, out _);
+
+    /// <param name="attributeStart">Where the attribute starts (the white space before its name), <paramref name="attributeEnd"/> just after its value.</param>
+    private static string? AttributeValue(string tag, string wanted, out int attributeStart, out int attributeEnd)
+    {
+        attributeStart = attributeEnd = -1;
         int i = 1;
         while (i < tag.Length && !char.IsWhiteSpace(tag[i]) && tag[i] != '>' && tag[i] != '/') i++;   // past the element name
         while (i < tag.Length)
         {
+            int gapStart = i;
             while (i < tag.Length && (char.IsWhiteSpace(tag[i]) || tag[i] == '/')) i++;
             if (i >= tag.Length || tag[i] == '>') return null;
             int nameStart = i;
@@ -153,7 +196,7 @@ public static class MarkupBlockRenderer
             }
             else i = afterName;
             if (attribute.Length == 0) { i++; continue; }
-            if (attribute.Equals(wanted, StringComparison.OrdinalIgnoreCase)) return value ?? "";
+            if (attribute.Equals(wanted, StringComparison.OrdinalIgnoreCase)) { attributeStart = gapStart; attributeEnd = Math.Min(i, tag.Length - 1); return value ?? ""; }
         }
         return null;
     }

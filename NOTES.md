@@ -2804,3 +2804,24 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   spaces; each piece keeps its span's look but the paragraph's size, and the initial is inserted at the paragraph's start.
   A tab, line break or note ends it (txtdrop.cxx SwTextNode::GetDropLen :157-165). LibreOffice's PDF of drop-cap-spans-v1:
   "Abc" over a red and a bold span, "Word" split by a span, "X" before a tab.
+
+## Web archive sheets resolved inline; ODT script split per paragraph (2026-11-16)
+
+MHTML: the head `<style>` sheet is never sent to the page. `WebArchiveStylesheet.Parse` checks it at index time (the
+index stores the checked text, format 16): selectors must fit a small grammar (type, .class, #id, descendant, `>`,
+:link / :any-link, :first-child; :visited is dropped because a printed link is unvisited; :hover, attribute / sibling
+selectors and pseudo-elements drop the selector), declarations must be whitelisted print properties with safe values
+(no url(), image(), expression, behavior, binding, var(), escapes, '@', "fixed"; no position / top / left / z-index /
+content / table-layout). `MarkupBlockRenderer.Render` keeps the open elements (html / body implicit under them) and
+writes each element's matched declarations, by specificity then order, before its own style="" - which passes the same
+check. Class and id match case-insensitively (Word's HTML has no doctype: quirks mode). body / html rules give only their
+inherited declarations to `.word-document`. Verified against Word 16: a .docx with a custom paragraph style (Courier New
+20 pt bold red centred), Heading 1 and a character style (green italic 16 pt) saved as .mht (SaveAs2 9) and as PDF
+(SaveAs2 17): PyMuPDF reads the same fonts, sizes, colours and centring as the inline styles we write. Test:
+`WebArchiveSheetAndOdtScriptTest` (in `--fidelity` and `--mhtml`).
+
+ODT: the Latin / complex-script split (WordTextScript) now runs once over the paragraph's whole text, as LibreOffice's
+SwScriptInfo::InitScriptInfo does over the text node (sw/source/core/text/porlay.cxx:1368, 1467-1469), not per text node;
+notes, frames and shapes stand as one neutral anchor character. LibreOffice 25 PDF of the test's .fodt: " 2024" after
+"English" (italic span) is LiberationSerif 11 pt (Latin), "Eng" + span "lish" both 11 pt, ", " after them David 16 pt -
+the same split we draw.

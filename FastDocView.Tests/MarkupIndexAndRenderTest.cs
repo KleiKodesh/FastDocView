@@ -216,12 +216,14 @@ public static class MarkupIndexAndRenderTest
             $"the text/html alternative is read ({document.BlockCount} blocks: {string.Join(" | ", blocks.Select(b => b.Html))})");
     }
 
+    private const string MhtmlNormalStyle = "margin:0cm;font-size:12.0pt;font-family:&quot;Times New Roman&quot;;";
+
     private static void VerifyMhtml(MarkupWindowedDocument document, int count, string what)
     {
         TestReport.Check(document.Index.CodePage == 1255, $"{what}: charset windows-1255 from the part header");
         TestReport.Check(document.BlockCount == MhtmlExpectedBlockCount(count), $"{what}: block count {document.BlockCount:N0} == {MhtmlExpectedBlockCount(count):N0}");
         TestReport.Check(document.IsRightToLeft, $"{what}: right-to-left");
-        TestReport.Check(document.Stylesheet.Contains(".word-document p.MsoNormal") && !document.Stylesheet.Contains("@page"), $"{what}: Word styles scoped, @page dropped");
+        TestReport.Check(!document.Stylesheet.Contains("MsoNormal") && !document.Stylesheet.Contains("@page"), $"{what}: the sheet never reaches the page stylesheet");
         IReadOnlyList<WordDocumentBlockHtml> prefix = document.RenderBlocks(0, MhtmlPrefixBlockCount);
         bool ok = prefix[0].Html.Contains("<h1 dir=RTL>" + Title + " 1</h1>")
                   && prefix[1].Html.StartsWith("<div class=WordSection1 dir=RTL>") && prefix[1].Html.Contains("<b>" + Bold + "</b> a=b")
@@ -238,7 +240,7 @@ public static class MarkupIndexAndRenderTest
             foreach (WordDocumentBlockHtml block in document.RenderBlocks(MhtmlPrefixBlockCount + start, 30))
             {
                 int i = block.BlockIndex - MhtmlPrefixBlockCount;
-                string expected = i % 500 == 0 ? $"<h2 dir=RTL>{Title} {i}</h2>" : $"<p class=MsoNormal dir=RTL>{MhtmlParagraphText(i)}</p>";
+                string expected = i % 500 == 0 ? $"<h2 dir=RTL>{Title} {i}</h2>" : $"<p class=MsoNormal dir=RTL style=\"{MhtmlNormalStyle}\">{MhtmlParagraphText(i)}</p>";
                 if (!block.Html.Contains(expected)) { windowsOk = false; Console.WriteLine($"      block {block.BlockIndex}: {Ascii(block.Html)}"); break; }
             }
         }

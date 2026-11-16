@@ -28,7 +28,7 @@ public sealed record MarkupSpanAnchor(MarkupScanState? State, long ScanPosition,
 public sealed class MarkupRandomAccessIndex
 {
     private const string Magic = "KHMKPIDX";
-    private const int FormatVersion = 15; // 15: plain .txt drops blank and whitespace-only lines; 14: Torat Emet note lines (hidden from the text, carried with the head); 13: a blank line right after a Torat Emet heading is dropped in every book (anchors carry it); 12: the first title heading keeps its own text (no ForcedBookName root); 11: blank lines dropped unless PutNewLinesAsIs=1, tilde headings return when the contents would be empty; 10: (also covers 8, the path rule: an empty head, no head block) PutNewLinesAsIs=0 books drop blank lines, LastLevelIndex 0 hides tilde headings; 9: heading levels 1-4 (dollar = 1), label lines merge with the next line; 8: Torat Emet without line-1 metadata (empty head) and without a title line; 7: Torat Emet head (metadata + where it ends; heading levels from line marks); 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
+    private const int FormatVersion = 16; // 16: the web archive sheet stored checked (WebArchiveStylesheet.Normalize), resolved per element; 15: plain .txt drops blank and whitespace-only lines; 14: Torat Emet note lines (hidden from the text, carried with the head); 13: a blank line right after a Torat Emet heading is dropped in every book (anchors carry it); 12: the first title heading keeps its own text (no ForcedBookName root); 11: blank lines dropped unless PutNewLinesAsIs=1, tilde headings return when the contents would be empty; 10: (also covers 8, the path rule: an empty head, no head block) PutNewLinesAsIs=0 books drop blank lines, LastLevelIndex 0 hides tilde headings; 9: heading levels 1-4 (dollar = 1), label lines merge with the next line; 8: Torat Emet without line-1 metadata (empty head) and without a title line; 7: Torat Emet head (metadata + where it ends; heading levels from line marks); 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
     public const int AnchorSpanBytes = 64 * 1024;
     /// <summary>
     /// MHTML anchors are 4x denser: decoding plus tag-heavy HTML rescans at ~25 MB/s, so a 64 KB span cost a random block
@@ -46,7 +46,7 @@ public sealed class MarkupRandomAccessIndex
     public long TextEnd { get; }                      // end of the last block, text coordinates
     public long EncodedEnd { get; }                   // MHTML: end of the HTML part body in the file
     public bool IsRightToLeft { get; }
-    public string DocumentCss { get; }                // MHTML: the head's style text, scoped
+    public string DocumentCss { get; }                // MHTML: the head's style sheet, checked (WebArchiveStylesheet.Normalize)
     /// <summary>.txt: the first text byte (after a BOM). MHTML: the decoder resume point of the HTML part's first byte.</summary>
     public long TextStart { get; }
     /// <summary>.txt: where the index pass's first fed piece ended (the detection sample); later pieces are <see cref="MarkupRandomAccessIndexBuilder.ChunkSize"/> each - a rescan feeds the same pieces.</summary>

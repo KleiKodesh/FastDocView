@@ -7,8 +7,8 @@ Cells: **yes** = read and rendered; **partial** = rendered with a limit (numbere
 The view is a **flow view** (Word's draft / continuous view): no pages. Anything page-bound waits for the
 separate paged view, which is not built yet.
 
-- MHTML = Word web archives: the HTML Word saved is passed through block by block; `<style>` sheets are dropped,
-  so only inline formatting survives. Pictures are read from their archive part on request (the `<img>` Word writes; its VML copy is skipped).
+- MHTML = Word web archives: the HTML Word saved is passed through block by block; the `<style>` sheet is parsed and
+  checked, and its rules are resolved into each element's inline style (it never reaches the page as written). Pictures are read from their archive part on request (the `<img>` Word writes; its VML copy is skipped).
 - .txt = one block per line (encoding detection identical to Notepad++), plus the Torat Emet book markup.
 
 **How to verify:** in `FastDocView.Tests`, `dotnet run -c Release -- --audit <files>` (unhandled constructs per file, keep at 0),
@@ -20,23 +20,23 @@ separate paged view, which is not built yet.
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Fonts (Latin and complex-script sets, per-run script) | yes | yes | yes | partial (1) | n.a. | partial (2) |
+| Fonts (Latin and complex-script sets, per-run script) | yes | yes | yes | yes (1) | n.a. | yes (2) |
 | Theme fonts (minorBidi / majorBidi, themeFontLang) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
-| Sizes (Latin and complex) | yes | yes | yes | yes | n.a. | partial (2) |
-| Colours, auto colour | yes | yes | yes | yes | n.a. | partial (2) |
+| Sizes (Latin and complex) | yes | yes | yes | yes | n.a. | yes (2) |
+| Colours, auto colour | yes | yes | yes | yes | n.a. | yes (2) |
 | Theme colours with tint / shade | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
-| Highlight | yes | yes | yes | yes | n.a. | partial (2) |
-| Character shading (patterns mixed to one colour) | yes | yes | yes | yes | n.a. | partial (2) |
-| Character borders | yes | yes | yes | yes | n.a. | partial (2) |
-| Bold, italic (complex-script variants too) | yes | yes | yes | yes | n.a. | partial (2) |
-| Underline styles (double, dotted, dashed, wavy, thick / heavy) | yes | yes | yes | yes | n.a. | partial (2) |
-| Underline colour | yes | yes | yes | yes | n.a. | partial (2) |
+| Highlight | yes | yes | yes | yes | n.a. | yes (2) |
+| Character shading (patterns mixed to one colour) | yes | yes | yes | yes | n.a. | yes (2) |
+| Character borders | yes | yes | yes | yes | n.a. | yes (2) |
+| Bold, italic (complex-script variants too) | yes | yes | yes | yes | n.a. | yes (2) |
+| Underline styles (double, dotted, dashed, wavy, thick / heavy) | yes | yes | yes | yes | n.a. | yes (2) |
+| Underline colour | yes | yes | yes | yes | n.a. | yes (2) |
 | Underline words only | partial (3) | partial (3) | partial (3) | partial (3) | n.a. | n.a. |
-| Strike, double strike | yes | yes | yes | yes | n.a. | partial (2) |
-| Caps, small caps | yes | yes | yes | yes | n.a. | partial (2) |
-| Superscript / subscript | yes | yes | yes | yes | n.a. | partial (2) |
-| Raised / lowered position | yes | yes | yes | yes | n.a. | partial (2) |
-| Character spacing | yes | yes | yes | yes | n.a. | partial (2) |
+| Strike, double strike | yes | yes | yes | yes | n.a. | yes (2) |
+| Caps, small caps | yes | yes | yes | yes | n.a. | yes (2) |
+| Superscript / subscript | yes | yes | yes | yes | n.a. | yes (2) |
+| Raised / lowered position | yes | yes | yes | yes | n.a. | yes (2) |
+| Character spacing | yes | yes | yes | yes | n.a. | yes (2) |
 | Character scale (per-word scaleX boxes) | yes | yes | yes | yes | n.a. | n.a. |
 | Emphasis marks | yes | yes | yes | yes | n.a. | n.a. |
 | Legacy effects: outline, shadow, emboss, imprint / engrave | yes | yes | yes | yes | n.a. | n.a. |
@@ -46,8 +46,8 @@ separate paged view, which is not built yet.
 | Symbol characters (w:sym, sprmCSymbol, symbol fonts to Unicode) | yes | yes | yes | yes | n.a. | n.a. |
 | Language ids (for hyphenation) | yes | yes | yes | yes | n.a. | n.a. |
 
-1. ODT has no per-run script flag; each paragraph is split by script per text node (LibreOffice's rule), so a run broken by a span is judged in pieces.
-2. MHTML keeps inline `style=` only; class-based formatting from the dropped `<style>` sheet is lost.
+1. ODT has no per-run script flag; the script split runs over the whole paragraph text, as LibreOffice's SwScriptInfo does, so a run broken by a span stays one run.
+2. MHTML: the head sheet's rules (type, class, id, descendant / child selectors, :link, :first-child) are resolved per element into checked inline styles with the element's own style last; only print properties pass (no url(), expression, behavior, @import or position). Attribute / sibling selectors, :last-child and pseudo-elements are not read.
 3. Drawn as a plain underline: CSS has no skip-the-spaces underline (LibreOffice does the same).
 4. Shadow / glow offset and blur are drawn; shadow scale and skew (sx, sy, kx, ky) are not (CSS text-shadow cannot transform).
 
@@ -55,13 +55,13 @@ separate paged view, which is not built yet.
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Alignment (justified with manual-break rule) | yes | yes | yes | yes | n.a. | partial (2) |
+| Alignment (justified with manual-break rule) | yes | yes | yes | yes | n.a. | yes (2) |
 | Direction (RTL / LTR) | yes | yes | yes | yes | yes | yes |
-| Indents (start, end, first line, hanging) | yes | yes | yes | yes | n.a. | partial (2) |
-| Spacing before / after, contextual spacing | yes | yes | yes | yes | n.a. | partial (2) |
-| Line spacing (auto, exact, at least) | yes | yes | yes | yes | n.a. | partial (2) |
-| Paragraph borders | yes | yes | yes (5) | yes | n.a. | partial (2) |
-| Paragraph shading | yes | yes | yes | yes | n.a. | partial (2) |
+| Indents (start, end, first line, hanging) | yes | yes | yes | yes | n.a. | yes (2) |
+| Spacing before / after, contextual spacing | yes | yes | yes | yes | n.a. | yes (2) |
+| Line spacing (auto, exact, at least) | yes | yes | yes | yes | n.a. | yes (2) |
+| Paragraph borders | yes | yes | yes (5) | yes | n.a. | yes (2) |
+| Paragraph shading | yes | yes | yes | yes | n.a. | yes (2) |
 | Tab stops | partial (6) | partial (6) | partial (6) | partial (6) | n.a. | n.a. |
 | Drop caps | yes | yes | yes | yes (7) | n.a. | n.a. |
 | Automatic hyphenation (by language; Hebrew has no dictionary) | yes | yes | yes | yes | n.a. | n.a. |
@@ -108,14 +108,14 @@ NOTES.md "List numbering" holds the audit of list number formats.
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Borders (table, cell; theme colours in docx) | yes | yes (T3) | yes | yes | n.a. | partial (2) |
-| Shading | yes | yes | yes | yes | n.a. | partial (2) |
+| Borders (table, cell; theme colours in docx) | yes | yes (T3) | yes | yes | n.a. | yes (2) |
+| Shading | yes | yes | yes | yes | n.a. | yes (2) |
 | Conditional table styles (first / last row and column, banding) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
 | Merged cells (horizontal and vertical) | yes | yes (T2) | yes (T2) | yes | n.a. | yes |
 | Nested tables | yes | yes | yes | yes | n.a. | yes |
-| Widths (grid, cell, indent, cell margins) | yes | yes | yes | yes | n.a. | partial (2) |
+| Widths (grid, cell, indent, cell margins) | yes | yes | yes | yes | n.a. | yes (2) |
 | Direction (bidiVisual / RTL rows) | yes | yes | yes | yes | n.a. | yes |
-| Vertical alignment in cells | yes | yes | yes | yes | n.a. | partial (2) |
+| Vertical alignment in cells | yes | yes | yes | yes | n.a. | yes (2) |
 | Row height (at least / exact, exact clips the cell) | yes | yes | yes | yes | n.a. | no |
 | Cell text direction (vertical text) | yes | yes | yes | yes (T4) | n.a. | n.a. |
 | Big tables split into row blocks (windowed) | yes | yes | yes | yes | n.a. | yes |

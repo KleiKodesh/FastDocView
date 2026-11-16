@@ -261,12 +261,16 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
         _encoding = MarkupTextEncoding.FromCodePage(index.CodePage);
         Decision = decision;
         IsRightToLeft = index.IsRightToLeft;
+        _webArchiveStylesheet = index.DocumentCss.Length == 0 ? WebArchiveStylesheet.Empty : WebArchiveStylesheet.Parse(index.DocumentCss);
         Stylesheet = WordDocumentHtmlStylesheet.Build(new WordRunFormatting(), index.IsRightToLeft)
                      + "\n.word-document .text-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1em; }"
                      + "\n.word-document .image-placeholder { color: #999; font-style: italic; }\n"
                      + (index.ToratEmet is not null ? ToratEmetFormat.Stylesheet : index.Kind == MarkupSourceKind.PlainText ? MarkupBlockRenderer.PlainTextHeadingStylesheet : "")
-                     + index.DocumentCss;
+                     + (_webArchiveStylesheet.RootCss.Length > 0 ? "\n.word-document { " + _webArchiveStylesheet.RootCss + " }\n" : "");
     }
+
+    /// <summary>A web archive's head sheet, checked and parsed once; its rules become each element's inline style (MarkupBlockRenderer.Render).</summary>
+    private readonly WebArchiveStylesheet _webArchiveStylesheet;
 
     public int EstimatedTextLength(int blockIndex)
     {
@@ -361,7 +365,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
         {
             string content = DecodeBlock(text, textStart, block);
             string openTags = _table.OpenTags(block);
-            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(openTags, content, drawsPictures: true)
+            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(openTags, content, drawsPictures: true, _webArchiveStylesheet)
                         : _index.ToratEmet is { } toratEmet ? (block == 0 && toratEmet.HasHead ? ToratEmetFormat.RenderHeader(toratEmet, FirstTitle(_index)) : ToratEmetFormat.RenderLine(openTags, content))
                         : MarkupBlockRenderer.RenderLine(openTags, content);
             WordDocumentBlockKind kind = content.TrimStart().StartsWith("<table", StringComparison.OrdinalIgnoreCase) ? WordDocumentBlockKind.Table : WordDocumentBlockKind.Paragraph;

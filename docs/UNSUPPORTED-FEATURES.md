@@ -16,8 +16,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | w14 reflection, 3-D text (props3d / scene3d), ligatures / number forms / stylistic sets | docx | Not read | deferred |
 | Kerning | docx, doc, rtf, odt | Ignored by design (audit set); the browser's own kerning applies | won't do |
 | East-Asian font slot (eastAsiaTheme, east-asian fonts), eastAsianLayout, fitText | docx, doc | Model has no East-Asian slot; not needed for Hebrew books | deferred |
-| Class-based formatting in web archives | mhtml | `<style>` sheets are dropped for safety; only inline styles stay | deferred |
-| ODT run script split per text node | odt/fodt | ODT has no per-run script flag; an LTR run broken by a span is judged in pieces | deferred |
+| Web archive sheet rules with attribute or sibling selectors, :last-child, pseudo-elements, @media | mhtml | The sheet is resolved per element into inline styles by a small checked grammar; Word's own sheets do not use these | deferred |
 | Bullet whose symbol font is set only for complex script | doc | Shows no glyph (LibreOffice also reads the Latin font) | won't do |
 | Blinking / animated text | all | Not drawn | won't do |
 
