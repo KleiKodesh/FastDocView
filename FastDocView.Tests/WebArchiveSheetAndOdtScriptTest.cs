@@ -17,6 +17,7 @@ public static class WebArchiveSheetAndOdtScriptTest
     {
         TestReport.Step("Web archive class styles resolved inline; ODT script split per paragraph");
         WebArchiveSheet();
+        WordSavedClassStyles();
         OdtParagraphScript();
     }
 
@@ -29,6 +30,7 @@ public static class WebArchiveSheetAndOdtScriptTest
             + "p.Big {font-size:20.0pt;}\r\n#special {color:green;}\r\n"
             + "div.Box > p {font-style:italic;}\r\ndiv.Box p.Deep {text-decoration:underline;}\r\n"
             + "a:link, span.MsoHyperlink {color:blue;}\r\na:visited {color:purple;}\r\np:first-child {letter-spacing:2px;}\r\n"
+            + ".Huge {margin-left:-5in; padding:1cm 99in; text-indent:-9in; width:9000px; font-size:900pt; letter-spacing:-3cm; margin-top:calc(1px); border-top:1e9px solid;}"+"\r\n"
             + "p:hover {color:orange;}\r\np[title] {color:orange;}\r\np::first-letter {color:orange;}\r\n"
             + ".Evil {background:url(http://example.invalid/y.png); color:navy; position:absolute; behavior:url(x.htc); width:expression(alert(1)); font-family:\"A\\\"B\";}\r\n"
             + "@page WordSection1 {size:595.3pt 841.9pt;}\r\ndiv.WordSection1 {page:WordSection1;}\r\n-->";
@@ -38,6 +40,7 @@ public static class WebArchiveSheetAndOdtScriptTest
             + "<p class=MsoNormal id=special>Green</p>\r\n"
             + "<div class=Box><p class=MsoNormal>Child</p><p class=Deep>Deep</p></div>\r\n"
             + "<p><a href=\"#x\">Link</a></p>\r\n"
+            + "<p class=Huge style='margin-right:-2cm;line-height:400'>Huge</p>\r\n"
             + "<p style=\"color:teal\"class=Big>Tight</p>\r\n"
             + "<p class=Evil style=\"background-image:url(javascript:alert(1))\">Evil</p>\r\n"
             + "</body></html>\r\n";
@@ -66,11 +69,41 @@ public static class WebArchiveSheetAndOdtScriptTest
         Expect(Tag("Deep").Contains("font-style:italic;text-decoration:underline;") && !Tag("Deep").Contains("letter-spacing"), "descendant, not first child", "Deep");
         Expect(Tag("Link").Contains("color:blue;") && !Tag("Link").Contains("purple"), ":link prints, :visited does not", "Link");
         Expect(Tag("Tight").StartsWith("<p ", StringComparison.Ordinal) && Tag("Tight").Contains("class=\"Big\" style=\"font-size:20.0pt;color:teal;\""), "style removed without joining the next attribute", "Tight");
+        Expect(Tag("Huge").Contains("style=\"margin-left:0in;padding:1cm 10in;text-indent:-1.5in;width:1920px;font-size:400pt;letter-spacing:-0.706cm;margin-right:0cm;line-height:10;\""),
+               "lengths from the sheet and the element's own style kept in bounds, calc() dropped", "Huge");
         Expect(Tag("Evil").Contains("style=\"color:navy;\"") && !Tag("Evil").Contains("url") && !Tag("Evil").Contains("javascript"), "only safe declarations", "Evil");
         TestReport.Check(!all.Contains("orange") && !all.Contains("@") && !all.Contains("behavior") && !all.Contains("expression"), "mhtml sheet: no :hover / attribute / pseudo-element rule, nothing unsafe");
         TestReport.Check(document.Stylesheet.Contains(".word-document { font-family:\"David\"; }") && !document.Stylesheet.Contains("MsoNormal")
                          && !document.Stylesheet.Contains("5cm") && !document.Stylesheet.Contains("url("),
                          "mhtml sheet: the page stylesheet carries only the body's inherited declarations, never the sheet");
+    }
+
+    /// <summary>
+    /// test-data/word-mhtml/class-styles-v1.mht and .pdf, both saved by Word 16 from one document (make-class-styles-fixture.ps1):
+    /// the PDF prints "Fancy styled paragraph" in Courier New bold 20 pt red centred, "Heading one text" in Calibri Light 20 pt
+    /// #2F5496 and "green" italic 16 pt #008000 (read with PyMuPDF); the styles come only from the archive's class rules.
+    /// </summary>
+    private static void WordSavedClassStyles()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-mhtml", "class-styles-v1.mht");
+        if (!File.Exists(path)) { TestReport.Check(false, "test-data/word-mhtml/class-styles-v1.mht present"); return; }
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+        string all = string.Join("\n", document.RenderBlocks(0, document.BlockCount).Select(block => block.Html));
+        string Opening(string text)
+        {
+            int at = all.IndexOf(text, StringComparison.Ordinal);
+            int start = at < 0 ? -1 : Math.Max(all.LastIndexOf("<p ", at, StringComparison.Ordinal), all.LastIndexOf("<h1 ", at, StringComparison.Ordinal));
+            return start < 0 ? "" : all.Substring(start, all.IndexOf('>', start) + 1 - start);
+        }
+        string fancy = Opening("Fancy styled paragraph"), heading = Opening("Heading one text");
+        int green = all.IndexOf(">green<", StringComparison.Ordinal);
+        string greenRun = green < 0 ? "" : all.Substring(Math.Max(0, green - 200), 201);
+        TestReport.Check(fancy.Contains("font-family:&quot;Courier New&quot;") && fancy.Contains("font-size:20.0pt") && fancy.Contains("color:red") && fancy.Contains("font-weight:bold") && fancy.Contains("text-align:center"),
+                         $"Word .mht: paragraph style as the PDF prints it (Courier New bold 20 pt red centred) [{fancy}]");
+        TestReport.Check(heading.Contains("font-family:&quot;Calibri Light&quot;") && heading.Contains("font-size:20.0pt") && heading.Contains("color:#2F5496"),
+                         $"Word .mht: Heading 1 as the PDF prints it (Calibri Light 20 pt #2F5496) [{heading}]");
+        TestReport.Check(greenRun.Contains("color:green;font-style:italic;") && greenRun.Contains("font-size:16.0pt"), "Word .mht: character style as the PDF prints it (green italic 16 pt)");
+        TestReport.Check(!document.Stylesheet.Contains("MsoNormal") && !document.Stylesheet.Contains("FancyPara"), "Word .mht: the archive sheet is not in the page stylesheet");
     }
 
     private static void OdtParagraphScript()

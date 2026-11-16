@@ -44,6 +44,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Stacked cell text (style:direction ttb) | odt | LibreOffice Writer does not read it on cells either (the reference print is horizontal) | won't do |
 | Cells merged down drawn as one cell | rtf, doc | An outer row is one block (windowed): a cell merged down is cells without the line between them, not one rowspan cell (a nested table gets a real rowspan) | won't do (windowed rule) |
 | Repeat header row, row "can't split" | all | Page-bound | planned (paged view) |
+| Negative margins / padding, very large sizes, calc() in web archive CSS | mhtml | Clamped to safe bounds (WebArchiveCssLength) so text stays in the document area; a page that relies on them lays out a little differently | won't do |
 | Row heights in .mhtml | mhtml | The page's own HTML heights are kept as written; no Word row-height rule is applied | won't do |
 | Exact row heights as Word measures | all | Row heights are drawn (at least / exact), but text heights are the browser's, not Word's metrics | won't do |
 

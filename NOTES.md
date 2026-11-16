@@ -2825,3 +2825,11 @@ SwScriptInfo::InitScriptInfo does over the text node (sw/source/core/text/porlay
 notes, frames and shapes stand as one neutral anchor character. LibreOffice 25 PDF of the test's .fodt: " 2024" after
 "English" (italic span) is LiberationSerif 11 pt (Latin), "Eng" + span "lish" both 11 pt, ", " after them David 16 pt -
 the same split we draw.
+
+Update (2026-11-16, same day): every CSS length from a web archive (sheet rules and the element's own style="", one
+shared check: WebArchiveStylesheet.ParseDeclarations -> WebArchiveCssLength.Clamp) is kept in bounds so nothing moves
+text out of the document area: margins / padding 0..10 in (0..50 %), text-indent -1.5..10 in, width / height 0..20 in
+(0..100 %), font size 1..400 pt, line height up to 400 pt or 10x, letter / word spacing -20..100 pt, borders / rules /
+gaps 0..72 pt, offsets (vertical-align, shadows) +-200 pt; em / ex / ch measured at a 12 pt font. A token in range is
+kept as written; calc() and other functions in a length drop the declaration. Word's own fixture
+test-data/word-mhtml/class-styles-v1.mht + .pdf (make-class-styles-fixture.ps1) is checked in WebArchiveSheetAndOdtScriptTest.

@@ -186,7 +186,8 @@ public sealed class WebArchiveStylesheet
             if (!AllowedProperties.Contains(property) || !IsSafeValue(value)) continue;
             if (property == "display" && !DisplayValues.Contains(value.ToLowerInvariant())) continue;
             if (property == "float" && value.ToLowerInvariant() is not ("left" or "right" or "none")) continue;
-            result.Add(new Declaration(property, value, isImportant));
+            if (WebArchiveCssLength.Clamp(property, value) is not { } bounded) continue;
+            result.Add(new Declaration(property, bounded, isImportant));
         }
         return result;
     }
