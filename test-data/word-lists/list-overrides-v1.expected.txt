@@ -1,0 +1,28 @@
+A restart limit
+1. item a
+1.1. item b
+1.1.1. item c
+1.1.2. item d
+1.2. item e
+1.2.3. item f
+2. item g
+2.1. item h
+2.1.4. item i
+B style linked
+I) item a
+a] item b
+II) item c
+III) item style d
+IV) item style e
+I) item direct f
+II) item direct g
+V) item style h
+C override level
+(e) item a
+(f) item b
+(g) item c
+D bullet colour size
+item a
+1. item b
+ 2. item c
+item d

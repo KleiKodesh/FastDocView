@@ -37,10 +37,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| Restart-limit level (\levelnorestart is read; the limit is not) | rtf | Not read | deferred |
-| A level replaced inside a list override | rtf | Only start-at is read | deferred |
-| Style-linked numbering | rtf | Not read | deferred |
-| Separate bullet colour / size | rtf (counted labels), odt | Labels take the general label formatting | deferred |
+| A stale `{\listtext}` label (Word re-counts from the list table when it opens the file; e.g. a restart limit Word dropped on save prints 2.1.4 where the saved label says 2.1.1) | rtf | Word's flat label copy is drawn as written (its text and formatting); drawing every RTF label from the count instead is a wider change, not yet measured on the corpus | deferred |
 | ApplyParagraphMarkFormatToNumbering setting | docx | Not read (LibreOffice writes it only for Word imports) | won't do |
 
 ## Tables
@@ -128,8 +125,8 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| Show markup / original view toggle for tracked changes | docx, doc, rtf, odt | Only Word's final view (planned as a toggle in the coverage plan) | planned |
-| Comments | docx, doc, rtf, odt | Not shown in a reading view (references skipped) | deferred |
+| Show markup / original view toggle for tracked changes | docx, doc, rtf, odt | Only Word's final view is shown, as it prints; markup does not print | won't do (not printed) |
+| Comments | docx, doc, rtf, odt | Comments do not print (references skipped) | won't do (not printed) |
 | Equations: a stretched operator around content whose ink lands right at a variant boundary can take the next size (the 3-row brace in Cambria Math, 1.48 x Word's width; 29 of 30 test cases within 15%); a host without font files falls back to tables for Cambria Math and DejaVu Math TeX Gyre; heights of single-line equations read ~0.85 of Word's PDF by the measuring method | docx, doc, rtf | Ink is read from the browser's text metrics, not Word's own layout | deferred |
 | Equations in .doc saved without equationXML (Word 2003 and older) | doc | No OMML in the file; the saved picture is shown | won't do |
 | Ruby | doc, rtf | Not read (EQ \o fields still compute) | deferred |

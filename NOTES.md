@@ -2027,8 +2027,8 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 |---|---|---|---|---|
 | Number formats (ST_NumberFormat / MSONFC / \levelnfc(n)) | partial: 37 of Word's 60 styles exact, rest decimal | same table | Word's \listtext drawn as written (any format); counted labels use the .doc table | partial: 1 a A i I, hebrew1 / hebrew2 |
 | Start at (w:start, LVLF iStartAt, \levelstartat, start-value) | yes | yes | yes | yes |
-| lvlRestart (after a higher level / never) | yes | yes (fNoRestart + ilvlRestartLim) | partial: \levelnorestart, no limit level | yes (nested-list rules) |
-| lvlOverride / startOverride (LFOLVL, \lfolevel) | yes | yes | start-at yes, replaced level no | text:start-value on the item |
+| lvlRestart (after a higher level / never) | yes | yes (fNoRestart + ilvlRestartLim) | yes: \levelnorestart = never (RTF has no limit level; Word prints it so) | yes (nested-list rules) |
+| lvlOverride / startOverride (LFOLVL, \lfolevel) | yes | yes | yes (start-at; a \listlevel inside \lfolevel replaces the level) | text:start-value on the item |
 | Restart at a section break | n/a: Word has no such list setting (restart per section exists for pages, line numbers and notes only) |
 | Continue a list across other lists | yes (shared abstractNum) | yes (lsid) | yes (\listid) | yes (continue-numbering / continue-list) |
 | isLgl | yes | yes | yes (\levellegal) | n/a |
@@ -2036,10 +2036,10 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 | lvlJc, level indents / tab | yes | yes | yes (\leveljc) | yes (label-alignment) |
 | Label rPr (font, size, colour, b, i, u) | yes | yes (grpprlChpx) | yes (\listlevel group: \f \af \fs \afs \cf \b \i over the mark); \listtext runs keep their formatting | yes (text:style-name) |
 | Legacy numbering (w:legacy) | yes (legacySpace / legacyIndent) | yes (LVLF 0x40, dxaSpace / dxaIndent) | yes (\levelold \levelspace \levelindent) | n/a |
-| Style-linked numbering (pStyle in lvl, numStyleLink / styleLink) | yes | yes (rgistdPara) | no | n/a |
+| Style-linked numbering (pStyle in lvl, numStyleLink / styleLink) | yes | yes (rgistdPara) | yes (\liststyleid: an empty linked list draws the style list's levels) | n/a |
 | Symbol-font bullets | yes | yes | yes | yes (text-properties fo:font-family / style:font-name) |
 | Picture bullets (numPicBullet, \listpicture, list-level-style-image) | yes (VML / DrawingML) | yes (_PictureBullets) | yes (\listpicture) | yes (package picture) |
-| Bullet colour and size | yes (level rPr) | yes | no (counted path) | no |
+| Bullet colour and size | yes (level rPr) | yes | yes (\cf \fs on counted labels) | ignored, as LibreOffice prints |
 
 - **Number formats**: `DocxNumberingDefinitions.FormatNumber` gained ordinal, cardinalText, ordinalText, decimalFullWidth(2), decimalHalfWidth,
   hindiNumbers, thaiNumbers, ideographDigital / japaneseDigitalTenThousand / taiwaneseDigital / koreanDigital2, decimalEnclosedCircle(Chinese) /
@@ -2103,6 +2103,30 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
   rtfdocumentimpl.cxx:1695-1697), so those paragraphs keep their text and are checked again. Symbol / Wingdings
   bullets: DocxFidelityTest list labels.
 - Drop caps (.doc): notes referenced inside the initial now come with the paragraph that draws it, not the empty frame block.
+
+## RTF list overrides, list style links, restart limits; label colour / size (2026-11-16; RTF index format 20)
+
+Fixtures: test-data/word-lists/make-list-overrides.py (.docx -> Word 16 .rtf -> counted / emptied variants; Word 16's print of
+both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Check: ListOverridesFidelityTest (--list-bullets, --fidelity).
+
+- Restart limit: Word 16 saves w:lvlRestart 1 on level 3 as `\levelnorestart` alone - RTF has no limit-level word (not in the
+  1.9.1 spec, not in LibreOffice's keyword table) - and printing that .rtf never restarts the level (2.1.4; the .docx prints 2.1.1).
+  The counter already did that; nothing more to read.
+- `\lfolevel` holding `\listoverrideformat {\listlevel ...}`: the level replaces the list's for that override (label text, format,
+  start, character formatting); its `\levelstartat` is also the override's start-at. LibreOffice: rtfdocumentimpl.cxx:3713-3724
+  (a LISTLEVEL popped into an LFOLEVEL becomes LN_CT_NumLvl_lvl), :3727-3736 (LFOLEVEL -> LN_CT_Num_lvlOverride). Word: (e) (f) (g).
+- `\liststyleid N` on a `\list`: linked to the list style whose `\listid` is N (that list carries `{\*\liststylename}`). Word 16
+  writes the levels into both lists; with the linked list's levels removed it still prints the style's levels, and counts the linked
+  list apart from the style's own list (I) II) on the style's list after III) IV) on the linked one, then V) again).
+  LibreOffice reads neither word (rtfdispatchvalue.cxx has no case for them; LISTTEMPLATEID is dropped at :1073-1075). A paragraph
+  style's `\ls` alone does not number a paragraph in Word 16's print (Word writes `\ls` on every list paragraph), so it is not read.
+- Label colour / size: RTF counted labels already took the level's `\cf` / `\fs` (CountedLabelCss); now checked against Word's print.
+  ODT: xmloff reads fo:color / fo:font-size % in the level's style:text-properties into BulletColor / BulletRelSize
+  (xmlnumi.cxx:613-631, :518-526) but Writer never draws them: sw/source/core/text/txtfld.cxx:569-600 builds the bullet font from
+  the paragraph font plus the character style; text:bullet-relative-size is not read at all. soffice's PDF of
+  list-bullet-look-v1.fodt: both labels black 12 pt. FastDocView ignores them too.
+- Unchanged: a Word-saved `{\listtext}` is drawn as written, while Word re-counts on open (the restart-limit file shows the saved
+  2.1.1, Word prints 2.1.4). Listed as deferred.
 
 ## Picture bullets, ODT symbol bullets and label styles (2026-11-09; index formats .docx 19, ODT 14)
 
@@ -4518,8 +4542,8 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 |---|---|---|---|---|
 | Number formats (ST_NumberFormat / MSONFC / \levelnfc(n)) | partial: 37 of Word's 60 styles exact, rest decimal | same table | Word's \listtext drawn as written (any format); counted labels use the .doc table | partial: 1 a A i I, hebrew1 / hebrew2 |
 | Start at (w:start, LVLF iStartAt, \levelstartat, start-value) | yes | yes | yes | yes |
-| lvlRestart (after a higher level / never) | yes | yes (fNoRestart + ilvlRestartLim) | partial: \levelnorestart, no limit level | yes (nested-list rules) |
-| lvlOverride / startOverride (LFOLVL, \lfolevel) | yes | yes | start-at yes, replaced level no | text:start-value on the item |
+| lvlRestart (after a higher level / never) | yes | yes (fNoRestart + ilvlRestartLim) | yes: \levelnorestart = never (RTF has no limit level; Word prints it so) | yes (nested-list rules) |
+| lvlOverride / startOverride (LFOLVL, \lfolevel) | yes | yes | yes (start-at; a \listlevel inside \lfolevel replaces the level) | text:start-value on the item |
 | Restart at a section break | n/a: Word has no such list setting (restart per section exists for pages, line numbers and notes only) |
 | Continue a list across other lists | yes (shared abstractNum) | yes (lsid) | yes (\listid) | yes (continue-numbering / continue-list) |
 | isLgl | yes | yes | yes (\levellegal) | n/a |
@@ -4527,10 +4551,10 @@ Audit (yes / partial / no per .docx | .doc | RTF | ODT):
 | lvlJc, level indents / tab | yes | yes | yes (\leveljc) | yes (label-alignment) |
 | Label rPr (font, size, colour, b, i, u) | yes | yes (grpprlChpx) | yes (\listlevel group: \f \af \fs \afs \cf \b \i over the mark); \listtext runs keep their formatting | yes (text:style-name) |
 | Legacy numbering (w:legacy) | yes (legacySpace / legacyIndent) | yes (LVLF 0x40, dxaSpace / dxaIndent) | yes (\levelold \levelspace \levelindent) | n/a |
-| Style-linked numbering (pStyle in lvl, numStyleLink / styleLink) | yes | yes (rgistdPara) | no | n/a |
+| Style-linked numbering (pStyle in lvl, numStyleLink / styleLink) | yes | yes (rgistdPara) | yes (\liststyleid: an empty linked list draws the style list's levels) | n/a |
 | Symbol-font bullets | yes | yes | yes | yes (text-properties fo:font-family / style:font-name) |
 | Picture bullets (numPicBullet, \listpicture, list-level-style-image) | yes (VML / DrawingML) | yes (_PictureBullets) | yes (\listpicture) | yes (package picture) |
-| Bullet colour and size | yes (level rPr) | yes | no (counted path) | no |
+| Bullet colour and size | yes (level rPr) | yes | yes (\cf \fs on counted labels) | ignored, as LibreOffice prints |
 
 - **Number formats**: `DocxNumberingDefinitions.FormatNumber` gained ordinal, cardinalText, ordinalText, decimalFullWidth(2), decimalHalfWidth,
   hindiNumbers, thaiNumbers, ideographDigital / japaneseDigitalTenThousand / taiwaneseDigital / koreanDigital2, decimalEnclosedCircle(Chinese) /

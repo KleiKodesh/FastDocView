@@ -44,40 +44,62 @@ internal sealed class RtfListNumbering
         _ => "decimal",
     };
 
-    /// <summary>The level definition a paragraph's \ls / \ilvl name, or null.</summary>
+    /// <summary>The level definition a paragraph's \ls / \ilvl name (an override's own level first), or null.</summary>
     public static RtfDocumentTables.ListLevelDefinition? LevelOf(RtfDocumentTables tables, int overrideIndex, int level)
     {
         if (overrideIndex <= 0 || !tables.ListOverrides.TryGetValue(overrideIndex, out RtfDocumentTables.ListOverride? listOverride)) return null;
-        if (!tables.Lists.TryGetValue(listOverride.ListId, out RtfDocumentTables.ListDefinition? list) || list.Levels.Length == 0) return null;
-        return list.Levels[Math.Max(0, Math.Min(level, list.Levels.Length - 1))];
+        if (!tables.Lists.TryGetValue(listOverride.ListId, out RtfDocumentTables.ListDefinition? list)) return null;
+        RtfDocumentTables.ListLevelDefinition[] levels = LevelsOf(tables, list);
+        if (levels.Length == 0) return null;
+        return LevelAt(listOverride, levels, Math.Max(0, Math.Min(level, levels.Length - 1)));
     }
+
+    /// <summary>
+    /// A list's levels: its own, or - when it has none - those of the list style its \liststyleid names (the list whose \listid
+    /// that is; Word 16 draws an emptied linked list from the style's levels and still counts it as its own list, checked by printing).
+    /// </summary>
+    private static RtfDocumentTables.ListLevelDefinition[] LevelsOf(RtfDocumentTables tables, RtfDocumentTables.ListDefinition list)
+        => list.Levels.Length == 0 && list.StyleListId != 0 && list.StyleListId != list.ListId
+           && tables.Lists.TryGetValue(list.StyleListId, out RtfDocumentTables.ListDefinition? style) ? style.Levels : list.Levels;
+
+    /// <summary>The override's own level for <paramref name="level"/> (an \lfolevel holding a \listlevel), else the list's.</summary>
+    private static RtfDocumentTables.ListLevelDefinition LevelAt(RtfDocumentTables.ListOverride listOverride, RtfDocumentTables.ListLevelDefinition[] levels, int level)
+        => listOverride.LevelsByLevel.TryGetValue(level, out RtfDocumentTables.ListLevelDefinition? replaced) ? replaced : levels[level];
 
     /// <summary>Advances the counters for a list paragraph and returns its label; null when the list is unknown.</summary>
     public string? Next(int overrideIndex, int level)
     {
         if (overrideIndex <= 0 || !_tables.ListOverrides.TryGetValue(overrideIndex, out RtfDocumentTables.ListOverride? listOverride)) return null;
-        if (!_tables.Lists.TryGetValue(listOverride.ListId, out RtfDocumentTables.ListDefinition? list) || list.Levels.Length == 0) return null;
-        level = Math.Min(level, list.Levels.Length - 1);
+        if (!_tables.Lists.TryGetValue(listOverride.ListId, out RtfDocumentTables.ListDefinition? list)) return null;
+        RtfDocumentTables.ListLevelDefinition[] levels = LevelsOf(_tables, list);
+        if (levels.Length == 0) return null;
+        level = Math.Min(level, levels.Length - 1);
         if (!_countersByListId.TryGetValue(list.ListId, out int[]? counters))
         {
             counters = new int[9];
-            for (int i = 0; i < counters.Length; i++) counters[i] = (i < list.Levels.Length ? list.Levels[i].StartAt : 1) - 1;
+            for (int i = 0; i < counters.Length; i++) counters[i] = (i < levels.Length ? levels[i].StartAt : 1) - 1;   // the list's own starts: counters are shared by its overrides
             _countersByListId[list.ListId] = counters;
         }
-        for (int deeper = level + 1; deeper < list.Levels.Length && deeper < counters.Length; deeper++)
-            if (!list.Levels[deeper].NoRestart) counters[deeper] = list.Levels[deeper].StartAt - 1;
+        // \levelnorestart: the level never restarts. RTF has no restart-limit level (w:lvlRestart N / ilvlRestartLim): Word 16 saves a
+        // limit as \levelnorestart alone and, printing the .rtf, never restarts that level (list-overrides-v1: 2.1.4, where the .docx prints 2.1.1)
+        for (int deeper = level + 1; deeper < levels.Length && deeper < counters.Length; deeper++)
+        {
+            RtfDocumentTables.ListLevelDefinition deeperLevel = LevelAt(listOverride, levels, deeper);
+            if (!deeperLevel.NoRestart) counters[deeper] = deeperLevel.StartAt - 1;
+        }
 
-        RtfDocumentTables.ListLevelDefinition definition = list.Levels[level];
+        RtfDocumentTables.ListLevelDefinition definition = LevelAt(listOverride, levels, level);
         if (FormatName(definition.NumberFormat) is not ("bullet" or "none"))
         {
             if (listOverride.StartAtByLevel.TryGetValue(level, out int startAt) && _appliedStartOverrides.Add((overrideIndex, level)))
                 counters[level] = startAt - 1;
             counters[level]++;
         }
-        return FormatLabel(list, definition, counters, _tables);
+        return FormatLabel(listOverride, levels, definition, counters, _tables);
     }
 
-    private static string FormatLabel(RtfDocumentTables.ListDefinition list, RtfDocumentTables.ListLevelDefinition definition, int[] counters, RtfDocumentTables tables)
+    private static string FormatLabel(RtfDocumentTables.ListOverride listOverride, RtfDocumentTables.ListLevelDefinition[] levels,
+                                      RtfDocumentTables.ListLevelDefinition definition, int[] counters, RtfDocumentTables tables)
     {
         string text = definition.Text;
         // a picture bullet (\levelpicture) a browser can show is drawn as that picture ("lp:" id); else the level's text below
@@ -93,7 +115,7 @@ internal sealed class RtfListNumbering
             if (Array.IndexOf(definition.NumberPositions, (byte)position) >= 0 && text[i] < 9)
             {
                 int placeholderLevel = text[i];
-                string format = placeholderLevel < list.Levels.Length ? FormatName(list.Levels[placeholderLevel].NumberFormat) : "decimal";
+                string format = placeholderLevel < levels.Length ? FormatName(LevelAt(listOverride, levels, placeholderLevel).NumberFormat) : "decimal";
                 if (definition.Legal && format != "decimalZero") format = "decimal";
                 label.Append(DocxNumberingDefinitions.FormatNumber(counters[placeholderLevel], format));
             }

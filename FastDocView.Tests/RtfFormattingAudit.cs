@@ -47,7 +47,7 @@ public static class RtfFormattingAudit
             "tscbandsv", "tsbghoriz", "tsbgvert", "tsbgfdiag", "tsbgbdiag", "tsbgcross", "tsbgdcross", "tscellcfpat", "tscellcbpat", "tscellpct", "tblind",
             "tblindtype", "tsbrdrdgl", "tsbrdrdgr", "listtemplateid", "listhybrid", "listsimple", "listrestarthdn", "listoverridecount", "listoverrideformat",
             "leveljcn", "levelprev", "levelprevspace", "levelpicture", "leveltemplateid",
-            "levelpicturenosize", "lvltentative", "liststyleid", "lsdlockeddef", "lsdsemihiddendef", "lsdunhideuseddef", "lsdqformatdef", "lsdprioritydef",
+            "levelpicturenosize", "lvltentative", "lsdlockeddef", "lsdsemihiddendef", "lsdunhideuseddef", "lsdqformatdef", "lsdprioritydef",
             "lsdstimax", "lsdlocked", "lsdsemihidden", "lsdunhideused", "lsdqformat", "lsdpriority", "csN", "keepn", "colorschememapping"]),
         ("pagination / layout hints (keep, widow, hyphenation, snapping, frames positions)", [
             "keep", "keepn", "widctlpar", "nowidctlpar", "hyphpar", "nohyph", "noline", "sbys", "aspalpha", "aspnum", "faauto", "faroman", "favar", "fafixed",

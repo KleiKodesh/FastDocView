@@ -38,9 +38,11 @@ public sealed class RtfDocumentTables
     /// <summary>A {\pict} of {\*\listpicture}: where its body starts in the file (its bytes are read on demand), its type and goal size.</summary>
     public sealed class ListPictureEntry { public long Offset; public string Extension = ""; public int WidthTwips, HeightTwips; }
 
-    public sealed class ListDefinition { public int ListId; public ListLevelDefinition[] Levels = []; }
+    /// <summary>A \list; <see cref="StyleListId"/> is its \liststyleid (0 = none): the list style whose levels it draws when it has none of its own.</summary>
+    public sealed class ListDefinition { public int ListId; public int StyleListId; public ListLevelDefinition[] Levels = []; }
 
-    public sealed class ListOverride { public int Index; public int ListId; public Dictionary<int, int> StartAtByLevel = new(); }
+    /// <summary>A \listoverride: start-at values and whole levels (an \lfolevel holding a \listlevel) that replace the list's, by level.</summary>
+    public sealed class ListOverride { public int Index; public int ListId; public Dictionary<int, int> StartAtByLevel = new(); public Dictionary<int, ListLevelDefinition> LevelsByLevel = new(); }
 
     public Dictionary<int, FontEntry> Fonts { get; } = new();
     /// <summary>{\mmathPr}: the document's math settings as control word -> parameter (WordOfficeMathSettings.FromRtf).</summary>
@@ -111,16 +113,9 @@ public sealed class RtfDocumentTables
         {
             writer.Write(list.Key);
             writer.Write(list.Value.ListId);
+            writer.Write(list.Value.StyleListId);
             writer.Write(list.Value.Levels.Length);
-            foreach (ListLevelDefinition level in list.Value.Levels)
-            {
-                writer.Write(level.NumberFormat); writer.Write(level.StartAt); writer.Write(level.Text);
-                writer.Write(level.NumberPositions.Length); writer.Write(level.NumberPositions);
-                writer.Write(level.NoRestart); writer.Write(level.Legal); writer.Write(level.Justification); writer.Write(level.Follow); writer.Write(level.Font); writer.Write(level.Picture);
-                writer.Write(level.ComplexFont); writer.Write(level.FontSize); writer.Write(level.ComplexFontSize); writer.Write(level.Color);
-                writer.Write(level.Bold); writer.Write(level.ComplexBold); writer.Write(level.Italic); writer.Write(level.ComplexItalic);
-                writer.Write(level.IsLegacy); writer.Write(level.LegacySpace); writer.Write(level.LegacyIndent);
-            }
+            foreach (ListLevelDefinition level in list.Value.Levels) WriteLevel(writer, level);
         }
         writer.Write(ListOverrides.Count);
         foreach (KeyValuePair<int, ListOverride> listOverride in ListOverrides)
@@ -130,6 +125,8 @@ public sealed class RtfDocumentTables
             writer.Write(listOverride.Value.ListId);
             writer.Write(listOverride.Value.StartAtByLevel.Count);
             foreach (KeyValuePair<int, int> startAt in listOverride.Value.StartAtByLevel) { writer.Write(startAt.Key); writer.Write(startAt.Value); }
+            writer.Write(listOverride.Value.LevelsByLevel.Count);
+            foreach (KeyValuePair<int, ListLevelDefinition> level in listOverride.Value.LevelsByLevel) { writer.Write(level.Key); WriteLevel(writer, level.Value); }
         }
         writer.Write(ListPictures.Count);
         foreach (ListPictureEntry picture in ListPictures) { writer.Write(picture.Offset); writer.Write(picture.Extension); writer.Write(picture.WidthTwips); writer.Write(picture.HeightTwips); }
@@ -160,24 +157,11 @@ public sealed class RtfDocumentTables
         for (int i = 0; i < lists; i++)
         {
             int key = reader.ReadInt32();
-            var list = new ListDefinition { ListId = reader.ReadInt32() };
+            var list = new ListDefinition { ListId = reader.ReadInt32(), StyleListId = reader.ReadInt32() };
             int levelCount = reader.ReadInt32();
             if (levelCount < 0 || levelCount > 64) throw new InvalidDataException("RTF index: list table damaged.");
             list.Levels = new ListLevelDefinition[levelCount];
-            for (int level = 0; level < levelCount; level++)
-            {
-                var definition = new ListLevelDefinition { NumberFormat = reader.ReadInt32(), StartAt = reader.ReadInt32(), Text = reader.ReadString() };
-                int positions = reader.ReadInt32();
-                if (positions < 0 || positions > 1024) throw new InvalidDataException("RTF index: list table damaged.");
-                definition.NumberPositions = reader.ReadBytes(positions);
-                if (definition.NumberPositions.Length != positions) throw new EndOfStreamException("RTF index: list table truncated.");
-                definition.NoRestart = reader.ReadBoolean(); definition.Legal = reader.ReadBoolean();
-                definition.Justification = reader.ReadInt32(); definition.Follow = reader.ReadInt32(); definition.Font = reader.ReadInt32(); definition.Picture = reader.ReadInt32();
-                definition.ComplexFont = reader.ReadInt32(); definition.FontSize = reader.ReadInt32(); definition.ComplexFontSize = reader.ReadInt32(); definition.Color = reader.ReadInt32();
-                definition.Bold = reader.ReadSByte(); definition.ComplexBold = reader.ReadSByte(); definition.Italic = reader.ReadSByte(); definition.ComplexItalic = reader.ReadSByte();
-                definition.IsLegacy = reader.ReadBoolean(); definition.LegacySpace = reader.ReadInt32(); definition.LegacyIndent = reader.ReadInt32();
-                list.Levels[level] = definition;
-            }
+            for (int level = 0; level < levelCount; level++) list.Levels[level] = ReadLevel(reader);
             tables.Lists[key] = list;
         }
         int overrides = reader.ReadInt32();
@@ -189,6 +173,9 @@ public sealed class RtfDocumentTables
             int startAts = reader.ReadInt32();
             if (startAts < 0 || startAts > 64) throw new InvalidDataException("RTF index: list override table damaged.");
             for (int level = 0; level < startAts; level++) listOverride.StartAtByLevel[reader.ReadInt32()] = reader.ReadInt32();
+            int replacedLevels = reader.ReadInt32();
+            if (replacedLevels < 0 || replacedLevels > 64) throw new InvalidDataException("RTF index: list override table damaged.");
+            for (int level = 0; level < replacedLevels; level++) listOverride.LevelsByLevel[reader.ReadInt32()] = ReadLevel(reader);
             tables.ListOverrides[key] = listOverride;
         }
         int pictures = reader.ReadInt32();
@@ -196,5 +183,30 @@ public sealed class RtfDocumentTables
         for (int i = 0; i < pictures; i++)
             tables.ListPictures.Add(new ListPictureEntry { Offset = reader.ReadInt64(), Extension = reader.ReadString(), WidthTwips = reader.ReadInt32(), HeightTwips = reader.ReadInt32() });
         return tables;
+    }
+
+    private static void WriteLevel(BinaryWriter writer, ListLevelDefinition level)
+    {
+        writer.Write(level.NumberFormat); writer.Write(level.StartAt); writer.Write(level.Text);
+        writer.Write(level.NumberPositions.Length); writer.Write(level.NumberPositions);
+        writer.Write(level.NoRestart); writer.Write(level.Legal); writer.Write(level.Justification); writer.Write(level.Follow); writer.Write(level.Font); writer.Write(level.Picture);
+        writer.Write(level.ComplexFont); writer.Write(level.FontSize); writer.Write(level.ComplexFontSize); writer.Write(level.Color);
+        writer.Write(level.Bold); writer.Write(level.ComplexBold); writer.Write(level.Italic); writer.Write(level.ComplexItalic);
+        writer.Write(level.IsLegacy); writer.Write(level.LegacySpace); writer.Write(level.LegacyIndent);
+    }
+
+    private static ListLevelDefinition ReadLevel(BinaryReader reader)
+    {
+        var definition = new ListLevelDefinition { NumberFormat = reader.ReadInt32(), StartAt = reader.ReadInt32(), Text = reader.ReadString() };
+        int positions = reader.ReadInt32();
+        if (positions < 0 || positions > 1024) throw new InvalidDataException("RTF index: list table damaged.");
+        definition.NumberPositions = reader.ReadBytes(positions);
+        if (definition.NumberPositions.Length != positions) throw new EndOfStreamException("RTF index: list table truncated.");
+        definition.NoRestart = reader.ReadBoolean(); definition.Legal = reader.ReadBoolean();
+        definition.Justification = reader.ReadInt32(); definition.Follow = reader.ReadInt32(); definition.Font = reader.ReadInt32(); definition.Picture = reader.ReadInt32();
+        definition.ComplexFont = reader.ReadInt32(); definition.FontSize = reader.ReadInt32(); definition.ComplexFontSize = reader.ReadInt32(); definition.Color = reader.ReadInt32();
+        definition.Bold = reader.ReadSByte(); definition.ComplexBold = reader.ReadSByte(); definition.Italic = reader.ReadSByte(); definition.ComplexItalic = reader.ReadSByte();
+        definition.IsLegacy = reader.ReadBoolean(); definition.LegacySpace = reader.ReadInt32(); definition.LegacyIndent = reader.ReadInt32();
+        return definition;
     }
 }

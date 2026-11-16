@@ -9,7 +9,7 @@ internal enum RtfWord : ushort
     // ── document / header ──
     Rtf, Ansi, Mac, Pc, Pca, AnsiCodePage, DefaultFont, FontTable, FontCharset, FontCodePage, Font, AssociatedFont,
     ColorTable, Red, Green, Blue, StyleSheet, Style, CharacterStyle, SectionStyle, TableStyle, OutlineLevel,
-    ListTable, List, ListId, ListLevel, LevelNumberFormat, LevelNumberFormatNew, LevelStartAt, LevelText, LevelNumbers, LevelNoRestart, LevelLegal, LevelJustification, LevelFollow, LevelOld, LevelSpace, LevelIndent, ListPicture, LevelPicture,
+    ListTable, List, ListId, ListStyleId, ListLevel, LevelNumberFormat, LevelNumberFormatNew, LevelStartAt, LevelText, LevelNumbers, LevelNoRestart, LevelLegal, LevelJustification, LevelFollow, LevelOld, LevelSpace, LevelIndent, ListPicture, LevelPicture,
     ListOverrideTable, ListOverride, ListOverrideLevel, ListOverrideStartAt, ListOverrideIndex, ListLevelIndex,
     FootnoteNumberingArabic, FootnoteNumberingLowerAlpha, FootnoteNumberingUpperAlpha, FootnoteNumberingLowerRoman, FootnoteNumberingUpperRoman, FootnoteNumberingChicago,
     EndnoteNumberingArabic, EndnoteNumberingLowerAlpha, EndnoteNumberingUpperAlpha, EndnoteNumberingLowerRoman, EndnoteNumberingUpperRoman, EndnoteNumberingChicago,
@@ -101,7 +101,7 @@ internal static class RtfControlWords
         ("deff", RtfWord.DefaultFont), ("fonttbl", RtfWord.FontTable), ("fcharset", RtfWord.FontCharset), ("cpg", RtfWord.FontCodePage), ("f", RtfWord.Font),
         ("af", RtfWord.AssociatedFont), ("colortbl", RtfWord.ColorTable), ("red", RtfWord.Red), ("green", RtfWord.Green), ("blue", RtfWord.Blue),
         ("stylesheet", RtfWord.StyleSheet), ("s", RtfWord.Style), ("cs", RtfWord.CharacterStyle), ("ds", RtfWord.SectionStyle), ("ts", RtfWord.TableStyle),
-        ("outlinelevel", RtfWord.OutlineLevel), ("listtable", RtfWord.ListTable), ("list", RtfWord.List), ("listid", RtfWord.ListId),
+        ("outlinelevel", RtfWord.OutlineLevel), ("listtable", RtfWord.ListTable), ("list", RtfWord.List), ("listid", RtfWord.ListId), ("liststyleid", RtfWord.ListStyleId),
         ("listlevel", RtfWord.ListLevel), ("levelnfc", RtfWord.LevelNumberFormat), ("levelnfcn", RtfWord.LevelNumberFormatNew),
         ("levelstartat", RtfWord.LevelStartAt), ("leveltext", RtfWord.LevelText), ("levelnumbers", RtfWord.LevelNumbers),
         ("levelnorestart", RtfWord.LevelNoRestart), ("levellegal", RtfWord.LevelLegal),

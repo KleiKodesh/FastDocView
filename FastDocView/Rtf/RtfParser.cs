@@ -669,8 +669,27 @@ internal sealed class RtfParser
                 if (_list is not null && _listDepth >= 0 && _overrideDepth < 0) _list.ListId = parameter;
                 else if (_override is not null) _override.ListId = parameter;
                 return;
+            // \liststyleid N: the list is linked to the list style whose \listid is N; a linked list without levels of its own draws
+            // that style's (RTF 1.9.1 list table; Word 16 writes the levels in both, and draws an emptied linked list from the style's -
+            // checked by printing; LibreOffice reads neither \liststyleid nor \liststylename: rtftok/rtfdispatchvalue.cxx has no case for them)
+            case RtfWord.ListStyleId:
+                if (_list is not null && _listDepth >= 0 && _overrideDepth < 0) _list.StyleListId = parameter;
+                return;
             case RtfWord.ListLevel:
-                if (_overrideLevelDepth >= 0) { state.Destination = RtfDestination.ListOverrideLevel; return; }
+                // a \listlevel inside an \lfolevel replaces the list's level for this override (LibreOffice rtfdocumentimpl.cxx:3713-3724:
+                // a LISTLEVEL popped into an LFOLEVEL becomes LN_CT_NumLvl_lvl, the w:lvlOverride's w:lvl); its \levelstartat is still
+                // the override's start-at (below)
+                if (_overrideLevelDepth >= 0)
+                {
+                    state.Destination = RtfDestination.ListLevel;
+                    if (_override is not null && _overrideLevelIndex is >= 0 and < 9 && _level is null)
+                    {
+                        _level = new RtfDocumentTables.ListLevelDefinition();
+                        _override.LevelsByLevel[_overrideLevelIndex] = _level;
+                        _levelDepth = _depth;
+                    }
+                    return;
+                }
                 if (_listLevels is not null && _listDepth >= 0)
                 {
                     state.Destination = RtfDestination.ListLevel;
@@ -684,7 +703,7 @@ internal sealed class RtfParser
                 return;
             case RtfWord.LevelStartAt:
                 if (_overrideLevelDepth >= 0) _overrideStartAt = parameter;
-                else if (_level is not null && _levelDepth >= 0) _level.StartAt = parameter;
+                if (_level is not null && _levelDepth >= 0) _level.StartAt = parameter;
                 return;
             case RtfWord.LevelNoRestart: if (_level is not null && _levelDepth >= 0) _level.NoRestart = isOn; return;
             case RtfWord.LevelLegal: if (_level is not null && _levelDepth >= 0) _level.Legal = isOn; return;

@@ -26,6 +26,7 @@ public static class ListBulletsFidelityTest
         if (File.Exists(bare)) Check(bare, ".rtf", hasFlatLabels: false);
         else TestReport.Check(false, "test-data/word-lists/list-bullets-nolisttext-v1.rtf present");
         LegacyListsFidelityTest.Run();
+        ListOverridesFidelityTest.Run();
     }
 
     private static void Check(string path, string format, bool hasFlatLabels = true)

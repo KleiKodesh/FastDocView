@@ -81,21 +81,21 @@ separate paged view, which is not built yet.
 | Number formats (decimal, letters, roman, hebrew1 / hebrew2, ordinal and more, Word-verified) | yes | yes | yes | yes | n.a. | yes (10) |
 | Script number formats: Japanese / Chinese / Korean / Thai / Vietnamese / Hindi counting, kana (aiueo, iroha), Korean letters and digits, Word's custom formats (Greek, Turkish, Bulgarian, 001), Word-verified | yes | yes (14) | yes (14) | yes (15) | n.a. | yes (10) |
 | Start value | yes | yes | yes | yes | n.a. | yes (10) |
-| Restart after a higher level / never | yes | yes | partial (11) | yes | n.a. | n.a. |
-| Overrides (startOverride, LFOLVL, lfolevel, start-value) | yes | yes | partial (11) | yes | n.a. | n.a. |
+| Restart after a higher level / never | yes | yes | yes (11) | yes | n.a. | n.a. |
+| Overrides (startOverride, LFOLVL, lfolevel, start-value; a whole level replaced) | yes | yes | yes (11) | yes | n.a. | n.a. |
 | Legal numbering (isLgl) | yes | yes | yes | n.a. | n.a. | n.a. |
 | Suffix (tab / space / nothing) and label alignment | yes | yes | yes | yes | n.a. | n.a. |
 | Label styling (paragraph-mark formatting, complex-script set) | yes | yes | yes | yes | n.a. | n.a. |
-| Style-linked numbering | yes | yes | no | n.a. | n.a. | n.a. |
+| Style-linked numbering | yes | yes | yes (11) | n.a. | n.a. | n.a. |
 | Bullets, symbol bullets (Symbol / Wingdings mapped to Unicode) | yes | yes | yes | yes | yes (12) | yes (10) |
 | Picture bullets | yes | yes | yes | yes | n.a. | n.a. |
-| Bullet colour and size | yes | yes | partial (13) | partial (13) | n.a. | n.a. |
+| Bullet colour and size | yes | yes | yes (13) | yes (13) | n.a. | n.a. |
 | Legacy numbering (Word 6 levels, \pn, w:legacy) | yes | yes | yes | n.a. | n.a. | n.a. |
 
 10. Word writes the label into the HTML; it is shown as written.
-11. RTF: `\levelnorestart` yes, but no restart-limit level; a level replaced by an override is not read (start-at is).
+11. RTF, as Word 16 prints it: `\levelnorestart` never restarts (RTF has no restart-limit level: Word saves a limit as `\levelnorestart` and prints the .rtf that way); an `\lfolevel` holding a whole `\listlevel` replaces that level; a list with `\liststyleid` and no levels of its own draws the list style's levels and counts on its own. A label Word saved in `{\listtext}` is drawn as written (see the unsupported list).
 12. Torat Emet line marks.
-13. Counted RTF labels and ODT bullets take the label formatting rules, not a separate bullet colour / size.
+13. RTF: counted labels take the level's own `\cf` / `\fs` over the mark's formatting, as Word prints them. ODT: a level's `fo:color`, `fo:font-size` percentage and `text:bullet-relative-size` are ignored, as LibreOffice Writer prints them (the label is the paragraph's font plus the level's character style).
 14. Word saves its custom formats (Greek, Turkish, Bulgarian, 001) in .doc and RTF as decimal and shows them so itself.
 15. ODT / FODT: every LibreOffice number style (CJK, Korean, Japanese, Greek, Cyrillic bg / ru / sr / uk, Hebrew, Arabic, Persian, Thai, Indic, Old Hungarian, ordinal and text numbers, num-letter-sync) as LibreOffice prints it, checked label by label against soffice; Native Numbering, full-width digits and the text numbers follow the paragraph's language (75 locales checked, Hebrew and Arabic included).
 
