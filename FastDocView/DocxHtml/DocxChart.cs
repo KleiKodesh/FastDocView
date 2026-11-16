@@ -415,9 +415,9 @@ internal sealed partial class DocxChart
     }
 
     /// <summary>
-    /// Office's automatic trend line name, "type (series)", in the reader's interface language: Hebrew as a Hebrew Office writes it
-    /// (all six read from Word's PDF of a chart with every trend type, Hebrew Office 16, 2026-11-12), else English (Excel's names,
-    /// from memory: only a Hebrew Office is installed here, and the interface language is a registry setting we do not change).
+    /// Office's automatic trend line name, "type (series)", in the reader's interface language (CurrentUICulture): Hebrew, else English.
+    /// Both sets read from Word 16's PDF of a chart with all six types and no c:name: Hebrew interface 2026-11-12, English interface
+    /// (Office's UILanguageTag switched to en-us for the run) 2026-11-16: Linear, Expon., Log., Poly., Power, "N per. Mov. Avg.".
     /// </summary>
     internal static string TrendLineName(string type, XElement trend, string seriesName)
     {

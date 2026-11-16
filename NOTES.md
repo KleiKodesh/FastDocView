@@ -5151,3 +5151,10 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   near the floor (100-200), and with the scene depth at perspective 30; fixed aim points, absolute aims, eye-on-the-bounding-box
   axis, perspective before / after the elevation, and free height / depth all left 2-6 pt. The fitted distance at perspective 30 is
   about 0.5 / tan(15 deg) of the width. Left at the 2026-11-13 camera (median about 3.5 / 2 pt).
+
+## Chart trend line names in an English interface (2026-11-16)
+
+- Word 16 with Office's interface language switched to English (HKCU LanguageResources UILanguageTag en-us, restored after)
+  printed a chart with all six trend types and no c:name as: Linear, Expon., Log., Poly., Power, "3 per. Mov. Avg." - each
+  followed by " (series)". Identical to the English set DocxChart.TrendLineName already used (it was from memory). Harness:
+  RunTrendNamesEnglish (--charts / --fidelity).

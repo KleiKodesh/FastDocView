@@ -109,6 +109,26 @@ public static class BinaryChartsFidelityTest
         finally { System.Globalization.CultureInfo.CurrentUICulture = saved; }
     }
 
+    /// <summary>Office's automatic trend line names in an English interface, as Word 16 printed them (its PDF of a chart with all six types, Office's UI language switched to en-us, 2026-11-16).</summary>
+    public static void RunTrendNamesEnglish()
+    {
+        TestReport.Step("Charts: trend line legend names as an English Office writes them");
+        var saved = System.Globalization.CultureInfo.CurrentUICulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentUICulture = new System.Globalization.CultureInfo("en-US");
+            var plain = new System.Xml.Linq.XElement("trendline");
+            var moving = new System.Xml.Linq.XElement("trendline", new System.Xml.Linq.XElement("period", new System.Xml.Linq.XAttribute("val", "3")));
+            (string Type, System.Xml.Linq.XElement Trend, string Name)[] cases =
+            [
+                ("linear", plain, "Linear"), ("exp", plain, "Expon."), ("log", plain, "Log."), ("poly", plain, "Poly."), ("power", plain, "Power"), ("movingAvg", moving, "3 per. Mov. Avg."), ("movingAvg", plain, "2 per. Mov. Avg."),
+            ];
+            foreach ((string type, System.Xml.Linq.XElement trend, string name) in cases)
+                TestReport.Check(FastDocView.DocxHtml.DocxChart.TrendLineName(type, trend, "North") == name + " (North)", "English trend name: " + name);
+        }
+        finally { System.Globalization.CultureInfo.CurrentUICulture = saved; }
+    }
+
     /// <summary>c:dispEq / c:dispRSqr shown unless val is false (Word 16's PDFs of probes, 2026-11-12; oox seriesmodel.cxx:90-91).</summary>
     public static void RunTrendLabelDefaults()
     {
