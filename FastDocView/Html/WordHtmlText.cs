@@ -9,33 +9,54 @@ public static class WordHtmlText
 {
     public static string Encode(string text) => WebUtility.HtmlEncode(text);
 
+    /// <summary>The span that gives a stretch of Arabic letters the browser's shaping back (ligatures, and no run-level
+    /// feature list: a 'liga' 0 in font-feature-settings would override font-variant-ligatures).</summary>
+    public const string ArabicShapingSpan = "<span style=\"font-variant-ligatures:normal;font-feature-settings:normal\">";
+    /// <summary>The span that gives a stretch of Hebrew letters Word's complex-script shaping inside a run whose own OpenType CSS
+    /// asks for more (no ligatures, no contextual alternates, no feature list).</summary>
+    public const string HebrewShapingSpan = "<span style=\"font-variant-ligatures:no-common-ligatures no-contextual;font-feature-settings:normal\">";
+
     /// <summary>
-    /// Encoded Word run text with each stretch of Arabic letters wrapped in a span that gives the browser's ligatures back:
-    /// Word draws no ligatures by default (the document's font-variant-ligatures), but Arabic always with them, whatever
-    /// w14:ligatures says (Word 16 XPS: Arial's Allah ligature, 4 characters to 1 glyph, with ligatures none and all alike).
-    /// One span per word (a space ends it). Text inside tags is left alone; text with no Arabic letter is returned as it is.
+    /// Encoded Word run text with each stretch of Arabic letters, and of Hebrew letters when <paramref name="isHebrewReset"/>,
+    /// wrapped in a span with the shaping Word gives that script. Word splits a run by the script of its letters and ignores the
+    /// w14 typography settings on complex-script text whatever the run's flags say (Word 16 XPS of w14-scripts-v1.docx: the
+    /// same glyphs with ligatures none and all + cntxtAlts): Arabic always with its ligatures (Arial's Allah ligature, 4
+    /// characters to 1 glyph), Hebrew never with liga (David Libre's vav + U+05C2 stays two glyphs; ccmp and mark still apply).
+    /// <paramref name="isHebrewReset"/> = the run's own CSS turns on more than Hebrew gets (<see cref="WordRunFormatting.ShapesHebrewApart"/>).
+    /// One span per word (a space ends it). Text inside tags is left alone; text with no such letter is returned as it is.
     /// </summary>
-    public static string WithWordArabicShaping(string encoded)
+    public static string WithWordScriptShaping(string encoded, bool isHebrewReset = false)
     {
         int first = -1;
-        for (int i = 0; i < encoded.Length; i++) if (IsArabicLetter(encoded[i])) { first = i; break; }
+        for (int i = 0; i < encoded.Length; i++) if (ScriptOf(encoded[i], isHebrewReset) != 0) { first = i; break; }
         if (first < 0) return encoded;
-        var html = new StringBuilder(encoded.Length + 64);
-        bool inTag = false, inArabic = false;
+        var html = new StringBuilder(encoded.Length + 96);
+        bool inTag = false;
+        char current = '\0';
         for (int i = 0; i < encoded.Length; i++)
         {
             char c = encoded[i];
             if (c == '<') inTag = true;
+            char script = inTag ? '\0' : ScriptOf(c, isHebrewReset);
             // marks and joiners stay inside the stretch; a space ends it, so AppendScaled can still box each word on its own
-            bool arabic = !inTag && (IsArabicLetter(c) || (inArabic && (c is '‌' or '‍' || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.NonSpacingMark)));
-            if (arabic && !inArabic) { html.Append("<span style=\"font-variant-ligatures:normal\">"); inArabic = true; }
-            else if (!arabic && inArabic) { html.Append("</span>"); inArabic = false; }
+            if (script == 0 && current != 0 && !inTag && (c is '‌' or '‍' || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.NonSpacingMark))
+                script = current;
+            if (script != current)
+            {
+                if (current != 0) html.Append("</span>");
+                if (script != 0) html.Append(script == 'A' ? ArabicShapingSpan : HebrewShapingSpan);
+                current = script;
+            }
             html.Append(c);
             if (c == '>') inTag = false;
         }
-        if (inArabic) html.Append("</span>");
+        if (current != 0) html.Append("</span>");
         return html.ToString();
     }
+
+    /// <summary>'A' for an Arabic letter, 'H' for a Hebrew letter (when wanted), else 0.</summary>
+    private static char ScriptOf(char c, bool isHebrewWanted)
+        => IsArabicLetter(c) ? 'A' : isHebrewWanted && c is (>= 'א' and <= 'ת') or (>= 'ׯ' and <= 'ײ') or (>= 'יִ' and <= 'ﭏ') ? 'H' : '\0';
 
     private static bool IsArabicLetter(char c)
         => c is (>= '؀' and <= 'ۿ') or (>= 'ݐ' and <= 'ݿ') or (>= 'ࢠ' and <= 'ࣿ') or (>= 'ﭐ' and <= '﷿') or (>= 'ﹰ' and <= '﻿');

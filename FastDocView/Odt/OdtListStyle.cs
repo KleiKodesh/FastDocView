@@ -55,7 +55,7 @@ public sealed class OdtListStyle
                                      (string?)alignment?.Attribute(text + "list-tab-stop-position"), (string?)alignment?.Attribute(text + "label-followed-by"));
             XElement? textProperties = element.Element(style + "text-properties");
             var extras = new LevelExtras((string?)element.Attribute(text + "style-name"), (string?)element.Attribute(Xlink + "href"),
-                                         (string?)textProperties?.Attribute(fo + "font-family") ?? (string?)textProperties?.Attribute(style + "font-name"),
+                                         BulletFont((string?)textProperties?.Attribute(fo + "font-family") ?? (string?)textProperties?.Attribute(style + "font-name")),
                                          (string?)properties?.Attribute(fo + "width"), (string?)properties?.Attribute(fo + "height"));
             AddLevel(element.Name.LocalName, element.Name.Namespace == text, (local, isStyle) => (string?)element.Attribute((isStyle ? style : text) + local), layout, extras);
         }
@@ -104,7 +104,7 @@ public sealed class OdtListStyle
                             height = reader.GetAttribute("height", foNs);
                         }
                         else if (reader.LocalName == "text-properties" && reader.Depth == levelDepth + 1)
-                            fontFamily = reader.GetAttribute("font-family", foNs) ?? reader.GetAttribute("font-name", styleNs);
+                            fontFamily = BulletFont(reader.GetAttribute("font-family", foNs) ?? reader.GetAttribute("font-name", styleNs));
                         else if (reader.LocalName == "list-level-label-alignment" && reader.Depth == levelDepth + 2)
                         {
                             hasAlignment = true;
@@ -497,4 +497,8 @@ public sealed class OdtListStyle
     /// <summary>style:num-format -> label text, as LibreOffice draws it (<see cref="ListNumberingTypes"/>); "" = no number.</summary>
     public static string FormatNumber(int value, string format, string? language = null)
         => ListNumberingTypes.FromOdfNumberFormat(format, letterSync: false) is { } type ? ListNumberingTypes.Format(value, type, language) : "";
+
+    /// <summary>A bullet's font name without the OpenType features a LibreOffice font name may carry ("Name:-liga"), which
+    /// are not part of the family (see <see cref="OdtStyleCascade.FontWithoutFeatures"/>).</summary>
+    private static string? BulletFont(string? font) => font is null ? null : OdtStyleCascade.FontWithoutFeatures(font, out _);
 }

@@ -473,8 +473,9 @@ public sealed class OdtStyleCascade
         if ((string?)properties.Attribute(Fo + "font-size") is { } size) run.FontSizeHalfPoints = HalfPoints(size, run.FontSizeHalfPoints);
         if ((string?)properties.Attribute(Style + "font-size-complex") is { } complexSize)
             run.ComplexScriptFontSizeHalfPoints = HalfPoints(complexSize, run.ComplexScriptFontSizeHalfPoints > 0 ? run.ComplexScriptFontSizeHalfPoints : run.FontSizeHalfPoints);
-        if (FontName(properties, Style + "font-name", Fo + "font-family") is { } font) run.FontName = font;
-        if (FontName(properties, Style + "font-name-complex", Style + "font-family-complex") is { } complexFont) run.ComplexScriptFontName = complexFont;
+        if (FontName(properties, Style + "font-name", Fo + "font-family") is { } font) run.FontName = FontWithoutFeatures(font, out run.FontFeaturesCss);
+        if (FontName(properties, Style + "font-name-complex", Style + "font-family-complex") is { } complexFont)
+            run.ComplexScriptFontName = FontWithoutFeatures(complexFont, out run.ComplexScriptFontFeaturesCss);
 
         if ((string?)properties.Attribute(Fo + "color") is { } color) run.ColorHex = ColorHex(color);
         if ((string?)properties.Attribute(Fo + "background-color") is { } background)
@@ -525,6 +526,48 @@ public sealed class OdtStyleCascade
         string first = value.Split(' ')[0];
         run.IsSuperscript = first == "super" || (Percent(first) is { } up && up > 0);
         run.IsSubscript = first == "sub" || (Percent(first) is { } down && down < 0);
+    }
+
+    /// <summary>
+    /// A LibreOffice font name with its OpenType features ("Gabriola:ss05&amp;-liga") split into the family and a
+    /// font-feature-settings list ("'ss05' 1,'liga' 0"; null = none). LibreOffice vcl/source/font/FeatureParser.cxx:24-56:
+    /// the features follow the first ':' (include/vcl/font/FeatureParser.hxx:23-24, FeaturePrefix ':' and FeatureSeparator '&amp;'),
+    /// each parsed by HarfBuzz hb_feature_from_string (vcl/source/font/Feature.cxx:44-58: "liga", "+liga", "-liga", "liga=0",
+    /// a [start:end] range); "lang=xx" sets the language, not a feature. Without features LibreOffice shapes with HarfBuzz's
+    /// defaults (liga, clig, calt on), which is the browser's default too, so nothing is written then.
+    /// </summary>
+    internal static string FontWithoutFeatures(string font, out string? featuresCss)
+    {
+        featuresCss = null;
+        int colon = font.IndexOf(':');
+        if (colon < 0) return font;
+        var css = new StringBuilder();
+        foreach (string token in font.Substring(colon + 1).Split('&'))
+        {
+            string feature = token.Trim();
+            int range = feature.IndexOf('[');
+            int equals = feature.IndexOf('=');
+            string tag = feature.Substring(0, range >= 0 ? range : equals >= 0 ? equals : feature.Length).Trim();
+            if (tag == "lang") continue;
+            int value = 1;
+            if (tag.StartsWith("-", StringComparison.Ordinal)) { value = 0; tag = tag.Substring(1); }
+            else if (tag.StartsWith("+", StringComparison.Ordinal)) tag = tag.Substring(1);
+            if (equals >= 0)
+            {
+                string number = feature.Substring(equals + 1).Trim();
+                if (number is "on" or "true") value = 1;
+                else if (number is "off" or "false") value = 0;
+                else if (!int.TryParse(number, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out value)) continue;
+            }
+            if (tag.Length is 0 or > 4) continue;
+            bool isTag = true;
+            foreach (char c in tag) if (c is < '!' or > '~' or '\'' or '"' or '\\') isTag = false;
+            if (!isTag) continue;
+            if (css.Length > 0) css.Append(',');
+            css.Append('\'').Append(tag.PadRight(4)).Append("' ").Append(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        if (css.Length > 0) featuresCss = css.ToString();
+        return font.Substring(0, colon).Trim();
     }
 
     private string? FontName(XElement properties, XName nameAttribute, XName familyAttribute)

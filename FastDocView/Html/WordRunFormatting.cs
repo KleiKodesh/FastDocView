@@ -83,6 +83,10 @@ public sealed class WordRunFormatting
     public string? ShadingHex;              // run shading (w:shd / sprmCShd) "RRGGBB"; a highlight is drawn instead when both are set
     public string? FontName;
     public string? ComplexScriptFontName;
+    /// <summary>ODT: the OpenType features a LibreOffice font name carries ("Name:-liga") as font-feature-settings entries; null = none.</summary>
+    public string? FontFeaturesCss;
+    /// <summary>ODT: the same for the complex-script font.</summary>
+    public string? ComplexScriptFontFeaturesCss;
     public bool IsComplexScript;            // .docx w:cs: complex-script properties without right-to-left direction
     public string? EastAsianFontName;       // .docx rFonts eastAsia: the face Word draws CJK characters with
     /// <summary>The Latin-text language as a BCP 47 tag ("en-US"): .docx w:lang val, .doc sprmCRgLid0, RTF \lang, ODT fo:language + fo:country. Used for hyphenation only.</summary>
@@ -110,6 +114,12 @@ public sealed class WordRunFormatting
     /// <summary>Word's ligature default, also what it draws on Hebrew whatever the run sets.</summary>
     public const string WordComplexScriptLigaturesCss = "font-variant-ligatures:no-common-ligatures no-contextual;";
 
+    /// <summary>.docx: the run's own OpenType CSS turns on more than Word gives Hebrew letters (a run without w:rtl / w:cs that
+    /// sets ligatures, contextual alternates or a feature list), so its Hebrew letters are set back in their own span
+    /// (<see cref="WordHtmlText.WithWordScriptShaping"/>): Word decides by the letters' script, not by the run's flags.</summary>
+    public bool ShapesHebrewApart => UsesWordOpenTypeDefaults && OpenTypeCss() is var own
+                                     && (own.ligatures != WordComplexScriptLigaturesCss || own.features.Length > 0);
+
     /// <summary>
     /// Word's OpenType typography (.docx w14:ligatures, numForm, numSpacing, cntxtAlts, stylisticSets) as three CSS declarations
     /// (font-variant-ligatures, font-variant-numeric, font-feature-settings), each "" when it is the browser default. Word draws
@@ -123,10 +133,12 @@ public sealed class WordRunFormatting
     /// </summary>
     private (string ligatures, string numeric, string features) OpenTypeCss()
     {
-        if (!UsesWordOpenTypeDefaults) return ("", "", "");
+        if (!UsesWordOpenTypeDefaults)
+            return ("", "", ((UsesComplexScriptProperties && !string.IsNullOrEmpty(ComplexScriptFontName)) || FontName is null ? ComplexScriptFontFeaturesCss : FontFeaturesCss) is { } fontFeatures
+                ? "font-feature-settings:" + fontFeatures + ";" : "");
         // Word ignores all five settings on complex-script runs and shapes them its own way (XPS glyphs of w14-scripts-v1.docx:
         // ligatures none vs all + cntxtAlts give the same glyphs): Hebrew without the font's liga (David Libre's vav + U+05C2
-        // stays two glyphs), Arabic with it (WordHtmlText.WithWordArabicShaping turns it back on for Arabic letters)
+        // stays two glyphs), Arabic with it (WordHtmlText.WithWordScriptShaping turns it back on for Arabic letters)
         if (UsesComplexScriptProperties || IsParagraphShapedAsComplexScript) return (WordComplexScriptLigaturesCss, "", "");
         string value = Ligatures ?? "none";
         bool all = value == "all";

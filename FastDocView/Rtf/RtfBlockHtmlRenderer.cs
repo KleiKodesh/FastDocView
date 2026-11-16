@@ -174,7 +174,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         }
         string css = runFormatting.ToCss(_documentRun) + BaselineShiftCss
                      + WordHtmlText.RunDirectionCss(isRunRightToLeft, _runState.Has(RtfStateFlags.RightToLeftParagraph));
-        string encoded = WordHtmlText.WithWordArabicShaping(WordHtmlText.Encode(text));
+        string encoded = WordHtmlText.WithWordScriptShaping(WordHtmlText.Encode(text));
         if (css.Length == 0) { WordHtmlText.AppendScaled(target, encoded, _runState.CharacterScale); return; }
         target.Append("<span style=\"").Append(css).Append("\">");
         WordHtmlText.AppendScaled(target, encoded, _runState.CharacterScale);

@@ -138,7 +138,7 @@ public sealed class WebArchiveStylesheet
     private static readonly HashSet<string> AllowedProperties = new(StringComparer.Ordinal)
     {
         "color", "background", "background-color",
-        "font", "font-family", "font-size", "font-weight", "font-style", "font-variant", "font-stretch", "font-kerning", "font-feature-settings",
+        "font", "font-family", "font-size", "font-weight", "font-style", "font-variant", "font-stretch", "font-kerning", "font-feature-settings", "font-variant-ligatures", "font-variant-numeric",
         "text-decoration", "text-decoration-line", "text-decoration-style", "text-decoration-color", "text-underline-position", "text-underline-offset",
         "text-align", "text-align-last", "text-indent", "text-transform", "text-shadow", "line-height", "letter-spacing", "word-spacing",
         "white-space", "vertical-align", "direction", "unicode-bidi", "writing-mode", "text-orientation", "hyphens", "tab-size",

@@ -26,6 +26,9 @@ public static class TextEffectsFidelityTest
         DocxOpenTypeTypography();
         DocxReflection();
         WordScriptShaping();
+        OdtFontFeatures();
+        TestReport.Check(FastDocView.Markup.WebArchiveStylesheet.SanitizeInline("font-variant-ligatures:no-common-ligatures;font-variant-numeric:oldstyle-nums;position:absolute")
+                         == "font-variant-ligatures:no-common-ligatures;font-variant-numeric:oldstyle-nums;", "web archive: ligature and number CSS kept, as the browser prints it");
     }
 
     private static void WordHtmlTextScale()
@@ -96,6 +99,27 @@ public static class TextEffectsFidelityTest
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
         string html = document.RenderBlocks(0, 1)[0].Html;
         TestReport.Check(html.Split(ScaleBox).Length - 1 == 2 && html.Contains(ScaleBox + "0.6)") && html.Contains("plain "), "odt style:text-scale 60%: the span's two words scaled, the rest not: " + html);
+    }
+
+    /// <summary>ODT: LibreOffice's font-name features ("Name:-liga&amp;ss05", vcl FeatureParser) as font-feature-settings; a plain name
+    /// keeps the browser's (= HarfBuzz's) defaults.</summary>
+    private static void OdtFontFeatures()
+    {
+        TestReport.Check(FastDocView.Odt.OdtStyleCascade.FontWithoutFeatures("Gabriola:-liga&ss05&calt=0&lang=he&kern[1:3]", out string? css) == "Gabriola"
+                         && css == "'liga' 0,'ss05' 1,'calt' 0,'kern' 1", "LibreOffice font features parsed: " + css);
+        TestReport.Check(FastDocView.Odt.OdtStyleCascade.FontWithoutFeatures("Arial", out string? none) == "Arial" && none is null, "plain font name: no features");
+        string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-odt-font-features.fodt");
+        File.WriteAllText(path, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+            + "xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+            + "xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" "
+            + "xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" office:version=\"1.3\" office:mimetype=\"application/vnd.oasis.opendocument.text\">"
+            + "<office:font-face-decls><style:font-face style:name=\"Gabriola:-liga\" svg:font-family=\"Gabriola:-liga\"/></office:font-face-decls>"
+            + "<office:automatic-styles><style:style style:name=\"T1\" style:family=\"text\"><style:text-properties style:font-name=\"Gabriola:-liga\"/></style:style></office:automatic-styles>"
+            + "<office:body><office:text><text:p>office <text:span text:style-name=\"T1\">office</text:span></text:p></office:text></office:body></office:document>");
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+        string html = document.RenderBlocks(0, 1)[0].Html;
+        TestReport.Check(html.Contains("font-feature-settings:'liga' 0;") && html.Contains("Gabriola") && !html.Contains("Gabriola:") && !html.Contains("font-variant-ligatures")
+                         && !document.Stylesheet.Contains("font-variant-ligatures"), "odt Gabriola:-liga: family + liga off, nothing else: " + html);
     }
 
     private static string Run(string properties, string text) => $"<w:r><w:rPr>{properties}</w:rPr><w:t xml:space=\"preserve\">{text}</w:t></w:r>";
@@ -175,19 +199,28 @@ public static class TextEffectsFidelityTest
     {
         var html = new System.Text.StringBuilder();
         string arabic = "\u0627\u0644\u0644\u0647 \u0628\u0633\u0645";
-        TestReport.Check(WordHtmlText.WithWordArabicShaping("abc \u05D0") == "abc \u05D0", "no Arabic letter: text unchanged");
-        const string Normal = "<span style=\"font-variant-ligatures:normal\">";
-        TestReport.Check(WordHtmlText.WithWordArabicShaping("a " + arabic + " b") == "a " + Normal + arabic.Replace(" ", "</span> " + Normal) + "</span> b",
+        TestReport.Check(WordHtmlText.WithWordScriptShaping("abc \u05D0") == "abc \u05D0", "no Arabic letter: text unchanged");
+        const string Normal = WordHtmlText.ArabicShapingSpan;
+        TestReport.Check(WordHtmlText.WithWordScriptShaping("a " + arabic + " b") == "a " + Normal + arabic.Replace(" ", "</span> " + Normal) + "</span> b",
                          "each Arabic word gets the browser's ligatures back, one span per word");
         html.Clear();
-        WordHtmlText.AppendScaled(html, WordHtmlText.WithWordArabicShaping(arabic), 80);
+        WordHtmlText.AppendScaled(html, WordHtmlText.WithWordScriptShaping(arabic), 80);
         TestReport.Check(html.ToString().Split("class=\"char-scale\"").Length - 1 == 2, "scaled Arabic: still one box per word: " + html);
-        TestReport.Check(WordHtmlText.WithWordArabicShaping("<i title=\"\u0627\">x</i>") == "<i title=\"\u0627\">x</i>", "Arabic inside a tag is left alone");
-        List<string> docx = DocxFidelityTest.RenderAll("script-shaping-v1",
+        TestReport.Check(WordHtmlText.WithWordScriptShaping("<i title=\"\u0627\">x</i>") == "<i title=\"\u0627\">x</i>", "Arabic inside a tag is left alone");
+        List<string> docx = DocxFidelityTest.RenderAll("script-shaping-v2",
             "<w:p>" + Run($"<w:rtl/><w14:ligatures {W14} w14:val=\"all\"/><w14:cntxtAlts {W14}/>", "\u05D5\u05C2") + "</w:p>"
-          + "<w:p>" + Run("<w:rtl/>", arabic) + "</w:p>");
+          + "<w:p>" + Run("<w:rtl/>", arabic) + "</w:p>"
+          + "<w:p>" + Run($"<w14:ligatures {W14} w14:val=\"all\"/><w14:cntxtAlts {W14}/>", "fi וׂ") + "</w:p>"
+          + "<w:p>" + Run($"<w14:ligatures {W14} w14:val=\"standard\"/>", "fi " + arabic) + "</w:p>"
+          + "<w:p>" + Run("", "fi וׂ") + "</w:p>");
         TestReport.Check(!docx[0].Contains("common-ligatures discretionary") && !docx[0].Contains(" contextual;"), "Hebrew run: w14:ligatures all + cntxtAlts ignored, as Word does: " + docx[0]);
         TestReport.Check(docx[1].Contains(Normal + arabic.Substring(0, 4) + "</span>"), "Arabic run keeps its ligatures");
+        TestReport.Check(docx[2].Contains("common-ligatures discretionary") && docx[2].Contains(WordHtmlText.HebrewShapingSpan + "וׂ</span>") && !docx[2].Contains(WordHtmlText.HebrewShapingSpan + "fi"),
+                         "Hebrew letters in a Latin run (no w:rtl) with ligatures all: by their script, without ligatures; the Latin keeps them");
+        TestReport.Check(docx[3].Contains("'liga' 1,'clig' 0") && docx[3].Contains(Normal + arabic.Substring(0, 4) + "</span>"),
+                         "Arabic letters in a Latin run with liga apart from clig: the feature list is set back, ligatures kept: " + docx[3]);
+        TestReport.Check(!docx[4].Contains(WordHtmlText.HebrewShapingSpan), "Hebrew letters in a Latin run with Word's default: no extra span: " + docx[4]);
+        TestReport.Check(WordHtmlText.WithWordScriptShaping("א x", isHebrewReset: true) == WordHtmlText.HebrewShapingSpan + "א</span> x", "Hebrew stretch: one span per word");
         string rtfPath = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-rtf-shaping.rtf");
         File.WriteAllText(rtfPath, @"{\rtf1\ansi{\fonttbl{\f0 Arial;}}\pard\f0 office\par}");
         using IWordWindowedDocument rtf = WordWindowedDocumentOpener.Open(rtfPath);

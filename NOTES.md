@@ -593,11 +593,27 @@ overloads. Every rule below was read from the source named, not from memory:
   for both settings**. Word ignores w14 typography on complex-script runs: Hebrew never gets liga (vav + U+05C2 stays two
   glyphs; ccmp and mark positioning still apply), Arabic always gets its ligatures (Allah = 4 characters to 1 glyph). So
   complex-script runs get `font-variant-ligatures:no-common-ligatures no-contextual` whatever they set, and each stretch of
-  Arabic letters is wrapped in a `font-variant-ligatures:normal` span (`WordHtmlText.WithWordArabicShaping`, .docx / .doc /
+  Arabic letters is wrapped in a `font-variant-ligatures:normal` span (`WordHtmlText.WithWordScriptShaping`, .docx / .doc /
   RTF; text with no Arabic letter is returned as it is). Whether Word applies calt to Arabic was not visible (none of the
-  installed Hebrew fonts has calt; Arial's Arabic calt gave the same glyphs either way), so Arabic keeps the browser default.
+  installed Hebrew fonts has calt; Arial's Arabic calt gave the same glyphs either way), so Arabic keeps the browser default (measured since with Calibri: always on, see below).
   .doc and RTF store no typography settings; the document style sheet carries Word's default for them
   (`WordDocumentHtmlStylesheet.WithWordShaping`), .docx too.
+- **Shaping by the letters' script; Arabic calt; ODT and web archives (2026-11-16)** - Word splits a run by script: a
+  Hebrew run Word itself saves always carries w:rtl (Word 16 added it to Hebrew typed into an LTR paragraph), but a
+  hand-made .docx may not, so `WordHtmlText.WithWordScriptShaping` sets each Hebrew word back to Hebrew's shaping
+  (`HebrewShapingSpan`) when the run's own OpenType CSS turns on more (`WordRunFormatting.ShapesHebrewApart`), and each
+  Arabic word gets `font-variant-ligatures:normal;font-feature-settings:normal` (a 'liga' 0 from a liga/clig split
+  would otherwise override it). Arabic calt measured with Calibri (its arab calt rewrites beh-beh-beh; found by a browser
+  width scan): test-data/word-text-effects/w14-arabic-calt-v1.docx (make-w14-arabic-calt-fixture.ps1) gives XPS glyphs
+  4750;5854;4792 / 5623;4850;4792 with w14:cntxtAlts off and on alike, and fontTools shows 4750, 5854 and 5623 are outputs
+  of Calibri's calt lookups (5854 of calt only): Word always applies calt to Arabic = the browser default. Same file: Latin
+  "fi" in David Libre is glyph 534 (one ligature) only with ligatures all; the Hebrew vav + U+05C2 stays 550;704;805 both ways.
+  ODT follows LibreOffice, which shapes with HarfBuzz's defaults (liga, clig, calt on, as the browser) unless the font name
+  carries features: vcl/source/font/FeatureParser.cxx:24-56 splits at the first ':' (include/vcl/font/FeatureParser.hxx:23-24,
+  separator '&'), each token through hb_feature_from_string (vcl/source/font/Feature.cxx:44-58), "lang=" excluded;
+  `OdtStyleCascade.FontWithoutFeatures` turns them into font-feature-settings. Web archives are HTML the browser prints, so
+  their font-variant-ligatures / -numeric CSS is now kept (WebArchiveStylesheet). Test: `TextEffectsFidelityTest`
+  (WordScriptShaping, OdtFontFeatures).
 
 
 ## OpenDocument text (Odt/, 2026-10-28)

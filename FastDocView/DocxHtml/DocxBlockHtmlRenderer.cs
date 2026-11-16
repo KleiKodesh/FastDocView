@@ -825,7 +825,7 @@ public sealed class DocxBlockHtmlRenderer
     private static void AppendScriptText(StringBuilder html, string text, WordRunFormatting formatting)
     {
         string? eastAsianFont = formatting.EastAsianFontSwitch;
-        if (eastAsianFont is null) { WordHtmlText.AppendScaled(html, WordHtmlText.WithWordArabicShaping(WordHtmlText.Encode(text)), formatting.CharacterScalePercent, formatting.ReflectionCss); return; }
+        if (eastAsianFont is null) { WordHtmlText.AppendScaled(html, WordHtmlText.WithWordScriptShaping(WordHtmlText.Encode(text), formatting.ShapesHebrewApart), formatting.CharacterScalePercent, formatting.ReflectionCss); return; }
         var pieces = new StringBuilder();
         for (int start = 0; start < text.Length;)
         {
@@ -837,7 +837,7 @@ public sealed class DocxBlockHtmlRenderer
             else pieces.Append(piece);
             start = end;
         }
-        WordHtmlText.AppendScaled(html, WordHtmlText.WithWordArabicShaping(pieces.ToString()), formatting.CharacterScalePercent, formatting.ReflectionCss);
+        WordHtmlText.AppendScaled(html, WordHtmlText.WithWordScriptShaping(pieces.ToString(), formatting.ShapesHebrewApart), formatting.CharacterScalePercent, formatting.ReflectionCss);
     }
 
     private IEnumerable<RenderStep> RenderRunChildren(XElement run, StringBuilder html, WordRunFormatting formatting)
