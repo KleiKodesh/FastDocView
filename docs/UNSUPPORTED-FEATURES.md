@@ -98,8 +98,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| 3-D shapes: contour (sp3d contourW), exact lighting of turned sides and of some rigs, bevel profiles other than circle / angle / slope | docx | The contour is not drawn (its 2 pt band is missing: outline 2.2 pt inside Word's). Sides turned towards the viewer and the balanced rig come out 13-19 levels darker than Word's print (Word's light model is only known from its rig table, MS-OI29500); bevels other than circle, angle and slope use the nearest of those profiles; a perspective camera with a bevel is up to 2.3 pt off on a slanted side | deferred |
-| 3-D shapes: Word's own lighting of legacy .doc / RTF 3-D | doc, rtf | Lit with LibreOffice's model (msdffimp.cxx: the key / fill lights and ambient), about 50 levels brighter than Word 16 prints a legacy 3-D shape; the outlines match | deferred |
+| 3-D shapes: bevel profiles other than circle / angle / slope; shading inside bevel bands; contours of outlines with holes or several parts | docx | Other presets use the nearest of those profiles; a contour is drawn only round a single closed outline; band colours on a curved outline can be up to 50 levels off at single points (centres and fronts match within 6) | deferred |
 | Connector routing (glue points) | docx, doc, rtf | Drawn as their saved geometry only | won't do |
 | Half-transparent picture fill in a darken / lighten path | docx | The darkening layer is scaled by the picture's opacity (exact only for an opaque picture) | won't do |
 | Shapes in web archives: the VML drawing itself | mhtml | Shown as a browser shows the archive: Word's HTML fallback (table cells and pictures of the shapes); the fallback is what a browser prints | won't do |

@@ -7,7 +7,8 @@ namespace FastDocView.Tests;
 /// 3-D shapes against Word 16's PDFs in test-data/word-shapes-3d (make-shapes-3d-fixture.ps1; measured 2026-11-17 at 4 px per pt):
 /// shapes-3d-v1.docx (a:scene3d / a:sp3d: legacy oblique and perspective cameras, isometric, perspective and orthographic turns,
 /// an extrusion colour, circle / slope / angle bevels, metal, an oblique camera under the balanced rig, a contour) and
-/// shapes-3d-on-v1.rtf (Word's RTF save of it with f3D turned on, make_rtf_3d.py: the legacy OfficeArt 3-D properties).
+/// shapes-3d-on-v1.rtf (Word's RTF save of it with f3D turned on, make_rtf_3d.py: the legacy OfficeArt 3-D properties, with
+/// [MS-ODRAW]'s defaults - parallel, key light harsh, fill light soft - and Word's legacy lighting).
 /// Each shape's drawn extent against Word's (page points) and the colour at the box's centre against Word's pixel there.
 /// </summary>
 public static class Shapes3DFidelityTest
@@ -25,19 +26,21 @@ public static class Shapes3DFidelityTest
         (429.5, 74.8, 550.2, 160.2, 1, "4375c8", 8),    // legacyPerspectiveTop
         (77.2, 214.2, 176.8, 337.2, 1, "4274c7", 8),    // isometricLeftDown
         (249.5, 234.8, 370.2, 314.2, 1, "4a7ccf", 8),   // perspectiveFront turned 30 degrees, an oval
-        (422.5, 216.5, 544.8, 327.5, 1, "5587da", 16),  // orthographic, lat 35 lon -25, green extrusion: Word lights it brighter
+        (422.5, 216.5, 544.8, 327.5, 1, "5587da", 4),   // orthographic, lat 35 lon -25, green extrusion (its side 124 grey as Word's)
         (59.8, 399.5, 180.0, 480.0, 1, "4779cc", 6),    // circle bevel only
         (249.5, 399.5, 370.2, 480.0, 1, "4979cd", 6),   // slope bevel on an oval
         (429.5, 399.5, 550.2, 480.0, 1, "315796", 10),  // angle bevel, legacy metal
-        (53.2, 559.0, 174.0, 640.8, 2.5, "4375c8", 8),  // perspective lat 20 with a bevel, a right triangle: 2.3 pt on its slanted side
-        (249.5, 552.2, 370.2, 640.2, 1, "5583ce", 22),  // oblique top, balanced rig: Word lights it 19 levels brighter
-        (428.5, 549.0, 551.2, 626.2, 2.5, "4676c3", 8), // turned 50 degrees, flat material, 2 pt contour (not drawn: 2.2 pt)
+        (53.2, 559.0, 174.0, 640.8, 1, "4375c8", 6),    // perspective lon -20, rounded rectangle with a bevel (the bevel's top on the shape's plane)
+        (249.5, 552.2, 370.2, 640.2, 1, "5583ce", 4),   // oblique top, balanced rig (half its ambient as white)
+        (428.5, 549.0, 551.2, 626.2, 1, "4676c3", 4),   // turned 50 degrees, flat material, 2 pt contour round it
     ];
 
     // the legacy OfficeArt scene (RTF, f3D on): extents of the shapes whose 3-D style Word wrote as a legacy one (others: -1)
-    private static readonly (double L, double T, double R, double B)[] Rtf =
+    private static readonly (double L, double T, double R, double B, string Centre)[] Rtf =
     [
-        (59.5, 67.0, 192.8, 160.2), (249.5, 79.5, 370.2, 160.2), (429.5, 74.8, 550.2, 160.2), (59.5, 239.5, 180.2, 320.2), (249.5, 228.0, 370.2, 314.0),
+        (59.5, 67.0, 192.8, 160.2, "305592"), (249.5, 79.5, 370.2, 160.2, "305592"), (429.5, 74.8, 550.2, 160.2, "305592"), (59.5, 239.5, 180.2, 320.2, "305592"),
+        (249.5, 228.0, 370.2, 314.0, "2e528f"), (429.5, 227.0, 562.8, 320.2, "305592"), (59.5, 387.0, 192.8, 480.2, "305592"), (249.5, 387.0, 382.8, 480.2, "305592"),
+        (429.5, 387.0, 562.8, 480.2, "305592"), (52.5, 558.5, 175.0, 641.2, "365fa3"), (249.5, 547.2, 382.8, 640.2, "305592"), (429.5, 547.0, 562.8, 640.2, "305592"),
     ];
 
     public static void Run()
@@ -54,7 +57,7 @@ public static class Shapes3DFidelityTest
             var e = Docx[i];
             (double l, double t, double r, double b) = Extent(faces, box);
             double off = new[] { Math.Abs(l - e.L), Math.Abs(t - e.T), Math.Abs(r - e.R), Math.Abs(b - e.B) }.Max();
-            TestReport.Check(off <= e.Outline, $".docx shape {i}: extent within {e.Outline} pt of Word's ({off:0.00} pt)");
+            TestReport.Check(off <= e.Outline, $".docx shape {i}: extent within {e.Outline} pt of Word's ({off:0.00} pt: {l:0.0} {t:0.0} {r:0.0} {b:0.0})");
             string? centre = ColourAt(faces, 60, 40);
             int levels = centre is null ? 999 : Levels(centre, e.Centre);
             TestReport.Check(levels <= e.Levels, $".docx shape {i}: centre {centre} against Word's {e.Centre} ({levels} levels, allowed {e.Levels})");
@@ -69,6 +72,9 @@ public static class Shapes3DFidelityTest
                 (double l, double t, double r, double b) = Extent(legacy[i], Boxes[i]);
                 double off = new[] { Math.Abs(l - Rtf[i].L), Math.Abs(t - Rtf[i].T), Math.Abs(r - Rtf[i].R), Math.Abs(b - Rtf[i].B) }.Max();
                 TestReport.Check(off <= 1, $"RTF legacy 3-D shape {i}: extent within 1 pt of Word's ({off:0.00} pt)");
+                string? centre = ColourAt(legacy[i], 60, 40);
+                int levels = centre is null ? 999 : Levels(centre, Rtf[i].Centre);
+                TestReport.Check(levels <= 3, $"RTF legacy 3-D shape {i}: centre {centre} against Word's {Rtf[i].Centre} ({levels} levels)");
             }
         // Word's .doc / RTF save keeps the 3-D style with f3D off, and Word prints those flat: so do we
         var flat = Shapes(doc);

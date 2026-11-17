@@ -159,16 +159,18 @@ internal static class WordShape3D
     };
 
     /// <summary>
-    /// Per material (ST_PresetMaterialType): the diffuse share (LibreOffice's aPrstMaterialArray :940-960 fDiffusion) and the lift Word
-    /// adds to a lit face in levels, measured on its PDF of test-data/word-shapes-3d (front faces under threePt: warm matte 5, legacy
-    /// matte 0, legacy metal 10 at two thirds diffuse). Materials not measured take warm matte's lift.
+    /// Per material (ST_PresetMaterialType): the diffuse share (LibreOffice's aPrstMaterialArray :940-960 fDiffusion), a constant lift
+    /// in levels, the Phong highlight's strength in levels and its power (LibreOffice's nSpecularPower), fitted on Word 16's PDFs:
+    /// warm matte's highlight (power 8, strength 75.7) reproduces the measured picture lifts by camera angle (test-data/word-picture-
+    /// effects effects-light-*-v1: RMS 0.5 levels over 17 angles) and the turned shape of shapes-3d-v1 (19 vs 18.5); matte and legacy
+    /// matte have none; legacy metal two thirds diffuse and a flat 10. Materials not measured take warm matte's.
     /// </summary>
-    private static (double Diffuse, double Lift) Material(string material) => material switch
+    private static (double Diffuse, double Lift, double Highlight, double Power) Material(string material) => material switch
     {
-        "matte" or "legacyMatte" => (1, 0),
-        "legacyMetal" => (0.66699, 10),
-        "dkEdge" => (0.7, 5),
-        _ => (1, 5),
+        "matte" or "legacyMatte" => (1, 0, 0, 1),
+        "legacyMetal" => (0.66699, 10, 0, 1),
+        "dkEdge" => (0.7, 0, 75.7, 8),
+        _ => (1, 0, 75.7, 8),
     };
 
     /// <summary>
@@ -252,9 +254,13 @@ internal static class WordShape3D
             extrusionColor = extrusionCss;
         }
         string material = (string?)shape3d?.Attribute("prstMaterial") ?? "warmMatte";
+        e.ContourWidth = Emu(shape3d, "contourW") / 12700;
+        if (shape3d?.Elements().FirstOrDefault(x => x.Name.LocalName == "contourClr") is { } contourClr) e.ContourColor = color(contourClr);
         if (material == "legacyWireframe") e.ShadeMode = "draft";
         XElement? rig = scene.Elements().FirstOrDefault(x => x.Name.LocalName == "lightRig");
-        e.Shader = Shader(rig, material);
+        // the viewer's direction in the shape's frame (x right, y down, z to the viewer): the camera turned by lon about y after lat about x
+        double latRad = lat / 60000 * Math.PI / 180, lonRad = lon / 60000 * Math.PI / 180;
+        e.Shader = Shader(rig, material, (Math.Sin(lonRad) * Math.Cos(latRad), -Math.Sin(latRad), Math.Cos(lonRad) * Math.Cos(latRad)));
         return e;
     }
 
@@ -284,7 +290,7 @@ internal static class WordShape3D
     /// material is not lit. The lights stay with the shape whatever the camera: the cosine uses the face's own normal.
     /// </summary>
     private static Func<(double X, double Y, double Z), (double X, double Y, double Z), (double R, double G, double B), (double R, double G, double B)> Shader(
-        XElement? rig, string material)
+        XElement? rig, string material, (double X, double Y, double Z) view)
     {
         string name = (string?)rig?.Attribute("rig") ?? "threePt";
         if (!Rigs.TryGetValue(name, out var preset)) preset = Rigs["threePt"];
@@ -302,22 +308,28 @@ internal static class WordShape3D
             lights = lights.Select(l => (l.Level, Direction: (X: c * l.Direction.X - s * l.Direction.Y, Y: s * l.Direction.X + c * l.Direction.Y, l.Direction.Z))).ToList();
         }
         bool flat = material == "flat";
-        (double diffuse, double liftLevels) = Material(material);
-        double lift = liftLevels / 255;
+        (double diffuse, double liftLevels, double highlight, double power) = Material(material);
+        // a lit material also takes half the rig's ambient as white (balanced, ambient 0.13: 24.5 levels on a front face where the
+        // highlight gives 7.6)
+        double lift = (liftLevels + (highlight > 0 ? preset.Ambient * 255 / 2 : 0)) / 255;
         return (own, _, colour) =>
         {
-            if (flat) return colour;
+            if (flat) return (Clamp(colour.R + 5 / 255.0), Clamp(colour.G + 5 / 255.0), Clamp(colour.B + 5 / 255.0));   // Word's print: unlit, 5 levels up
             // the lights stay with the shape: its own normal, whatever the camera
             var n = own;
-            double r = preset.Ambient, g = preset.Ambient, b = preset.Ambient;
+            double r = preset.Ambient, g = preset.Ambient, b = preset.Ambient, sr = 0, sg = 0, sb = 0;
             foreach (var light in lights)
             {
                 // the light travels along Direction; a face lit from it faces the other way
                 double cos = -(n.X * light.Direction.X + n.Y * light.Direction.Y + n.Z * light.Direction.Z);
                 if (cos <= 0) continue;
                 r += light.Level.R * cos; g += light.Level.G * cos; b += light.Level.B * cos;
+                // Phong: the light reflected about the normal, against the viewer
+                double rx = 2 * cos * n.X + light.Direction.X, ry = 2 * cos * n.Y + light.Direction.Y, rz = 2 * cos * n.Z + light.Direction.Z;
+                double spot = rx * view.X + ry * view.Y + rz * view.Z;
+                if (highlight > 0 && spot > 0) { double h = Math.Pow(spot, power) * highlight / 255; sr += light.Level.R * h; sg += light.Level.G * h; sb += light.Level.B * h; }
             }
-            return (Clamp(colour.R * r * diffuse + lift), Clamp(colour.G * g * diffuse + lift), Clamp(colour.B * b * diffuse + lift));
+            return (Clamp(colour.R * r * diffuse + lift + sr), Clamp(colour.G * g * diffuse + lift + sg), Clamp(colour.B * b * diffuse + lift + sb));
         };
     }
 
@@ -330,19 +342,23 @@ internal static class WordShape3D
     public static OdtExtrusion? FromOfficeArt(Func<int, uint?> property, out uint? extrusionColor)
     {
         extrusionColor = null;
-        uint lightFace = property(703) ?? 0, fillHarsh = property(767) ?? 0;
-        if ((lightFace & 8) == 0) return null;
+        uint lightFace = property(703) ?? 0, style = property(767) ?? 0;
+        // a boolean counts only with its "use" bit (bit + 16); else [MS-ODRAW] 2.3.15.15 / 2.3.16.28's default: f3D off, metal off,
+        // parallel on, key light harsh, fill light not harsh, rotation centre not automatic
+        bool Flag(uint value, int bit, bool fallback) => (value & (1u << (bit + 16))) != 0 ? (value & (1u << bit)) != 0 : fallback;
+        if (!Flag(lightFace, 3, false)) return null;
+        bool keyHarsh = Flag(style, 1, true), fillHarsh = Flag(style, 0, false);
         double Fixed(int id, double fallback) => property(id) is { } v ? (int)v / 65536.0 : fallback;
         double Signed(int id, double fallback) => property(id) is { } v ? (int)v : fallback;
         var e = new OdtExtrusion
         {
             Brightness = Signed(722, 20000) / 655.36,
             Diffusion = Signed(641, 65536) / 655.36,
-            FirstLightHarsh = (fillHarsh & 2) != 0, SecondLightHarsh = (fillHarsh & 1) != 0,
+            FirstLightHarsh = keyHarsh, SecondLightHarsh = fillHarsh,
             FirstLightLevel = Signed(726, 38000) / 655.36, SecondLightLevel = Signed(730, 38000) / 655.36,
-            Metal = (lightFace & 4) != 0, MetalMicrosoftCompatible = true,
+            Metal = Flag(lightFace, 2, false), MetalMicrosoftCompatible = true,
             ShadeMode = property(713) == 1 ? "draft" : "flat",   // mso_Wireframe
-            Perspective = (fillHarsh & 4) == 0,
+            Perspective = !Flag(style, 2, true),
         };
         if (property(645) is not null || property(644) is not null)
         {
@@ -355,7 +371,7 @@ internal static class WordShape3D
         if (property(727) is not null || property(728) is not null || property(729) is not null)
             e.SecondLightDirection = (Signed(727, -50000), Signed(728, 0), Signed(729, 10000));
         if (property(705) is not null || property(704) is not null) { e.RotateXDegrees = Fixed(705, 0); e.RotateYDegrees = Fixed(704, 0); }
-        if ((fillHarsh & 8) == 0 && (property(710) is not null || property(711) is not null || property(712) is not null))
+        if (!Flag(style, 3, false) && (property(710) is not null || property(711) is not null || property(712) is not null))
             e.RotationCenter = (Fixed(710, 0), Fixed(711, 0), Signed(712, 0) / 360.0);
         if (property(642) is { } shininess) e.Shininess = (int)shininess * 10.0;
         if (property(721) is not null || property(720) is not null) { e.SkewAmount = Signed(721, 50); e.SkewAngleDegrees = Fixed(720, -135); }
@@ -367,7 +383,69 @@ internal static class WordShape3D
         e.ViewPoint = (viewX * OdtExtrusion.Hundredth, viewY * OdtExtrusion.Hundredth, viewZ * OdtExtrusion.Hundredth);
         if (property(718) is not null || property(719) is not null) { e.OriginX = Signed(718, 32768) / 65536; e.OriginY = Signed(719, -32768) / 65536; }
         if (property(647) is { } colour) { e.UseExtrusionColor = true; extrusionColor = colour; }
+        e.Shader = LegacyShader(e);
         return e;
+    }
+
+    /// <summary>
+    /// Word's lighting of a legacy (OfficeArt) 3-D shape, fitted on Word 16's print of test-data/word-shapes-3d/shapes-3d-on-v1.rtf
+    /// (exact face colours: the PDF draws them as vectors; front 0.766, top 0.594, right side 0.880 of the fill): the ambient
+    /// intensity plus each light's level times the cosine to its position for a harsh (directional) light, or times
+    /// (1 + cosine) / 2 for a soft one ([MS-ODRAW]: "infinite, uniform, planar"), times the colour; no lift. The lights stay with
+    /// the viewer (the shape turns under them, as in LibreOffice).
+    /// </summary>
+    private static Func<(double X, double Y, double Z), (double X, double Y, double Z), (double R, double G, double B), (double R, double G, double B)> LegacyShader(OdtExtrusion e)
+    {
+        static (double X, double Y, double Z) Unit((double X, double Y, double Z) v)
+        {
+            double l = Math.Sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z);
+            return l == 0 ? (0, 0, 1) : (v.X / l, v.Y / l, v.Z / l);
+        }
+        var key = Unit(e.FirstLightDirection); var fill = Unit(e.SecondLightDirection);
+        double ambient = e.Brightness / 100, keyLevel = e.FirstLightLevel / 100, fillLevel = e.SecondLightLevel / 100, diffuse = e.Diffusion / 100;
+        bool keyHarsh = e.FirstLightHarsh, fillHarsh = e.SecondLightHarsh;
+        double Light((double X, double Y, double Z) n, (double X, double Y, double Z) l, bool harsh)
+        {
+            double cos = n.X * l.X + n.Y * l.Y + n.Z * l.Z;
+            return harsh ? Math.Max(0, cos) : (1 + cos) / 2;
+        }
+        return (_, eye, colour) =>
+        {
+            double k = ambient + keyLevel * Light(eye, key, keyHarsh) + fillLevel * Light(eye, fill, fillHarsh);
+            k *= diffuse;
+            return (Clamp(colour.R * k), Clamp(colour.G * k), Clamp(colour.B * k));
+        };
+    }
+
+    /// <summary>A closed ring grown outward by <paramref name="width"/> (each vertex along its two edges' miter, kept to 4 widths).</summary>
+    private static List<(double X, double Y)> Grown(List<(double X, double Y)> ring, double width)
+    {
+        var points = new List<(double X, double Y)>();
+        foreach (var p in ring) if (points.Count == 0 || Math.Abs(p.X - points[^1].X) + Math.Abs(p.Y - points[^1].Y) > 0.01) points.Add(p);
+        while (points.Count > 1 && Math.Abs(points[0].X - points[^1].X) + Math.Abs(points[0].Y - points[^1].Y) <= 0.01) points.RemoveAt(points.Count - 1);
+        int n = points.Count;
+        if (n < 3) return ring;
+        double area = 0;
+        for (int i = 0; i < n; i++) area += points[i].X * points[(i + 1) % n].Y - points[(i + 1) % n].X * points[i].Y;
+        var outward = new (double X, double Y)[n];
+        for (int i = 0; i < n; i++)
+        {
+            var a = points[i]; var b = points[(i + 1) % n];
+            double ex = b.X - a.X, ey = b.Y - a.Y, l = Math.Sqrt(ex * ex + ey * ey);
+            // y down: a positive area runs clockwise on screen, its outside is left of each edge
+            outward[i] = l == 0 ? (0, 0) : area > 0 ? (ey / l, -ex / l) : (-ey / l, ex / l);
+        }
+        var grown = new List<(double X, double Y)>(n);
+        for (int i = 0; i < n; i++)
+        {
+            var n1 = outward[(i - 1 + n) % n]; var n2 = outward[i];
+            double mx = n1.X + n2.X, my = n1.Y + n2.Y, ml = Math.Sqrt(mx * mx + my * my);
+            if (ml < 1e-9) { grown.Add((points[i].X + n2.X * width, points[i].Y + n2.Y * width)); continue; }
+            mx /= ml; my /= ml;
+            double scale = Math.Min(4, 1 / Math.Max(mx * n2.X + my * n2.Y, 0.25));
+            grown.Add((points[i].X + mx * scale * width, points[i].Y + my * scale * width));
+        }
+        return grown;
     }
 
     /// <summary>
@@ -389,6 +467,16 @@ internal static class WordShape3D
             var source = new OdtExtrusionSource { Filled = filled };
             foreach (WordShapeSubpath subpath in path.Subpaths) source.Rings.Add((OdtShapeStyle.Flatten(subpath), filled || subpath.Closed));
             sources.Add(source);
+        }
+        // the contour (a:sp3d contourW): the outline grown by half its width all round (Word's print: the band straddles the outline), extruded behind the shape in its colour (listed
+        // first: at equal depths it is drawn under the shape's own faces)
+        if (extrusion.ContourWidth > 0 && filled)
+        {
+            var contour = new OdtExtrusionSource { Filled = true, Colour = OdtShapeStyle.ParseColor(extrusion.ContourColor) ?? (0, 0, 0),
+                                                 Thicken = extrusion.ContourWidth };
+            foreach (var ring in sources.SelectMany(s => s.Rings).Where(r => r.Closed && r.Points.Count >= 3))
+                contour.Rings.Add((Grown(ring.Points, extrusion.ContourWidth / 2), true));
+            if (contour.Rings.Count == 1) sources.Insert(0, contour);   // one outline only: grown holes would shrink (not drawn for several)
         }
         var fallback = OdtShapeStyle.ParseColor("#ffffff")!.Value;
         var fill = OdtShapeStyle.ParseColor(shape.FillColor ?? shape.GradientStops?.FirstOrDefault().Color) ?? fallback;

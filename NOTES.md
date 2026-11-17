@@ -3225,3 +3225,21 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
   (rtfsdrimport.cxx), so the RTF names are the [MS-ODRAW] names Word writes (c3D*, f3D, fc3D*; booleans with their use bits).
   shapes-3d-on-v1.rtf (make_rtf_3d.py: f3D on) printed by Word: legacy outlines within 0.5 pt; Word prints legacy 3-D as vectors,
   lit darker than LibreOffice's model (front 93 vs 144 grey) - left as LibreOffice draws it.
+
+## 3-D shapes: contour, bevel plane, Word's highlight, legacy lighting, MS-ODRAW defaults (2026-11-17)
+
+- Contour (a:sp3d contourW / contourClr): the outline grown by half the width, its back pushed back by the width, drawn before
+  every other face (OdtExtrusionSource.Colour / Thicken, Face.Behind): only its rim shows. shapes-3d-v1 shape 11: 0.5 pt.
+- The front bevel's top is the shape's own plane (the scene is moved back by its height): the turned perspective shape with a
+  6 pt bevel went from 2.3 pt to 0.75 pt; sinking the bevel into the extrusion changed nothing.
+- Word's highlight: Phong, power 8 (warm matte, LibreOffice's nSpecularPower), strength 75.7 levels times each light's level,
+  viewer = (sin lon cos lat, -sin lat, cos lon cos lat) in the shape's frame. Fitted on the 17 picture-light angles of
+  effects-light-*-v1 (RMS 0.49 levels; Blinn best 4.5), it predicts the turned front of shape 5 (19 vs 18.5) and its green side
+  (124 = Word). Balanced's extra lift is half its ambient as white (0.13: 7.6 + 16.6 = 24.2 vs 24.5). Flat material: unlit + 5.
+- Legacy (.doc / RTF f3D) lighting from Word's print of shapes-3d-on-v1.rtf (vector faces, exact colours): front 0.766, top 0.594,
+  right 0.880 of the fill = ambient 0.305 + key 0.58 x cos (harsh, at (50000, 0, 10000)) + fill 0.58 x (1 + cos) / 2 (soft, at
+  (-50000, 0, 10000)); exact to a level on all three. Lights stay with the viewer. All 12 shapes 1-2 levels.
+- Booleans per [MS-ODRAW] 2.3.15.15 / 2.3.16.28 (learn.microsoft.com, read 2026-11-17): a bit counts only with its fUse bit;
+  defaults fc3DParallel 1, fc3DKeyHarsh 1, fc3DFillHarsh 0, fc3DRotationCenterAuto 0, f3D 0. LibreOffice reads the bits without
+  the use bits (default 0 = perspective): with the spec's parallel default the shapes 5-11 of the RTF fixture went from 8 pt off to
+  0.5 pt.

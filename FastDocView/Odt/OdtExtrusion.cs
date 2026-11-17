@@ -8,6 +8,10 @@ internal sealed class OdtExtrusionSource
 {
     public readonly List<(List<(double X, double Y)> Points, bool Closed)> Rings = new();
     public bool Filled = true;
+    /// <summary>A colour for all of this object's faces instead of the shape's (Word's contour, a:sp3d contourW); it takes no bevel.</summary>
+    internal (double R, double G, double B)? Colour;
+    /// <summary>How far this object reaches behind the back cap (points; Word's contour wraps the back too: its print's top edge).</summary>
+    internal double Thicken;
 }
 
 /// <summary>A projected face of an extruded shape: its rings in the shape's box points (y down), its lit colour (null = the shape's own
@@ -81,6 +85,9 @@ internal sealed class OdtExtrusion
     public bool FirstLightHarsh = true, SecondLightHarsh = true;
     public double Brightness = 33, Diffusion, Specularity, Shininess = 50;
     public bool Metal, MetalMicrosoftCompatible;
+    /// <summary>Word's contour (a:sp3d contourW, points) and its colour ("#rrggbb"); 0 = none.</summary>
+    internal double ContourWidth;
+    internal string? ContourColor;
     /// <summary>Word's bevels on the front (a:sp3d a:bevelT) and back (a:bevelB); null = none. Not an ODF attribute: set by the
     /// DrawingML reader (<see cref="FastDocView.Html.WordShape3D"/>).</summary>
     internal FastDocView.Html.WordShapeBevel? BevelTop, BevelBottom;
@@ -222,6 +229,8 @@ internal sealed class OdtExtrusion
         public (double X, double Y, double Z) Normal;                                  // outward, object coordinates
         public (double R, double G, double B) Material;
         public bool DoubleSided, Textured;
+        /// <summary>Drawn before every other face (Word's contour: the grown solid shows only as a rim round the shape).</summary>
+        public bool Behind;
     }
 
     /// <summary>
@@ -242,6 +251,8 @@ internal sealed class OdtExtrusion
         // :379-404
         // an unfilled shape never gets two fill styles: else-if after the FillStyle_NONE branch (:386-389)
         bool shapeFilled = sources.Any(s => s.Filled);
+        // Word's bevels rise above the extrusion's front and below its back; the shape's own plane is the front bevel's top
+        double topSink = 0, bottomSink = 0, raise = BevelTop?.Height ?? 0;
         bool twoFillStyles = !draft && shapeFilled && (fillTextured || UseExtrusionColor);
         bool doubleSidedScene = draft || twoFillStyles || mirrorX != mirrorY;
         bool twoSidedLighting = !draft && (twoFillStyles || mirrorX != mirrorY);
@@ -250,14 +261,16 @@ internal sealed class OdtExtrusion
         // material colours before diffusion (:581-583, :607-614)
         var faces = new List<Face>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+        var sourceStarts = new List<(int First, bool Behind)>();
         foreach (OdtExtrusionSource source in sources)
         {
+            sourceStarts.Add((faces.Count, source.Colour is not null));
             var rings = source.Rings.Where(r => r.Points.Count >= 2).ToList();
             if (rings.Count == 0) continue;
             foreach (var ring in rings) foreach (var p in ring.Points) { minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X); minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y); }
             bool caps = source.Filled;   // draft keeps the object's fill style (:378-383)
-            var capColour = source.Filled ? fill : line;
-            var sideColour = !source.Filled ? line : UseExtrusionColor ? secondaryFill : fill;
+            var capColour = source.Colour ?? (source.Filled ? fill : line);
+            var sideColour = source.Colour ?? (!source.Filled ? line : UseExtrusionColor ? secondaryFill : fill);
             // 3-D object coordinates: y mirrored (extrud3d.cxx:61-64), back at z = 0, front at z = depth
             (double, double, double) At((double X, double Y) p, double z) => (p.X, -p.Y, z);
             if (caps)
@@ -272,8 +285,8 @@ internal sealed class OdtExtrusion
                     {
                         var face = new Face { Kind = front ? "front" : "back", Normal = (0, 0, front ? 1 : -1), Material = capColour,
                                               DoubleSided = doubleSidedScene || !source.Filled, Textured = fillTextured && source.Filled };
-                        double z = front ? depth : 0;
-                        var bevel = front ? BevelTop : BevelBottom;
+                        double z = front ? depth - topSink : bottomSink - (source.Thicken > 0 ? source.Thicken + (BevelBottom?.Height ?? 0) : 0);
+                        var bevel = source.Colour is not null ? null : front ? BevelTop : BevelBottom;
                         if (bevel is not null && closed.Count == 1 && Bevel(outer, ccw, z, front, bevel, capColour, faces) is { } inner)
                         {
                             // the cap is the bevel's innermost ring, raised (front) or lowered (back) by the bevel's height
@@ -307,7 +320,7 @@ internal sealed class OdtExtrusion
                     double ex = b.X - a.X, ey = -(b.Y - a.Y);
                     bool outwardRight = ringCcw != hole;
                     var normal = Normalized(outwardRight ? (ey, -ex, 0) : (-ey, ex, 0));
-                    var quad = new List<(double X, double Y, double Z)> { At(a, 0), At(b, 0), At(b, depth), At(a, depth) };
+                    var quad = new List<(double X, double Y, double Z)> { At(a, bottomSink - (source.Thicken > 0 ? source.Thicken + (BevelBottom?.Height ?? 0) : 0)), At(b, bottomSink - (source.Thicken > 0 ? source.Thicken + (BevelBottom?.Height ?? 0) : 0)), At(b, depth - topSink), At(a, depth - topSink) };
                     if (!outwardRight) quad.Reverse();
                     var face = new Face { Kind = "side", Normal = normal, Material = sideColour, DoubleSided = doubleSidedScene || !source.Filled, Facing = quad };
                     face.Rings.Add(quad);
@@ -316,10 +329,14 @@ internal sealed class OdtExtrusion
             }
         }
         if (faces.Count == 0) return result;
+        // a coloured (contour) source's faces: from its first face to the next source's
+        for (int k = 0; k < sourceStarts.Count; k++)
+            if (sourceStarts[k].Behind)
+                for (int f = sourceStarts[k].First, end = k + 1 < sourceStarts.Count ? sourceStarts[k + 1].First : faces.Count; f < end; f++) faces[f].Behind = true;
 
         // scene transform (:643-709)
         Matrix m = Matrix.Identity;
-        m.Translate(-cx, cy, -backward);
+        m.Translate(-cx, cy, -backward - raise);
         double zRotate = rotationDegrees * Math.PI / 180;
         if (zRotate != 0) m.Rotate(0, 0, zRotate);
         if (mirrorX) m.Scale(-1, 1, 1);
@@ -398,7 +415,7 @@ internal sealed class OdtExtrusion
                 outFace.Rings.Add(projected.Select(p => Project2(p)!.Value).Select(p => (p.X + cx, -p.Y + cy)).ToList());
             }
             if (outFace.Rings.Count == 0) continue;
-            outFace.Depth = kept.Average(p => m.Point(p).Z);
+            outFace.Depth = kept.Average(p => m.Point(p).Z) - (face.Behind ? 1e9 : 0);
             if (draft) outFace.Color = Hex(line);
             else if (face.Textured) outFace.Color = null;
             else
