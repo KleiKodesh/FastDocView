@@ -21,6 +21,15 @@ for (const path of process.argv.slice(2)) {
     check(wingdings, `${path}: the font-face bullet draws in Wingdings`)
     continue
   }
+  if (/ruby-escapes/.test(path)) {
+    // guide / base as Word's PDF draws them (the guide ends at the first comma, every ")" dropped)
+    const expected = /probe/.test(path) ? ['g(0|base(0', 'g|1,base,1', String.raw`a\|b,c\,d`, String.raw`e\f|g\h`, String.raw`i\(j|k\\l`, 'g 5 x|base 5']
+                                       : ['g(0|base(0', 'g|1,base,1', 'g;2|base;2', String.raw`g\3|base\3`, 'g4(|base4(', 'g 5 x|base 5']
+    await page.waitForFunction(() => document.querySelectorAll('ruby').length >= 6, null, { timeout: 60_000 })
+    const got = await page.evaluate(() => [...document.querySelectorAll('ruby')].map(r => r.querySelector('rt').textContent + '|' + r.firstChild.textContent))
+    expected.forEach((e, n) => check(got[n] === e, `${path}: ruby escape ${n}: ${e} (got ${got[n]})`))
+    continue
+  }
   await page.waitForFunction(() => document.querySelectorAll('ruby').length >= 5, null, { timeout: 60_000 })
   const rubies = await page.evaluate(() => [...document.querySelectorAll('ruby')].map(r => {
     const rt = r.querySelector('rt'), base = document.createRange(); base.selectNodeContents(r.firstChild)

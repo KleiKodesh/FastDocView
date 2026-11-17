@@ -20,6 +20,7 @@ public static class RubyAndBulletFontFidelityTest
             if (!File.Exists(path)) { TestReport.Check(false, $"test-data/word-ruby/ruby-v1{extension} present"); continue; }
             Ruby(path, extension);
         }
+        Escapes(root);
         foreach (string extension in new[] { ".fodt", ".odt" })
         {
             string path = Path.Combine(root, "odt-bullet-fonts", "bullet-font-name-v1" + extension);
@@ -49,6 +50,49 @@ public static class RubyAndBulletFontFidelityTest
                 : block.Contains("<rt style=\"font-size:" + sizes[i] + "pt;font-family:'Arial';" + alignCss + "\">guide" + i + "</rt>");
             TestReport.Check(isRuby && isStyled, $"{format}: ruby case {i}: base{i} with guide{i} above as HTML ruby ({sizes[i]} pt Arial{(aligns[i] is null ? "" : ", " + aligns[i])})");
         }
+    }
+
+    /// <summary>
+    /// Brackets, commas, semicolons, backslashes and spaces in a guide or base, and unquoted multi-word fonts, read as Word's EQ
+    /// parser does (Word 16 PDFs ruby-escapes-v1.pdf / ruby-escapes-probe-v1.pdf: the guide ends at the first comma, every ")"
+    /// is dropped, a backslash escapes nothing).
+    /// </summary>
+    private static void Escapes(string root)
+    {
+        // (file, case, guide as Word's PDF draws it, base as Word's PDF draws it, guide font)
+        string b = "\\";
+        (string File, int Case, string Guide, string Base, string Font)[] cases =
+        [
+            ("ruby-escapes-v1.doc", 0, "g(0", "base(0", "Times New Roman"), ("ruby-escapes-v1.doc", 1, "g", "1,base,1", "Courier New"),
+            ("ruby-escapes-v1.doc", 2, "g;2", "base;2", "Arial"), ("ruby-escapes-v1.doc", 3, "g" + b + "3", "base" + b + "3", "Arial"),
+            ("ruby-escapes-v1.doc", 4, "g4(", "base4(", "Calibri"), ("ruby-escapes-v1.doc", 5, "g 5 x", "base 5", "Calibri"),
+            ("ruby-escapes-v1.rtf", 0, "g(0", "base(0", "Times New Roman"), ("ruby-escapes-v1.rtf", 1, "g", "1,base,1", "Courier New"),
+            ("ruby-escapes-v1.rtf", 2, "g;2", "base;2", "Arial"), ("ruby-escapes-v1.rtf", 3, "g" + b + "3", "base" + b + "3", "Arial"),
+            ("ruby-escapes-v1.rtf", 4, "g4(", "base4(", "Calibri"), ("ruby-escapes-v1.rtf", 5, "g 5 x", "base 5", "Calibri"),
+            ("ruby-escapes-probe-v1.rtf", 0, "g(0", "base(0", "Times New Roman"), ("ruby-escapes-probe-v1.rtf", 1, "g", "1,base,1", "Courier New"),
+            ("ruby-escapes-probe-v1.rtf", 2, "a" + b, "b,c" + b + ",d", "Arial"), ("ruby-escapes-probe-v1.rtf", 3, "e" + b + "f", "g" + b + "h", "Arial"),
+            ("ruby-escapes-probe-v1.rtf", 4, "i" + b + "(j", "k" + b + b + "l", "Calibri"),
+        ];
+        foreach (var group in cases.GroupBy(c => c.File))
+        {
+            string path = Path.Combine(root, "word-ruby", group.Key);
+            if (!File.Exists(path)) { TestReport.Check(false, $"test-data/word-ruby/{group.Key} present"); continue; }
+            var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-ruby-escapes-" + group.Key.Replace('.', '-')) };
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+            List<string> blocks = document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
+            foreach (var c in group)
+            {
+                string block = blocks.FirstOrDefault(html => html.Contains("ruby escape " + c.Case + ":")) ?? "";
+                string expected = "<ruby>" + Html.WordHtmlText.Encode(c.Base) + "<rt style=\"font-size:10pt;font-family:'" + c.Font + "';\">"
+                                  + Html.WordHtmlText.Encode(c.Guide) + "</rt></ruby>";
+                TestReport.Check(block.Contains(expected), $"{group.Key}: ruby escape {c.Case}: guide and base as Word's PDF draws them, {c.Font}");
+            }
+        }
+        TestReport.Check(Fields.WordFieldRuby.ToHtml(@" \* jc0 \* Font:MS Mincho \* hps20 \o(\s\up 11(a),b)") == "<ruby>b<rt style=\"font-size:10pt;font-family:'MS Mincho';\">a</rt></ruby>",
+                         "EQ ruby: an unquoted multi-word Font: name runs to the next switch");
+        TestReport.Check(Fields.WordFieldRuby.ToHtml(@" \* jc0 \o\ac(\s\up 11(a),b) \* MERGEFORMAT") == "<ruby>b<rt>a</rt></ruby>"
+                         && Fields.WordFieldRuby.ToHtml(@" \* jc0 \o(x,\s\up 3(a),b)") is null && Fields.WordFieldRuby.ToHtml(@" \* jc0 \o(\s\up 11(a,b") is null,
+                         "EQ ruby: text after \\o's last bracket is not base; \\s\\up must be \\o's first element; a code cut short stays an equation");
     }
 
     private static void BulletFontNames(string path, string format)

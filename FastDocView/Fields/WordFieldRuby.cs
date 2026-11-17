@@ -8,9 +8,14 @@ namespace FastDocView.Fields;
 /// Phonetic guide in .doc and RTF. Word 16 saves a w:ruby to both as an EQ field (checked: Word's SaveAs2 of a phonetic
 /// guide writes "EQ \* jc0 \* "Font:Calibri" \* hps20 \o(\s\up 11(guide),base)" in .doc and in RTF's \fldinst - no
 /// sprmCFRuby, no RTF ruby destination). It is recognised the way LibreOffice does (sw/source/filter/ww8/ww8par5.cxx:2746
-/// Read_SubF_Ruby: code starts with \*, \* jcN / hpsN / "Font:name", then \o with \s\up N(guide) and the base after the
-/// comma up to the last ")" - Word disallows brackets inside) and drawn as HTML ruby, the same markup as .docx's w:ruby.
-/// Anything else stays a general EQ (MathML).
+/// Read_SubF_Ruby: code starts with \*, \* jcN / hpsN / "Font:name", then \o with \s\up N(guide),base) and drawn as HTML
+/// ruby, the same markup as .docx's w:ruby. Anything else stays a general EQ (MathML).
+/// Word writes the guide and base unescaped, so brackets, commas and backslashes in them land in the code as they are. Word's
+/// own EQ parser (test-data/word-ruby/ruby-escapes-v1 and ruby-escapes-probe-v1, Word 16 PDFs) then ends the guide at the
+/// first comma (";" only when there is none, LibreOffice's fallback), takes everything after it as the base, drops every ")"
+/// and keeps "(" and "\" as text: a backslash escapes nothing here ("a\,b" still splits, "k\\l" draws both backslashes).
+/// LibreOffice instead cuts the guide at the first ")" and the base at the last one. A font name Word writes quoted; an
+/// unquoted one runs to the next switch, so Font:Times New Roman is one name (LibreOffice keeps only the first word).
 /// </summary>
 public static class WordFieldRuby
 {
@@ -42,6 +47,12 @@ public static class WordFieldRuby
                 int start = position;
                 while (position < code.Length && !char.IsWhiteSpace(code[position]) && code[position] != '\\') position++;
                 option = code.Substring(start, position - start);
+                if (option.StartsWith("Font:", StringComparison.OrdinalIgnoreCase))
+                {
+                    // an unquoted font name with spaces runs to the next switch
+                    while (position < code.Length && code[position] != '\\') position++;
+                    option = code.Substring(start, position - start).TrimEnd();
+                }
             }
             if (option.StartsWith("jc", StringComparison.OrdinalIgnoreCase)) int.TryParse(option.Substring(2), NumberStyles.Integer, CultureInfo.InvariantCulture, out justification);
             else if (option.StartsWith("hps", StringComparison.OrdinalIgnoreCase)) int.TryParse(option.Substring(3), NumberStyles.Integer, CultureInfo.InvariantCulture, out halfPoints);
@@ -49,17 +60,21 @@ public static class WordFieldRuby
         }
         string rest = code.Substring(position);
         if (!rest.StartsWith(@"\o", StringComparison.OrdinalIgnoreCase)) return null;
-        int up = rest.IndexOf(@"\s\up", StringComparison.OrdinalIgnoreCase);
-        if (up < 0) return null;
-        string part = rest.Substring(up + 5);
-        int open = part.IndexOf('('), close = part.IndexOf(')');
-        if (open < 0 || close < open) return null;
-        string guide = part.Substring(open + 1, close - open - 1);
-        int comma = part.IndexOf(',', close);
-        if (comma < 0) comma = part.IndexOf(';', close);
-        int last = part.LastIndexOf(')');
+        // \s\up must be \o's first element ("\o(" or "\o\aX(", then \s\up): any other \o is an equation
+        int overstrikeOpen = rest.IndexOf('(');
+        if (overstrikeOpen < 0 || rest.IndexOf(' ', 0, overstrikeOpen) >= 0) return null;
+        string first = rest.Substring(overstrikeOpen + 1).TrimStart();
+        if (!first.StartsWith(@"\s\up", StringComparison.OrdinalIgnoreCase)) return null;
+        string part = first.Substring(5);
+        int open = part.IndexOf('(');
+        if (open < 0) return null;
+        int comma = part.IndexOf(',', open + 1);
+        if (comma < 0) comma = part.IndexOf(';', open + 1);
+        int last = part.LastIndexOf(')');      // \o's closing bracket: nothing after it is base text
         if (comma < 0 || last <= comma) return null;
-        string baseText = part.Substring(comma + 1, last - comma - 1);
+        // Word drops every ")" from the guide and the base (they close its groups) and keeps everything else as text
+        string guide = part.Substring(open + 1, comma - open - 1).Replace(")", "");
+        string baseText = part.Substring(comma + 1, last - comma - 1).Replace(")", "");
         if (guide.Length == 0 || baseText.Length == 0) return null;
 
         var style = new StringBuilder();

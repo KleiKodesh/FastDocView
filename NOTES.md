@@ -2259,6 +2259,12 @@ both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Ch
   (ww8par5.cxx:2746 Read_SubF_Ruby) and draws `<ruby>base<rt style="font-size;font-family;ruby-align">guide</rt></ruby>`, the
   .docx markup; jc and .docx w:rubyAlign map to ruby-align alike (ww8par5.cxx:2832-2851, DomainMapper.cxx:3905). Any other EQ stays
   MathML. Check: `RubyAndBulletFontFidelityTest` (test-data/word-ruby/ruby-v1, Word's PDF: guide in Arial at hps/2 pt).
+- .doc / RTF ruby text with brackets, commas, backslashes (2026-11-17): Word writes guide and base into the EQ code unescaped,
+  and its own EQ parser (Word 16 PDFs of test-data/word-ruby/ruby-escapes-v1 and ruby-escapes-probe-v1) ends the guide at the
+  first comma, takes the rest as the base, drops every ")" and keeps "(" and backslashes as text - a backslash escapes nothing
+  (a backslash-comma still splits). `WordFieldRuby` follows Word, not LibreOffice (which cuts at the first / last ")"). An unquoted
+  multi-word Font: option runs to the next switch (Word draws the guide in it; LibreOffice keeps one word). Not handled: in the
+  guide-comma case Word draws the guide's second piece in the guide font on the base line; it is drawn in the base font here.
 - .doc (render time, no index change): sprmCPbiGrf 0x4888 bit 0 + sprmCPbiIBullet 0x6887 (4 bytes) in the LVL grpprlChpx (ww8par3.cxx:808-819,
   :839-845; writer wrtw8num.cxx:355-358) name picture N of the paragraph holding the "_PictureBullets" bookmark, counted from the bookmark start
   (ww8par.cxx:5302-5348); that paragraph's runs are read once per renderer, the id is the PICF offset as for any inline picture. Hidden (vanish)
