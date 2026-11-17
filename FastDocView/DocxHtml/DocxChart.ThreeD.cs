@@ -226,8 +226,23 @@ internal sealed partial class DocxChart
                 if (horizontal) { var p = projection.Point(zero * width, (i + 0.5) * slot, 0); Text(svg, p.X - 4, p.Y + labelSize / 3, label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "end"); }
                 else { var p = projection.Point(midCategory ? (categoryCount == 1 ? 0.5 * slot : i * width / (categoryCount - 1)) : (i + 0.5) * slot, zero * height, 0); Text(svg, p.X, p.Y + labelSize + 2 + (seriesRows && !_libreOfficeLayout ? labelSize / 3 : 0), label, labelSize, CategoryAxis()?.LabelColor ?? textColor, "middle"); }
             }
+        // the series axis (c:serAx, 21.2.2.175) of a scene with one depth row per series: each series name beside its row, left-aligned
+        // a little right of the floor's right edge (Word 16's PDFs of word-charts-seraxis-v1: right-angled and perspective columns,
+        // lines and areas)
+        if (seriesRows && SeriesAxis() is { } seriesAxis)
+            for (int s = 0; s < rows && s < _groups[0].Series.Count; s++)
+            {
+                var p = projection.Point(horizontal ? 0 : width, 0, (s + 0.5) * rowDepth);
+                Text(svg, p.X + SeriesLabelGap, p.Y + seriesAxis.LabelSize / 3, _groups[0].Series[s].Name ?? "", seriesAxis.LabelSize, seriesAxis.LabelColor ?? textColor, "start");
+            }
         return (projection, width, height, depth, slot, rowDepth);
     }
+
+    // Word 16's PDFs of word-charts-seraxis-v1 (right-angled and perspective columns and areas): the names start 10 pt right of the floor edge
+    private const double SeriesLabelGap = 10;
+
+    /// <summary>The shown series axis (c:serAx not deleted, with tick labels), or null.</summary>
+    private Axis? SeriesAxis() => _axes.Values.FirstOrDefault(a => a.IsSeries && !a.Deleted && !a.NoLabels);
 
     /// <summary>
     /// The scene height for a width of 1. Columns and bars: the plot's own proportions. Word's 3-D lines and areas (one depth row per series):
@@ -273,7 +288,7 @@ internal sealed partial class DocxChart
         Group group = _groups[0];
         bool standard = group.Grouping == "standard";
         int rows = standard ? group.Series.Count : 1;
-        var (projection, width, height, _, slot, rowDepth) = Draw3DFrame(svg, categoryCount, rows, horizontal, left, top, right, bottom, valueToAxis, valueLabels, categories, showCategories, textColor, gridColor, plotFill, labelSize);
+        var (projection, width, height, _, slot, rowDepth) = Draw3DFrame(svg, categoryCount, rows, horizontal, left, top, right, bottom, valueToAxis, valueLabels, categories, showCategories, textColor, gridColor, plotFill, labelSize, seriesRows: standard && !horizontal);
         double valueExtent = horizontal ? width : height;
         bool stacked = group.Grouping is "stacked" or "percentStacked", percent = group.Grouping == "percentStacked";
         int count = group.Series.Count, totalSeries = _groups.Sum(g => g.Series.Count);

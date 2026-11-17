@@ -35,7 +35,8 @@ internal static class ExcelBinaryChart
         ChScatter = 0x101B, ChAxis = 0x101D, ChTick = 0x101E, ChValueRange = 0x101F, ChAxisLine = 0x1021, ChText = 0x1025,
         ChFont = 0x1026, ChObjectLink = 0x1027, ChBegin = 0x1033, ChEnd = 0x1034, ChChart3D = 0x103A, ChRadarLine = 0x103E,
         ChRadarArea = 0x1040, ChAxesSet = 0x1041, ChSourceLink = 0x1051, ChEscherFormat = 0x1066, ChSeriesIndex = 0x1065,
-        ChLabelRange = 0x1020, ChSeriesParent = 0x104A, ChSeriesTrendLine = 0x104B, ChSeriesErrorBar = 0x105B, ChFormat = 0x104E, ChFramePos = 0x104F, Format = 0x041E, PaletteRecord = 0x0092;
+        ChLabelRange = 0x1020, ChSeriesParent = 0x104A, ChSeriesTrendLine = 0x104B, ChSeriesErrorBar = 0x105B, ChFormat = 0x104E, ChFramePos = 0x104F, Format = 0x041E, PaletteRecord = 0x0092,
+        TextPropsStream = 0x08A5, RichTextStream = 0x08A6, ContinueFrt12 = 0x087F;
 
     /// <summary>
     /// The chart of an RTF \objdata (hex digits; [MS-OLEDS] 2.2.4 ObjectHeader, then NativeDataSize and the compound file -
@@ -108,6 +109,8 @@ internal static class ExcelBinaryChart
         public double? TitleSize;
         public int FormatIndex = -1;                               // CHFORMAT: the number format of the tick labels
         public string? LabelColor;
+        public string? RecordLabelColor;                          // the TICK record's colour (BIFF8: the nearest palette colour)
+        public bool ExactLabelColor;                              // LabelColor from the axis's TextPropsStream
         public bool Between = true;
         /// <summary>Where the other axis crosses this one: at its maximum, or at a value (CHVALUERANGE cross / CHLABELRANGE category); null = automatic.</summary>
         public bool MaxCross;
@@ -139,7 +142,7 @@ internal static class ExcelBinaryChart
         var axes = new List<AxisData>();
         var texts = new List<TextData>();
         string kind = "";
-        bool horizontal = false, stacked = false, percent = false, is3D = false, real3D = false, varyColors = false;
+        bool horizontal = false, stacked = false, percent = false, is3D = false, real3D = false, varyColors = false, deep3D = false;
         double gap = 150, overlap = 0, hole = 0, rotation = 0, elevation = 15, rotY = 20, eyeDistance = 30;
         string? legendPosition = null;
         (double X, double Y)? legendAt = null;
@@ -166,6 +169,13 @@ internal static class ExcelBinaryChart
         string? labelTypeface = null;                            // the axis labels' font: the chart's text widths
         int substreamType = -1;
 
+        // an Office 2007+ DrawingML text stream being read (TextPropsStream / RichTextStream, continued in ContinueFrt12 records)
+        MemoryStream? frtXml = null;
+        int frtXmlLength = 0;
+        object? frtXmlOwner = null;
+        bool frtXmlRich = false;
+        string? legendExactColor = null;
+
         var header = new byte[4];
         while (ReadFully(workbook, header, 4))
         {
@@ -173,6 +183,17 @@ internal static class ExcelBinaryChart
             int length = BitConverter.ToUInt16(header, 2);
             var body = new byte[length];
             if (!ReadFully(workbook, body, length)) break;
+            if (frtXml is not null)
+            {
+                // ContinueFrt12 ([MS-XLS] 2.4.62: rt 0x087F, a 12-byte FrtRefHeader, then the next part of the data)
+                if (id == ContinueFrt12 && length > 12) frtXml.Write(body, 12, Math.Min(length - 12, frtXmlLength - (int)frtXml.Length));
+                if (id != ContinueFrt12 || frtXml.Length >= frtXmlLength)
+                {
+                    ApplyDrawingText(frtXmlOwner, frtXml.ToArray(), frtXmlRich);
+                    frtXml = null;
+                }
+                if (id == ContinueFrt12) continue;
+            }
             if (id == Bof && length >= 4)
             {
                 substreamType = BitConverter.ToUInt16(body, 2);
@@ -320,6 +341,9 @@ internal static class ExcelBinaryChart
                     elevation = BitConverter.ToInt16(body, 2);
                     eyeDistance = BitConverter.ToUInt16(body, 4);
                     real3D = (BitConverter.ToUInt16(body, 12) & 1) != 0;
+                    // EXC_CHCHART3D_CLUSTER (0x0002) clear: one depth row per series and a series (Z) axis (xlchart.hxx:538;
+                    // xichart.hxx:1013 Is3dDeepChart, xichart.cxx:2882 Z stacking, :3596 the Z axis)
+                    deep3D = (BitConverter.ToUInt16(body, 12) & 2) == 0;
                     continue;
                 case ChLegend when length >= 18:
                 {
@@ -359,7 +383,7 @@ internal static class ExcelBinaryChart
                 case ChTick when length >= 1 && current is AxisData ticked:
                     ticked.NoTickMarks = body[0] is 0 or 1;            // none / inside: no mark outside the plot
                     // the labels' colour unless automatic: rgb at 4 + 16, flags at 24 (EXC_CHTICK_AUTOCOLOR), BIFF8 palette index at 26 (xichart.cxx:3194-3209)
-                    if (length >= 28 && (BitConverter.ToUInt16(body, 24) & 1) == 0) ticked.LabelColor = ColorOf(body, 20, BitConverter.ToUInt16(body, 26));
+                    if (length >= 28 && (BitConverter.ToUInt16(body, 24) & 1) == 0) ticked.LabelColor = ticked.RecordLabelColor = ColorOf(body, 20, BitConverter.ToUInt16(body, 26));
                     if (length >= 3 && body[2] == 0) ticked.NoLabels = true;   // label position none: the axis line stays
                     continue;
                 case ChAxisLine when length >= 2:
@@ -443,15 +467,20 @@ internal static class ExcelBinaryChart
                 case ChAxesSet:
                     last = "axesset";
                     continue;
-                case 0x08A5 when language is null:
+                case TextPropsStream when length >= 20:
+                case RichTextStream when length >= 20:
                 {
-                    // CrtMlFrt ([MS-XLS] 2.4.70; continued in 0x08A4 records): Office's DrawingML text properties,
-                    // whose a:endParaRPr lang is the chart's editing language (c:lang in the .docx Word writes from the same chart)
-                    string xml = Latin1(body, 0, body.Length);
-                    int at = xml.IndexOf("lang=\"", StringComparison.Ordinal);
-                    if (at >= 0 && xml.IndexOf('"', at + 6) is int close && close > at + 6 && close - at < 20
-                        && System.Text.RegularExpressions.Regex.IsMatch(xml.Substring(at + 6, close - at - 6), "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$"))
-                        language = xml.Substring(at + 6, close - at - 6);   // a BCP 47 tag only (damaged bytes are dropped)
+                    // TextPropsStream ([MS-XLS] 2.4.325) / RichTextStream (2.4.218): FrtHeader (12), dwChecksum (4), cb (4), then cb bytes
+                    // of DrawingML (a:txPr / a:richFrt) with the text's exact colour, which the BIFF8 records keep only as the nearest
+                    // palette colour (Word 16's .doc / .rtf of word-charts-seraxis-v1: 8A4F1C saved as 993300 in TICK). LibreOffice does
+                    // not read these records (sc/source/filter/inc/xlchart.hxx has no id for them), so Word is the reference.
+                    frtXmlLength = BitConverter.ToInt32(body, 16);
+                    if (frtXmlLength <= 0 || frtXmlLength > 1 << 20) continue;
+                    frtXml = new MemoryStream();
+                    frtXml.Write(body, 20, Math.Min(length - 20, frtXmlLength));
+                    frtXmlOwner = current;
+                    frtXmlRich = id == RichTextStream;
+                    if (frtXml.Length >= frtXmlLength) { ApplyDrawingText(frtXmlOwner, frtXml.ToArray(), frtXmlRich); frtXml = null; }
                     continue;
                 }
                 case Continue:
@@ -461,6 +490,11 @@ internal static class ExcelBinaryChart
                     continue;
             }
         }
+        if (frtXml is not null) ApplyDrawingText(frtXmlOwner, frtXml.ToArray(), frtXmlRich);
+        // Word 16 writes no TextPropsStream for the series axis (its .doc / .rtf of word-charts-seraxis-v1), only the TICK palette colour:
+        // an axis without its own exact colour takes that of an axis whose record colour is the same
+        foreach (AxisData plain in axes.Where(a => !a.ExactLabelColor))
+            if (plain.RecordLabelColor is not null && axes.FirstOrDefault(a => a.ExactLabelColor && a.RecordLabelColor == plain.RecordLabelColor) is { } exactSibling) plain.LabelColor = exactSibling.LabelColor;
         if (series.Count == 0 || kind.Length == 0) return null;
         // custom error amounts: the error bar series' own cached values (their column of the value cache)
         for (int s = 0; s < series.Count; s++)
@@ -492,7 +526,7 @@ internal static class ExcelBinaryChart
             if (kind == "bar")
             {
                 group.Add(new XElement("barDir", Val(horizontal ? "bar" : "col")));
-                group.Add(new XElement("grouping", Val(percent ? "percentStacked" : stacked ? "stacked" : "clustered")));
+                group.Add(new XElement("grouping", Val(percent ? "percentStacked" : stacked ? "stacked" : is3D && deep3D ? "standard" : "clustered")));
             }
             else if (kind is "line" or "area") group.Add(new XElement("grouping", Val(percent ? "percentStacked" : stacked ? "stacked" : "standard")));
             else if (kind == "scatter") group.Add(new XElement("scatterStyle", Val("lineMarker")));
@@ -577,6 +611,12 @@ internal static class ExcelBinaryChart
                 AxisData? x = axes.FirstOrDefault(a => a.Type == 0), y = axes.FirstOrDefault(a => a.Type == 1);
                 plot.Add(Axis(x, kind is "scatter" or "bubble" ? "valAx" : "catAx", 1, 2, horizontal ? "l" : "b"));
                 plot.Add(Axis(y, "valAx", 2, 1, horizontal ? "b" : "l"));
+                // the series axis: the third AXIS block of a deep 3-D chart (type 2, EXC_CHAXIS_Z; xichart.cxx:3400 AxisType SERIES)
+                if (is3D && deep3D && kind is "bar" or "line" or "area" && axes.FirstOrDefault(a => a.Type == 2) is { } z)
+                {
+                    group.Add(new XElement("axId", Val(3)));
+                    plot.Add(Axis(z, "serAx", 3, 2, "b"));
+                }
             }
 
             var chart = new XElement("chart");
@@ -586,7 +626,10 @@ internal static class ExcelBinaryChart
             if (is3D)
             {
                 var view = new XElement("view3D", new XElement("rotX", Val(N(elevation))), new XElement("rotY", Val(N(rotY))));
-                if (real3D) view.Add(new XElement("perspective", Val(N(eyeDistance * 2))));
+                // CHCHART3D's eye distance is c:perspective as is: Word 16 saves a .docx chart's perspective 30 as 30 (its .doc / .rtf of
+                // word-charts-seraxis-v1) and draws both alike. LibreOffice reads it as its own 0..100 perspective (xichart.cxx:2465),
+                // which oox halves from c:perspective - twice Word's angle, so Word is the reference.
+                if (real3D) view.Add(new XElement("perspective", Val(N(eyeDistance))));
                 else view.Add(new XElement("rAngAx", Val("1")));
                 chart.Add(view);
             }
@@ -597,7 +640,7 @@ internal static class ExcelBinaryChart
                 if (legendAt is { } at && UsesSavedPlotPosition)
                     legend.Add(new XElement("layout", new XElement("manualLayout", new XElement("xMode", Val("edge")), new XElement("yMode", Val("edge")),
                         new XElement("x", Val(N(at.X))), new XElement("y", Val(N(at.Y))))));
-                if (legendSize is { } size) legend.Add(TextProperties(size, legendText?.Color));
+                if (legendSize is { } size) legend.Add(TextProperties(size, legendExactColor ?? legendText?.Color));
                 chart.Add(legend);
             }
             var space = new XElement("chartSpace", chart);
@@ -605,6 +648,24 @@ internal static class ExcelBinaryChart
             if (typeface is { Length: > 0 })
                 space.Add(new XElement("txPr", new XElement("p", new XElement("pPr", new XElement("defRPr", new XElement("latin", new XAttribute("typeface", typeface)))))));
             return space;
+        }
+
+        // a TextPropsStream's language (the first lang="...": c:lang in the .docx Word writes from the same chart) and exact
+        // colour, on the object it belongs to: an axis's tick labels, a text (title / label), the legend
+        void ApplyDrawingText(object? owner, byte[] data, bool rich)
+        {
+            string xml = Encoding.UTF8.GetString(data);
+            if (language is null && !rich)   // a text's own runs may carry another language (a title typed in English)
+            {
+                int at = xml.IndexOf("lang=\"", StringComparison.Ordinal);
+                if (at >= 0 && xml.IndexOf('"', at + 6) is int close && close > at + 6 && close - at < 20
+                    && System.Text.RegularExpressions.Regex.IsMatch(xml.Substring(at + 6, close - at - 6), "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$"))
+                    language = xml.Substring(at + 6, close - at - 6);   // a BCP 47 tag only (damaged bytes are dropped)
+            }
+            if (ExactTextColor(xml) is not { } exact) return;
+            if (owner is AxisData axisText) { axisText.LabelColor = exact; axisText.ExactLabelColor = true; }
+            else if (owner is TextData textData) textData.Color = exact;
+            else if (owner is "legend") legendExactColor = exact;
         }
 
         // a BIFF8 palette index (xistyle.cxx:158-167, xlstyle.cxx:78-88 default table, xlstyle.hxx:205-216 system indices):
@@ -651,6 +712,28 @@ internal static class ExcelBinaryChart
             if (axis?.Major is { } major) element.Add(new XElement("majorUnit", Val(N(major))));
             return element;
         }
+    }
+
+    /// <summary>
+    /// The colour of the first run properties with a solid fill (a:defRPr / a:rPr a:solidFill) in an Office DrawingML text stream, as
+    /// RRGGBB; null when there is none or it needs the chart's theme. The theme travels zipped in a CrtMlFrt record and is not read:
+    /// scheme colours tx1 / bg1 (dk1 / lt1) are the window text and background, black and white in the themes Word writes, so those
+    /// resolve (with their lumMod / lumOff); any other scheme colour keeps the BIFF8 record's colour.
+    /// </summary>
+    internal static string? ExactTextColor(string xml)
+    {
+        XElement root;
+        try { root = DocxShapeGeometry.WithoutNamespaces(XElement.Parse(xml)); }
+        catch (System.Xml.XmlException) { return null; }
+        XElement? fill = root.Descendants().FirstOrDefault(e => e.Name.LocalName is "defRPr" or "rPr" && e.Element("solidFill") is not null)?.Element("solidFill");
+        if (fill is null) return null;
+        foreach (XElement scheme in fill.Elements("schemeClr").ToList())
+        {
+            string? rgb = (string?)scheme.Attribute("val") switch { "tx1" or "dk1" => "000000", "bg1" or "lt1" => "FFFFFF", _ => null };
+            if (rgb is null) return null;
+            scheme.ReplaceWith(new XElement("srgbClr", new XAttribute("val", rgb), scheme.Elements()));
+        }
+        return DocxDrawingColor.Hex(fill, null);
     }
 
     /// <summary>fillColor (0x0181) and lineColor (0x01C0) of an OfficeArtFOPT ([MS-ODRAW] 2.2.9; LibreOffice reads the record through its DFF importer, xichart.cxx:540-560); RGB only when the colour is not a scheme / system index.</summary>

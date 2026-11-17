@@ -364,7 +364,7 @@ internal sealed partial class DocxChart
         return Enumerable.Range(1, count).Select(i => i.ToString(CultureInfo.InvariantCulture)).ToList();
     }
 
-    private Axis? CategoryAxis() => _axes.Values.FirstOrDefault(a => a.IsCategory);
+    private Axis? CategoryAxis() => _axes.Values.FirstOrDefault(a => a.IsCategory && !a.IsSeries);
     private Axis? ValueAxis() => _axes.Values.FirstOrDefault(a => !a.IsCategory);
 
     /// <summary>Legend entries: (text, fill colour, is a line); varyColors pies list their points.</summary>
@@ -902,13 +902,15 @@ internal sealed partial class DocxChart
         double plotWidth = Math.Max(1, right - left), plotHeight = Math.Max(1, bottom - top);
         string gridColor = DocxDrawingColor.Css(new XElement("c", new XElement("schemeClr", new XAttribute("val", "tx1"), new XElement("lumMod", new XAttribute("val", "15000")), new XElement("lumOff", new XAttribute("val", "85000")))), _theme) ?? "#D9D9D9";
         string? plotFill = PropertiesFill(_plotAreaProperties, null);
-        if (_is3D && !xy && _groups.Count == 1 && _groups[0].Kind == Kind.Bar)
+        if (_is3D && !xy && _groups.Count == 1 && _groups[0].Kind == Kind.Bar && !(!horizontal && _groups[0].Grouping == "standard"))
         {
             Draw3DColumns(svg, categoryCount, horizontal, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { NoLabels: true }, textColor, gridColor, plotFill, labelSize);
             return;
         }
-        if (_is3D && !xy && !horizontal && _groups.Count == 1 && _groups[0].Kind is Kind.Line or Kind.Area)
+        if (_is3D && !xy && !horizontal && _groups.Count == 1 && (_groups[0].Kind is Kind.Line or Kind.Area || _groups[0].Kind == Kind.Bar && _groups[0].Grouping == "standard"))
         {
+            // (3-D columns with one depth row per series - c:grouping standard - are laid out by Word as its 3-D lines and areas: the
+            // same value labels, category labels and series names in its PDFs of word-charts-seraxis-v1's Col3D SerAx and Line3D SerAx)
             // Word scales a 3-D line / area value axis over the scene's front height, one tick per 1.55 label sizes (its PDFs of the
             // 2026-11-13 probes: 0..5 by 1 up to a 124.5 pt front, by 0.5 from 137.4 pt; 3-D columns keep the plot height); the labels'
             // width then moves the plot's left edge
@@ -930,12 +932,14 @@ internal sealed partial class DocxChart
             {
                 left = Math.Min(right - 1, left + 2.8);
                 right = Math.Max(left + 1, right - (MidCategory() && categoryAxis is not { NoLabels: true } ? 2.35 : 7.15));
-                // a shown series axis (c:serAx, its labels not drawn yet): Word keeps the series names' room on the right (its PDF of
-                // word-charts-3d-rows-v1's Line3D SerAx: plot 34.3 pt narrower)
-                if (_axes.Values.Any(a => a.IsSeries && !a.NoLabels))
-                    right = Math.Max(left + 1, right - _groups[0].Series.Max(x => TextWidth(x.Name ?? "", labelSize)) - SeriesAxisGap);
+                // a shown series axis (c:serAx): Word keeps the series names' room on the right (its PDF of word-charts-3d-rows-v1's
+                // Line3D SerAx: plot 34.3 pt narrower); the names are drawn by Draw3DFrame
+                if (SeriesAxis() is { } rowsSeriesAxis)
+                    right = Math.Max(left + 1, right - _groups[0].Series.Max(x => TextWidth(x.Name ?? "", rowsSeriesAxis.LabelSize)) - SeriesAxisGap);
             }
-            Draw3DRows(svg, categoryCount, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { NoLabels: true }, textColor, gridColor, plotFill, labelSize);
+            if (_groups[0].Kind == Kind.Bar)
+                Draw3DColumns(svg, categoryCount, false, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { NoLabels: true }, textColor, gridColor, plotFill, labelSize);
+            else Draw3DRows(svg, categoryCount, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { NoLabels: true }, textColor, gridColor, plotFill, labelSize);
             return;
         }
         if (_is3D && !horizontal)
@@ -1076,6 +1080,7 @@ internal sealed partial class DocxChart
     /// advance widths (DocxChartFontWidths: the hmtx tables of Calibri, Cambria, Times New Roman and Arial; metric-compatible fonts map
     /// to them); characters outside ASCII take the font's average width.
     /// </summary>
+
     private const double SeriesAxisGap = 5.75;   // Word 16 PDF, word-charts-3d-rows-v1 Line3D SerAx
 
     private double TextWidth(string text, double size)

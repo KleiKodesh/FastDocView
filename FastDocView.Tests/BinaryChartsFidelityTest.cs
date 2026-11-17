@@ -55,7 +55,7 @@ public static class BinaryChartsFidelityTest
             TestReport.Check(Regex.IsMatch(column, "fill=\"#FF0000\"[^>]*>Column Chart<"), extension + ": the title's own colour");
             TestReport.Check(Regex.Matches(all, "<svg class=\"word-chart\"").Count == Titles.Length, extension + ": the trend line and error bar series are not drawn as series");
             // v3: a blue value axis, a green legend; the scatter chart's first series with custom plus-only x and fixed y error bars
-            TestReport.Check(Regex.IsMatch(column, "fill=\"#0000FF\"[^>]*>5[.]0<") && Regex.IsMatch(column, "fill=\"#339966\"[^>]*>North<"), extension + ": axis label and legend text colours (the legend's 00B050 is saved as its nearest palette colour, 339966, in both the RGB and the index)");
+            TestReport.Check(Regex.IsMatch(column, "fill=\"#0000FF\"[^>]*>5[.]0<") && Regex.IsMatch(column, "fill=\"#00B050\"[^>]*>North<"), extension + ": axis label and legend text colours (the legend's 00B050, saved as its nearest palette colour 339966 in both the RGB and the index, read exactly from its TextPropsStream)");
             string scatter = Block("Scatter Chart");
             TestReport.Check(Regex.Matches(scatter, "word-chart-error-bar").Count == 8, extension + ": x (custom) and y (fixed) error bars, one per point each (" + Regex.Matches(scatter, "word-chart-error-bar").Count + ")");
         }
@@ -213,6 +213,36 @@ public static class BinaryChartsFidelityTest
         string converted = FastDocView.Odt.OdtChart.ChartSpace(odf, styles).ToString();
         TestReport.Check(Regex.IsMatch(converted, "<catAx[^>]*>.*<crosses val=\"max\" />.*</catAx>", RegexOptions.Singleline) && Regex.IsMatch(converted, "<valAx[^>]*>.*<crossesAt val=\"2.5\" />.*</valAx>", RegexOptions.Singleline),
                          "ODT: chart:axis-position end / a value become c:crosses max / c:crossesAt");
+    }
+
+    /// <summary>
+    /// Series axes (c:serAx; BIFF8 the third AXIS block of a deep 3-D chart) and exact text colours (BIFF8 TextPropsStream / RichTextStream)
+    /// against Word 16's PDF of test-data/word-charts-binary/word-charts-seraxis-v1 (scripts/make-word-charts-seraxis-v1.py), in the .docx
+    /// and in Word's own .doc and .rtf of it: series names left-aligned beside their rows (positions relative to the title, in points).
+    /// </summary>
+    public static void RunSeriesAxes()
+    {
+        TestReport.Step("Charts: 3-D series axis labels and exact .doc / RTF text colours as Word draws them");
+        string folder = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-charts-binary");
+        foreach (string extension in new[] { "docx", "doc", "rtf" })
+        {
+            string path = Path.Combine(folder, "word-charts-seraxis-v1." + extension);
+            TestReport.Check(File.Exists(path), "fixture exists: " + extension);
+            if (!File.Exists(path)) continue;
+            List<string> html = Render(path);
+            bool Start(string title, string text, double x, double y) => ChartTexts(html, title).Any(t => t.Text == text && t.Anchor == "start" && Math.Abs(t.X - x) <= 6 && Math.Abs(t.Y - y) <= 4);
+            TestReport.Check(Start("Col3D SerAx R", "North", 121.4, 164.7) && Start("Col3D SerAx R", "West", 170.1, 127.8), extension + ": right-angled 3-D columns, one row per series: the series names beside the rows (within 6 pt)");
+            TestReport.Check(Start("Col3D SerAx P", "North", 136.1, 161.8) && Start("Col3D SerAx P", "West", 153.5, 119.4), extension + ": 3-D columns with perspective: the series names (within 6 pt)");
+            TestReport.Check(Start("Area3D SerAx P", "North", 135.9, 161.8) && Start("Area3D SerAx P", "West", 153.4, 119.4), extension + ": 3-D area with perspective: the series names (within 6 pt)");
+            string colours = Regex.Match(string.Concat(html), "<svg class=\"word-chart\"(?:(?!</svg>).)*>Col Colors<.*?</svg>", RegexOptions.Singleline).Value;
+            string colours3D = Regex.Match(string.Concat(html), "<svg class=\"word-chart\"(?:(?!</svg>).)*>Col3D Colors<.*?</svg>", RegexOptions.Singleline).Value;
+            bool TextIn(string svg, string text, string fill) => Regex.IsMatch(svg, "<text[^>]*fill=\"#" + fill + "\"[^>]*>" + Regex.Escape(text) + "<", RegexOptions.IgnoreCase);
+            TestReport.Check(TextIn(colours, "Col Colors", "7A2E9B") && TextIn(colours, "Q1", "8A4F1C") && TextIn(colours, "3", "8A4F1C") && TextIn(colours, "North", "2F6EA8"),
+                             extension + ": title, axis and legend text in Word's exact colours (not the nearest palette colours 333399, 993300, 666699)");
+            TestReport.Check(TextIn(colours3D, "Col3D Colors", "C0392B") && Regex.Matches(colours3D, "<text[^>]*fill=\"#1E7A6B\"[^>]*>(North|South|West)<").Count == 3 && TextIn(colours3D, "Q1", "1E7A6B"),
+                             extension + ": 3-D title, category and series axis labels in Word's exact colours");
+            TestReport.Check(Regex.IsMatch(colours, "fill=\"#12AB9C\"") && Regex.IsMatch(colours, "fill=\"#5B2C83\""), extension + ": series fills in Word's exact colours");
+        }
     }
 
     private static List<string> Render(string path)

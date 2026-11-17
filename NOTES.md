@@ -2936,6 +2936,29 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
 - Shown series axis (c:serAx): Word keeps the series names' room right of a 3-D line / area plot (Line3D SerAx: plot 34.3 pt
   narrower = widest name + 5.75 pt); the labels themselves are not drawn yet. Labels 6.7 / 1.8 -> 2.1 / 2.3 pt.
 
+## Charts: series axis labels, .doc / RTF exact colours and deep 3-D columns (2026-11-17)
+
+- Fixture word-charts-seraxis-v1 (scripts/make-word-charts-seraxis-v1.py rewrites chart XML; save-word-charts-seraxis.ps1 lets
+  Word save PDF, .doc, .rtf): 3-D standard columns, lines, areas with a shown c:serAx, right-angled and perspective; two charts
+  in non-palette colours. Word's .doc drops the 3-D line chart's object (6 of 7 charts are BIFF8 objects).
+- Series axis labels: left-aligned (anchor start: their left edges step evenly along the depth, their centres do not), 10 pt right
+  of the floor's right edge at each row's centre depth, the axis's own size and colour. Word lays 3-D standard columns out
+  exactly like its 3-D lines (same value / category label places in the PDF), so they now share that path. Medians vs Word's
+  PDF: .docx 1.1 / 0.5 pt, .doc and .rtf 1.6 / 1.1 pt (were 2.5 / 1.0 and 8.0 / 2.8). Tried and rejected: narrowing the scene until
+  the farthest name ends at the plot edge (perspective scenes 20 pt too wide); the fixed room (widest name + 5.75 pt) stays.
+- BIFF8: CHCHART3D flag 0x0002 (EXC_CHCHART3D_CLUSTER) clear = one depth row per series (LibreOffice Is3dDeepChart,
+  xichart.hxx:1013; Z axis xichart.cxx:3596) -> c:grouping standard for bars, and the AXIS type 2 block -> c:serAx.
+  CHCHART3D eye distance is c:perspective 1:1 (Word saved perspective 30 as 30; it was doubled after LibreOffice's 0..100 scale,
+  xichart.cxx:2465, which drew .doc perspective scenes 20-50 pt off).
+- Exact text colours: Office 2007+ keeps DrawingML beside the BIFF8 records - TextPropsStream 0x08A5 (FrtHeader 12, dwChecksum 4,
+  cb 4, a:txPr; [MS-XLS] 2.4.325) in an axis / legend / default-text block, RichTextStream 0x08A6 (same layout, a:richFrt) in a
+  title's TEXT block, ShapePropsStream 0x08A4 (with wObjContext, so the XML at 24), continued in ContinueFrt12 0x087F (12-byte
+  header; 2.4.62). Measured: axis 8A4F1C saved as TICK 993300, legend 2F6EA8 as 666699, title 7A2E9B as 333399; the XML has the
+  exact ones. Read: the first a:defRPr / a:rPr solidFill; schemeClr tx1 / bg1 resolve to black / white with their modifiers (the
+  default 595959 grey, saved as 333333), other scheme colours need the zipped theme (CrtMlFrt) and keep the record colour.
+  Word writes no TextPropsStream for the series axis: it takes the exact colour of an axis with the same TICK colour.
+  LibreOffice reads none of these records. Series fills were already exact (CHESCHERFORMAT).
+
 ## Vertical cell text, RTF border details and groups, ODT drop caps over spans (2026-11-16; index formats RTF 22, ODT 18)
 
 - Cell text direction in every format goes through the .docx mapping (`DocxTableFormatting.TextDirectionCss`): .doc reads

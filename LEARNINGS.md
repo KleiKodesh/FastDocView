@@ -490,3 +490,7 @@ window) and the p95 (a slow path hit by more than one window in twenty); the wor
 - The ODT body scanner never checked end-tag names: a mismatched end tag silently closed the wrong element and could end
   office:text early, dropping the rest of the body without any sign. Name hashes per frame catch it.
 
+- 2026-11-17: Word's own .doc / .rtf of a chart disagrees with LibreOffice's reading of CHCHART3D's eye distance: Word saves
+  c:perspective 30 as 30, LibreOffice treats it as its 0..100 scale (twice the OOXML angle). When LibreOffice and Word's own
+  round trip disagree, the round trip wins. And the BIFF8 colours of an Office 2007+ chart are only palette approximations even
+  in their RGB fields; the exact colours sit in the DrawingML future records (0x08A4 / 0x08A5 / 0x08A6).
