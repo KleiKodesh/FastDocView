@@ -3136,3 +3136,19 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
   every tab within 2 pt of Word's PDF (.docx / .doc / .rtf) and LibreOffice's (.odt): `vue-demo/playwright/tabStopsCheck.mjs`.
 - Cost (87 MB .docx sample, 81 of 99 rendered paragraphs carry tabs): about 0.2 ms per tabbed paragraph (one extra layout
   of those paragraphs), measured over all rendered blocks at once 2-18 ms; .doc sample 1 ms.
+### Picture effects follow-up: soft edges, duotone clipping, perspective cameras (2026-11-17)
+
+- Fixture effects-3d-v1.docx (make_3d.py; Word's PDF effects-3d-v1.pdf): soft edges 5 / 10 / 20 pt and 10 pt on a half-size
+  picture, duotone with satMod, perspective cameras at several sizes, aspects and fields of view.
+- Soft edge: Word's mask is a Gaussian edge, sigma 0.33 rad on every picture size; its half-alpha line sits 0.865 / 0.845 /
+  0.927 rad in for rad 5 / 10 / 20 pt (mean of four edges; the edges of one picture differ by up to 0.3 pt - Word's pixel grid).
+  The CSS gradient samples the CDF every 0.1 rad.
+- Duotone: Word resolves satMod without clipping the saturation, clips the colour to RGB, then mixes (C0504D satMod 300 %
+  -> 255, 0, 0; clipped saturation would give 255, 15, 15). DocxDrawingColor.Resolve(unclampedSaturation) does that for
+  duotone colours only; shapes keep LibreOffice's clipping until a Word sample says otherwise.
+- Perspective: fitting a pinhole camera to Word's outlines gives a distance that does not scale with the picture (90 x 60 to
+  180 x 120, square, tall): about 1555 pt for lon and 1095 pt for lat at fov 45, 655 pt for lon at fov 90 - i.e. 645 / tan(fov/2)
+  and 452 / tan(fov/2). CSS: scaleY(1/r) perspective(645/tan) rotateX rotateY scaleY(r), r = 645 / 452, so rotateX sees the
+  vertical distance. Word's lat / lon turn the near edge the other way round from CSS rotateX / rotateY.
+- Lighting: a turned flat picture comes out 0-10 levels brighter (threePt rig from the top: lat 30 +8, lat -30 0, lon 30 +9,
+  orthographic lon 40 +6); not drawn.

@@ -33,13 +33,16 @@ public abstract record WordPictureColorEffect
 ///   oox/source/drawingml/fillproperties.cxx:834-836, matched on Word's pixels: washout b 70 % c -70 % takes 0 -> 205,
 ///   112 -> 238; b -40 % c 60 % takes 174 -> 65, 249 -> 252): v' = (v + b/2 - 1/2) k + 1/2 + b/2, k = 1 + c for c below 0,
 ///   1 / (1 - c) from 0 up.
-/// - duotone: the luminance mixed linearly between the two colours in sRGB (C00000 / FFFF00: red 112 -> 198, 23, 0).
+/// - duotone: the luminance mixed linearly between the two colours in sRGB (C00000 / FFFF00: red 112 -> 198, 23, 0); each colour
+///   is clipped to RGB before the mix, its satMod unclipped before that (DocxDrawingColor unclampedSaturation).
 /// - colour change: only the exact colour (a PNG's 255, 0, 0 turned transparent; 252, 0, 0 kept).
 /// - transparency (a:alphaModFix amt): the picture's opacity.
-/// - soft edges (a:softEdge rad): the alpha falls off over 1.73 rad from each edge, half way at about 0.9 rad (Word's mask of
-///   rad 10 and 20 pt); the two directions multiply (a blurred rectangle is separable).
-/// - 3-D rotation (a:scene3d camera rot lat / lon / rev): drawn with an orthographic camera, as a CSS transform without
-///   perspective (rot lon 40 degrees: 180 pt shows 139 pt wide, cos 40 = 0.766). The lighting Word adds is not drawn.
+/// - soft edges (a:softEdge rad): a Gaussian edge (see SoftEdgeProfile); the two directions multiply (a blurred rectangle is
+///   separable).
+/// - 3-D rotation (a:scene3d camera rot lat / lon / rev): orthographic cameras as CSS rotations without perspective (rot lon 40
+///   degrees: 180 pt shows 139 pt wide, cos 40 = 0.766); perspective cameras through CSS perspective at Word's camera distance
+///   (see CameraHorizontalDistance). Word's light rig brightens a turned flat picture by 0-10 levels depending on the angle
+///   (threePt from the top: lat 30 +8, lat -30 0, lon 30 +9, lon 40 orthographic +6); that is not drawn.
 /// The colour operations become one SVG filter in sRGB (filter primitives: Filter Effects 1, feColorMatrix /
 /// feComponentTransfer / feComposite / feFlood), named by a hash of its contents so equal effects share one id.
 /// </summary>
@@ -55,6 +58,17 @@ public sealed class WordPictureEffects
 
     /// <summary>The camera rotation in degrees: latitude (about the horizontal axis), longitude (vertical axis), revolution (in the plane).</summary>
     public (double Latitude, double Longitude, double Revolution) Rotation { get; init; }
+
+    /// <summary>The camera's field of view in degrees for a perspective camera; 0 = orthographic (no perspective).</summary>
+    public double CameraFieldOfView { get; init; }
+
+    /// <summary>
+    /// Word's camera distance for a 45 degree field of view, in points, fitted on its PDF of effects-3d-v1.docx (pictures of 90 x 60
+    /// to 180 x 120 pt, square and tall, fov 45 and 90): it does not scale with the picture. Turning about the vertical axis
+    /// (lon) foreshortens as a pinhole camera 645 / tan(fov / 2) pt away (1555 pt at 45 degrees, 655 at 90), turning about the
+    /// horizontal axis (lat) as one 452 / tan(fov / 2) pt away (1095 at 45 degrees). Fit error 0.1-1 pt.
+    /// </summary>
+    private const double CameraHorizontalDistance = 645, CameraVerticalDistance = 452;
 
     public bool IsEmpty => ColorEffects.Count == 0 && Opacity >= 1 && SoftEdgePt <= 0 && Rotation == default;
 
@@ -119,23 +133,75 @@ public sealed class WordPictureEffects
             string Edge(string direction)
             {
                 var gradient = new StringBuilder("linear-gradient(").Append(direction);
-                foreach ((double at, double alpha) in SoftEdgeProfile)
+                (double At, double Alpha)[] profile = SoftEdgeProfile(SoftEdgePt);
+                foreach ((double at, double alpha) in profile)
                     gradient.Append(",rgba(0,0,0,").Append(Number(alpha)).Append(") ").Append(Number(at * SoftEdgePt)).Append("pt");
-                for (int i = SoftEdgeProfile.Length - 1; i >= 0; i--)
-                    gradient.Append(",rgba(0,0,0,").Append(Number(SoftEdgeProfile[i].Alpha)).Append(") calc(100% - ").Append(Number(SoftEdgeProfile[i].At * SoftEdgePt)).Append("pt)");
+                for (int i = profile.Length - 1; i >= 0; i--)
+                    gradient.Append(",rgba(0,0,0,").Append(Number(profile[i].Alpha)).Append(") calc(100% - ").Append(Number(profile[i].At * SoftEdgePt)).Append("pt)");
                 return gradient.Append(')').ToString();
             }
             css.Append("mask-image:").Append(Edge("to right")).Append(',').Append(Edge("to bottom")).Append(";mask-composite:intersect;mask-repeat:no-repeat;");
         }
         if (Rotation != default)
-            css.Append("transform:rotateX(").Append(Number(Rotation.Latitude)).Append("deg) rotateY(").Append(Number(Rotation.Longitude))
-               .Append("deg) rotateZ(").Append(Number(Rotation.Revolution)).Append("deg);");
+        {
+            // Word's lat / lon turn the near edge toward the viewer the other way round from CSS rotateX / rotateY (its PDF: lat 30
+            // draws the top edge wider, lon 30 the right edge taller). A perspective camera: CSS perspective at the horizontal
+            // distance, the vertical axis stretched by their ratio around it so rotateX sees its own distance.
+            string turn = "rotateX(" + Number(-Rotation.Latitude) + "deg) rotateY(" + Number(-Rotation.Longitude) + "deg)";
+            css.Append("transform:");
+            if (CameraFieldOfView > 0 && CameraFieldOfView < 180)
+            {
+                double tangent = Math.Tan(CameraFieldOfView * Math.PI / 360);
+                double stretch = CameraHorizontalDistance / CameraVerticalDistance;
+                css.Append("scaleY(").Append(Number(1 / stretch)).Append(") perspective(").Append(Number(CameraHorizontalDistance / tangent)).Append("pt) ")
+                   .Append(turn).Append(" scaleY(").Append(Number(stretch)).Append(')');
+            }
+            else css.Append(turn);
+            css.Append(" rotateZ(").Append(Number(Rotation.Revolution)).Append("deg);");
+        }
         return css.ToString();
     }
 
-    /// <summary>Word's soft edge alpha by distance from the edge in radii (its PDF masks for rad 10 and 20 pt, averaged).</summary>
-    private static readonly (double At, double Alpha)[] SoftEdgeProfile =
-        [(0, 0), (0.29, 0.035), (0.58, 0.18), (0.86, 0.47), (1.15, 0.78), (1.44, 0.95), (1.73, 1)];
+    /// <summary>
+    /// Word's soft edge alpha by distance from the edge in radii: a Gaussian edge (normal CDF) with sigma 0.33 rad, its half-way
+    /// line at <see cref="SoftEdgeCentre"/>, fitted on its PDF masks for rad 5, 10 and 20 pt (effects-3d-v1.docx, the four
+    /// edges of each). Sampled every 0.1 rad: linear steps between them stay within 0.005.
+    /// </summary>
+    private static (double At, double Alpha)[] SoftEdgeProfile(double radiusPt)
+    {
+        const double Sigma = 0.33;
+        double centre = SoftEdgeCentre(radiusPt);
+        var profile = new (double, double)[21];
+        for (int i = 0; i <= 20; i++)
+        {
+            double at = i * 0.1;
+            profile[i] = (at, i == 0 ? 0 : i == 20 ? 1 : NormalDistribution((at - centre) / Sigma));
+        }
+        return profile;
+    }
+
+    /// <summary>
+    /// Where Word's soft edge is half transparent, in radii from the edge: 0.865 at rad 5 pt, 0.845 at 10, 0.927 at 20 (the
+    /// mean of the four edges of its PDF masks, each within 0.05), straight lines between and the end values beyond. Not a
+    /// constant: Word draws the blur on its own pixel grid.
+    /// </summary>
+    private static double SoftEdgeCentre(double radiusPt)
+    {
+        (double Radius, double Centre)[] measured = [(5, 0.865), (10, 0.845), (20, 0.927)];
+        if (radiusPt <= measured[0].Radius) return measured[0].Centre;
+        for (int i = 1; i < measured.Length; i++)
+            if (radiusPt <= measured[i].Radius)
+                return measured[i - 1].Centre + (measured[i].Centre - measured[i - 1].Centre) * (radiusPt - measured[i - 1].Radius) / (measured[i].Radius - measured[i - 1].Radius);
+        return measured[measured.Length - 1].Centre;
+    }
+
+    /// <summary>The standard normal CDF (Abramowitz and Stegun 7.1.26 for erf, error below 1.5e-7).</summary>
+    private static double NormalDistribution(double x)
+    {
+        double z = Math.Abs(x) / Math.Sqrt(2), t = 1 / (1 + 0.3275911 * z);
+        double erf = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.Exp(-z * z);
+        return x >= 0 ? (1 + erf) / 2 : (1 - erf) / 2;
+    }
 
     private static string LuminanceMatrix(double scale, double offset)
     {
@@ -186,5 +252,5 @@ public sealed class WordPictureEffects
         return hash;
     }
 
-    private static string Number(double value) => Math.Round(value, 4).ToString("0.####", CultureInfo.InvariantCulture);
+    private static string Number(double value) => Math.Round(value, 4) is var rounded && rounded == 0 ? "0" : rounded.ToString("0.####", CultureInfo.InvariantCulture);
 }

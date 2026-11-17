@@ -19,7 +19,32 @@ public static class PictureEffectsFidelityTest
     {
         TestReport.Step("Picture effects: .docx against Word's PDF; shapes in web archives");
         Docx();
+        Cameras();
         WebArchive();
+    }
+
+    /// <summary>
+    /// Soft edges, duotone clipping and perspective cameras against Word's PDF of effects-3d-v1.docx (make_3d.py). Word's
+    /// numbers: soft edge 10 pt half transparent 8.45 pt in (alpha 0.47 at 8 pt); duotone 202020 / C0504D satMod 300 % mixes to
+    /// 255, 0, 0 (a saturation clipped at 100 % gives 255, 15, 15); perspectiveFront / perspectiveRelaxed draw at a camera
+    /// 1557 pt away for fov 45 (645 pt for fov 90) - the browser's projection of these was measured against Word's: within
+    /// 0.5 pt (fov 90: 1.5 pt), the same edge nearer.
+    /// </summary>
+    private static void Cameras()
+    {
+        string path = Path.Combine(Folder, "effects-3d-v1.docx");
+        if (!File.Exists(path)) { TestReport.Check(false, "test-data/word-picture-effects/effects-3d-v1.docx present"); return; }
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+        string html = string.Concat(document.RenderBlocks(0, document.BlockCount).Select(block => block.Html));
+        string[] pictures = Regex.Split(html, "(?=<svg class=\"word-picture-effect\")|(?<=<img[^>]*>)").Where(part => part.Contains("<img")).ToArray();
+        TestReport.Check(pictures.Length == 16, $"16 pictures ({pictures.Length})");
+        if (pictures.Length != 16) return;
+        Match stop = Regex.Match(pictures[1], @"rgba\(0,0,0,([0-9.]+)\) 8pt");
+        TestReport.Check(stop.Success && Math.Abs(double.Parse(stop.Groups[1].Value, CultureInfo.InvariantCulture) - 0.47) < 0.03, $"soft edge 10 pt: alpha at 8 pt {stop.Groups[1].Value} (Word 0.47)");
+        TestReport.Check(pictures[5].Contains("-0.0267 -0.0898 -0.0091 0 0.1255"), "duotone with satMod 300 %: Word's clipping order (green / blue mix to 0)");
+        TestReport.Check(pictures[8].Contains("perspective(1557.1677pt) rotateX(0deg) rotateY(-30deg)") && pictures[10].Contains("perspective(645pt)"),
+                         "perspective cameras: fov 45 and 90 at Word's distances");
+        TestReport.Check(pictures[11].Contains("transform:rotateX(0deg) rotateY(-40deg) rotateZ(0deg)"), "orthographic camera: no perspective");
     }
 
     private static void Docx()
@@ -43,14 +68,15 @@ public static class PictureEffectsFidelityTest
         TestReport.Check(pictures[6].Contains("flood-opacity=\"0\""), "transparent colour: the exact colour drawn transparent");
         TestReport.Check(pictures[7].Contains("data-word-picture=\"m:rId5\"") && pictures[8].Contains("data-word-picture=\"m:rId7\""),
                          "artistic effects: Word's own drawing of the effect (a:blip r:embed), not the original (a14:imgLayer)");
-        TestReport.Check(pictures[10].Contains("mask-image:") && pictures[10].Contains(" 17.3pt") && pictures[19].Contains(" 34.6pt"), "soft edges 10 / 20 pt: faded over 1.73 radii");
+        TestReport.Check(pictures[10].Contains("mask-image:") && pictures[10].Contains(" 20pt,") && pictures[19].Contains(" 40pt,"), "soft edges 10 / 20 pt: faded over 2 radii");
         TestReport.Check(pictures[12].Contains("<feColorMatrix") && pictures[13].Contains("0.0525 0.1767 0.0178 0 0.7529"),
                          "duotone: luminance mixed from the first colour (C00000) to the second (FFFF00)");
         TestReport.Check(pictures[14].Contains("opacity:0.5;"), "transparency 50 %: opacity");
         TestReport.Check(pictures[17].IndexOf("0.2126 0.7152", StringComparison.Ordinal) is var grey and >= 0
                          && pictures[17].IndexOf("<feComponentTransfer>", StringComparison.Ordinal) > grey, "grey then brightness: document order");
         TestReport.Check(pictures[18].Contains("flood-color=\"rgb(0,0,255)\""), "colour change: green to blue");
-        TestReport.Check(pictures[20].Contains("rotateY(40deg)") && pictures[21].Contains("rotateX(30deg)"), "3-D rotation: CSS rotation (Word: 180 pt shown 139 pt wide at 40 degrees)");
+        TestReport.Check(pictures[20].Contains("transform:rotateX(0deg) rotateY(-40deg)"), "3-D rotation, orthographic camera: CSS rotation without perspective (Word: 180 pt shown 139 pt wide at 40 degrees)");
+        TestReport.Check(pictures[21].Contains("perspective(1557.1677pt) rotateX(-30deg)"), "3-D rotation, perspective camera (perspectiveRelaxed, fov 45): Word's camera distance");
     }
 
     /// <summary>The black-and-white step (the input luminance 0..255 from which the output is white) of a picture's filter.</summary>

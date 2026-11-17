@@ -50,13 +50,21 @@ internal static class DocxPictureEffects
         (double, double, double) rotation = default;
         if (effects.Element("scene3d")?.Element("camera")?.Element("rot") is { } rot)
             rotation = (Number(rot, "lat", 0) / PerDegree, Number(rot, "lon", 0) / PerDegree, Number(rot, "rev", 0) / PerDegree);
-        var result = new WordPictureEffects { ColorEffects = colorEffects, Opacity = opacity, SoftEdgePt = Math.Max(0, softEdge), Rotation = rotation };
+        // a:camera prst (ST_PresetCameraType, 20.1.10.47): the perspective presets (perspective*, legacyPerspective*) look through
+        // a:camera fov (60000ths of a degree), else 45 degrees - Word's perspectiveFront and perspectiveRelaxed both draw at
+        // 45 (fitted on its PDF, WordPictureEffects.CameraHorizontalDistance); the others are orthographic. A preset's own
+        // rotation (used without a:rot) is not known here: such a picture is drawn flat.
+        double fieldOfView = 0;
+        if (effects.Element("scene3d")?.Element("camera") is { } camera
+            && ((string?)camera.Attribute("prst") ?? "") is var preset && (preset.StartsWith("perspective", StringComparison.Ordinal) || preset.StartsWith("legacyPerspective", StringComparison.Ordinal)))
+            fieldOfView = camera.Attribute("fov") is not null ? Number(camera, "fov", 0) / PerDegree : 45;
+        var result = new WordPictureEffects { ColorEffects = colorEffects, Opacity = opacity, SoftEdgePt = Math.Max(0, softEdge), Rotation = rotation, CameraFieldOfView = fieldOfView };
         return result.IsEmpty ? null : result;
     }
 
     /// <summary>One colour element (with its transforms) as RGB; the resolver reads the first colour child of a parent.</summary>
     private static (int R, int G, int B)? Color(XElement color, DocxTheme? theme)
-        => DocxDrawingColor.Resolve(new XElement("color", new XElement(color)), theme) is { } resolved ? Rgb(resolved.Css) : null;
+        => DocxDrawingColor.Resolve(new XElement("color", new XElement(color)), theme, unclampedSaturation: true) is { } resolved ? Rgb(resolved.Css) : null;
 
     private static (int R, int G, int B)? Rgb(string css)
         => css.Length == 7 && css[0] == '#' && int.TryParse(css.Substring(1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int value)

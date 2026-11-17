@@ -29,7 +29,12 @@ internal static class DocxDrawingColor
     public static string? Hex(XElement? parent, DocxTheme? theme) => Resolve(parent, theme)?.Css.Substring(1);
 
     /// <summary>The first colour child of <paramref name="parent"/> with its transforms and alpha; null when none or unresolved.</summary>
-    public static DocxResolvedColor? Resolve(XElement? parent, DocxTheme? theme, string? placeholderHex = null)
+    /// <param name="unclampedSaturation">
+    /// satMod may push the saturation past 100 %, and the colour is clipped to RGB only at the end: Word 16 does this for a
+    /// picture's duotone colours (its PDF of test-data/word-picture-effects/effects-3d-v1.docx: C0504D satMod 300 % mixes to
+    /// 255, 0, 0, which a saturation clipped at 100 % cannot reach - it gives 255, 15, 15). LibreOffice clips (color.cxx lclModValue).
+    /// </param>
+    public static DocxResolvedColor? Resolve(XElement? parent, DocxTheme? theme, string? placeholderHex = null, bool unclampedSaturation = false)
     {
         if (parent is null) return null;
         foreach (XElement color in parent.Elements())
@@ -68,7 +73,7 @@ internal static class DocxDrawingColor
                 default: continue;
             }
             int alpha = MaxPercent;
-            Transform(color, ref mode, ref c1, ref c2, ref c3, ref alpha);
+            Transform(color, ref mode, ref c1, ref c2, ref c3, ref alpha, unclampedSaturation);
             ToRgb(ref mode, ref c1, ref c2, ref c3);
             int rgb = (Limit(c1, 0, 255) << 16) | (Limit(c2, 0, 255) << 8) | Limit(c3, 0, 255);
             return new DocxResolvedColor("#" + rgb.ToString("X6", CultureInfo.InvariantCulture), (double)alpha / MaxPercent);
@@ -96,7 +101,7 @@ internal static class DocxDrawingColor
 
     private enum Mode { Rgb, Crgb, Hsl }
 
-    private static void Transform(XElement color, ref Mode mode, ref int c1, ref int c2, ref int c3, ref int alpha)
+    private static void Transform(XElement color, ref Mode mode, ref int c1, ref int c2, ref int c3, ref int alpha, bool unclampedSaturation = false)
     {
         foreach (XElement transform in color.Elements())
         {
@@ -143,7 +148,7 @@ internal static class DocxDrawingColor
                 case "hueMod": ToHsl(ref mode, ref c1, ref c2, ref c3); ModValue(ref c1, value, MaxDegree); break;
                 case "hueOff": ToHsl(ref mode, ref c1, ref c2, ref c3); OffValue(ref c1, value, MaxDegree); break;
                 case "sat": ToHsl(ref mode, ref c1, ref c2, ref c3); SetValue(ref c2, value); break;
-                case "satMod": ToHsl(ref mode, ref c1, ref c2, ref c3); ModValue(ref c2, value); break;
+                case "satMod": ToHsl(ref mode, ref c1, ref c2, ref c3); ModValue(ref c2, value, unclampedSaturation ? int.MaxValue / 2 : MaxPercent); break;
                 case "satOff": ToHsl(ref mode, ref c1, ref c2, ref c3); OffValue(ref c2, value); break;
                 case "lum":
                     ToHsl(ref mode, ref c1, ref c2, ref c3); SetValue(ref c3, value);
@@ -182,6 +187,7 @@ internal static class DocxDrawingColor
         if (mode == Mode.Hsl) ToRgb(ref mode, ref c1, ref c2, ref c3);
         if (mode != Mode.Rgb) return;
         mode = Mode.Crgb;
+        c1 = Limit(c1, 0, 255); c2 = Limit(c2, 0, 255); c3 = Limit(c3, 0, 255);   // an unclamped saturation may have left RGB out of range
         c1 = Gamma(c1 * MaxPercent / 255, DecGamma); c2 = Gamma(c2 * MaxPercent / 255, DecGamma); c3 = Gamma(c3 * MaxPercent / 255, DecGamma);
     }
 

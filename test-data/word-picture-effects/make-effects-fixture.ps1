@@ -2,6 +2,7 @@
 #   python make_png.py swatch-v1.png                        -> the colour swatch (240 x 160 px)
 #   this script, step 1                                     -> effects-com-v1.docx (Word's own effects through its object model)
 #   python make_variants.py effects-com-v1.docx effects-xml-v1.docx  -> XML-only variants added
+#   python make_3d.py effects-com-v1.docx effects-3d-v1.docx; this script -Step 3 -> effects-3d-v1.pdf
 #   this script, step 2                                     -> effects-xml-v1.pdf / .mht, vml-shapes-v1.docx / .pdf / .mht / .mht.pdf
 param([int]$Step = 1)
 $d = $PSScriptRoot
@@ -10,7 +11,12 @@ $w = New-Object -ComObject Word.Application
 $w.DisplayAlerts = 0; $w.Visible = $false
 $mine = @(Get-Process WINWORD | Where-Object { $before -notcontains $_.Id } | ForEach-Object Id)
 try {
-    if ($Step -eq 1) {
+    if ($Step -eq 3) {
+        $doc = $w.Documents.Open("$d\effects-3d-v1.docx", $false, $true)
+        $doc.ActiveWindow.View.Type = 3
+        $doc.SaveAs2("$d\effects-3d-v1.pdf", 17)
+        $doc.Close([ref]0)
+    } elseif ($Step -eq 1) {
         $doc = $w.Documents.Add()
         function Add($label) {
             $doc.Content.InsertParagraphAfter(); $doc.Paragraphs.Last.Range.Text = $label
