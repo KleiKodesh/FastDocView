@@ -3159,7 +3159,7 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
 - RTF: a group scopes its tab stops like the rest of the paragraph state - the list each group started with is put back
   at its '}' (shared arrays, no copy for a group that changes nothing).
 - Lines: after the widths are set, a tab (or the text after it) that landed on another line is laid out again from there
-  on its new line; a left stop at or past the line's end sends the tab to the next line (a `br.tab-break` before it;
+  on its new line; a left stop at or past the line's end sends the tab to the next line (a `span.tab-break` before it;
   txttab.cxx PreFormat bFull: Width() <= X + PrtWidth()). Each round fixes one more tab, so it ends; no timers.
 - Bars: measured from the same origin as the tabs; inside a bordered paragraph the box's start padding moves the line in
   with the text (Word draws the border in the indent; here it sits inside the box).
@@ -3168,6 +3168,13 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
 - The width watch records the width the pass used, so a resize right after a block mounts is not missed.
 - Verified: test-data/tab-stops/tab-stops-v2 (adds a bordered paragraph with a bar and a tab on a wrapped line) within 2 pt
   of Word's and LibreOffice's PDFs, bar lines included.
+- The wrap break is not text: `span.tab-break` is empty and its break is CSS generated content (`::before { content: "\A";
+  white-space: pre }`), so copying a paragraph with a wrapped tab gives exactly its text (one tab, no line break) - a `<br>`
+  copied as a newline. Checked live with the clipboard (tabStopsCheck.mjs).
+- RTF windows: a block that starts inside a group carries, in its parser snapshot, the tab stops each open group started with
+  (index format 25), so that group's '}' puts back the stops from before it, not the window's own. Harness: a window that
+  starts past a span anchor inside the group (tab-stops-group-v2.rtf).
+
 ### Picture effects: light rig and small soft edges (2026-11-17)
 
 - effects-light-{persp,ortho,extra,soft}-v1.docx / .pdf (make_light.py; Word 16 printed them from a hidden instance).

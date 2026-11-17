@@ -2,7 +2,8 @@
 //   node playwright/tabStopsCheck.mjs <reference.json> <file> [<reference.json> <file> ...]
 // The reference is scripts/measure-tab-stops-pdf.py's output for test-data/tab-stops/tab-stops-v2 (Word's PDF for .docx / .doc /
 // .rtf, LibreOffice's for .odt): per paragraph, the x (pt from the left margin) where the text after each tab starts. Each must
-// match within 2 pt; the leaders are drawn; the text keeps its tab characters.
+// match within 2 pt; the leaders are drawn; the text keeps its tab characters; copying a paragraph whose tab went to the next
+// line gives exactly its text (the tab, no line break - the clipboard is read back).
 import { chromium } from 'playwright'
 import { readFileSync } from 'node:fs'
 
@@ -14,7 +15,9 @@ const check = (ok, what) => { console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${what}`);
 const step = text => console.log(`[${new Date().toLocaleTimeString()}] ${text}`)
 
 const browser = await chromium.launch()
-const page = await browser.newPage({ viewport: { width: 1200, height: 1600 } })
+const context = await browser.newContext({ viewport: { width: 1200, height: 1600 } })
+await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(DEMO_URL).origin })
+const page = await context.newPage()
 const errors = []
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)) })
 page.on('pageerror', e => errors.push(String(e).slice(0, 200)))
@@ -85,6 +88,27 @@ for (let a = 0; a + 1 < args.length; a += 2) {
   const bars = measured.flatMap(m => m.bars)
   if (!path.endsWith('.odt'))
     check(bars.length === referenceBars.length && bars.every((x, i) => Math.abs(x - referenceBars[i]) <= TOLERANCE), `${path}: bar lines at ${bars.join(', ')} vs ${referenceBars.join(', ')}`)
+  // copy: each paragraph with a tab that went to the next line, selected whole and copied with Ctrl+C, reads back as its text
+  const wrappedCount = await page.evaluate(() => document.querySelectorAll('.fast-doc-view-block-text .tab-break').length)
+  if (!path.endsWith('.odt')) check(wrappedCount > 0, `${path}: a tab went to the next line (${wrappedCount})`)
+  for (let k = 0; k < wrappedCount; k++) {
+    const expected = await page.evaluate((k) => {
+      const p = document.querySelectorAll('.fast-doc-view-block-text .tab-break')[k].closest('p, h1, h2, h3, h4, h5, h6')
+      const range = document.createRange()
+      range.setStart(p.firstChild, 0)
+      const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT)
+      let last = null
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) last = node
+      range.setEnd(last, last.nodeValue.length)
+      const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range)
+      return p.textContent
+    }, k)
+    await page.evaluate(() => navigator.clipboard.writeText(''))
+    await page.keyboard.press('Control+C')
+    const copied = await page.evaluate(() => navigator.clipboard.readText())
+    const show = t => JSON.stringify(t.replace(/[^\x20-\x7e\t\n\r]/g, '?'))
+    check(copied === expected, `${path}: copying wrapped-tab paragraph ${k + 1} gives its text: ${show(copied)} vs ${show(expected)}`)
+  }
 }
 check(errors.length === 0, `no console errors ${errors.join(' | ')}`)
 await browser.close()

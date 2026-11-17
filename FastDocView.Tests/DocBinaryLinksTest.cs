@@ -5,10 +5,13 @@ using System.Text;
 namespace FastDocView.Tests;
 
 /// <summary>
-/// Bookmarks and in-document links in .doc: the file is written by LibreOffice (headless, below-normal priority) from a
-/// small OpenDocument file, so Word's own binary structures are produced by a mature writer: bookmarks
+/// Bookmarks and in-document links in .doc: the file was written by LibreOffice from a small OpenDocument file
+/// (<see cref="WriteSource"/>), so Word's own binary structures are produced by a mature writer: bookmarks
 /// (SttbfBkmk / PlcfBkf / PlcfBkl), HYPERLINK fields (\l for in-document targets) and REF ... \h cross-references.
-/// Skipped when LibreOffice is not installed. Checks: lookup (complete index and after a reopen from the sidecar), the
+/// The .doc is committed (test-data/doc-links/doc-links-v1.doc): converting it on every fresh TestOutput started a cold
+/// LibreOffice at below-normal priority, which a busy machine starved past any wall-clock limit (the old 3-minute check
+/// failed now and then while conversions normally take 15-60 s). It is written again only when the file is missing
+/// (bump the version when <see cref="WriteSource"/> changes). Checks: lookup (complete index and after a reopen from the sidecar), the
 /// internal link, the cross-reference, an app link kept for the host, javascript: never a link.
 /// </summary>
 public static class DocBinaryLinksTest
@@ -19,17 +22,18 @@ public static class DocBinaryLinksTest
     public static void Run()
     {
         TestReport.Step(".doc links: bookmarks, HYPERLINK \\l, REF \\h (file written by LibreOffice)");
-        if (!File.Exists(SofficePath)) { TestReport.Step("LibreOffice not installed - .doc links not checked"); return; }
-        string directory = Path.Combine(TestReport.OutputDirectory, "doc-links-v1");
-        Directory.CreateDirectory(directory);
-        string odt = Path.Combine(directory, "doc-links-v1.odt"), doc = Path.Combine(directory, "doc-links-v1.doc");
+        string doc = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "doc-links", "doc-links-v1.doc"));
         if (!File.Exists(doc))
         {
+            if (!File.Exists(SofficePath)) { TestReport.Check(false, "test-data/doc-links/doc-links-v1.doc present (LibreOffice not installed to write it)"); return; }
+            string directory = Path.GetDirectoryName(doc)!;
+            Directory.CreateDirectory(directory);
+            string odt = Path.Combine(TestReport.OutputDirectory, "doc-links-v1.odt");
             WriteSource(odt);
             var start = new ProcessStartInfo(SofficePath)
             {
                 UseShellExecute = false, CreateNoWindow = true,
-                Arguments = $"-env:UserInstallation=file:///{directory.Replace(Path.DirectorySeparatorChar, '/')}/lo-profile --headless --invisible --nologo --norestore --convert-to doc --outdir \"{directory}\" \"{odt}\"",
+                Arguments = $"-env:UserInstallation=file:///{TestReport.OutputDirectory.Replace(Path.DirectorySeparatorChar, '/')}/doc-links-lo-profile --headless --invisible --nologo --norestore --convert-to doc --outdir \"{directory}\" \"{odt}\"",
             };
             LibreOfficeConversion.WithoutPrinters(start);
             using Process process = Process.Start(start)!;

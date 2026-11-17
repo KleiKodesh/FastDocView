@@ -41,6 +41,7 @@ public static class WordDocumentHtmlStylesheet
             .word-document .tab-space[data-leader="u"]::before, .word-document .tab-space[data-leader="H"]::before { content: "{{TabLeaders.Underscores}}"; }
             .word-document .tab-space[data-leader="H"]::before { font-weight: bold; }
             .word-document .tab-space[data-leader="m"]::before { content: "{{TabLeaders.MiddleDots}}"; }
+            .word-document .tab-break::before { content: "\A"; white-space: pre; }
             .word-document .tab-bar { position: absolute; top: 0; bottom: 0; border-inline-start: 0.75pt solid currentColor; pointer-events: none; }
             .word-document .note-reference { font-size: 0.7em; line-height: 0; color: var(--fdv-link, #06c); cursor: pointer; padding: 0 1px; }
             .word-document .note-mark { vertical-align: super; font-size: 0.7em; line-height: 0; color: var(--fdv-link, #06c); margin-inline-end: 0.25em; }

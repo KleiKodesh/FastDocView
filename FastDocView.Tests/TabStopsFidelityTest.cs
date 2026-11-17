@@ -26,14 +26,32 @@ public static class TabStopsFidelityTest
     public static void RunRtfGroupScope()
     {
         TestReport.Step("Tab stops: an RTF group scopes its stops");
-        string path = Path.Combine(TestReport.OutputDirectory, "tab-stops-group-v1.rtf");
-        File.WriteAllText(path, @"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}\pard\tx1440 Outer\tab one\par {\pard\tqr\tldot\tx5000 Inner\tab two\par}Back\tab three\par}");
+        string path = Path.Combine(TestReport.OutputDirectory, "tab-stops-group-v2.rtf");
+        // a long paragraph inside the group puts Inner2 past the index's span anchor distance: a window there starts from its own
+        // parser snapshot, inside the group
+        string filler = "Filler " + new string('x', (int)FastDocView.Rtf.RtfRandomAccessIndex.AnchorSpanBytes + 1024);
+        File.WriteAllText(path, @"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}\pard\tx1440 Outer\tab one\par {\pard\tqr\tldot\tx5000 Inner\tab two\par " + filler + @"\par Inner2\tab four\par}Back\tab three\par}");
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-tab-stops-group") };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
         List<string> blocks = document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
         string Block(string start) => blocks.FirstOrDefault(html => WordFieldsFidelityTest.Strip(html).Trim().StartsWith(start, StringComparison.Ordinal)) ?? "";
         TestReport.Check(Block("Inner").Contains(";250 r d\""), $"rtf: the group's own right stop (got [{Shorten(Block("Inner"))}])");
         TestReport.Check(Block("Back").Contains(";72 l \"") && !Block("Back").Contains("250"), $"rtf: after the group's '}}' the outer stop is back (got [{Shorten(Block("Back"))}])");
+        // a window that starts inside the group: its '}' must put back the stops from before the group (the block start's
+        // snapshot carries each open group's starting stops), not the stops the window started with
+        int inner2 = blocks.FindIndex(html => WordFieldsFidelityTest.Strip(html).Trim().StartsWith("Inner2", StringComparison.Ordinal));
+        TestReport.Check(inner2 >= 0, "rtf: the second paragraph inside the group is a block");
+        if (inner2 < 0) return;
+        foreach (bool reopen in new[] { false, true })
+        {
+            IWordWindowedDocument window = reopen ? WordWindowedDocumentOpener.Open(path, policy) : document;
+            List<string> part;
+            try { part = window.RenderBlocks(inner2, 2).Select(block => block.Html).ToList(); }
+            finally { if (reopen) window.Dispose(); }
+            string back = part.Count == 2 ? part[1] : "";
+            TestReport.Check(part.Count == 2 && part[0].Contains(";250 r d\"") && back.Contains(";72 l \"") && !back.Contains("250"),
+                $"rtf: a window from inside the group gets the outer stop back after its '}}'{(reopen ? " (reopened)" : "")} (got [{Shorten(back)}])");
+        }
     }
 
     private static void Check(string path, string format)

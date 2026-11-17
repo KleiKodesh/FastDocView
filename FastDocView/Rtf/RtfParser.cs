@@ -195,10 +195,38 @@ internal sealed class RtfParser
     private static readonly int BorderSize = Marshal.SizeOf<RtfBorder>();
 
     public int SnapshotSize => 4 + (_depth + 1) * RtfGroupState.Size + 4 * 4 + 1 + 4 + 4 + 1 + 6 * BorderSize + 4 + _cells.Count * CellDefinitionSize
-                              + 4 + TabStops.Count * TabStopSize;
+                              + TabStopListsSize();
 
     // a tab stop in a snapshot: position (int), alignment and leader (their index in these lists)
     private const int TabStopSize = 6;
+
+    // The tab stops in a snapshot: the current list and, per open group, the list it started with (what its '}' puts back - a block
+    // that starts inside a group must restore the stops from before that group, not the block's own). Distinct lists are written
+    // once (groups that changed nothing share the array, so most stacks hold one or two): int list count, each list (int count +
+    // stops), then per frame the int index of its list; list 0 is the current one.
+    private readonly List<WordTabStop[]> _snapshotTabLists = new();
+
+    private int TabStopListsSize()
+    {
+        CollectSnapshotTabLists();
+        int size = 4 + 4 * (_depth + 1);
+        foreach (WordTabStop[] list in _snapshotTabLists) size += 4 + list.Length * TabStopSize;
+        return size;
+    }
+
+    private void CollectSnapshotTabLists()
+    {
+        _snapshotTabLists.Clear();
+        _snapshotTabLists.Add(CurrentTabStops());
+        for (int i = 0; i <= _depth; i++) SnapshotTabListIndex(_tabStopsAtGroupStart[i] ?? []);
+    }
+
+    private int SnapshotTabListIndex(WordTabStop[] list)
+    {
+        for (int k = 0; k < _snapshotTabLists.Count; k++) if (ReferenceEquals(_snapshotTabLists[k], list)) return k;
+        _snapshotTabLists.Add(list);
+        return _snapshotTabLists.Count - 1;
+    }
     private static readonly string[] TabAlignments = ["left", "center", "right", "decimal", "bar"];
     private static readonly string[] TabLeaders = ["none", "dot", "hyphen", "underscore", "heavy", "middleDot"];
 
@@ -227,14 +255,21 @@ internal sealed class RtfParser
             MemoryMarshal.Write(bytes.Slice(at), ref cell);
             at += CellDefinitionSize;
         }
-        // the paragraph's tab stops carry over a \par without \pard (Word writes them only when they change)
-        WriteInt(bytes, ref at, TabStops.Count);
-        foreach (WordTabStop stop in TabStops)
+        // the paragraph's tab stops carry over a \par without \pard (Word writes them only when they change), and each open
+        // group's starting stops come back at its '}'
+        CollectSnapshotTabLists();
+        WriteInt(bytes, ref at, _snapshotTabLists.Count);
+        foreach (WordTabStop[] list in _snapshotTabLists)
         {
-            WriteInt(bytes, ref at, stop.PositionTwips);
-            bytes[at++] = (byte)Math.Max(0, Array.IndexOf(TabAlignments, stop.Alignment));
-            bytes[at++] = (byte)Math.Max(0, Array.IndexOf(TabLeaders, stop.Leader));
+            WriteInt(bytes, ref at, list.Length);
+            foreach (WordTabStop stop in list)
+            {
+                WriteInt(bytes, ref at, stop.PositionTwips);
+                bytes[at++] = (byte)Math.Max(0, Array.IndexOf(TabAlignments, stop.Alignment));
+                bytes[at++] = (byte)Math.Max(0, Array.IndexOf(TabLeaders, stop.Leader));
+            }
         }
+        for (int i = 0; i < frames; i++) WriteInt(bytes, ref at, SnapshotTabListIndex(_tabStopsAtGroupStart[i] ?? []));
     }
 
     public void RestoreSnapshot(byte[] bytes)
@@ -263,17 +298,24 @@ internal sealed class RtfParser
             _cells.Add(MemoryMarshal.Read<RtfCellDefinition>(bytes.AsSpan(at)));
             at += CellDefinitionSize;
         }
-        int tabStops = ReadInt(bytes, ref at);
-        for (int i = 0; i < tabStops; i++)
+        int lists = ReadInt(bytes, ref at);
+        var tabLists = new WordTabStop[lists][];
+        for (int k = 0; k < lists; k++)
         {
-            int position = ReadInt(bytes, ref at);
-            TabStops.Add(new WordTabStop(position, TabAlignments[Math.Min(bytes[at], TabAlignments.Length - 1)], TabLeaders[Math.Min(bytes[at + 1], TabLeaders.Length - 1)]));
-            at += 2;
-        }
-        _tabStopsChanged = true;
+            var list = new WordTabStop[ReadInt(bytes, ref at)];
+            for (int i = 0; i < list.Length; i++)
+            {
+                int position = ReadInt(bytes, ref at);
+                list[i] = new WordTabStop(position, TabAlignments[Math.Min(bytes[at], TabAlignments.Length - 1)], TabLeaders[Math.Min(bytes[at + 1], TabLeaders.Length - 1)]);
+                at += 2;
+            }
+            tabLists[k] = list;
+        }
+        TabStops.AddRange(tabLists[0]);
+        _tabStopsArray = tabLists[0];
+        _tabStopsChanged = false;
         if (_tabStopsAtGroupStart.Length < frames + 1) _tabStopsAtGroupStart = new WordTabStop[]?[frames + 32];
-        WordTabStop[] restored = CurrentTabStops();
-        for (int i = 0; i < frames; i++) _tabStopsAtGroupStart[i] = restored;
+        for (int i = 0; i < frames; i++) _tabStopsAtGroupStart[i] = tabLists[ReadInt(bytes, ref at)];
         _nestedCells.Clear(); _pendingNestedCell = default; Array.Clear(_nestedRowBorders, 0, 6); _isNestedRowRightToLeft = false; _nestedRowHeight = 0;
         _isIgnorableNext = false;
         _skipCount = 0;
