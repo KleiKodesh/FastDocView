@@ -23,6 +23,8 @@ internal sealed class OdtDocumentMeta
     public DateTime? CreationDate { get; private set; }
     public DateTime? ModificationDate { get; private set; }
     public Dictionary<string, string> UserDefined { get; } = new(StringComparer.Ordinal);
+    /// <summary>meta:document-statistic (ODF 1.3 part 3 4.3.2.18) by attribute local name (word-count, paragraph-count...).</summary>
+    public Dictionary<string, string> Statistics { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Reads office:meta's children from <paramref name="reader"/> until office:body / the styles begin (null when it never reaches meta).</summary>
     public static OdtDocumentMeta Read(XmlReader reader, string officeNamespace)
@@ -34,6 +36,17 @@ internal sealed class OdtDocumentMeta
             if (reader.NodeType != XmlNodeType.Element) { reader.Read(); continue; }
             if (reader.NamespaceURI == officeNamespace && reader.LocalName is "body" or "styles" or "automatic-styles" or "master-styles" or "font-face-decls" or "settings" or "scripts") break;
             bool isMeta = reader.NamespaceURI == MetaNamespace, isDublinCore = reader.NamespaceURI == DublinCoreNamespace;
+            if (isMeta && reader.LocalName == "document-statistic")
+            {
+                if (reader.MoveToFirstAttribute())
+                {
+                    do if (reader.NamespaceURI == MetaNamespace) meta.Statistics[reader.LocalName] = reader.Value;
+                    while (reader.MoveToNextAttribute());
+                    reader.MoveToElement();
+                }
+                reader.Read();
+                continue;
+            }
             if ((!isMeta && !isDublinCore) || reader.IsEmptyElement && !(isMeta && reader.LocalName == "user-defined")) { reader.Read(); continue; }
             string local = reader.LocalName;
             string? name = isMeta && local == "user-defined" ? reader.GetAttribute("name", MetaNamespace) : null;

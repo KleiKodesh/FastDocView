@@ -513,18 +513,32 @@ internal sealed class OdtBodyBlockScanner
             case Name.Paragraph or Name.Heading:
             {
                 string? label = isListItemParagraph ? _numbering.ParagraphStarted() : null;
-                StartBlock(WordDocumentBlockKind.Paragraph, isListItemParagraph || _numbering.IsInsideList ? (byte)_numbering.CurrentLevel : (byte)255, label);
+                int headingLevel = 0;
+                string? outlineLabel = null;
+                if (name == Name.Heading)
+                {
+                    headingLevel = 1;                                            // txtparai.cxx: text:h defaults to outline level 1
+                    if (Attribute(tag, nameEnd, "text:outline-level") is { } level && int.TryParse(level, out int parsed) && parsed >= 1) headingLevel = Math.Min(10, parsed);
+                    _fieldState = _fieldState.HeadingStarted(headingLevel);
+                    // heading numbering (text:outline-style): every text:h outside a list that is not a list header (probe 2026-11-17)
+                    bool isCounted = !isListItemParagraph && !_numbering.IsInsideList && Attribute(tag, nameEnd, "text:is-list-header") != "true";
+                    OdtListStyle? outline = _styles.ListStyle(OdtListStyle.OutlineStyleName);
+                    int? startValue = Attribute(tag, nameEnd, "text:start-value") is { } start && int.TryParse(start, out int startParsed) && startParsed >= 0 ? startParsed
+                                    : Attribute(tag, nameEnd, "text:restart-numbering") == "true" ? outline?.LevelAt(headingLevel - 1).StartValue : null;
+                    _fieldState = _fieldState.HeadingNumbered(headingLevel, outline, startValue, isCounted, out outlineLabel);
+                    if (outlineLabel is not null) _numbering.UsedListStyles[OdtListStyle.OutlineStyleName] = outline!;
+                }
+                StartBlock(WordDocumentBlockKind.Paragraph, isListItemParagraph || _numbering.IsInsideList ? (byte)_numbering.CurrentLevel : (byte)255, label ?? outlineLabel);
+                if (label is null && outlineLabel is not null)
+                    ListLabelLayouts[ListLabelLayouts.Count - 1] = _styles.ListStyle(OdtListStyle.OutlineStyleName)!.LevelAt(headingLevel - 1).Layout;
                 // one pending label at a time: a list paragraph nested in one still waiting keeps the default language
                 if (label is not null && _languageLabel is null && _numbering.LastLanguageDependent is { } dependent)
                     _languageLabel = new PendingLanguageLabel(_currentBlock, ListLabels.Count - 1, dependent.Style, dependent.Level, dependent.Counters, Attribute(tag, nameEnd, "text:style-name"));
                 NoteSectionStart("paragraph", Attribute(tag, nameEnd, "text:style-name"));
                 if (name == Name.Heading)
                 {
-                    _headingLevel = 1;                                           // txtparai.cxx: text:h defaults to outline level 1
-                    if (Attribute(tag, nameEnd, "text:outline-level") is { } level && int.TryParse(level, out int parsed) && parsed >= 1) _headingLevel = Math.Min(10, parsed);
+                    _headingLevel = headingLevel;
                     if (_headingLevel == 1) _footnotesBeforeChapter = _noteCounts[(int)WordDocumentNoteKind.Footnote];
-                    _fieldState = _fieldState.HeadingStarted(_headingLevel);
-                    BlockFieldStates[_currentBlock] = _fieldState;
                 }
                 return Frame.Block;
             }

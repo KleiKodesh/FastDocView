@@ -630,6 +630,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                 throw new WordDocumentSourceChangedException(FilePath);
             try
             {
+                _searchFieldsBlock = -1;               // computed values may have changed (the index grew)
                 int wantedEnd = (int)Math.Min(int.MaxValue, (long)fromBlock + Math.Max(1, maxBlocksToScan));
                 if (_builder is { } builder)
                 {
@@ -644,10 +645,12 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                 if (fromBlock < end)
                 {
                     _searchText ??= new OdtSearchTextScanner(_blocks.RootOpenTag);
+                    _searchText.ComputedFieldText = SearchFieldText;     // what is shown: computed fields searched by their shown text
                     long pieceStartOffset = -1;            // a byte piece's start in the part while it is scanned: hit block starts are recorded
                     var pieceHitStarts = new List<long>();  // to verify the scanner's numbering if the piece fails
                     void BlockEnded(int blockIndex)
                     {
+                        if (matcher.Count > 0 && _searchText!.CurrentBlockHasHiddenParagraph && IsBlockHidden(blockIndex)) matcher.Reset();   // not printed: not found
                         if (matcher.Count > 0)
                         {
                             hits.Add(blockIndex);
@@ -663,8 +666,12 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                         foreach ((int blockIndex, int start, int length) in blocks)
                         {
                             matcher.Reset();
-                            if (mode == OdtSearchTextMode.ReferenceXmlReader) _referenceSearchText!.FeedOdf(bytes, start, length, matcher);
-                            else _searchText.Feed(bytes, start, length, matcher);
+                            if (mode == OdtSearchTextMode.ReferenceXmlReader)
+                            {
+                                _referenceSearchText!.FeedOdf(bytes, start, length, matcher, ordinal => SearchFieldText(blockIndex, ordinal), OdtBlockHtmlRenderer.ComputedFieldElementNames);
+                                if (matcher.Count > 0 && bytes.AsSpan(start, length).IndexOf("hidden-paragraph"u8) >= 0 && IsBlockHidden(blockIndex)) matcher.Reset();
+                            }
+                            else _searchText.Feed(bytes, start, length, matcher, blockIndex);
                             BlockEnded(blockIndex);
                             if (ObjectElementAt(bytes.AsSpan(start, length)) >= 0) objectBlocks.Add(blockIndex);
                         }
@@ -748,6 +755,44 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         get { lock (_readLock) return _builder is { } builder ? builder.KnownHeadings.ToArray() : _index!.Headings; }
     }
 
+    // -- search over computed fields: the shown text of a block's computed fields, by ordinal (OdtSearchTextScanner.ComputedFieldText)
+
+    private OdtFieldComputer? _searchFields;
+    private int _searchFieldsBlock = -1;
+    private string?[] _searchFieldTexts = [];
+    private bool _searchBlockHidden;
+
+    private void ComputeSearchFields(int blockIndex)
+    {
+        if (_searchFieldsBlock == blockIndex) return;
+        _searchFieldsBlock = blockIndex;
+        _searchFieldTexts = [];
+        _searchBlockHidden = false;
+        if ((uint)blockIndex >= (uint)_blocks.BlockCount || _reader.ReadBlocks(blockIndex, 1) is not { Count: 1 } blocks) return;
+        XElement block = blocks[0].element;
+        _searchFields ??= new OdtFieldComputer(this);
+        _searchFields.BeginBlock(blockIndex, block, _blocks.FieldStateOf(blockIndex));
+        try
+        {
+            IReadOnlyCollection<string> names = OdtBlockHtmlRenderer.ComputedFieldElementNames;
+            _searchFieldTexts = block.Descendants().Where(e => e.Name.Namespace == OdtStyleCascade.Text && names.Contains(e.Name.LocalName)).Select(_searchFields.Compute).ToArray();
+            _searchBlockHidden = (block.Name == OdtStyleCascade.Text + "p" || block.Name == OdtStyleCascade.Text + "h") && _searchFields.IsParagraphHidden(block);
+        }
+        finally { _searchFields.EndBlock(); }
+    }
+
+    private string? SearchFieldText(int blockIndex, int ordinal)
+    {
+        ComputeSearchFields(blockIndex);
+        return (uint)ordinal < (uint)_searchFieldTexts.Length ? _searchFieldTexts[ordinal] : null;
+    }
+
+    private bool IsBlockHidden(int blockIndex)
+    {
+        ComputeSearchFields(blockIndex);
+        return _searchBlockHidden;
+    }
+
     // -- field lookups (OdtFieldComputer): called under _readLock while a window renders; a target not known yet is not scanned for
 
     bool IOdtFieldLookups.IsIndexComplete => _index is not null;
@@ -756,10 +801,12 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         => (uint)blockIndex < (uint)_blocks.BlockCount && _reader.ReadBlocks(blockIndex, 1) is { Count: 1 } blocks ? blocks[0].element : null;
     OdtFieldState IOdtFieldLookups.FieldStateOf(int blockIndex) => _blocks.FieldStateOf(blockIndex);
     string? IOdtFieldLookups.ListLabelOf(int blockIndex) => _blocks.ListLabelOf(blockIndex);
+    int IOdtFieldLookups.ListLevelOf(int blockIndex) => _blocks.ListLevelOf(blockIndex);
     IReadOnlyList<WordDocumentHeading> IOdtFieldLookups.KnownHeadings => _builder is { } builder ? builder.KnownHeadings : _index!.Headings;
     IReadOnlyList<OdtNoteReference> IOdtFieldLookups.NotesIn(int blockIndex) => _blocks.NoteReferencesInBlocks(blockIndex, blockIndex).ToArray();
     OdtDocumentMeta IOdtFieldLookups.Meta => _meta;
     OdtStyleCascade IOdtFieldLookups.Styles => _styles;
+    OdtListStyle? IOdtFieldLookups.ListStyleNamed(string name) => _blocks.ListStyleNamed(name);
 
     /// <summary>Page text width per section (master pages, see <see cref="OdtPageSetup"/>); the known ones while scanning.</summary>
     public int? FindBookmark(string name)

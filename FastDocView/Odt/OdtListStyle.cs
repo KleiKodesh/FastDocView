@@ -17,6 +17,17 @@ namespace FastDocView.Odt;
 public sealed class OdtListStyle
 {
     public const int MaxLevels = 10;
+    /// <summary>The name text:outline-style (heading numbering) is kept under among the list styles; no style name holds U+0001.</summary>
+    public const string OutlineStyleName = "outline";
+
+    /// <summary>A label without its level's prefix and suffix (LibreOffice MakeNumString(..., bInclStrings false)).</summary>
+    public string WithoutPrefixAndSuffix(int level, string label)
+    {
+        Level current = LevelAt(level);
+        if (label.Length >= current.Prefix.Length + current.Suffix.Length && label.StartsWith(current.Prefix, StringComparison.Ordinal) && label.EndsWith(current.Suffix, StringComparison.Ordinal))
+            return label.Substring(current.Prefix.Length, label.Length - current.Prefix.Length - current.Suffix.Length);
+        return label;
+    }
 
     public sealed class Level
     {
@@ -380,7 +391,16 @@ public sealed class OdtListStyle
         if (!int.TryParse(attribute("level", false), NumberStyles.Integer, CultureInfo.InvariantCulture, out int levelNumber)) return null;
         int index = Math.Max(1, Math.Min(MaxLevels, levelNumber)) - 1;
         var level = new Level { Prefix = attribute("num-prefix", true) ?? "", Suffix = attribute("num-suffix", true) ?? "" };
-        if (isTextNamespace && localName == "list-level-style-number")
+        if (isTextNamespace && localName == "outline-level-style")
+        {
+            // text:outline-style (ODF 1.3 part 3 16.34): heading numbering; no style:num-format = no number (xmloff xmlnumi.cxx reads an
+            // outline level like a number level, its format defaulting to none)
+            string? format = attribute("num-format", true);
+            level.NumberFormat = string.IsNullOrEmpty(format) ? "" : NumberFormatOf(format, attribute("num-letter-sync", true));
+            if (int.TryParse(attribute("start-value", false), NumberStyles.Integer, CultureInfo.InvariantCulture, out int start)) level.StartValue = start < 0 ? 1 : start;
+            if (int.TryParse(attribute("display-levels", false), NumberStyles.Integer, CultureInfo.InvariantCulture, out int display)) level.DisplayLevels = Math.Max(1, display);
+        }
+        else if (isTextNamespace && localName == "list-level-style-number")
         {
             level.NumberFormat = NumberFormatOf(attribute("num-format", true), attribute("num-letter-sync", true));
             if (int.TryParse(attribute("start-value", false), NumberStyles.Integer, CultureInfo.InvariantCulture, out int start)) level.StartValue = start < 0 ? 1 : start;

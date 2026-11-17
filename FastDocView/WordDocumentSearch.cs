@@ -591,7 +591,7 @@ internal sealed class WordXmlSearchText
     /// (comments), text:note-body (the note's text: the block's HTML shows only its mark), and what the renderer does not show
     /// (<see cref="IsHiddenOdf"/>: svg:title / svg:desc, shapes, images, other namespaces inside a paragraph...).
     /// </summary>
-    public void FeedOdf(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher)
+    public void FeedOdf(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher, Func<int, string?>? computedFieldText = null, IReadOnlyCollection<string>? computedFieldNames = null)
     {
         try
         {
@@ -601,6 +601,19 @@ internal sealed class WordXmlSearchText
             bool skipped = false;                  // Skip() already moved to the next node
             var contexts = new List<(int depth, OdfTextContext context)>();   // what the renderer shows inside the open elements
             byte[] localBytes = new byte[32];
+            int fieldOrdinal = 0;                  // computed fields (OdtFieldComputer) by ordinal in document order, skipped subtrees included
+            bool IsComputed(XmlReader at) => computedFieldNames is not null && at.NamespaceURI == OdfTextNamespace && computedFieldNames.Contains(at.LocalName);
+            void SkipCounting()
+            {
+                // Skip(), counting the computed fields inside; leaves the reader on the element's end (the loop's Read moves past it)
+                if (computedFieldNames is null || reader.IsEmptyElement) { reader.Skip(); skipped = true; return; }
+                using (XmlReader subtree = reader.ReadSubtree())
+                {
+                    subtree.Read();
+                    while (subtree.Read()) if (subtree.NodeType == XmlNodeType.Element && IsComputed(subtree)) fieldOrdinal++;
+                }
+                skipped = false;
+            }
             while (skipped ? !reader.EOF : reader.Read())
             {
                 skipped = false;
@@ -609,9 +622,23 @@ internal sealed class WordXmlSearchText
                     case XmlNodeType.Element:
                     {
                         OdfTextContext? context = contexts.Count == 0 ? null : contexts[contexts.Count - 1].context;
+                        if (IsComputed(reader))
+                        {
+                            int ordinal = fieldOrdinal++;
+                            bool shownHere = paragraphDepth > 0 && contexts.Count > 0 && contexts[contexts.Count - 1].context == OdfTextContext.Paragraph;
+                            if (shownHere && computedFieldText!(ordinal) is { } shown)
+                            {
+                                foreach (char c in shown)
+                                {
+                                    if (c is ' ' or '\t' or '\r' or '\n') { if (!lastWasSpace) matcher.Feed(' '); lastWasSpace = true; }
+                                    else { matcher.Feed(c); lastWasSpace = false; }
+                                }
+                                SkipCounting(); continue;
+                            }
+                        }
                         ReadOnlySpan<byte> local = AsciiName(reader.LocalName, localBytes);
                         if (IsHiddenOdf(context, reader.NamespaceURI == OdfTextNamespace, reader.NamespaceURI == OdfDrawingNamespace, local, out OdfTextContext? opens, reader.NamespaceURI == OdfTableNamespace))
-                        { reader.Skip(); skipped = true; continue; }
+                        { SkipCounting(); continue; }
                         if (opens is { } opened && !reader.IsEmptyElement) contexts.Add((reader.Depth, opened));
                     }
                         if (reader.NamespaceURI == OdfTextNamespace)
@@ -628,15 +655,15 @@ internal sealed class WordXmlSearchText
                                     break;
                                 case "tab": matcher.Feed(' '); break;
                                 case "line-break": matcher.Separator(); break;
-                                case "note-citation": matcher.Separator(); reader.Skip(); skipped = true; continue;   // the note's mark: a match never crosses it
-                                case "tracked-changes": reader.Skip(); skipped = true; continue;
+                                case "note-citation": matcher.Separator(); SkipCounting(); continue;   // the note's mark: a match never crosses it
+                                case "tracked-changes": SkipCounting(); continue;
                                 case "note-body":
                                     matcher.Separator();
                                     if (contexts.Count > 0 && contexts[contexts.Count - 1].depth == reader.Depth) contexts.RemoveAt(contexts.Count - 1);   // never closes: skipped whole
-                                    reader.Skip(); skipped = true; continue;
+                                    SkipCounting(); continue;
                             }
                         }
-                        else if (reader.NamespaceURI == OdfOfficeNamespace && reader.LocalName == "annotation") { reader.Skip(); skipped = true; continue; }
+                        else if (reader.NamespaceURI == OdfOfficeNamespace && reader.LocalName == "annotation") { SkipCounting(); continue; }
                         break;
                     case XmlNodeType.EndElement:
                         if (contexts.Count > 0 && contexts[contexts.Count - 1].depth == reader.Depth) contexts.RemoveAt(contexts.Count - 1);

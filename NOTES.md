@@ -3004,5 +3004,15 @@ sender-*, text-input; page-number / page-count / references by page need pages (
 - Data styles: number:date-style / number:time-style are kept in the style sections (whole, whitespace kept: a number:text
   of blanks); without one, LibreOffice's defaults as printed: date M/D/YY, time HH:MM:SS, creation / modification date
   MM/DD/YYYY. Document information is read from meta.xml / office:meta at open (small, not the body).
-- Not done: statistics fields (saved text), heading outline numbers (chapter numbers come from a saved text:number), hidden
-  paragraphs, search inside computed values (saved text is searched).
+- Follow-up (2026-11-17, probe fidelity-v1-odt-outline.fodt printed by soffice): text:outline-style numbers every text:h outside a
+  list that is not a list header (1. / (1.a) / (1.b) / 2. / 3.; start-value and restart-numbering followed); the counters
+  ride in OdtFieldState (scan state), the label is the heading block's list label (OdtListStyle.OutlineStyleName in the
+  used list styles). Chapter fields: number = prefix + number + suffix, plain = without (chpfld.cxx ExpandImpl), name after
+  a space; a sequence with display-outline-level prints chapter + "." + number (expfld.cxx SetChapter); a reference's
+  "chapter" = the plain number ("1.a"). A true text:hidden-paragraph drops its paragraph. Statistics fields print
+  meta:document-statistic (999 printed for a short text), so they come from meta.xml, not from a count.
+- Search reads what is shown: OdtSearchTextScanner (and the reference reader) number the computed-field elements of a block
+  in document order (skipped regions included) and ask the document for each one's shown text (OdtFieldComputer over the
+  block, read only when it holds such a field); a block whose paragraph is hidden reports no hit. WordDocumentText reads
+  through the same scan. Limit: only a block that is itself a hidden paragraph drops its hits; a hidden paragraph inside a
+  table cell is not drawn but its words are still found.

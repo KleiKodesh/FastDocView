@@ -19,18 +19,71 @@ internal sealed class OdtFieldState
     /// <summary>Sequence name -> text:display-outline-level (1-based, 0 = none; ODF 1.3 part 3 7.4.13.1).</summary>
     private readonly Dictionary<string, int> _sequenceLevels;
 
+    /// <summary>Heading (outline) numbering: the counter per outline level (OdtListNumbering.Unset = not counted yet).</summary>
+    private int[] _outlineCounters = NewCounters();
+    /// <summary>Per outline level D (index D - 1): the level of the last heading at level D or above (0 = none) - the chapter a field at D is in.</summary>
+    private int[] _chapterLevels = new int[OdtListStyle.MaxLevels];
+
+    private static int[] NewCounters() => Enumerable.Repeat(OdtListNumbering.Unset, OdtListStyle.MaxLevels).ToArray();
+
     private OdtFieldState(Dictionary<string, OdtFieldValue> values, Dictionary<string, int> sequenceLevels)
     {
         _values = values;
         _sequenceLevels = sequenceLevels;
     }
 
-    public bool IsEmpty => _values.Count == 0 && _sequenceLevels.Count == 0;
+    public bool IsEmpty => _values.Count == 0 && _sequenceLevels.Count == 0 && _chapterLevels.All(level => level == 0);
+
+    /// <summary>
+    /// A heading at outline <paramref name="level"/> (1-based): counts it in the outline numbering (the level's counter steps, or
+    /// text:start-value / restart sets it; deeper levels restart) and returns its label - null when the level shows no number
+    /// (LibreOffice numbers every text:h through text:outline-style unless it is a list header or inside a list; probe 2026-11-17).
+    /// </summary>
+    public OdtFieldState HeadingNumbered(int level, OdtListStyle? outline, int? startValue, bool isCounted, out string? label)
+    {
+        label = null;
+        OdtFieldState copy = Copy();
+        int index = Math.Max(1, Math.Min(OdtListStyle.MaxLevels, level)) - 1;
+        if (!isCounted) return copy;                 // a list header / a heading in a list: not a numbered chapter
+        for (int d = index; d < OdtListStyle.MaxLevels; d++) copy._chapterLevels[d] = level;
+        if (outline is null) return copy;
+        OdtListStyle.Level style = outline.LevelAt(index);
+        int[] counters = copy._outlineCounters;
+        counters[index] = startValue ?? (counters[index] == OdtListNumbering.Unset ? style.StartValue : counters[index] + 1);
+        for (int deeper = index + 1; deeper < counters.Length; deeper++) counters[deeper] = OdtListNumbering.Unset;
+        if (style.NumberFormat.Length > 0)
+        {
+            string formatted = outline.FormatLabel(index, counters);
+            if (formatted.Length > style.Prefix.Length + style.Suffix.Length) label = formatted;
+        }
+        return copy;
+    }
+
+    /// <summary>
+    /// The number of the chapter a field at outline level <paramref name="displayLevel"/> is in, without prefix / suffix (SwSetExpFieldType::SetChapter:
+    /// FindOutlineNodeOfLevel, MakeNumString(.., false)); "" when there is none or it shows no number.
+    /// </summary>
+    public string ChapterNumber(OdtListStyle? outline, int displayLevel)
+    {
+        if (outline is null || displayLevel <= 0) return "";
+        int level = _chapterLevels[Math.Min(OdtListStyle.MaxLevels, displayLevel) - 1];
+        if (level == 0) return "";
+        int index = level - 1;
+        if (outline.LevelAt(index).NumberFormat.Length == 0 || _outlineCounters[index] == OdtListNumbering.Unset) return "";
+        return outline.WithoutPrefixAndSuffix(index, outline.FormatLabel(index, _outlineCounters));
+    }
+
+    /// <summary>A sequence's text:display-outline-level (0 = none).</summary>
+    public int SequenceLevelOf(string name) => _sequenceLevels.TryGetValue(name, out int level) ? level : 0;
 
     public OdtFieldValue? ValueOf(string name) => _values.TryGetValue(name, out OdtFieldValue value) ? value : null;
 
     private OdtFieldState Copy() => new(new Dictionary<string, OdtFieldValue>(_values, StringComparer.OrdinalIgnoreCase),
-                                        new Dictionary<string, int>(_sequenceLevels, StringComparer.OrdinalIgnoreCase));
+                                        new Dictionary<string, int>(_sequenceLevels, StringComparer.OrdinalIgnoreCase))
+    {
+        _outlineCounters = (int[])_outlineCounters.Clone(),
+        _chapterLevels = (int[])_chapterLevels.Clone(),
+    };
 
     /// <summary>text:sequence-decl (7.4.13.1): the counter starts at 0; display-outline-level restarts it per chapter.</summary>
     public OdtFieldState Declare(string name, string? outlineLevel)
@@ -115,6 +168,8 @@ internal sealed class OdtFieldState
             AppendString(bytes, entry.Key);
             bytes.Add((byte)entry.Value);
         }
+        foreach (int counter in _outlineCounters) IndexBinaryArrays.AppendVarint(bytes, (uint)(counter == OdtListNumbering.Unset ? 0 : counter + 1));
+        foreach (int level in _chapterLevels) bytes.Add((byte)level);
     }
 
     public static OdtFieldState Read(byte[] bytes)
@@ -143,8 +198,19 @@ internal sealed class OdtFieldState
             if (position >= bytes.Length) throw Damaged();
             levels[name] = bytes[position++];
         }
+        var state = new OdtFieldState(values, levels);
+        for (int i = 0; i < OdtListStyle.MaxLevels; i++)
+        {
+            ulong counter = IndexBinaryArrays.ReadVarint(bytes, ref position);
+            state._outlineCounters[i] = counter == 0 ? OdtListNumbering.Unset : (int)Math.Min(int.MaxValue, counter - 1);
+        }
+        for (int i = 0; i < OdtListStyle.MaxLevels; i++)
+        {
+            if (position >= bytes.Length) throw Damaged();
+            state._chapterLevels[i] = Math.Min(OdtListStyle.MaxLevels, (int)bytes[position++]);
+        }
         if (position != bytes.Length) throw Damaged();
-        return new OdtFieldState(values, levels);
+        return state;
     }
 
     private static int Count(byte[] bytes, ref int position)

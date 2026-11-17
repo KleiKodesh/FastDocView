@@ -13,11 +13,15 @@ internal interface IOdtFieldLookups
     XElement? ReadBlock(int blockIndex);
     OdtFieldState FieldStateOf(int blockIndex);
     string? ListLabelOf(int blockIndex);
+    /// <summary>The list depth of a list paragraph, -1 otherwise (an outline-numbered heading is not a list paragraph).</summary>
+    int ListLevelOf(int blockIndex);
     IReadOnlyList<WordDocumentHeading> KnownHeadings { get; }
     IReadOnlyList<OdtNoteReference> NotesIn(int blockIndex);
     OdtDocumentMeta Meta { get; }
     string FilePath { get; }
     OdtStyleCascade Styles { get; }
+    /// <summary>A list style the index kept (the outline style under <see cref="OdtListStyle.OutlineStyleName"/>), or null.</summary>
+    OdtListStyle? ListStyleNamed(string name);
 }
 
 /// <summary>
@@ -95,6 +99,25 @@ internal sealed class OdtFieldComputer
         return state;
     }
 
+    /// <summary>
+    /// A paragraph holding a text:hidden-paragraph whose condition is true is not printed (ODF 1.3 part 3 7.7.11; LibreOffice
+    /// dropped it from the PDF, probe 2026-11-17). Only the paragraph's own fields count, not those of a note or text box in it.
+    /// </summary>
+    public bool IsParagraphHidden(XElement paragraph)
+    {
+        foreach (XElement hidden in paragraph.Descendants(Text + "hidden-paragraph"))
+        {
+            if (hidden.Ancestors().FirstOrDefault(a => a.Name == Text + "p" || a.Name == Text + "h") != paragraph) continue;
+            OdtFieldState state = _stateBefore.TryGetValue(hidden, out OdtFieldState? known) ? known : OdtFieldState.Empty;
+            if ((string?)hidden.Attribute(Text + "condition") is { Length: > 0 } condition && OdtFieldFormula.Evaluate(condition, state.ValueOf) is { } truth)
+            {
+                if (truth.IsText ? truth.Text!.Length > 0 : truth.Number != 0) return true;
+            }
+            else if ((string?)hidden.Attribute(Text + "is-hidden") == "true") return true;
+        }
+        return false;
+    }
+
     /// <summary>The text a field shows, or null to show the text it was saved with.</summary>
     public string? Compute(XElement field)
     {
@@ -105,7 +128,7 @@ internal sealed class OdtFieldComputer
         {
             case "sequence":
                 return _setValues.TryGetValue(field, out OdtFieldValue? sequence) && sequence is { } number
-                    ? FormatSequence(number, (string?)field.Attribute(Style + "num-format")) : null;
+                    ? WithChapter(state, field, FormatSequence(number, (string?)field.Attribute(Style + "num-format"))) : null;
             case "variable-set":
                 if (Attribute("display") == "none") return "";
                 return _setValues.TryGetValue(field, out OdtFieldValue? set) && set is { } setValue ? setValue.Display : null;
@@ -152,6 +175,10 @@ internal sealed class OdtFieldComputer
                 if (IsFixed(field)) return null;
                 return Attribute("name") is { } property && _lookups.Meta.UserDefined.TryGetValue(property, out string? propertyValue) ? propertyValue : null;
             case "file-name": return IsFixed(field) ? null : FileName(Attribute("display") ?? "full");
+            // statistics: LibreOffice prints the document's saved statistics (meta:document-statistic), not a count of its own (probe
+            // 2026-11-17: 999 words printed for a short text); page-count is a page field (paged view)
+            case "word-count" or "character-count" or "paragraph-count" or "table-count" or "image-count" or "object-count":
+                return _lookups.Meta.Statistics.TryGetValue(field.Name.LocalName, out string? statistic) && long.TryParse(statistic, out long count) ? count.ToString(CultureInfo.InvariantCulture) : null;
             default: return null;
         }
     }
@@ -160,6 +187,19 @@ internal sealed class OdtFieldComputer
 
     /// <summary>A document information field: the saved text when fixed, else the document's value ("" when the document has none).</summary>
     private static string? Information(XElement field, string? value) => IsFixed(field) ? null : value ?? "";
+
+    /// <summary>
+    /// A sequence numbered per chapter shows the chapter's number before its own, joined by "." (SwSetExpFieldType::SetChapter: the
+    /// outline number without prefix / suffix + the delimiter; printed "1.1" under heading "1.", probe 2026-11-17).
+    /// </summary>
+    private string WithChapter(OdtFieldState stateBefore, XElement sequence, string number)
+    {
+        string name = (string?)sequence.Attribute(Text + "name") ?? "";
+        string chapter = stateBefore.ChapterNumber(Outline, stateBefore.SequenceLevelOf(name));
+        return chapter.Length > 0 ? chapter + "." + number : number;
+    }
+
+    private OdtListStyle? Outline => _lookups.ListStyleNamed(OdtListStyle.OutlineStyleName);
 
     private static string FormatSequence(OdtFieldValue value, string? numberFormat)
     {
@@ -218,9 +258,10 @@ internal sealed class OdtFieldComputer
         {
             OdtFieldState state = targetBlock == _block ? StateAtBlockStart() : _lookups.FieldStateOf(targetBlock.Value);
             var values = new Dictionary<XElement, OdtFieldValue?>();
-            Replay(block, state, null, values, element => element == start);
+            var before = new Dictionary<XElement, OdtFieldState>();
+            Replay(block, state, before, values, element => element == start);
             if (!values.TryGetValue(start, out OdtFieldValue? sequenceValue) || sequenceValue is null) return null;
-            string number = FormatSequence(sequenceValue.Value, (string?)start.Attribute(Style + "num-format"));
+            string number = WithChapter(before[start], start, FormatSequence(sequenceValue.Value, (string?)start.Attribute(Style + "num-format")));
             if (format == "value") return number;
             (string text, int numberStart, int numberEnd) = ParagraphText(paragraph, start, number);
             string category = (string?)start.Attribute(Text + "name") ?? "";
@@ -344,27 +385,36 @@ internal sealed class OdtFieldComputer
 
     // -- chapter (sw/source/core/fields/chpfld.cxx) -------------------------------------------------------------------------
 
-    /// <summary>The nearest heading at or before the block whose outline level is at most <paramref name="level"/> (FindOutlineNodeOfLevel).</summary>
-    private int? ChapterHeading(int blockIndex, int level)
+    /// <summary>The nearest heading at or before the block whose outline level is at most <paramref name="level"/> (FindOutlineNodeOfLevel), and its level.</summary>
+    private (int Block, int Level)? ChapterHeading(int blockIndex, int level)
     {
         IReadOnlyList<WordDocumentHeading> headings = _lookups.KnownHeadings;
         int low = 0, high = headings.Count;
         while (low < high) { int middle = (low + high) / 2; if (headings[middle].BlockIndex <= blockIndex) low = middle + 1; else high = middle; }
         for (int i = low - 1; i >= 0; i--)
-            if (headings[i].Level <= level) return headings[i].BlockIndex;
+            if (headings[i].Level <= level) return (headings[i].BlockIndex, headings[i].Level);
         return null;
+    }
+
+    /// <summary>A heading's number as the outline numbering gives it (with and without the level's prefix / suffix); a saved text:number when it has none.</summary>
+    private (string Number, string Plain) HeadingNumber((int Block, int Level) heading, XElement? element)
+    {
+        if (_lookups.ListLevelOf(heading.Block) < 0 && _lookups.ListLabelOf(heading.Block) is { Length: > 0 } label)
+            return (label, Outline?.WithoutPrefixAndSuffix(heading.Level - 1, label) ?? label);
+        string saved = element?.Element(Text + "number")?.Value ?? "";
+        return (saved, saved.Trim().TrimEnd('.', ')', ' ').TrimStart('('));
     }
 
     private string Chapter(int blockIndex, string display, int level)
     {
         if (ChapterHeading(blockIndex, Math.Max(1, level)) is not { } heading) return "";
-        XElement? element = heading == _block ? _blockElement : _lookups.ReadBlock(heading);
+        XElement? element = heading.Block == _block ? _blockElement : _lookups.ReadBlock(heading.Block);
         if (element is null) return "";
-        string number = element.Element(Text + "number")?.Value ?? "";
+        (string number, string plain) = HeadingNumber(heading, element);
         var title = new StringBuilder();
         AppendText(element, title, child => child.Name == Text + "number" ? "" : null);
         string name = title.ToString().Trim();
-        string plain = number.Trim().TrimEnd('.', ')', ' ').TrimStart('(');
+        // chpfld.cxx ExpandImpl :104-121: Number = prefix + number + suffix, NumberNoPrePost = the number; with the title after a space (printed "1. Alpha")
         return display switch
         {
             "name" => name,
@@ -375,11 +425,12 @@ internal sealed class OdtFieldComputer
         };
     }
 
+    /// <summary>A reference's "chapter": the number of the target's chapter without prefix / suffix (reffld.cxx :708-724, printed "1.a").</summary>
     private string ChapterNumber(int blockIndex)
     {
         if (ChapterHeading(blockIndex, 10) is not { } heading) return "";
-        XElement? element = heading == _block ? _blockElement : _lookups.ReadBlock(heading);
-        return element?.Element(Text + "number")?.Value ?? "";
+        XElement? element = _lookups.ListLabelOf(heading.Block) is not null ? null : heading.Block == _block ? _blockElement : _lookups.ReadBlock(heading.Block);
+        return HeadingNumber(heading, element).Plain;
     }
 
     // -- dates, times, file name --------------------------------------------------------------------------------------------

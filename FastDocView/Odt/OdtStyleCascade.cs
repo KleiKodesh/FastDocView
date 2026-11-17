@@ -156,7 +156,7 @@ public sealed class OdtStyleCascade
                 configuration.RestartsAtChapter = !isEndnote && (string?)element.Attribute(Text + "start-numbering-at") == "chapter";
                 _notesConfigurations[isEndnote ? 1 : 0] = configuration;
             }
-            else if (local == "outline-style") { /* heading numbering: not rendered (see NOTES.md) */ }
+            else if (local == "outline-style") _listStyles[OdtListStyle.OutlineStyleName] = new OdtListStyle(element);   // heading numbering
         }
     }
 

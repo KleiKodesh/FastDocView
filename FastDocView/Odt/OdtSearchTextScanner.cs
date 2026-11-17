@@ -81,8 +81,8 @@ internal sealed class OdtSearchTextScanner
     public Frame[] StoppedFrames() => _frames.ToArray();
 
     /// <summary>One block [start, start + length) of <paramref name="bytes"/> (a block whose range comes from the index).</summary>
-    public void Feed(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher)
-        => Scan(bytes.AsSpan(start, length), matcher, 0, -1, null, null, out _);
+    public void Feed(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher, int blockIndex = 0)
+        => Scan(bytes.AsSpan(start, length), matcher, blockIndex, -1, null, null, out _);
 
     /// <summary>
     /// A run of consecutive body blocks with no per-block ranges: <paramref name="xml"/> starts at block
@@ -109,6 +109,35 @@ internal sealed class OdtSearchTextScanner
 
     private bool _lastWasSpace;
 
+    /// <summary>
+    /// The text a computed field shows (OdtFieldComputer), by block and the field's ordinal among the block's computed-field
+    /// elements (OdtBlockHtmlRenderer.ComputedFieldElementNames, every one in document order, skipped regions included); null =
+    /// its saved text. Null hook: saved text everywhere.
+    /// </summary>
+    public Func<int, int, string?>? ComputedFieldText { get; set; }
+
+    /// <summary>Whether the block being scanned holds a text:hidden-paragraph (the caller decides whether it hides the block).</summary>
+    public bool CurrentBlockHasHiddenParagraph { get; private set; }
+
+    private static readonly byte[][] ComputedNames = OdtBlockHtmlRenderer.ComputedFieldElementNames.Select(name => Encoding.ASCII.GetBytes(name)).ToArray();
+    private static readonly bool[] ComputedNameLengths = LengthsOf(ComputedNames);
+    private static readonly byte[] HiddenParagraphName = "hidden-paragraph"u8.ToArray();
+    private int _fieldOrdinal;
+
+    private static bool[] LengthsOf(byte[][] names)
+    {
+        var lengths = new bool[64];
+        foreach (byte[] name in names) lengths[name.Length] = true;
+        return lengths;
+    }
+
+    private static bool IsComputedName(ReadOnlySpan<byte> local)
+    {
+        if (local.Length >= ComputedNameLengths.Length || !ComputedNameLengths[local.Length]) return false;
+        foreach (byte[] name in ComputedNames) if (local.SequenceEqual(name)) return true;
+        return false;
+    }
+
 #if NET
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]   // optimised from the first call: a search runs in short bursts
 #endif
@@ -128,6 +157,8 @@ internal sealed class OdtSearchTextScanner
         int skipDepth = -1;             // depth of the open skipped element
         int paragraphDepth = 0;         // open text:p / text:h
         _lastWasSpace = false;
+        _fieldOrdinal = 0;
+        CurrentBlockHasHiddenParagraph = false;
         stoppedAt = 0;
         while (position < end)
         {
@@ -259,6 +290,8 @@ internal sealed class OdtSearchTextScanner
                 skipDepth = -1;
                 paragraphDepth = 0;
                 _lastWasSpace = false;
+                _fieldOrdinal = 0;
+                CurrentBlockHasHiddenParagraph = false;
                 _namespaces.ClearBlock();     // the reference reads the block's range alone: only the root's declarations hold
             }
             int elementDepth = depth;
@@ -266,6 +299,27 @@ internal sealed class OdtSearchTextScanner
             {
                 ReadOnlySpan<byte> attributes = xml.Slice(elementNameEnd, tagEnd - elementNameEnd);
                 if (attributes.IndexOf("xmlns"u8) >= 0 && !_namespaces.ReadDeclarations(attributes, elementDepth)) return Fail(segmented, block, out stoppedAt);
+            }
+            if (ComputedFieldText is { } computedFieldText)
+            {
+                ReadOnlySpan<byte> fieldPrefix = PrefixOf(elementName, out ReadOnlySpan<byte> fieldLocal);
+                if ((IsComputedName(fieldLocal) || fieldLocal.SequenceEqual(HiddenParagraphName)) && Resolve(fieldPrefix) == NamespaceKind.Text)
+                {
+                    if (fieldLocal.SequenceEqual(HiddenParagraphName)) CurrentBlockHasHiddenParagraph = true;
+                    else
+                    {
+                        int ordinal = _fieldOrdinal++;
+                        // a shown field: its computed text stands for its saved content
+                        if (skipDepth < 0 && paragraphDepth > 0 && IsParagraphContent && computedFieldText(block, ordinal) is { } shown)
+                        {
+                            FeedText(Encoding.UTF8.GetBytes(shown), matcher);
+                            position = tagEnd + 1;
+                            if (!isEmpty) { skipDepth = elementDepth; depth++; }
+                            else if (_namespaces.HasBlockDeclarations) _namespaces.Pop(depth);
+                            continue;
+                        }
+                    }
+                }
             }
             if (skipDepth < 0)
             {

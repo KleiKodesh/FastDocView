@@ -121,6 +121,8 @@ public static class OdtFieldsFidelityTest
         TestReport.Check(shown.TryGetValue("date-nofix", out string? date) && date == today, $"date-nofix: today '{Ascii(date ?? "")}'");
         TestReport.Check(shown.TryGetValue("time-nofix", out string? time) && Regex.IsMatch(time, @"^\d\d:\d\d:\d\d$") && time != "01:02:03", $"time-nofix: now '{Ascii(time ?? "")}'");
 
+        RunOutline();
+
         TestReport.Step("OpenDocument fields on demand: early references to late targets are provisional until the index is complete");
         RunLateTargets(Path.Combine(TestReport.OutputDirectory, "synthetic-odt-late-field-targets-v1.fodt"));
     }
@@ -158,6 +160,93 @@ public static class OdtFieldsFidelityTest
             TestReport.Check(reopened.RenderBlocks(1, 1)[0].Html.Contains("Target words"), "reopen: the early reference resolves at once");
         }
     }
+
+    /// <summary>
+    /// Heading numbering, chapters, hidden paragraphs and statistics as LibreOffice 25.8 printed fidelity-v1-odt-outline.fodt
+    /// (2026-11-17): outline-style numbers every text:h outside a list that is not a list header; a sequence numbered per chapter
+    /// shows "chapter.number"; a paragraph with a true text:hidden-paragraph is not printed; statistics fields print
+    /// meta:document-statistic. Search reads what is shown: computed values found, saved texts and hidden paragraphs not.
+    /// </summary>
+    private static void RunOutline()
+    {
+        TestReport.Step("OpenDocument heading numbering, chapter numbers, hidden paragraphs, statistics; search reads shown field text");
+        string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-odt-outline.fodt");
+        if (!File.Exists(path) || File.ReadAllText(path) != OutlineFixture) File.WriteAllText(path, OutlineFixture, new UTF8Encoding(false));
+        List<string> html = OdtDrawingFidelityTest.Render(path);
+        List<string> texts = html.Select(block => WebUtility.HtmlDecode(Regex.Replace(block, "<[^>]+>", "")).Trim()).ToList();
+        string Shown(string key) => texts.Select(text => Regex.Match(text, "^" + Regex.Escape(key) + @" \[(.*)\]$")).FirstOrDefault(m => m.Success)?.Groups[1].Value ?? "(missing)";
+        (string key, string printed)[] expected =
+        [
+            ("chapnum", "1."), ("chapplain", "1"), ("chapboth", "1. Alpha"), ("seq", "1.1"), ("chap2", "(1.a)"), ("seq2", "2.1"), ("refchap", "1.a"),
+            ("words", "999"), ("chars", "9999"), ("paras", "777"), ("tables", "77"), ("images", "77"), ("objects", "77"),
+        ];
+        foreach ((string key, string printed) in expected)
+            TestReport.Check(Shown(key) == printed, $"{key}: '{Ascii(Shown(key))}' (LibreOffice printed '{printed}')");
+        string Heading(string name) => texts.FirstOrDefault(text => text.EndsWith(name, StringComparison.Ordinal)) ?? "(missing)";
+        foreach ((string name, string label) in new[] { ("Alpha", "1."), ("Beta", "(1.a)"), ("Gamma", "(1.b)"), ("Delta", "2."), ("Epsilon", "3.") })
+            TestReport.Check(Heading(name).Replace(" ", "").Replace("\t", "") == label + name, $"heading {name}: '{Ascii(Heading(name))}' (LibreOffice printed '{label}{name}')");
+        TestReport.Check(!Regex.IsMatch(Heading("InList"), "[0-9]") && Heading("Header") == "Header", $"no number: a heading in a list, a list header ('{Ascii(Heading("InList"))}', '{Ascii(Heading("Header"))}')");
+        TestReport.Check(!texts.Any(text => text.Contains("HIDDENTRUE")) && texts.Any(text => text.Contains("HIDDENFALSE")), "a paragraph with a true hidden-paragraph condition is not shown");
+
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-odt-fields"), ForcedMode = WordIndexMode.InMemory });
+        int Hits(IWordWindowedDocument searched, string query)
+        {
+            int hits = 0;
+            for (int from = 0; from < searched.BlockCount;)
+            {
+                WordDocumentSearchBatch batch = searched.Search(query, WordDocumentSearchOptions.Default, from, 1000);
+                hits += batch.HitCounts.Sum();
+                if (batch.ReachedEnd) break;
+                from = batch.NextBlock;
+            }
+            return hits;
+        }
+        TestReport.Check(Hits(document, "9999") == 1 && Hits(document, "2.1") == 1 && Hits(document, "1. Alpha") == 1, $"search finds computed values (statistics, sequence with chapter, chapter field): {Hits(document, "9999")} {Hits(document, "2.1")} {Hits(document, "1. Alpha")}");
+        TestReport.Check(Hits(document, "XX") == 0 && Hits(document, "HIDDENTRUE") == 0 && Hits(document, "HIDDENFALSE") == 1, "search: no saved field text, no hidden paragraph");
+        using IWordWindowedDocument fields = WordWindowedDocumentOpener.Open(FixturePath, new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-odt-fields"), ForcedMode = WordIndexMode.InMemory });
+        TestReport.Check(Hits(fields, "RealTitle") == 1 && Hits(fields, "XX") == 6 && Hits(fields, "Cap text") == 3, $"search over the fields fixture: computed title found (1), saved XX only where shown (6: 2 author, input, sender, 2 page), caption reference (3) - got {Hits(fields, "RealTitle")} / {Hits(fields, "XX")} / {Hits(fields, "Cap text")}");
+        string text = WordDocumentText.GetText(document);
+        TestReport.Check(text.Contains("1.1") && !text.Contains("HIDDENTRUE") && !text.Contains("XX"), "document text follows search: shown field values, no hidden paragraph");
+    }
+
+    private const string OutlineFixture = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:ooow="http://openoffice.org/2004/writer" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.text">
+        <office:meta><meta:document-statistic meta:table-count="77" meta:image-count="77" meta:object-count="77" meta:page-count="77" meta:paragraph-count="777" meta:word-count="999" meta:character-count="9999" meta:non-whitespace-character-count="8888"/></office:meta>
+        <office:styles>
+        <style:style style:name="Heading_20_1" style:family="paragraph" style:default-outline-level="1"/>
+        <style:style style:name="Heading_20_2" style:family="paragraph" style:default-outline-level="2"/>
+        <text:outline-style style:name="Outline">
+        <text:outline-level-style text:level="1" style:num-format="1" style:num-suffix="."/>
+        <text:outline-level-style text:level="2" style:num-format="a" style:num-prefix="(" style:num-suffix=")" text:display-levels="2"/>
+        </text:outline-style>
+        </office:styles>
+        <office:body><office:text>
+        <text:sequence-decls><text:sequence-decl text:display-outline-level="1" text:separator="." text:name="Table"/></text:sequence-decls>
+        <text:h text:style-name="Heading_20_1" text:outline-level="1">Alpha</text:h>
+        <text:p>chapnum [<text:chapter text:display="number" text:outline-level="1">XX</text:chapter>]</text:p>
+        <text:p>chapplain [<text:chapter text:display="plain-number" text:outline-level="1">XX</text:chapter>]</text:p>
+        <text:p>chapboth [<text:chapter text:display="number-and-name" text:outline-level="1">XX</text:chapter>]</text:p>
+        <text:h text:style-name="Heading_20_2" text:outline-level="2">Beta</text:h>
+        <text:p>seq [<text:sequence text:ref-name="r1" text:name="Table" text:formula="ooow:Table+1" style:num-format="1">XX</text:sequence>]</text:p>
+        <text:p>chap2 [<text:chapter text:display="number" text:outline-level="2">XX</text:chapter>]</text:p>
+        <text:h text:style-name="Heading_20_2" text:outline-level="2">Gamma</text:h>
+        <text:h text:style-name="Heading_20_1" text:outline-level="1">Delta</text:h>
+        <text:p>seq2 [<text:sequence text:ref-name="r2" text:name="Table" text:formula="ooow:Table+1" style:num-format="1">XX</text:sequence>]</text:p>
+        <text:p>refchap [<text:sequence-ref text:reference-format="chapter" text:ref-name="r1">XX</text:sequence-ref>]</text:p>
+        <text:p>HIDDENTRUE <text:hidden-paragraph text:condition="ooow:1" text:is-hidden="true"/></text:p>
+        <text:p>HIDDENFALSE <text:hidden-paragraph text:condition="ooow:0" text:is-hidden="false"/></text:p>
+        <text:p>words [<text:word-count>XX</text:word-count>]</text:p>
+        <text:p>chars [<text:character-count>XX</text:character-count>]</text:p>
+        <text:p>paras [<text:paragraph-count>XX</text:paragraph-count>]</text:p>
+        <text:p>tables [<text:table-count>XX</text:table-count>]</text:p>
+        <text:p>images [<text:image-count>XX</text:image-count>]</text:p>
+        <text:p>objects [<text:object-count>XX</text:object-count>]</text:p>
+        <text:list><text:list-item><text:h text:outline-level="1">InList</text:h></text:list-item></text:list>
+        <text:h text:outline-level="1" text:is-list-header="true">Header</text:h>
+        <text:h text:outline-level="1">Epsilon</text:h>
+        </office:text></office:body></office:document>
+        """;
 
     private static string Ascii(string text)
     {

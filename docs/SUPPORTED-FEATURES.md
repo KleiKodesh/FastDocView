@@ -187,7 +187,10 @@ chapter), variables (set / get, string and number), user fields, expressions, co
 bookmarks, reference marks, sequences and notes (text, number, category and value, caption, direction, chapter), chapter
 fields, dates and times that are not fixed (data styles: day, month, year, weekday, hours, minutes, seconds, AM / PM), and
 the document information (title, subject, description, keywords, creator, creation / modification date, custom
-properties, file name). Kept as saved, as LibreOffice keeps them: author, sender, text input, placeholder. Sequence and
+properties, file name), statistics (the document's saved meta:document-statistic, as LibreOffice prints them), heading
+numbering (text:outline-style) in headings, chapter fields, chapter-numbered sequences and chapter references, and
+paragraphs hidden by a true text:hidden-paragraph. Search and document text read the shown values. Kept as saved, as
+LibreOffice keeps them: author, sender, text input, placeholder. Sequence and
 variable values are recorded per block at index time; a reference reads its target block. During the first open a target
 not indexed yet shows nothing and the block is fetched again once the index is complete (the .docx rule).
 

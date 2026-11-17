@@ -37,6 +37,7 @@ public sealed partial class OdtBlockHtmlRenderer
         "text:word-count", "text:character-count", "text:paragraph-count", "text:hidden-paragraph", "text:conditional-text", "text:placeholder",
         "text:drop-down", "text:text-input", "text:expression", "text:sender-firstname", "text:sender-lastname",
         "text:description", "text:keywords", "text:creation-time", "text:modification-date", "text:modification-time",
+        "text:table-count", "text:image-count", "text:object-count",
         "draw:custom-shape", "draw:rect", "draw:line", "draw:g", "draw:ellipse", "draw:circle", "draw:polygon", "draw:polyline", "draw:path", "draw:connector",
         "draw:measure", "draw:caption", "draw:regular-polygon", "draw:control", "draw:text-box", "draw:image", "draw:object", "draw:object-ole",
     ];
@@ -70,7 +71,11 @@ public sealed partial class OdtBlockHtmlRenderer
         "sequence", "variable-set", "variable-get", "user-field-get", "expression", "conditional-text", "hidden-text", "bookmark-ref", "reference-ref",
         "sequence-ref", "note-ref", "chapter", "date", "time", "title", "subject", "description", "keywords", "initial-creator", "creation-date",
         "creation-time", "modification-date", "modification-time", "user-defined", "file-name",
+        "word-count", "character-count", "paragraph-count", "table-count", "image-count", "object-count",
     ];
+
+    /// <summary>The text: elements whose shown text may differ from the saved one: what search asks the computer for (same set).</summary>
+    internal static IReadOnlyCollection<string> ComputedFieldElementNames => ComputedFieldNames;
 
     /// <summary>A computed field's text, run like a text node (drop cap, script pieces).</summary>
     private void AppendComputedField(StringBuilder html, string value, WordRunFormatting current)
@@ -145,6 +150,7 @@ public sealed partial class OdtBlockHtmlRenderer
 
     private void RenderParagraph(XElement paragraph, StringBuilder html, bool isTopLevel)
     {
+        if (Fields?.IsParagraphHidden(paragraph) == true) return;          // text:hidden-paragraph with a true condition: not printed
         string? styleName = (string?)paragraph.Attribute(TextNs + "style-name");
         OdtStyleCascade.OdtParagraphStyle style = _styles.ResolveParagraph(styleName);
         WordParagraphFormatting formatting = style.Formatting;
