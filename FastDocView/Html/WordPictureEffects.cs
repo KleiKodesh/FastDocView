@@ -37,12 +37,12 @@ public abstract record WordPictureColorEffect
 ///   is clipped to RGB before the mix, its satMod unclipped before that (DocxDrawingColor unclampedSaturation).
 /// - colour change: only the exact colour (a PNG's 255, 0, 0 turned transparent; 252, 0, 0 kept).
 /// - transparency (a:alphaModFix amt): the picture's opacity.
-/// - soft edges (a:softEdge rad): a Gaussian edge (see SoftEdgeProfile); the two directions multiply (a blurred rectangle is
+/// - soft edges (a:softEdge rad): a Gaussian edge (see SoftEdgeGradient); the two directions multiply (a blurred rectangle is
 ///   separable).
 /// - 3-D rotation (a:scene3d camera rot lat / lon / rev): orthographic cameras as CSS rotations without perspective (rot lon 40
 ///   degrees: 180 pt shows 139 pt wide, cos 40 = 0.766); perspective cameras through CSS perspective at Word's camera distance
-///   (see CameraHorizontalDistance). Word's light rig brightens a turned flat picture by 0-10 levels depending on the angle
-///   (threePt from the top: lat 30 +8, lat -30 0, lon 30 +9, lon 40 orthographic +6); that is not drawn.
+///   (see CameraHorizontalDistance). Word's light rig: a gain and a lift by the angle, drawn as a
+///   linear transfer at the end of the filter (see LightGain).
 /// The colour operations become one SVG filter in sRGB (filter primitives: Filter Effects 1, feColorMatrix /
 /// feComponentTransfer / feComposite / feFlood), named by a hash of its contents so equal effects share one id.
 /// </summary>
@@ -59,6 +59,9 @@ public sealed class WordPictureEffects
     /// <summary>The camera rotation in degrees: latitude (about the horizontal axis), longitude (vertical axis), revolution (in the plane).</summary>
     public (double Latitude, double Longitude, double Revolution) Rotation { get; init; }
 
+    /// <summary>Whether the picture has a 3-D scene (a:scene3d): Word lights it even when it is not turned.</summary>
+    public bool HasScene { get; init; }
+
     /// <summary>The camera's field of view in degrees for a perspective camera; 0 = orthographic (no perspective).</summary>
     public double CameraFieldOfView { get; init; }
 
@@ -70,14 +73,14 @@ public sealed class WordPictureEffects
     /// </summary>
     private const double CameraHorizontalDistance = 645, CameraVerticalDistance = 452;
 
-    public bool IsEmpty => ColorEffects.Count == 0 && Opacity >= 1 && SoftEdgePt <= 0 && Rotation == default;
+    public bool IsEmpty => ColorEffects.Count == 0 && Opacity >= 1 && SoftEdgePt <= 0 && Rotation == default && !HasScene;
 
     private const double RedLuminance = 0.2126, GreenLuminance = 0.7152, BlueLuminance = 0.0722;
 
     /// <summary>The SVG filter's id and markup (a zero-size svg holding it), or null when no colour operation is set.</summary>
     public (string Id, string Markup)? SvgFilter()
     {
-        if (ColorEffects.Count == 0) return null;
+        if (ColorEffects.Count == 0 && Rotation == default && !HasScene) return null;
         var primitives = new StringBuilder();
         foreach (WordPictureColorEffect effect in ColorEffects)
             switch (effect)
@@ -116,32 +119,58 @@ public sealed class WordPictureEffects
                     primitives.Append(ColorChangePrimitives(change, primitives.Length));
                     break;
             }
+        if (Rotation != default || HasScene)
+        {
+            double lift = LightLift(Rotation.Latitude, Rotation.Longitude);
+            primitives.Append(Transfer(LightGain, lift / 255));
+        }
         string body = primitives.ToString();
         string id = "fdv-picture-effect-" + Hash(body).ToString("x8", CultureInfo.InvariantCulture);
         return (id, "<svg class=\"word-picture-effect\" width=\"0\" height=\"0\" aria-hidden=\"true\" style=\"position:absolute;width:0;height:0;overflow:hidden\">"
                     + "<filter id=\"" + id + "\" color-interpolation-filters=\"sRGB\" x=\"0\" y=\"0\" width=\"1\" height=\"1\">" + body + "</filter></svg>");
     }
 
+    /// <summary>
+    /// Word's light rig on a turned flat picture (a:lightRig threePt from the top, the only one its UI writes for pictures):
+    /// every channel comes out 1.043 x itself plus a lift that depends on the angle (its PDF of effects-light-v1, orthographic
+    /// camera, error under 1 level; a perspective camera adds a few levels of its own across the picture). Measured lifts in
+    /// levels, by Word's lat / lon in degrees (negative = 360 - angle); between them straight lines, beyond them the end value.
+    /// Both angles turned: the flat picture's 5 levels (Word: lat 30 + lon 30 lifts 1, lat -30 + lon -30 lifts 7).
+    /// </summary>
+    private const double LightGain = 1.043;
+
+    private static readonly (double Angle, double Lift)[] LatitudeLift =
+        [(-60, 44), (-45, 64), (-30, 53), (-15, 24), (-5, 10), (0, 5), (5, 3), (15, 2), (30, 8), (45, 21), (60, 29)];
+
+    private static readonly (double Angle, double Lift)[] LongitudeLift =
+        [(-60, 0), (-45, 0), (-30, 0), (-15, 1), (-5, 4), (0, 5), (5, 7), (15, 9), (30, 8), (45, 4), (60, 1)];
+
+    private static double LightLift(double latitude, double longitude)
+    {
+        static double Signed(double degrees) { degrees %= 360; if (degrees > 180) degrees -= 360; if (degrees <= -180) degrees += 360; return degrees; }
+        static double Lookup((double Angle, double Lift)[] table, double angle)
+        {
+            if (angle <= table[0].Angle) return table[0].Lift;
+            for (int i = 1; i < table.Length; i++)
+                if (angle <= table[i].Angle)
+                    return table[i - 1].Lift + (table[i].Lift - table[i - 1].Lift) * (angle - table[i - 1].Angle) / (table[i].Angle - table[i - 1].Angle);
+            return table[table.Length - 1].Lift;
+        }
+        double lat = Signed(latitude), lon = Signed(longitude);
+        if (Math.Abs(lon) < 1e-9) return Lookup(LatitudeLift, lat);
+        if (Math.Abs(lat) < 1e-9) return Lookup(LongitudeLift, lon);
+        return 5;
+    }
+
     /// <summary>The CSS for the picture's element: the filter, opacity, the soft edge's mask and the rotation ("" when none).</summary>
-    public string Css(string? filterId)
+    public string Css(string? filterId, double widthPt = 0, double heightPt = 0)
     {
         var css = new StringBuilder();
         if (filterId is not null) css.Append("filter:url(#").Append(filterId).Append(");");
         if (Opacity < 1) css.Append("opacity:").Append(Number(Math.Max(0, Opacity))).Append(';');
-        if (SoftEdgePt > 0)
-        {
-            string Edge(string direction)
-            {
-                var gradient = new StringBuilder("linear-gradient(").Append(direction);
-                (double At, double Alpha)[] profile = SoftEdgeProfile(SoftEdgePt);
-                foreach ((double at, double alpha) in profile)
-                    gradient.Append(",rgba(0,0,0,").Append(Number(alpha)).Append(") ").Append(Number(at * SoftEdgePt)).Append("pt");
-                for (int i = profile.Length - 1; i >= 0; i--)
-                    gradient.Append(",rgba(0,0,0,").Append(Number(profile[i].Alpha)).Append(") calc(100% - ").Append(Number(profile[i].At * SoftEdgePt)).Append("pt)");
-                return gradient.Append(')').ToString();
-            }
-            css.Append("mask-image:").Append(Edge("to right")).Append(',').Append(Edge("to bottom")).Append(";mask-composite:intersect;mask-repeat:no-repeat;");
-        }
+        if (SoftEdgePt > 0 && widthPt > 0 && heightPt > 0)
+            css.Append("mask-image:").Append(SoftEdgeGradient("to right", widthPt)).Append(',').Append(SoftEdgeGradient("to bottom", heightPt))
+               .Append(";mask-composite:intersect;mask-repeat:no-repeat;");
         if (Rotation != default)
         {
             // Word's lat / lon turn the near edge toward the viewer the other way round from CSS rotateX / rotateY (its PDF: lat 30
@@ -163,21 +192,31 @@ public sealed class WordPictureEffects
     }
 
     /// <summary>
-    /// Word's soft edge alpha by distance from the edge in radii: a Gaussian edge (normal CDF) with sigma 0.33 rad, its half-way
-    /// line at <see cref="SoftEdgeCentre"/>, fitted on its PDF masks for rad 5, 10 and 20 pt (effects-3d-v1.docx, the four
-    /// edges of each). Sampled every 0.1 rad: linear steps between them stay within 0.005.
+    /// One direction of Word's soft edge across a picture side of <paramref name="lengthPt"/>: the picture's rectangle inset by
+    /// <see cref="SoftEdgeCentre"/> radii from each edge and blurred with sigma 0.33 rad (a Gaussian edge from both sides:
+    /// Phi((x - c) / sigma) - Phi((x - (length - c)) / sigma)). Word never shortens the radius: on a picture smaller than about
+    /// four radii both edges overlap and the whole picture stays faint (its PDF of effects-light-v1: rad 20 pt on 40 x 40 pt
+    /// peaks at alpha 9 / 255, on 60 x 40 at 30, rad 40 on 180 x 120 at 237). Stops every 0.1 rad from each edge (and the
+    /// middle), as percentages of the side so the mask follows the picture when it is drawn smaller; never crossing.
     /// </summary>
-    private static (double At, double Alpha)[] SoftEdgeProfile(double radiusPt)
+    private string SoftEdgeGradient(string direction, double lengthPt)
     {
         const double Sigma = 0.33;
-        double centre = SoftEdgeCentre(radiusPt);
-        var profile = new (double, double)[21];
-        for (int i = 0; i <= 20; i++)
+        double centre = SoftEdgeCentre(SoftEdgePt) * SoftEdgePt, sigma = Sigma * SoftEdgePt;
+        var positions = new SortedSet<double> { 0, lengthPt / 2, lengthPt };
+        for (int i = 1; i <= 20; i++)
         {
-            double at = i * 0.1;
-            profile[i] = (at, i == 0 ? 0 : i == 20 ? 1 : NormalDistribution((at - centre) / Sigma));
+            double at = i * 0.1 * SoftEdgePt;
+            if (at < lengthPt / 2) { positions.Add(at); positions.Add(lengthPt - at); }
         }
-        return profile;
+        var gradient = new StringBuilder("linear-gradient(").Append(direction);
+        foreach (double at in positions)
+        {
+            double alpha = at <= 0 || at >= lengthPt ? 0
+                : Math.Max(0, NormalDistribution((at - centre) / sigma) - NormalDistribution((at - (lengthPt - centre)) / sigma));
+            gradient.Append(",rgba(0,0,0,").Append(Number(alpha)).Append(") ").Append(Number(at / lengthPt * 100)).Append('%');
+        }
+        return gradient.Append(')').ToString();
     }
 
     /// <summary>

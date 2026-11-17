@@ -3168,3 +3168,14 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
 - The width watch records the width the pass used, so a resize right after a block mounts is not missed.
 - Verified: test-data/tab-stops/tab-stops-v2 (adds a bordered paragraph with a bar and a tab on a wrapped line) within 2 pt
   of Word's and LibreOffice's PDFs, bar lines included.
+### Picture effects: light rig and small soft edges (2026-11-17)
+
+- effects-light-{persp,ortho,extra,soft}-v1.docx / .pdf (make_light.py; Word 16 printed them from a hidden instance).
+- Light rig (threePt, top): with an orthographic camera every channel is 1.043 x in + lift, uniform over the picture
+  (error under 1 level); lift by lat alone: -60 44, -45 64, -30 53, -15 24, -5 10, 0 5, 5 3, 15 2, 30 8, 45 21, 60 29; by lon
+  alone: -60 0 .. -30 0, -15 1, -5 4, 0 5, 5 7, 15 9, 30 8, 45 4, 60 1 (negative = 360 - angle). Both axes turned is not the
+  sum (lat 30 + lon 30: 1; -30 / -30: 7): drawn as the flat 5. Perspective cameras add up to ~5 levels across the picture.
+  Drawn as a linear transfer at the end of the picture's SVG filter.
+- Soft edges never shorten the radius: Word's mask is the picture rectangle inset by the half-alpha distance and blurred, so
+  on a small picture the two edges overlap (rad 20 on 40 x 40 peaks at 9 / 255, on 60 x 40 at 30; rad 40 on 180 x 120 at 237).
+  The gradient is now that two-sided formula, in percent of the side, with stops every 0.1 rad from each edge: never crossing.

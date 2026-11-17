@@ -58,7 +58,8 @@ internal static class DocxPictureEffects
         if (effects.Element("scene3d")?.Element("camera") is { } camera
             && ((string?)camera.Attribute("prst") ?? "") is var preset && (preset.StartsWith("perspective", StringComparison.Ordinal) || preset.StartsWith("legacyPerspective", StringComparison.Ordinal)))
             fieldOfView = camera.Attribute("fov") is not null ? Number(camera, "fov", 0) / PerDegree : 45;
-        var result = new WordPictureEffects { ColorEffects = colorEffects, Opacity = opacity, SoftEdgePt = Math.Max(0, softEdge), Rotation = rotation, CameraFieldOfView = fieldOfView };
+        var result = new WordPictureEffects { ColorEffects = colorEffects, Opacity = opacity, SoftEdgePt = Math.Max(0, softEdge), Rotation = rotation, CameraFieldOfView = fieldOfView,
+                                             HasScene = effects.Element("scene3d")?.Element("camera")?.Element("rot") is not null };
         return result.IsEmpty ? null : result;
     }
 

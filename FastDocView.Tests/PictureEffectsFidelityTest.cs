@@ -20,6 +20,7 @@ public static class PictureEffectsFidelityTest
         TestReport.Step("Picture effects: .docx against Word's PDF; shapes in web archives");
         Docx();
         Cameras();
+        LightAndSmallSoftEdges();
         WebArchive();
     }
 
@@ -39,7 +40,7 @@ public static class PictureEffectsFidelityTest
         string[] pictures = Regex.Split(html, "(?=<svg class=\"word-picture-effect\")|(?<=<img[^>]*>)").Where(part => part.Contains("<img")).ToArray();
         TestReport.Check(pictures.Length == 16, $"16 pictures ({pictures.Length})");
         if (pictures.Length != 16) return;
-        Match stop = Regex.Match(pictures[1], @"rgba\(0,0,0,([0-9.]+)\) 8pt");
+        Match stop = Regex.Match(pictures[1], @"rgba\(0,0,0,([0-9.]+)\) 4.4444%");
         TestReport.Check(stop.Success && Math.Abs(double.Parse(stop.Groups[1].Value, CultureInfo.InvariantCulture) - 0.47) < 0.03, $"soft edge 10 pt: alpha at 8 pt {stop.Groups[1].Value} (Word 0.47)");
         TestReport.Check(pictures[5].Contains("-0.0267 -0.0898 -0.0091 0 0.1255"), "duotone with satMod 300 %: Word's clipping order (green / blue mix to 0)");
         TestReport.Check(pictures[8].Contains("perspective(1557.1677pt) rotateX(0deg) rotateY(-30deg)") && pictures[10].Contains("perspective(645pt)"),
@@ -68,7 +69,7 @@ public static class PictureEffectsFidelityTest
         TestReport.Check(pictures[6].Contains("flood-opacity=\"0\""), "transparent colour: the exact colour drawn transparent");
         TestReport.Check(pictures[7].Contains("data-word-picture=\"m:rId5\"") && pictures[8].Contains("data-word-picture=\"m:rId7\""),
                          "artistic effects: Word's own drawing of the effect (a:blip r:embed), not the original (a14:imgLayer)");
-        TestReport.Check(pictures[10].Contains("mask-image:") && pictures[10].Contains(" 20pt,") && pictures[19].Contains(" 40pt,"), "soft edges 10 / 20 pt: faded over 2 radii");
+        TestReport.Check(pictures[10].Contains("mask-image:") && pictures[10].Contains(" 50%") && pictures[19].Contains("mask-composite:intersect"), "soft edges 10 / 20 pt: a mask in both directions");
         TestReport.Check(pictures[12].Contains("<feColorMatrix") && pictures[13].Contains("0.0525 0.1767 0.0178 0 0.7529"),
                          "duotone: luminance mixed from the first colour (C00000) to the second (FFFF00)");
         TestReport.Check(pictures[14].Contains("opacity:0.5;"), "transparency 50 %: opacity");
@@ -95,6 +96,51 @@ public static class PictureEffectsFidelityTest
         if (!transfer.Success) return null;
         double slope = double.Parse(transfer.Groups[1].Value, CultureInfo.InvariantCulture), intercept = double.Parse(transfer.Groups[2].Value, CultureInfo.InvariantCulture);
         return Math.Max(0, Math.Min(1, slope * input / 255 + intercept)) * 255;
+    }
+
+    /// <summary>
+    /// Word's light rig and soft edges on small pictures (effects-light-*-v1.docx / .pdf, make_light.py): a turned picture is
+    /// 1.043 x itself plus a lift by the angle (orthographic lon 40: 5.3 levels between lon 30's 8 and lon 45's 4; lat -45: 64);
+    /// a soft edge keeps its radius on a small picture, so rad 20 pt on 40 x 40 pt peaks at alpha 9 / 255 and on 60 x 40 at 30.
+    /// </summary>
+    private static void LightAndSmallSoftEdges()
+    {
+        string extra = Path.Combine(Folder, "effects-light-extra-v1.docx"), soft = Path.Combine(Folder, "effects-light-soft-v1.docx");
+        if (!File.Exists(extra) || !File.Exists(soft)) { TestReport.Check(false, "test-data/word-picture-effects/effects-light-*-v1.docx present"); return; }
+        string Html(string path)
+        {
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+            return string.Concat(document.RenderBlocks(0, document.BlockCount).Select(block => block.Html));
+        }
+        string[] Pictures(string html) => Regex.Split(html, "(?=<svg class=\"word-picture-effect\")|(?<=<img[^>]*>)").Where(part => part.Contains("<img")).ToArray();
+        string[] turned = Pictures(Html(extra));
+        double? Lift(string picture) => Regex.Match(picture, "feFuncR type=\"linear\" slope=\"1.043\" intercept=\"([^\"]+)\"") is { Success: true } match
+            ? double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) * 255 : null;
+        // extra: 0, lat -5, lat 5, lon -5, lon 5, lat 30 + lon 30, lat -30 + lon -30, lat -60, lat 60, lon 60, lon -60 (Word: 5 10 3 4 7 1 7 44 29 1 0)
+        double[] word = [5, 10, 3, 4, 7, 1, 7, 44, 29, 1, 0];
+        TestReport.Check(turned.Length == word.Length, $"light: {word.Length} turned pictures ({turned.Length})");
+        for (int i = 0; i < Math.Min(turned.Length, word.Length); i++)
+            TestReport.Check(Lift(turned[i]) is { } lift && Math.Abs(lift - word[i]) <= (i is 5 or 6 ? 4.5 : 0.5), $"light: picture {i} lift {Lift(turned[i]):0.#} (Word {word[i]})");
+        string[] small = Pictures(Html(soft));
+        double Peak(string picture, string direction)
+            => Regex.Matches(GradientOf(picture, direction), @"rgba\(0,0,0,([0-9.]+)\)").Cast<Match>()
+                    .Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)).DefaultIfEmpty(0).Max();
+        static string GradientOf(string picture, string direction)
+        {
+            int start = picture.IndexOf("linear-gradient(" + direction, StringComparison.Ordinal);
+            if (start < 0) return "";
+            int end = picture.IndexOfAny([';', '"'], start);
+            int next = picture.IndexOf("linear-gradient(", start + 1, StringComparison.Ordinal);
+            return picture.Substring(start, (next > 0 && (end < 0 || next < end) ? next : end < 0 ? picture.Length : end) - start);
+        }
+        // soft: rad 10 on 60 x 40, rad 20 on 60 x 40, rad 20 on 40 x 40, rad 40 on 180 x 120 (Word's peaks 255, 30, 9, 237)
+        double[] peaks = [255, 30, 9, 237];
+        TestReport.Check(small.Length == 4, $"small soft edges: 4 pictures ({small.Length})");
+        for (int i = 0; i < Math.Min(4, small.Length); i++)
+        {
+            double peak = Peak(small[i], "to right") * Peak(small[i], "to bottom") * 255;
+            TestReport.Check(Math.Abs(peak - peaks[i]) <= 12, $"small soft edge {i}: peak alpha {peak:0} (Word {peaks[i]})");
+        }
     }
 
     /// <summary>

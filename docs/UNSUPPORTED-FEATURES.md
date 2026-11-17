@@ -91,7 +91,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Through wrap (text over holes) | all | Holes cannot be laid out in CSS; drawn as tight | won't do |
 | Page / margin-relative vertical position | all | No page | planned (paged view) |
-| Picture effects: a preset camera's own rotation (used without a:rot), the light rig's shading (0-10 levels), other a:blip children (alphaBiLevel, alphaCeiling / Floor, alphaRepl, blur, clrRepl, fillOverlay, hsl, tint) | docx | Preset rotations not known here (drawn flat); lighting not drawn; Word's UI does not write the other blip children | deferred |
+| Picture effects: a preset camera's own rotation (used without a:rot), the light rig with both axes turned (a flat 5-level lift, Word 1-7) and across a perspective picture (a few levels), other a:blip children (alphaBiLevel, alphaCeiling / Floor, alphaRepl, blur, clrRepl, fillOverlay, hsl, tint) | docx | Preset rotations not known here (drawn flat); Word's lighting is measured for one axis at a time; Word's UI does not write the other blip children | deferred |
 | Picture effects (grey, black and white, washout, VML gain / blacklevel) | doc, rtf | Not read | deferred |
 
 ## Shapes, WordArt, text boxes

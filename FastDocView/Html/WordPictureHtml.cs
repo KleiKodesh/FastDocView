@@ -115,7 +115,7 @@ public static class WordPictureHtml
         {
             (string Id, string Markup)? filter = effects.SvgFilter();
             if (filter is { } svg) html.Append(svg.Markup);
-            css.Append(effects.Css(filter?.Id));
+            css.Append(effects.Css(filter?.Id, layout.WidthPt, layout.HeightPt));
         }
         if (pictureId is not null && layout.Crop.IsDrawable && layout.WidthPt > 0 && layout.HeightPt > 0)
         {
