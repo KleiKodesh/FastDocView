@@ -1,9 +1,9 @@
-# Opens test-data/tab-stops/tab-stops-v1.docx in Word 16 (hidden, no alerts) and saves it as PDF, .doc and .rtf; then LibreOffice
+# Opens test-data/tab-stops/tab-stops-v2.docx in Word 16 (hidden, no alerts) and saves it as PDF, .doc and .rtf; then LibreOffice
 # (headless, private profile, no printers) converts the .docx to .odt and the .odt to PDF. Only the processes this script started
 # are stopped.
 $ErrorActionPreference = 'Stop'
 $folder = (Resolve-Path (Join-Path $PSScriptRoot '..\test-data\tab-stops')).Path
-$base = Join-Path $folder 'tab-stops-v1'
+$base = Join-Path $folder 'tab-stops-v2'
 $before = @(Get-Process WINWORD -ErrorAction SilentlyContinue | ForEach-Object Id)
 $word = New-Object -ComObject Word.Application
 $mine = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id } | ForEach-Object Id)

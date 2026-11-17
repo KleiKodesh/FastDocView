@@ -113,6 +113,17 @@ internal sealed class RtfParser
     /// the group state (fixed-size snapshot data): a snapshot carries them after the group stack (<see cref="WriteSnapshot"/>).
     /// </summary>
     public List<WordTabStop> TabStops { get; } = new();
+    // tab stops are paragraph properties, so a group scopes them as it scopes the group state: the list each open group
+    // started with (shared arrays: a group that changes nothing costs no copy), put back at its '}'
+    private WordTabStop[]?[] _tabStopsAtGroupStart = new WordTabStop[]?[64];
+    private WordTabStop[] _tabStopsArray = [];
+    private bool _tabStopsChanged;
+
+    private WordTabStop[] CurrentTabStops()
+    {
+        if (_tabStopsChanged) { _tabStopsArray = TabStops.ToArray(); _tabStopsChanged = false; }
+        return _tabStopsArray;
+    }
     private string _pendingTabAlignment = "left", _pendingTabLeader = "none";
     public bool IsInFootnote => _footnoteDepth >= 0;
     /// <summary>The open note sits inside a field code (its mark goes where the code puts it, not before the field).</summary>
@@ -258,7 +269,11 @@ internal sealed class RtfParser
             int position = ReadInt(bytes, ref at);
             TabStops.Add(new WordTabStop(position, TabAlignments[Math.Min(bytes[at], TabAlignments.Length - 1)], TabLeaders[Math.Min(bytes[at + 1], TabLeaders.Length - 1)]));
             at += 2;
-        }
+        }
+        _tabStopsChanged = true;
+        if (_tabStopsAtGroupStart.Length < frames + 1) _tabStopsAtGroupStart = new WordTabStop[]?[frames + 32];
+        WordTabStop[] restored = CurrentTabStops();
+        for (int i = 0; i < frames; i++) _tabStopsAtGroupStart[i] = restored;
         _nestedCells.Clear(); _pendingNestedCell = default; Array.Clear(_nestedRowBorders, 0, 6); _isNestedRowRightToLeft = false; _nestedRowHeight = 0;
         _isIgnorableNext = false;
         _skipCount = 0;
@@ -390,6 +405,8 @@ internal sealed class RtfParser
         if (_depth >= 0) _stack[_depth + 1] = _stack[_depth];
         else _stack[0] = RtfGroupState.Initial((short)_tables.DefaultFont, (ushort)_tables.AnsiCodePage);
         _depth++;
+        if (_depth >= _tabStopsAtGroupStart.Length) Array.Resize(ref _tabStopsAtGroupStart, Math.Max(_depth + 1, _tabStopsAtGroupStart.Length * 2));
+        _tabStopsAtGroupStart[_depth] = CurrentTabStops();
         if (_depth == 0) _sink.DocumentStarted();
         ref RtfGroupState state = ref _stack[_depth];
         if (_unicodePairDepth >= 0 && _depth == _unicodePairDepth + 1) state.Set(RtfStateFlags.DropText, true);
@@ -455,6 +472,12 @@ internal sealed class RtfParser
         }
         if (_shapes.Count > 0) CloseShapeGroup();
         if (_readsHeaderTables) CloseHeaderGroup();
+        if (_depth >= 0 && _depth < _tabStopsAtGroupStart.Length && _tabStopsAtGroupStart[_depth] is { } started && !ReferenceEquals(started, CurrentTabStops()))
+        {
+            TabStops.Clear();
+            TabStops.AddRange(started);
+            _tabStopsArray = started;
+        }
         _depth--;
         _sink.GroupClosed(_depth);
         return _depth >= 0;
@@ -1062,7 +1085,7 @@ internal sealed class RtfParser
             case RtfWord.RightToLeftMark: AddCharacter('\u200F'); return;
 
             // ── paragraph ──
-            case RtfWord.ParagraphDefault: state.ResetParagraph(); TabStops.Clear(); _pendingTabAlignment = "left"; _pendingTabLeader = "none"; return;
+            case RtfWord.ParagraphDefault: state.ResetParagraph(); if (TabStops.Count > 0) { TabStops.Clear(); _tabStopsChanged = true; } _pendingTabAlignment = "left"; _pendingTabLeader = "none"; return;
             case RtfWord.TabRight: _pendingTabAlignment = "right"; return;
             case RtfWord.TabCenter: _pendingTabAlignment = "center"; return;
             case RtfWord.TabDecimal: _pendingTabAlignment = "decimal"; return;
@@ -1078,6 +1101,7 @@ internal sealed class RtfParser
                     TabStops.RemoveAll(stop => stop.PositionTwips == parameter);
                     TabStops.Add(new WordTabStop(parameter, word == RtfWord.TabBar ? "bar" : _pendingTabAlignment, _pendingTabLeader));
                     TabStops.Sort((a, b) => a.PositionTwips.CompareTo(b.PositionTwips));
+                    _tabStopsChanged = true;
                 }
                 _pendingTabAlignment = "left"; _pendingTabLeader = "none";
                 return;

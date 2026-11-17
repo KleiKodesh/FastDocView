@@ -1,6 +1,6 @@
 // Live check of the tab layout (the page's fastDocViewTabs pass) against Word's and LibreOffice's PDFs, DOM measurements only:
 //   node playwright/tabStopsCheck.mjs <reference.json> <file> [<reference.json> <file> ...]
-// The reference is scripts/measure-tab-stops-pdf.py's output for test-data/tab-stops/tab-stops-v1 (Word's PDF for .docx / .doc /
+// The reference is scripts/measure-tab-stops-pdf.py's output for test-data/tab-stops/tab-stops-v2 (Word's PDF for .docx / .doc /
 // .rtf, LibreOffice's for .odt): per paragraph, the x (pt from the left margin) where the text after each tab starts. Each must
 // match within 2 pt; the leaders are drawn; the text keeps its tab characters.
 import { chromium } from 'playwright'
@@ -24,11 +24,17 @@ await page.waitForFunction(() => !!window.__fastDocViewDemo, null, { timeout: 12
 
 const args = process.argv.slice(2)
 for (let a = 0; a + 1 < args.length; a += 2) {
-  const reference = JSON.parse(readFileSync(args[a], 'utf8'))
+  const { paragraphs: reference, bars: referenceBars } = JSON.parse(readFileSync(args[a], 'utf8'))
   const path = args[a + 1]
   step(`open ${path}`)
   await page.evaluate(p => window.__fastDocViewDemo.open(p, { rebuildIndex: true }), path)
   await page.waitForFunction(n => document.querySelectorAll('.fast-doc-view-block-text p').length >= n && document.querySelectorAll('.fast-doc-view-block-text .tab-space').length > 0, 20, { timeout: 60_000 })
+  // the column as wide as the page's text area (the demo column follows the window): lines wrap where Word wraps them; the
+  // width change also re-runs the tab pass (its ResizeObserver, next frame)
+  await page.evaluate(async (textWidth) => {
+    for (const block of document.querySelectorAll('.fast-doc-view-block-text')) block.style.width = `${textWidth}pt`
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(r))))
+  }, TEXT_WIDTH)
   const measured = await page.evaluate((textWidth) => {
     const paragraphs = [...document.querySelectorAll('.fast-doc-view-block-text p, .fast-doc-view-block-text h1, .fast-doc-view-block-text h2')]
     return paragraphs.map(p => {
@@ -64,7 +70,8 @@ for (let a = 0; a + 1 < args.length; a += 2) {
         }
       }
       const leaders = [...p.querySelectorAll('.tab-space[data-leader]')].map(s => s.dataset.leader)
-      return { text: p.textContent.split('\t').length - 1, xs, leaders, width: +(box.width / pixelsPerPoint).toFixed(1) }
+      const bars = [...p.querySelectorAll(':scope > .tab-bar')].map(b => +((b.getBoundingClientRect().left - textAreaLeft) / pixelsPerPoint).toFixed(2))
+      return { text: p.textContent.split('\t').length - 1, xs, leaders, bars, width: +(box.width / pixelsPerPoint).toFixed(1) }
     })
   }, TEXT_WIDTH)
   measured.forEach((m, i) => {
@@ -74,6 +81,10 @@ for (let a = 0; a + 1 < args.length; a += 2) {
     check(ok, `${path} paragraph ${i + 1} (${reference[i]?.first}): ${pairs.map(([x, got]) => `${x} vs ${got}`).join(', ')}${m.leaders.length ? ' leaders ' + m.leaders.join(',') : ''}`)
   })
   check(measured[0]?.text === 1, `${path}: the text keeps its tab characters`)
+  // bar stops (Word draws them; LibreOffice drops them, so the .odt has none)
+  const bars = measured.flatMap(m => m.bars)
+  if (!path.endsWith('.odt'))
+    check(bars.length === referenceBars.length && bars.every((x, i) => Math.abs(x - referenceBars[i]) <= TOLERANCE), `${path}: bar lines at ${bars.join(', ')} vs ${referenceBars.join(', ')}`)
 }
 check(errors.length === 0, `no console errors ${errors.join(' | ')}`)
 await browser.close()

@@ -1,11 +1,11 @@
-# Writes test-data/tab-stops/tab-stops-v1.docx: tab stops of every kind (left / centre / right / decimal / bar), every leader,
+# Writes test-data/tab-stops/tab-stops-v2.docx (v2: a bordered paragraph with a bar stop, a tab on a wrapped line): tab stops of every kind (left / centre / right / decimal / bar), every leader,
 # default stops (with and without an indent), a hanging indent, stops from a style and a clear, a right-to-left paragraph and an
 # absolute position tab. ASCII text only. scripts/save-tab-stops.ps1 then has Word save it as PDF, .doc and .rtf, and LibreOffice
 # converts it to .odt and the .odt to PDF (the references the tab layout is compared with).
 import os, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, '..', 'test-data', 'tab-stops', 'tab-stops-v1.docx')
+OUT = os.path.join(HERE, '..', 'test-data', 'tab-stops', 'tab-stops-v2.docx')
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 
 
@@ -45,6 +45,10 @@ body = [
     para('wide\tWide centred text that is long\tx', tabs(('center', 2000, None))),                   # 18 centre near the start
     para('Long text that goes past the right stop position easily\t1', tabs(('right', 3000, None))), # 19 does not fit
     '<w:p><w:r><w:t>Absolute</w:t></w:r><w:r><w:ptab w:relativeTo="margin" w:alignment="right" w:leader="dot"/></w:r><w:r><w:t>99</w:t></w:r></w:p>',  # 20
+    para('Bordered\tafter2', '<w:pBdr>' + ''.join(f'<w:{side} w:val="single" w:sz="4" w:space="4" w:color="000000"/>' for side in ('top', 'left', 'bottom', 'right'))
+         + '</w:pBdr>' + tabs(('bar', 2000, None), ('left', 3000, None))),                              # 21 bar in a bordered paragraph
+    para('Wrap\tthe text after this tab is long enough to run past the right margin and wrap onto\tEnd',
+         tabs(('left', 1440, None), ('left', 6000, None))),                                             # 22 the second tab lands on the next line
 ]
 
 document = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

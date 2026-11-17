@@ -1,7 +1,7 @@
 namespace FastDocView.Tests;
 
 /// <summary>
-/// Tab stops in every format: test-data/tab-stops/tab-stops-v1 .docx (scripts/make-tab-stops-docx.py), .doc / .rtf saved from it by
+/// Tab stops in every format: test-data/tab-stops/tab-stops-v2 .docx (scripts/make-tab-stops-docx.py), .doc / .rtf saved from it by
 /// Word 16 and .odt by LibreOffice (scripts/save-tab-stops.ps1). Each paragraph carries the tab layout data the page's tab pass reads
 /// (data-tabs: default interval, start indent, first-line indent, relative-to-indent flag, then the stops with alignment and
 /// leader), and the text keeps its tab characters. Where the text after each tab lands is checked against Word's and LibreOffice's
@@ -13,12 +13,27 @@ public static class TabStopsFidelityTest
     {
         TestReport.Step("Tab stops: Word-saved .docx / .doc / .rtf, LibreOffice .odt");
         string folder = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "tab-stops");
+        RunRtfGroupScope();
         foreach (string extension in new[] { ".docx", ".doc", ".rtf", ".odt" })
         {
-            string path = Path.GetFullPath(Path.Combine(folder, "tab-stops-v1" + extension));
-            if (!File.Exists(path)) { TestReport.Check(false, $"test-data/tab-stops/tab-stops-v1{extension} present"); continue; }
+            string path = Path.GetFullPath(Path.Combine(folder, "tab-stops-v2" + extension));
+            if (!File.Exists(path)) { TestReport.Check(false, $"test-data/tab-stops/tab-stops-v2{extension} present"); continue; }
             Check(path, extension);
         }
+    }
+
+    /// <summary>RTF tab stops are paragraph properties of the group state: a group's stops end with its '}' (as Word reads them).</summary>
+    public static void RunRtfGroupScope()
+    {
+        TestReport.Step("Tab stops: an RTF group scopes its stops");
+        string path = Path.Combine(TestReport.OutputDirectory, "tab-stops-group-v1.rtf");
+        File.WriteAllText(path, @"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}\pard\tx1440 Outer\tab one\par {\pard\tqr\tldot\tx5000 Inner\tab two\par}Back\tab three\par}");
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-tab-stops-group") };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+        List<string> blocks = document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
+        string Block(string start) => blocks.FirstOrDefault(html => WordFieldsFidelityTest.Strip(html).Trim().StartsWith(start, StringComparison.Ordinal)) ?? "";
+        TestReport.Check(Block("Inner").Contains(";250 r d\""), $"rtf: the group's own right stop (got [{Shorten(Block("Inner"))}])");
+        TestReport.Check(Block("Back").Contains(";72 l \"") && !Block("Back").Contains("250"), $"rtf: after the group's '}}' the outer stop is back (got [{Shorten(Block("Back"))}])");
     }
 
     private static void Check(string path, string format)

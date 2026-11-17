@@ -3132,7 +3132,7 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
   sets each width as end padding. Stop choice and widths follow txttab.cxx NewTabPortion / PreFormat / PostFormat (see
   SUPPORTED-FEATURES note 6). Widths are pt in the paragraph's own coordinates: a zoom needs no new pass; a width change
   re-runs it in the next frame (ResizeObserver; inside the callback a row height change would be an observer loop).
-- Verified: test-data/tab-stops/tab-stops-v1 (.docx generated, .doc / .rtf by Word, .odt by LibreOffice), the text after
+- Verified: test-data/tab-stops/tab-stops-v2 (.docx generated, .doc / .rtf by Word, .odt by LibreOffice), the text after
   every tab within 2 pt of Word's PDF (.docx / .doc / .rtf) and LibreOffice's (.odt): `vue-demo/playwright/tabStopsCheck.mjs`.
 - Cost (87 MB .docx sample, 81 of 99 rendered paragraphs carry tabs): about 0.2 ms per tabbed paragraph (one extra layout
   of those paragraphs), measured over all rendered blocks at once 2-18 ms; .doc sample 1 ms.
@@ -3152,3 +3152,19 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
   vertical distance. Word's lat / lon turn the near edge the other way round from CSS rotateX / rotateY.
 - Lighting: a turned flat picture comes out 0-10 levels brighter (threePt rig from the top: lat 30 +8, lat -30 0, lon 30 +9,
   orthographic lon 40 +6); not drawn.
+
+
+### Tab layout follow-ups (2026-11-17)
+
+- RTF: a group scopes its tab stops like the rest of the paragraph state - the list each group started with is put back
+  at its '}' (shared arrays, no copy for a group that changes nothing).
+- Lines: after the widths are set, a tab (or the text after it) that landed on another line is laid out again from there
+  on its new line; a left stop at or past the line's end sends the tab to the next line (a `br.tab-break` before it;
+  txttab.cxx PreFormat bFull: Width() <= X + PrtWidth()). Each round fixes one more tab, so it ends; no timers.
+- Bars: measured from the same origin as the tabs; inside a bordered paragraph the box's start padding moves the line in
+  with the text (Word draws the border in the indent; here it sits inside the box).
+- Decimal stops take the point only from the run text after the tab: note marks, field placeholders, shapes, text boxes,
+  list labels, cells, equations and super / subscripts are skipped.
+- The width watch records the width the pass used, so a resize right after a block mounts is not missed.
+- Verified: test-data/tab-stops/tab-stops-v2 (adds a bordered paragraph with a bar and a tab on a wrapped line) within 2 pt
+  of Word's and LibreOffice's PDFs, bar lines included.
