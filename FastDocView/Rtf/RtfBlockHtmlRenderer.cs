@@ -378,7 +378,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     private void AppendParagraphTag(StringBuilder html, string tag, WordParagraphFormatting formatting, bool isTextBox)
         => WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss() + (isTextBox ? "display:block;" : ""), isTextBox ? "text-box-paragraph" : null, formatting.IsRightToLeft,
-                                      formatting.HyphenationLanguageAttribute);
+                                      formatting.ParagraphAttributes);
 
     /// <summary>The last bordered paragraph written inside a cell, text box or note: where its open tag is, to re-draw it joined.</summary>
     private sealed record BorderedParagraph(StringBuilder Target, int TagStart, int TagLength, int End, string Tag, bool IsTextBox, WordParagraphFormatting Formatting, string Key);
@@ -492,6 +492,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         formatting.IsHyphenated = _tables.IsAutoHyphenation && !formatting.IsAutoHyphenationSuppressed;
         SetBorderShadow(formatting, state);
         formatting.RunFormatting.Language = WordLanguageIds.TagOf(state.Language != 0 ? state.Language : _tables.DefaultLanguage);
+        formatting.TabStops = _parser.TabStops.Count > 0 ? _parser.TabStops.ToArray() : [];
+        formatting.DefaultTabStopTwips = _tables.DefaultTabStopTwips;
         // \slN: none / 1000 = auto; with \slmult1 a multiple of 240; else negative = exactly, positive = at least (RTF 1.5 spec)
         if (state.LineSpacing != 0 && state.LineSpacing != 1000)
         {

@@ -25,7 +25,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| Tab leaders and right / centre / decimal tab alignment | docx, doc, rtf, odt | Flow HTML has only `tab-size`; true tab layout needs a line layout engine | deferred |
+| Tab layout details: a tab that wraps the line is laid out on the line it had before the widths were set; the decimal point is always "." (Word uses the system's decimal symbol); an underline does not run under a laid-out tab | docx, doc, rtf, odt | One measuring pass per paragraph (no line layout engine); the system decimal symbol is not known to the document | deferred |
 | Keep with next, keep lines, widow / orphan control, page break before | docx, doc, rtf, odt | Pagination: belongs to the paged view | planned (paged view) |
 | Frames (framePr) other than drop caps: absolute position, wrap | docx, doc, rtf | Frames flow as paragraphs; positioning is page-bound | planned (paged view) |
 | Hebrew hyphenation | all | Chromium has no Hebrew hyphenation dictionary | won't do |

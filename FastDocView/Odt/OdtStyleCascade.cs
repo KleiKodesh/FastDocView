@@ -46,7 +46,7 @@ public sealed class OdtStyleCascade
     [
         "fo:text-align", "style:writing-mode", "fo:margin", "fo:margin-left", "fo:margin-right", "fo:margin-top", "fo:margin-bottom",
         "fo:text-indent", "fo:line-height", "style:line-height-at-least", "fo:background-color", "fo:border", "fo:border-top",
-        "fo:border-bottom", "fo:border-left", "fo:border-right", "fo:padding", "fo:break-before",
+        "fo:border-bottom", "fo:border-left", "fo:border-right", "fo:padding", "fo:break-before", "style:tab-stop-distance",
     ];
 
     /// <summary>Attributes of table, column and cell properties the table renderer maps.</summary>
@@ -200,6 +200,7 @@ public sealed class OdtStyleCascade
                         // graphic properties are kept whole: every drawing attribute (fill, stroke, markers, text area, wrap) is read
                         var kept = new XElement(properties.Name, properties.Attributes().Where(attribute => properties.Name.LocalName == "graphic-properties" || handled.Contains(QualifiedName(attribute.Name))));
                         if (properties.Element(Style + "drop-cap") is { } dropCap) kept.Add(new XElement(dropCap.Name, dropCap.Attributes()));   // style:drop-cap is a child element
+                        if (properties.Element(Style + "tab-stops") is { } tabStops) kept.Add(new XElement(tabStops));        // style:tab-stops too
                         if (kept.HasAttributes || kept.HasElements) style.Add(kept);
                     }
                     copy.Add(style);
@@ -374,6 +375,8 @@ public sealed class OdtStyleCascade
         public string? BorderTop, BorderBottom, BorderLeft, BorderRight;
         public bool IsPageBreakBefore;
         public int DropCapLines, DropCapLength, DropCapDistance;
+        public WordTabStop[]? TabStops;       // style:tab-stops: a style's own list replaces the inherited one (one SvxTabStopItem)
+        public int? TabStopDistance;          // style:tab-stop-distance (usually on the default style)
 
         public WordParagraphFormatting ToFormatting()
         {
@@ -405,6 +408,8 @@ public sealed class OdtStyleCascade
             formatting.BorderBottomCss = BorderBottom;
             formatting.BorderStartCss = IsRightToLeft ? BorderRight : BorderLeft;
             formatting.BorderEndCss = IsRightToLeft ? BorderLeft : BorderRight;
+            formatting.TabStops = TabStops ?? [];
+            formatting.DefaultTabStopTwips = TabStopDistance ?? 0;
             return formatting;
         }
     }
@@ -438,6 +443,8 @@ public sealed class OdtStyleCascade
         raw.BorderLeft = BorderCss(properties.Attribute(Fo + "border-left")) ?? raw.BorderLeft;
         raw.BorderRight = BorderCss(properties.Attribute(Fo + "border-right")) ?? raw.BorderRight;
         if ((string?)properties.Attribute(Fo + "break-before") is { } breakBefore) raw.IsPageBreakBefore = breakBefore == "page";
+        if (Twips(properties.Attribute(Style + "tab-stop-distance")) is > 0 and var distance) raw.TabStopDistance = distance;
+        if (properties.Element(Style + "tab-stops") is { } tabStops) raw.TabStops = ReadTabStops(tabStops);
         // style:drop-cap (ODF 1.3 17.9), read as LibreOffice xmloff txtdropi.cxx ProcessAttrs: style:lines below 2 = no drop cap,
         // style:length a count or "word" (-1 here), with lines and no length 1 character; style:distance the gap to the text.
         if (properties.Element(Style + "drop-cap") is { } dropCap)
@@ -700,6 +707,32 @@ public sealed class OdtStyleCascade
     }
 
     // ── value parsing (ODF 1.3 part 3 §18: length = number + unit cm|mm|in|pt|pc|px) ──
+
+    /// <summary>
+    /// style:tab-stops (ODF 1.3 part 3 17.8, 19.497-19.506): style:position (from the indent, LibreOffice's default
+    /// TABS_RELATIVE_TO_INDENT), style:type left / center / right / char (a decimal stop on style:char), the leader as its text
+    /// (style:leader-text, LibreOffice xmloff/source/style/xmltabi.cxx: the fill character; a leader style without text draws ".")
+    /// - the fill characters Word has map to its leaders, any other to dots.
+    /// </summary>
+    private static WordTabStop[] ReadTabStops(XElement tabStops)
+    {
+        var stops = new List<WordTabStop>();
+        foreach (XElement stop in tabStops.Elements(Style + "tab-stop"))
+        {
+            if (Twips(stop.Attribute(Style + "position")) is not { } position) continue;
+            string alignment = (string?)stop.Attribute(Style + "type") switch { "center" => "center", "right" => "right", "char" => "decimal", _ => "left" };
+            string? text = (string?)stop.Attribute(Style + "leader-text");
+            string? style = (string?)stop.Attribute(Style + "leader-style");
+            if (string.IsNullOrEmpty(text) && style is not null and not "none") text = ".";
+            string leader = text switch
+            {
+                null or "" or " " => "none", "." => "dot", "-" => "hyphen", "_" => "underscore", "\u00B7" => "middleDot", _ => "dot",
+            };
+            stops.Add(new WordTabStop(position, alignment, leader));
+        }
+        stops.Sort((a, b) => a.PositionTwips.CompareTo(b.PositionTwips));
+        return stops.ToArray();
+    }
 
     public static int? Twips(XAttribute? attribute) => attribute is null ? null : Twips(attribute.Value);
 

@@ -1,3 +1,4 @@
+using FastDocView.Html;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -106,6 +107,13 @@ internal sealed class RtfParser
 
     public int Depth => _depth;
     public ref readonly RtfGroupState Current => ref _stack[_depth < 0 ? 0 : _depth];
+
+    /// <summary>
+    /// The current paragraph's tab stops (\tx / \tb with the \tq* kind and \tl* leader before them), cleared by \pard. Kept here, not in
+    /// the group state (fixed-size snapshot data): a snapshot carries them after the group stack (<see cref="WriteSnapshot"/>).
+    /// </summary>
+    public List<WordTabStop> TabStops { get; } = new();
+    private string _pendingTabAlignment = "left", _pendingTabLeader = "none";
     public bool IsInFootnote => _footnoteDepth >= 0;
     /// <summary>The open note sits inside a field code (its mark goes where the code puts it, not before the field).</summary>
     public bool IsNoteInFieldInstruction { get; private set; }
@@ -175,7 +183,13 @@ internal sealed class RtfParser
     private static readonly int CellDefinitionSize = Marshal.SizeOf<RtfCellDefinition>();
     private static readonly int BorderSize = Marshal.SizeOf<RtfBorder>();
 
-    public int SnapshotSize => 4 + (_depth + 1) * RtfGroupState.Size + 4 * 4 + 1 + 4 + 4 + 1 + 6 * BorderSize + 4 + _cells.Count * CellDefinitionSize;
+    public int SnapshotSize => 4 + (_depth + 1) * RtfGroupState.Size + 4 * 4 + 1 + 4 + 4 + 1 + 6 * BorderSize + 4 + _cells.Count * CellDefinitionSize
+                              + 4 + TabStops.Count * TabStopSize;
+
+    // a tab stop in a snapshot: position (int), alignment and leader (their index in these lists)
+    private const int TabStopSize = 6;
+    private static readonly string[] TabAlignments = ["left", "center", "right", "decimal", "bar"];
+    private static readonly string[] TabLeaders = ["none", "dot", "hyphen", "underscore", "heavy", "middleDot"];
 
     /// <summary>Writes the snapshot into <paramref name="bytes"/> (at least <see cref="SnapshotSize"/> long).</summary>
     public void WriteSnapshot(Span<byte> bytes)
@@ -202,10 +216,19 @@ internal sealed class RtfParser
             MemoryMarshal.Write(bytes.Slice(at), ref cell);
             at += CellDefinitionSize;
         }
+        // the paragraph's tab stops carry over a \par without \pard (Word writes them only when they change)
+        WriteInt(bytes, ref at, TabStops.Count);
+        foreach (WordTabStop stop in TabStops)
+        {
+            WriteInt(bytes, ref at, stop.PositionTwips);
+            bytes[at++] = (byte)Math.Max(0, Array.IndexOf(TabAlignments, stop.Alignment));
+            bytes[at++] = (byte)Math.Max(0, Array.IndexOf(TabLeaders, stop.Leader));
+        }
     }
 
     public void RestoreSnapshot(byte[] bytes)
     {
+        TabStops.Clear();
         int at = 0;
         int frames = ReadInt(bytes, ref at);
         if (_stack.Length < frames + 8) _stack = new RtfGroupState[frames + 32];
@@ -228,6 +251,13 @@ internal sealed class RtfParser
         {
             _cells.Add(MemoryMarshal.Read<RtfCellDefinition>(bytes.AsSpan(at)));
             at += CellDefinitionSize;
+        }
+        int tabStops = ReadInt(bytes, ref at);
+        for (int i = 0; i < tabStops; i++)
+        {
+            int position = ReadInt(bytes, ref at);
+            TabStops.Add(new WordTabStop(position, TabAlignments[Math.Min(bytes[at], TabAlignments.Length - 1)], TabLeaders[Math.Min(bytes[at + 1], TabLeaders.Length - 1)]));
+            at += 2;
         }
         _nestedCells.Clear(); _pendingNestedCell = default; Array.Clear(_nestedRowBorders, 0, 6); _isNestedRowRightToLeft = false; _nestedRowHeight = 0;
         _isIgnorableNext = false;
@@ -1032,7 +1062,26 @@ internal sealed class RtfParser
             case RtfWord.RightToLeftMark: AddCharacter('\u200F'); return;
 
             // ── paragraph ──
-            case RtfWord.ParagraphDefault: state.ResetParagraph(); return;
+            case RtfWord.ParagraphDefault: state.ResetParagraph(); TabStops.Clear(); _pendingTabAlignment = "left"; _pendingTabLeader = "none"; return;
+            case RtfWord.TabRight: _pendingTabAlignment = "right"; return;
+            case RtfWord.TabCenter: _pendingTabAlignment = "center"; return;
+            case RtfWord.TabDecimal: _pendingTabAlignment = "decimal"; return;
+            case RtfWord.TabLeaderDot: _pendingTabLeader = "dot"; return;
+            case RtfWord.TabLeaderMiddleDot: _pendingTabLeader = "middleDot"; return;
+            case RtfWord.TabLeaderHyphen: _pendingTabLeader = "hyphen"; return;
+            case RtfWord.TabLeaderUnderline: _pendingTabLeader = "underscore"; return;
+            case RtfWord.TabLeaderThick: _pendingTabLeader = "heavy"; return;
+            case RtfWord.TabLeaderEqual: _pendingTabLeader = "none"; return;          // LibreOffice: no equal-sign leader (rtfdispatchflag.cxx:252)
+            case RtfWord.TabPosition: case RtfWord.TabBar:
+                if (hasParameter && state.Destination != RtfDestination.StyleSheet)
+                {
+                    TabStops.RemoveAll(stop => stop.PositionTwips == parameter);
+                    TabStops.Add(new WordTabStop(parameter, word == RtfWord.TabBar ? "bar" : _pendingTabAlignment, _pendingTabLeader));
+                    TabStops.Sort((a, b) => a.PositionTwips.CompareTo(b.PositionTwips));
+                }
+                _pendingTabAlignment = "left"; _pendingTabLeader = "none";
+                return;
+            case RtfWord.DefaultTab: if (_readsHeaderTables && hasParameter && parameter > 0) _tables.DefaultTabStopTwips = parameter; return;
             case RtfWord.AlignLeft: state.Alignment = RtfAlignment.Left; return;
             case RtfWord.AlignRight: state.Alignment = RtfAlignment.Right; return;
             case RtfWord.AlignCenter: state.Alignment = RtfAlignment.Center; return;

@@ -66,6 +66,8 @@ public sealed class RtfDocumentTables
     public bool IsAutoHyphenation { get; set; }
     /// <summary>\deflang: the document default language (LCID), 0 = none.</summary>
     public ushort DefaultLanguage { get; set; }
+    /// <summary>\deftab: the default tab interval, twips (0 = 720; LibreOffice rtfdispatchvalue.cxx:1372 -> w:defaultTabStop).</summary>
+    public int DefaultTabStopTwips { get; set; }
 
     /// <summary>The code page text in font <paramref name="font"/> decodes with: its \fcharset / \cpg / name suffix, else \ansicpg.</summary>
     public ushort CodePageOfFont(int font)
@@ -98,7 +100,7 @@ public sealed class RtfDocumentTables
         writer.Write(FootnoteFormat); writer.Write(EndnoteFormat); writer.Write(FootnoteStart); writer.Write(EndnoteStart);
         writer.Write((byte)FootnoteRestart); writer.Write((byte)EndnoteRestart);
         writer.Write(IsRightToLeftDocument);
-        writer.Write(IsAutoHyphenation); writer.Write(DefaultLanguage);
+        writer.Write(IsAutoHyphenation); writer.Write(DefaultLanguage); writer.Write(DefaultTabStopTwips);
         writer.Write(Fonts.Count);
         foreach (KeyValuePair<int, FontEntry> font in Fonts) { writer.Write(font.Key); writer.Write(font.Value.Name); writer.Write(font.Value.Charset); writer.Write(font.Value.CodePage); }
         writer.Write(Colors.Count);
@@ -142,6 +144,7 @@ public sealed class RtfDocumentTables
             IsRightToLeftDocument = reader.ReadBoolean(),
             IsAutoHyphenation = reader.ReadBoolean(),
             DefaultLanguage = reader.ReadUInt16(),
+            DefaultTabStopTwips = reader.ReadInt32(),
         };
         int fonts = reader.ReadInt32();
         for (int i = 0; i < fonts; i++) tables.Fonts[reader.ReadInt32()] = new FontEntry { Name = reader.ReadString(), Charset = reader.ReadInt32(), CodePage = reader.ReadInt32() };

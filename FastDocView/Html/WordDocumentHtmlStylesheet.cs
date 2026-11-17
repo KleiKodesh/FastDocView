@@ -34,6 +34,14 @@ public static class WordDocumentHtmlStylesheet
             .word-document td { border: 1px solid var(--fdv-table-border, #999); padding: 1pt 4pt; vertical-align: top; }
             .word-document .list-marker { display: inline-block; text-indent: 0; }
             .word-document p, .word-document .word-paragraph-block, .word-document h1, .word-document h2, .word-document h3, .word-document h4, .word-document h5, .word-document h6 { tab-size: 36pt; }
+            .word-document .tab-space { position: relative; tab-size: 0; }
+            .word-document .tab-space[data-leader]::before { position: absolute; inset-inline: 0; top: 0; line-height: normal; overflow: hidden; white-space: nowrap; text-align: end; pointer-events: none; }
+            .word-document .tab-space[data-leader="d"]::before { content: "{{TabLeaders.Dots}}"; }
+            .word-document .tab-space[data-leader="h"]::before { content: "{{TabLeaders.Hyphens}}"; }
+            .word-document .tab-space[data-leader="u"]::before, .word-document .tab-space[data-leader="H"]::before { content: "{{TabLeaders.Underscores}}"; }
+            .word-document .tab-space[data-leader="H"]::before { font-weight: bold; }
+            .word-document .tab-space[data-leader="m"]::before { content: "{{TabLeaders.MiddleDots}}"; }
+            .word-document .tab-bar { position: absolute; top: 0; bottom: 0; border-inline-start: 0.75pt solid currentColor; pointer-events: none; }
             .word-document .note-reference { font-size: 0.7em; line-height: 0; color: var(--fdv-link, #06c); cursor: pointer; padding: 0 1px; }
             .word-document .note-mark { vertical-align: super; font-size: 0.7em; line-height: 0; color: var(--fdv-link, #06c); margin-inline-end: 0.25em; }
             .word-document .page-break { display: block; border-top: 1px dashed var(--fdv-rule, #bbb); margin: 6pt 0; }
@@ -57,4 +65,13 @@ public static class WordDocumentHtmlStylesheet
             .word-document a.link { color: inherit; text-decoration: none; cursor: pointer; }
             """;
     }
+}
+
+/// <summary>The leader fills of a laid-out tab (the page's tab pass sets data-leader): long enough for any line, clipped to the tab's width.</summary>
+internal static class TabLeaders
+{
+    public static readonly string Dots = new('.', 400);
+    public static readonly string Hyphens = new('-', 400);
+    public static readonly string Underscores = new('_', 400);
+    public static readonly string MiddleDots = string.Concat(Enumerable.Repeat("\\0000B7", 400));    // CSS escapes (U+00B7)
 }

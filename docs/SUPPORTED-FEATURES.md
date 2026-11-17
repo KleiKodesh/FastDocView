@@ -64,7 +64,8 @@ separate paged view, which is not built yet.
 | Line spacing (auto, exact, at least) | yes | yes | yes | yes | n.a. | yes (2) |
 | Paragraph borders | yes | yes | yes (5) | yes | n.a. | yes (2) |
 | Paragraph shading | yes | yes | yes | yes | n.a. | yes (2) |
-| Tab stops | partial (6) | partial (6) | partial (6) | partial (6) | n.a. | n.a. |
+| Tab stops: left / centre / right / decimal / bar stops, leaders, default interval, stops from styles and clears, hanging indent, right-to-left (6) | yes | yes | yes | yes (no bar stops in ODF) | n.a. | n.a. |
+| Absolute position tabs (w:ptab: left / centre / right of the margin or indent, with leader) | yes (6) | n.a. | n.a. | n.a. | n.a. | n.a. |
 | Drop caps | yes | yes | yes | yes (7) | n.a. | n.a. |
 | Automatic hyphenation (by language; Hebrew has no dictionary) | yes | yes | yes | yes | n.a. | n.a. |
 | Headings as h1-h6 and the navigation tree | yes | yes | yes | yes | partial (8) | yes |
@@ -73,7 +74,13 @@ separate paged view, which is not built yet.
 5. RTF: `\brsp` spacing, the border shadow (`\brdrsh`), the line between (`\brdrbtw`) and border groups (adjacent body
    paragraphs with the same borders and indents share one box, as Word draws them; found at index time) are drawn; inside table cells,
    text boxes and notes the block itself joins them.
-6. Tab stops become `tab-size`; leaders and right / centre / decimal alignment are not laid out as Word does.
+6. The library writes each paragraph's stops as data (`data-tabs`); the page lays the tabs out after a block renders, with the
+   browser's text metrics and LibreOffice's rules (sw/source/core/text/txttab.cxx): the next custom stop, else the next default
+   stop (from the margin; from the indent in ODT unless settings.xml TabsRelativeToIndent is false), the start indent as a stop
+   inside a hanging indent, right / centre / decimal text against the stop, a non-left stop past the line's end at the end.
+   Leaders are drawn as dots, hyphens, underscores (heavy: bold), middle dots; bar stops as a vertical line (Word; LibreOffice
+   drops them). Checked against Word's and LibreOffice's PDFs within 2 pt (vue-demo/playwright/tabStopsCheck.mjs). The text
+   keeps its tab characters (search, copy, document text). List label tabs keep their own layout (WordListLabelHtml).
 7. ODT: the initial is the paragraph's first `style:length` characters (or its first word) wherever they run, across
    text nodes and spans, each piece in its span's look; a tab, a line break or a note ends it, as LibreOffice does.
 8. Torat Emet markup gives headings; plain .txt has none.

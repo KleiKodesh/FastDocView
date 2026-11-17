@@ -221,7 +221,9 @@ public static class DocBinaryPropertyModifiers
                 int at = BitConverter.ToInt16(grpprl, position + i * 2);
                 byte descriptor = grpprl[descriptors + i];
                 string alignment = (descriptor & 0x07) switch { 1 => "center", 2 => "right", 3 => "decimal", 4 => "bar", _ => "left" };
-                string leader = ((descriptor >> 3) & 0x07) switch { 1 => "dot", 2 => "hyphen", 3 or 4 => "underscore", _ => "none" };
+                // tlc ([MS-DOC] 2.9.329 TLC): 3 single line, 4 heavy line, 5 middle dot (LibreOffice ww8par.cxx Read_Tab :1874-1888 draws 3 and 4
+                // as "_" and drops 5; Word draws them as named)
+                string leader = ((descriptor >> 3) & 0x07) switch { 1 => "dot", 2 => "hyphen", 3 => "underscore", 4 => "heavy", 5 => "middleDot", _ => "none" };
                 stops.RemoveAll(stop => stop.PositionTwips == at);
                 stops.Add(new WordTabStop(at, alignment, leader));
             }

@@ -37,6 +37,7 @@ internal enum RtfWord : ushort
     ParagraphDefault, AlignLeft, AlignRight, AlignCenter, AlignJustify, AlignDistribute,
     LeftIndent, RightIndent, StartIndent, EndIndent, FirstLineIndent, SpaceBefore, SpaceAfter, LineSpacing, LineSpacingMultiple,
     RightToLeftParagraph, LeftToRightParagraph, InTable, NestingLevel, PageBreakBefore, DropCapLines, DropCapType, FrameHorizontalDistance, ParagraphHyphenation,
+    TabPosition, TabBar, TabRight, TabCenter, TabDecimal, TabLeaderDot, TabLeaderMiddleDot, TabLeaderHyphen, TabLeaderUnderline, TabLeaderThick, TabLeaderEqual, DefaultTab,
     // ── table row ──
     RowDefault, CellBoundary, CellShading, RightToLeftRow, LeftToRightRow, RowLeft, RowHeight, RowAlignLeft, RowAlignCenter, RowAlignRight,
     CellMergeFirst, CellMergeContinue, CellVerticalMergeFirst, CellVerticalMergeContinue, CellAlignTop, CellAlignCenter, CellAlignBottom, CellShadingPercent,
@@ -149,6 +150,10 @@ internal static class RtfControlWords
         ("qd", RtfWord.AlignDistribute), ("li", RtfWord.LeftIndent), ("ri", RtfWord.RightIndent), ("lin", RtfWord.StartIndent), ("rin", RtfWord.EndIndent),
         ("fi", RtfWord.FirstLineIndent), ("sb", RtfWord.SpaceBefore), ("sa", RtfWord.SpaceAfter), ("sl", RtfWord.LineSpacing), ("slmult", RtfWord.LineSpacingMultiple),
         ("rtlpar", RtfWord.RightToLeftParagraph), ("ltrpar", RtfWord.LeftToRightParagraph), ("intbl", RtfWord.InTable), ("itap", RtfWord.NestingLevel),
+        // tab stops (LibreOffice rtfdispatchflag.cxx:214-260 kind + leader, rtfdispatchvalue.cxx:1056-1068 \tx, 1372 \deftab)
+        ("tx", RtfWord.TabPosition), ("tb", RtfWord.TabBar), ("tqr", RtfWord.TabRight), ("tqc", RtfWord.TabCenter), ("tqdec", RtfWord.TabDecimal),
+        ("tldot", RtfWord.TabLeaderDot), ("tlmdot", RtfWord.TabLeaderMiddleDot), ("tlhyph", RtfWord.TabLeaderHyphen), ("tlul", RtfWord.TabLeaderUnderline),
+        ("tlth", RtfWord.TabLeaderThick), ("tleq", RtfWord.TabLeaderEqual), ("deftab", RtfWord.DefaultTab),
         ("pagebb", RtfWord.PageBreakBefore), ("dropcapli", RtfWord.DropCapLines), ("dropcapt", RtfWord.DropCapType), ("dxfrtext", RtfWord.FrameHorizontalDistance), ("dfrmtxtx", RtfWord.FrameHorizontalDistance), ("hyphpar", RtfWord.ParagraphHyphenation), ("lang", RtfWord.Language),
         ("trowd", RtfWord.RowDefault), ("cellx", RtfWord.CellBoundary), ("clcbpat", RtfWord.CellShading), ("rtlrow", RtfWord.RightToLeftRow), ("ltrrow", RtfWord.LeftToRightRow),
         ("trleft", RtfWord.RowLeft), ("trrh", RtfWord.RowHeight), ("trql", RtfWord.RowAlignLeft), ("trqc", RtfWord.RowAlignCenter), ("trqr", RtfWord.RowAlignRight),

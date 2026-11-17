@@ -2,7 +2,7 @@ namespace FastDocView.Tests;
 
 public static partial class DocxFidelityTest
 {
-    /// <summary>Tab stops with leaders (ST_TabJc / ST_TabTlc): a last tab to an end-aligned stop becomes a flex filler with the leader line.</summary>
+    /// <summary>Tab stops with leaders (ST_TabJc / ST_TabTlc): the stops and the absolute position tab become data for the page's tab pass.</summary>
     private static void TabLeaders()
     {
         const string styles = """<w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/><w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs></w:pPr></w:style>""";
@@ -12,10 +12,9 @@ public static partial class DocxFidelityTest
             Line("TOC1", "", "<w:r><w:tab/></w:r>")                                                                     // 0 style right/dot
           + Line("TOC1", "<w:tabs><w:tab w:val=\"clear\" w:pos=\"9350\"/><w:tab w:val=\"left\" w:pos=\"720\"/></w:tabs>", "<w:r><w:tab/></w:r>")   // 1 cleared
           + Line("", "", "<w:r><w:ptab w:relativeTo=\"margin\" w:alignment=\"right\" w:leader=\"hyphen\"/></w:r>"), styles);   // 2 ptab
-        TestReport.Check(html[0].Contains("display:flex") && html[0].Contains("class=\"tab-leader\" style=\"flex:1 1 0;min-width:0.5em;margin:0 0.2em;border-bottom:0.15em dotted currentColor;\"")
-                         && html[0].Contains("Chapter</span></span><span class=\"tab-leader\"") && html[0].Contains("<span class=\"tab-after\" style=\"flex:none\">"),
-                         "right tab with a dot leader: text, dotted filler, the rest at the end (the run span is closed and reopened)");
-        TestReport.Check(!html[1].Contains("display:flex") && html[1].Contains("\t"), "a cleared end stop leaves a plain tab");
-        TestReport.Check(html[2].Contains("dashed"), "ptab alignment right with a hyphen leader");
+        TestReport.Check(html[0].Contains("data-tabs=\"36 0 0 0;467.5 r d\"") && html[0].Contains("	"),
+                         "right tab with a dot leader: the style's stop goes to the page's tab pass as data, the tab stays a tab");
+        TestReport.Check(html[1].Contains("data-tabs=\"36 0 0 0;36 l \"") && html[1].Contains("	"), "a cleared end stop leaves only the paragraph's own left stop");
+        TestReport.Check(html[2].Contains("data-ptab=\"r h m\""), "ptab alignment right with a hyphen leader, relative to the margin");
     }
 }

@@ -163,6 +163,43 @@ public static class OdtPackage
     /// The document's meta:generator (meta.xml of a package, office:meta of a .fodt before its office:body), or null. Only the
     /// small meta part is read; LibreOffice reads the same element to tell which product wrote the file (xmlmetai.cxx:232-298).
     /// </summary>
+    public const string SettingsEntryName = "settings.xml";
+
+    /// <summary>
+    /// LibreOffice's TabsRelativeToIndent (a config:config-item of settings.xml, office:settings of a .fodt before its office:body):
+    /// tab positions count from the paragraph's indent. Absent = true (sw DocumentSettingManager mbTabRelativeToIndent); LibreOffice
+    /// writes false for documents it imported from Word (txttab.cxx NewTabPortion reads it as TABS_RELATIVE_TO_INDENT).
+    /// </summary>
+    internal static bool ReadTabsRelativeToIndent(Stream file, bool isFlat)
+    {
+        long position = file.Position;
+        try
+        {
+            Stream? view = null;
+            if (isFlat) { file.Position = 0; view = new NonClosingStream(file); }
+            else if (ZipEntryLocator.Locate(file, SettingsEntryName) is { } entry) view = OpenEntry(file, entry);
+            if (view is null) return true;
+            using (view)
+            {
+                using XmlReader reader = WordDocumentXml.CreateReader(view, tolerateUndeclaredPrefixes: true);
+                while (reader.Read())
+                {
+                    if (reader.NodeType != XmlNodeType.Element) continue;
+                    if (reader.NamespaceURI == OfficeNamespace && reader.LocalName is "body" or "master-styles") break;
+                    if (reader.LocalName == "config-item" && reader.GetAttribute("name", ConfigNamespace) == "TabsRelativeToIndent")
+                        return reader.ReadElementContentAsString().Trim() != "false";
+                }
+            }
+        }
+        catch (XmlException) { }
+        catch (IOException) { }
+        catch (InvalidDataException) { }
+        finally { file.Position = position; }
+        return true;
+    }
+
+    private const string ConfigNamespace = "urn:oasis:names:tc:opendocument:xmlns:config:1.0";
+
     public static string? ReadGenerator(Stream file, bool isFlat) => ReadMeta(file, isFlat).Generator;
 
     /// <summary>The document information (<see cref="OdtDocumentMeta"/>): meta.xml of a package, office:meta of a .fodt before its office:body.</summary>

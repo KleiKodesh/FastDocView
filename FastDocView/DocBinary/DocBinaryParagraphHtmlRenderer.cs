@@ -327,12 +327,13 @@ public sealed class DocBinaryParagraphHtmlRenderer
     {
         (WordParagraphFormatting formatting, int styleIndex) = ResolveParagraph(cpStart, cpEnd);
         formatting.IsHyphenated = IsAutoHyphenation && !formatting.IsAutoHyphenationSuppressed;
+        formatting.DefaultTabStopTwips = DefaultTabStopTwips;
         int headingLevel = _styles.HeadingLevelOf(styleIndex);
         string tag = _textBoxDepth > 0 ? "span" : headingLevel is >= 1 and <= 6 ? "h" + headingLevel : "p";
 
         bool outerRightToLeft = _isParagraphRightToLeft;
         WordHtmlText.AppendOpenTag(html, tag, formatting.ToCss(previousStyleKey) + (_textBoxDepth > 0 ? "display:block;" : ""),
-                                   _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft, formatting.HyphenationLanguageAttribute);
+                                   _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft, formatting.ParagraphAttributes);
         _isParagraphRightToLeft = formatting.IsRightToLeft;
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
         if (listLabel is { Length: > 0 }) AppendListLabel(html, listLabel, formatting, ParagraphMarkFormatting(cpEnd, formatting.RunFormatting, styleBase));

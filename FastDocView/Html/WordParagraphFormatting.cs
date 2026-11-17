@@ -48,6 +48,13 @@ public sealed class WordParagraphFormatting
     public int FirstTabStopTwips;           // 0 = default stops; drives CSS tab-size
     /// <summary>The custom tab stops after every style layer (w:tabs; "clear" removes a stop inherited at the same position), by position.</summary>
     public WordTabStop[] TabStops = [];
+    /// <summary>The document's default tab interval, twips (.docx w:defaultTabStop, .doc Dop dxaTab, RTF \deftab, ODT style:tab-stop-distance); 0 = 720.</summary>
+    public int DefaultTabStopTwips;
+    /// <summary>
+    /// Tab positions count from the start indent, not from the text area's edge: OpenDocument's default (LibreOffice
+    /// DocumentSettingId::TABS_RELATIVE_TO_INDENT, txttab.cxx NewTabPortion nTabLeft). Word measures them from the margin.
+    /// </summary>
+    public bool AreTabStopsRelativeToIndent;
     public string? StyleKey;                // what "same style" means for contextual spacing
     public string? BorderTopCss;            // CSS border values ("1pt solid #000"), null = none
     public string? BorderBottomCss;
@@ -181,6 +188,47 @@ public sealed class WordParagraphFormatting
     public string? HyphenationLanguageAttribute
         => IsHyphenated && RunFormatting.Language is { Length: > 0 } language && language.All(c => char.IsLetterOrDigit(c) || c == '-')
             ? "lang=\"" + language + "\"" : null;
+
+    /// <summary>
+    /// What the client-side tab layout needs (the page's tab pass, fastDocViewTabs.ts): <c>data-tabs="D S F R;pos a l;..."</c> with
+    /// D the default interval, S the start indent, F the first-line indent (pt), R 1 when stops count from the indent, then the
+    /// stops by position (pt): a = l(eft) c(enter) r(ight) d(ecimal) b(ar), l = the leader: "" none, d dot, h hyphen, u underscore,
+    /// H heavy, m middle dot. Null when the browser's own tabs already land where Word puts them (no stops, no indent, the
+    /// default 36 pt interval: CSS tab-size 36pt counts from the same edge).
+    /// </summary>
+    public string? TabStopsAttribute
+    {
+        get
+        {
+            int interval = DefaultTabStopTwips > 0 ? DefaultTabStopTwips : 720;
+            int start = StartIndentTwips;
+            if (TabStops.Length == 0 && interval == 720 && start == 0 && FirstLineIndentTwips >= 0) return null;
+            var value = new StringBuilder("data-tabs=\"");
+            value.Append(TwipsToExactPt(interval)).Append(' ').Append(TwipsToExactPt(start)).Append(' ').Append(TwipsToExactPt(FirstLineIndentTwips))
+                 .Append(' ').Append(AreTabStopsRelativeToIndent ? '1' : '0');
+            foreach (WordTabStop stop in TabStops)
+            {
+                char alignment = stop.Alignment switch { "center" => 'c', "right" or "end" => 'r', "decimal" => 'd', "bar" => 'b', "clear" => '\0', _ => 'l' };
+                if (alignment == '\0') continue;
+                value.Append(';').Append(TwipsToExactPt(stop.PositionTwips)).Append(' ').Append(alignment).Append(' ').Append(stop.Leader switch
+                {
+                    "dot" => "d", "hyphen" => "h", "underscore" => "u", "heavy" => "H", "middleDot" => "m", _ => "",
+                });
+            }
+            return value.Append('"').ToString();
+        }
+    }
+
+    /// <summary>The paragraph tag's extra attributes: the hyphenation language and the tab layout data.</summary>
+    public string? ParagraphAttributes
+        => (HyphenationLanguageAttribute, TabStopsAttribute) switch
+        {
+            (null, var tabs) => tabs,
+            (var language, null) => language,
+            (var language, var tabs) => language + " " + tabs,
+        };
+
+    private static string TwipsToExactPt(int twips) => (twips / 20.0).ToString("0.##", CultureInfo.InvariantCulture);
 
     public static string TwipsToPt(int twips) => (twips / 20.0).ToString("0.#", CultureInfo.InvariantCulture);
 }

@@ -62,6 +62,9 @@ public sealed partial class OdtBlockHtmlRenderer
 
     public OdtBlockHtmlRenderer(OdtStyleCascade styles) => _styles = styles;
 
+    /// <summary>settings.xml TabsRelativeToIndent (<see cref="OdtPackage.ReadTabsRelativeToIndent"/>): stops count from the start indent.</summary>
+    public bool AreTabStopsRelativeToIndent { get; init; } = true;
+
     /// <summary>Computes the fields LibreOffice recomputes when it prints (<see cref="OdtFieldComputer"/>); null: every field shows its saved text.</summary>
     internal OdtFieldComputer? Fields { get; set; }
 
@@ -168,7 +171,16 @@ public sealed partial class OdtBlockHtmlRenderer
             formatting.LeftIndentTwips = layout[0];
             formatting.IsLeftIndentPhysical = false;
             formatting.FirstLineIndentTwips = layout[1];
-            if (layout[2] >= 0) formatting.TabStops = [new WordTabStop(layout[2], "left", "none")];
+            if (layout[2] >= 0) formatting.TabStops = [.. formatting.TabStops.Append(new WordTabStop(layout[2] - (AreTabStopsRelativeToIndent ? layout[0] : 0), "left", "none")).OrderBy(stop => stop.PositionTwips)];
+        }
+        // ODT stops count from the start indent (unless settings.xml says otherwise); the tab data and the list label take them
+        // from the text area's edge
+        if (layout is null) formatting = formatting.Clone();
+        formatting.AreTabStopsRelativeToIndent = AreTabStopsRelativeToIndent;
+        if (formatting.TabStops.Length > 0 && AreTabStopsRelativeToIndent)
+        {
+            int indent = formatting.StartIndentTwips;
+            formatting.TabStops = [.. formatting.TabStops.Select(stop => stop with { PositionTwips = stop.PositionTwips + indent }).OrderBy(stop => stop.PositionTwips)];
         }
         if (formatting.RunFormatting.Hyphenate == true)
         {
@@ -183,7 +195,7 @@ public sealed partial class OdtBlockHtmlRenderer
         }
         if (style.IsPageBreakBefore && isTopLevel && _textBoxDepth == 0) html.Append("<span class=\"page-break\"></span>");
         WordHtmlText.AppendOpenTag(html, tag, css, _textBoxDepth > 0 ? "text-box-paragraph" : tag == "div" ? "word-paragraph-block" : null, formatting.IsRightToLeft,
-                                   formatting.HyphenationLanguageAttribute);
+                                   formatting.ParagraphAttributes);
         bool outerIsRightToLeft = _isParagraphRightToLeft;
         int outerDropCap = _dropCapRemaining;
         WordParagraphFormatting? outerDropCapFormat = _dropCapFormat;

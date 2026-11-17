@@ -1049,8 +1049,8 @@ writerfilter/dmapper and Word 16 (COM / PDF export of synthetic files). Regressi
 - **Neighbours**: a body block is rendered with the paragraph before and after it (read in the same pass as the
   window) - border groups (pBdr incl. between) and deleted paragraph marks (text joins the next paragraph, which keeps
   its pPr) work across blocks; inside cells / text boxes the siblings are used.
-- **Tabs**: stops merge across layers ("clear" removes); a last tab to an end-aligned stop (or ptab right) becomes a
-  flex filler drawn with the leader. Plain stops keep tab-size.
+- **Tabs**: stops merge across layers ("clear" removes); the paragraph writes them as `data-tabs` and a ptab as
+  `data-ptab`; the page's tab pass lays them out (see "Tab layout" below).
 - **Compatibility** (settings.xml w:compat, `DocxCompatibilitySettings`, read like LibreOffice SettingsTable):
   compatibilityMode (highest valid, absent = 12), doNotExpandShiftReturn (default: lines ending in a manual break
   of a justified paragraph are stretched), autospacing (280 / 100 twips + LibreOffice's first / last / same-list
@@ -3110,3 +3110,29 @@ sender-*, text-input; page-number / page-count / references by page need pages (
   `<![if !vml]>` (a positioned table: filled / bordered cells holding the shape's text, `<img>` pictures of ovals, lines and
   pictures with their effects drawn in). The scanner already drops the VML comment and keeps the fallback, which is what a
   browser prints; `PictureEffectsFidelityTest` pins it (vml-shapes-v1.mht).
+
+## Tab layout (2026-11-17)
+
+Tabs are laid out in the page, per paragraph, after its block renders (app: `features/fast-doc-view/fastDocViewTabs.ts`,
+the `v-fast-doc-view-tabs` directive on the block and note bodies). The library only writes data, so the windowed model
+holds: no whole-document layout, the HTML of a block is the same as before plus one attribute.
+
+- `WordParagraphFormatting.TabStopsAttribute`: `data-tabs="D S F R;pos a l;..."` (pt) - default interval (.docx
+  w:defaultTabStop, .doc Dop dxaTab, RTF `\deftab`, ODT style:tab-stop-distance), start indent, first-line indent,
+  R = 1 when default stops count from the indent (ODT unless settings.xml TabsRelativeToIndent=false), then the stops from
+  the text area's edge (ODT stops are shifted by the indent on the server) with alignment l/c/r/d/b and leader d/h/u/H/m.
+  Left out when the browser's tab-size 36pt already lands where Word does (no stops, no indent, 720-twip interval).
+- RTF: `	x` / `	b` with the pending `	q*` / `	l*` words (LibreOffice rtfdispatchflag.cxx:214-260,
+  rtfdispatchvalue.cxx:1056-1068) are kept by the parser, cleared by `\pard`, and stored in each block's snapshot - Word writes
+  them only when they change, so a block starting after a plain `\par` inherits them (index format 24).
+- .doc: TBD leader 4 = heavy, 5 = middle dot (LibreOffice ww8par.cxx Read_Tab draws 3 and 4 as "_" and drops 5).
+- Client pass: wraps each tab character in an inline `.tab-space` span (the text keeps its tab; an inline span keeps the
+  tab's bidi class, a segment separator - an inline-block is a neutral and put "44" of a right-to-left TOC line on the wrong
+  side), zeroes them, measures every tab and (only for right / centre / decimal stops) the text after it in one layout, then
+  sets each width as end padding. Stop choice and widths follow txttab.cxx NewTabPortion / PreFormat / PostFormat (see
+  SUPPORTED-FEATURES note 6). Widths are pt in the paragraph's own coordinates: a zoom needs no new pass; a width change
+  re-runs it in the next frame (ResizeObserver; inside the callback a row height change would be an observer loop).
+- Verified: test-data/tab-stops/tab-stops-v1 (.docx generated, .doc / .rtf by Word, .odt by LibreOffice), the text after
+  every tab within 2 pt of Word's PDF (.docx / .doc / .rtf) and LibreOffice's (.odt): `vue-demo/playwright/tabStopsCheck.mjs`.
+- Cost (87 MB .docx sample, 81 of 99 rendered paragraphs carry tabs): about 0.2 ms per tabbed paragraph (one extra layout
+  of those paragraphs), measured over all rendered blocks at once 2-18 ms; .doc sample 1 ms.

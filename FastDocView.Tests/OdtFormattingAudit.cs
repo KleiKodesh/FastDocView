@@ -28,7 +28,7 @@ public static class OdtFormattingAudit
     ];
 
     // Ignored by design, with reasons: pagination/hyphenation (no pages), language tags (no spell checking),
-    // East-Asian variants (no CJK script selection), kerning/scaling details, tab stops (CSS tab-size default), auto-direction flags.
+    // East-Asian variants (no CJK script selection), kerning/scaling details, auto-direction flags.
     private static readonly HashSet<string> IgnoredProperties =
     [
         "fo:language", "fo:country", "style:language-asian", "style:country-asian", "style:language-complex", "style:country-complex",
@@ -43,7 +43,7 @@ public static class OdtFormattingAudit
         "loext:hyphenation-zone-column", "loext:hyphenation-zone-page", "loext:hyphenation-zone-spread", "loext:hyphenation-keep-line",
         "fo:widows", "fo:orphans", "fo:keep-with-next", "fo:keep-together", "fo:break-after", "style:page-number", "style:snap-to-layout-grid",
         "style:register-true", "style:line-break", "style:punctuation-wrap", "style:text-autospace", "style:writing-mode-automatic",
-        "style:justify-single-word", "fo:text-align-last", "style:auto-text-indent", "style:join-border", "style:shadow", "style:tab-stop-distance",
+        "style:justify-single-word", "fo:text-align-last", "style:auto-text-indent", "style:join-border", "style:shadow",
         "style:vertical-align", "style:line-spacing", "style:contextual-spacing", "loext:contextual-spacing", "fo:padding-top", "fo:padding-bottom",
         "fo:padding-left", "fo:padding-right", "style:border-line-width", "style:border-line-width-top", "style:border-line-width-bottom",
         "style:border-line-width-left", "style:border-line-width-right", "draw:fill", "draw:fill-color", "loext:margin-left", "loext:margin-right",
@@ -61,7 +61,7 @@ public static class OdtFormattingAudit
         "style:diagonal-bl-tr", "style:diagonal-tl-br", "loext:writing-mode",
         // justification tuning (Writer's paragraph composer, word-spacing limits) and line metrics: no CSS equivalent
         "loext:paragraph-composer", "loext:word-spacing-maximum", "loext:word-spacing-minimum", "style:font-independent-line-spacing",
-        // tab stops are not mapped (the stylesheet's default tab size applies); line numbering belongs to a page margin
+        // LibreOffice's own copy of the tab interval (style:tab-stop-distance is read); line numbering belongs to a page margin
         "loext:tab-stop-distance", "text:line-number", "text:number-lines",
         // OpenType optical sizing, hyphenation detail, the script-type hint (western/complex is chosen by paragraph direction)
         "loext:font-optical-sizing", "loext:hyphenation-compound-push-char-count", "style:script-type",

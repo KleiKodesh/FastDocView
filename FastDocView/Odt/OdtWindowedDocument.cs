@@ -139,9 +139,10 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
             var content = new MemoryStream();
             OdtRandomAccessIndex index = OdtRandomAccessIndexBuilder.BuildFromPackage(file, indexingStyles, sourceLength, sourceLastWriteTicksUtc, progress, long.MaxValue, content, cancellation);
             OdtDocumentMeta meta = OdtPackage.ReadMeta(file, isFlat: false);
+            bool tabsFromIndent = OdtPackage.ReadTabsRelativeToIndent(file, isFlat: false);
             file.Dispose();
             return new OdtWindowedDocument(displayPath, index, null, OdtBlockXmlReader.OverBytes(content.ToArray(), index),
-                                           RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null, meta);
+                                           RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null, meta, tabsFromIndent);
         }
 
         OdtRandomAccessIndex built = OdtRandomAccessIndexBuilder.BuildFromPackage(file, indexingStyles, sourceLength, sourceLastWriteTicksUtc, progress,
@@ -159,7 +160,8 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
 
     private static OdtWindowedDocument OverIndex(string displayPath, Stream file, OdtRandomAccessIndex index, WordIndexDecision decision)
         => new(displayPath, index, null, index.IsFlat ? OdtBlockXmlReader.OverFlatFile(file, index) : OdtBlockXmlReader.OverPackage(file, index),
-               RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null, OdtPackage.ReadMeta(file, index.IsFlat));
+               RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null, OdtPackage.ReadMeta(file, index.IsFlat),
+               OdtPackage.ReadTabsRelativeToIndent(file, index.IsFlat));
 
     /// <summary>
     /// Returns once the first blocks are known; the rest of the index is scanned as blocks are asked
@@ -182,7 +184,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         }
         var document = new OdtWindowedDocument(displayPath, null, builder, OdtBlockXmlReader.OverIncrementalBuild(file, builder),
                                                RenderingStyles(builder.StyleSectionElementsForRendering()), decision, sidecarPathToSave,
-                                               OdtPackage.ReadMeta(file, isFlat));
+                                               OdtPackage.ReadMeta(file, isFlat), OdtPackage.ReadTabsRelativeToIndent(file, isFlat));
         if (builder.IsEveryBlockKnown) document.CompleteIndexLocked();   // a short body: done already
         return document;
     }
@@ -204,7 +206,8 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
     }
 
     private OdtWindowedDocument(string filePath, OdtRandomAccessIndex? index, OdtIncrementalIndexBuilder? builder, OdtBlockXmlReader reader,
-                                OdtStyleCascade styles, WordIndexDecision decision, string? sidecarPathToSave, OdtDocumentMeta meta)
+                                OdtStyleCascade styles, WordIndexDecision decision, string? sidecarPathToSave, OdtDocumentMeta meta,
+                                bool areTabStopsRelativeToIndent)
     {
         FilePath = filePath;
         _index = index;
@@ -214,7 +217,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         _reader = reader;
         _styles = styles;
         _meta = meta;
-        _renderer = new OdtBlockHtmlRenderer(styles) { Generator = meta.Generator };
+        _renderer = new OdtBlockHtmlRenderer(styles) { Generator = meta.Generator, AreTabStopsRelativeToIndent = areTabStopsRelativeToIndent };
         _renderer.Fields = new OdtFieldComputer(this);
         Decision = decision;
         CountNewNoteReferences();
