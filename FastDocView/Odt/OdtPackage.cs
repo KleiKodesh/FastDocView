@@ -158,13 +158,15 @@ public static class OdtPackage
     }
 
     public const string MetaEntryName = "meta.xml";
-    private const string MetaNamespace = "urn:oasis:names:tc:opendocument:xmlns:meta:1.0";
 
     /// <summary>
     /// The document's meta:generator (meta.xml of a package, office:meta of a .fodt before its office:body), or null. Only the
     /// small meta part is read; LibreOffice reads the same element to tell which product wrote the file (xmlmetai.cxx:232-298).
     /// </summary>
-    public static string? ReadGenerator(Stream file, bool isFlat)
+    public static string? ReadGenerator(Stream file, bool isFlat) => ReadMeta(file, isFlat).Generator;
+
+    /// <summary>The document information (<see cref="OdtDocumentMeta"/>): meta.xml of a package, office:meta of a .fodt before its office:body.</summary>
+    internal static OdtDocumentMeta ReadMeta(Stream file, bool isFlat)
     {
         long position = file.Position;
         try
@@ -172,23 +174,18 @@ public static class OdtPackage
             Stream? view = null;
             if (isFlat) { file.Position = 0; view = new NonClosingStream(file); }
             else if (ZipEntryLocator.Locate(file, MetaEntryName) is { } entry) view = OpenEntry(file, entry);
-            if (view is null) return null;
+            if (view is null) return OdtDocumentMeta.Empty;
             using (view)
             {
                 using XmlReader reader = WordDocumentXml.CreateReader(view, tolerateUndeclaredPrefixes: true);
-                while (reader.Read())
-                {
-                    if (reader.NodeType != XmlNodeType.Element) continue;
-                    if (reader.NamespaceURI == OfficeNamespace && reader.LocalName is "body" or "styles" or "automatic-styles" or "master-styles") return null;
-                    if (reader.NamespaceURI == MetaNamespace && reader.LocalName == "generator") return reader.ReadElementContentAsString();
-                }
+                return OdtDocumentMeta.Read(reader, OfficeNamespace);
             }
         }
-        catch (XmlException) { }          // malformed meta: no generator, as LibreOffice without one
-        catch (IOException) { }           // a damaged meta.xml entry (EndOfStreamException too): no generator, the body still opens
+        catch (XmlException) { }          // malformed meta: no information, as LibreOffice without one
+        catch (IOException) { }           // a damaged meta.xml entry (EndOfStreamException too): the body still opens
         catch (InvalidDataException) { }
         finally { file.Position = position; }
-        return null;
+        return OdtDocumentMeta.Empty;
     }
 
     /// <summary>Keeps the caller's stream open when a reader disposes its input.</summary>

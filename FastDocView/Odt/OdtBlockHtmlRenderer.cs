@@ -36,6 +36,7 @@ public sealed partial class OdtBlockHtmlRenderer
         "text:variable-get", "text:variable-set", "text:user-field-get", "text:user-defined", "text:initial-creator", "text:creation-date",
         "text:word-count", "text:character-count", "text:paragraph-count", "text:hidden-paragraph", "text:conditional-text", "text:placeholder",
         "text:drop-down", "text:text-input", "text:expression", "text:sender-firstname", "text:sender-lastname",
+        "text:description", "text:keywords", "text:creation-time", "text:modification-date", "text:modification-time",
         "draw:custom-shape", "draw:rect", "draw:line", "draw:g", "draw:ellipse", "draw:circle", "draw:polygon", "draw:polyline", "draw:path", "draw:connector",
         "draw:measure", "draw:caption", "draw:regular-polygon", "draw:control", "draw:text-box", "draw:image", "draw:object", "draw:object-ole",
     ];
@@ -59,6 +60,24 @@ public sealed partial class OdtBlockHtmlRenderer
     private XElement? _currentBlock;
 
     public OdtBlockHtmlRenderer(OdtStyleCascade styles) => _styles = styles;
+
+    /// <summary>Computes the fields LibreOffice recomputes when it prints (<see cref="OdtFieldComputer"/>); null: every field shows its saved text.</summary>
+    internal OdtFieldComputer? Fields { get; set; }
+
+    /// <summary>The text: elements <see cref="OdtFieldComputer.Compute"/> may give a text for.</summary>
+    private static readonly HashSet<string> ComputedFieldNames =
+    [
+        "sequence", "variable-set", "variable-get", "user-field-get", "expression", "conditional-text", "hidden-text", "bookmark-ref", "reference-ref",
+        "sequence-ref", "note-ref", "chapter", "date", "time", "title", "subject", "description", "keywords", "initial-creator", "creation-date",
+        "creation-time", "modification-date", "modification-time", "user-defined", "file-name",
+    ];
+
+    /// <summary>A computed field's text, run like a text node (drop cap, script pieces).</summary>
+    private void AppendComputedField(StringBuilder html, string value, WordRunFormatting current)
+    {
+        if (_dropCapRemaining != 0 && value.Length > 0) value = TakeDropCap(value, current);
+        AppendScriptPieces(html, value, current, -1);
+    }
 
     /// <summary>The block being rendered (its index names the pictures stored inside it); -1 when unknown.</summary>
     /// <summary>The text width (points) of the section of the block being rendered: the column a floating object picks its nearer edge in (0 = unknown).</summary>
@@ -410,6 +429,8 @@ public sealed partial class OdtBlockHtmlRenderer
             XName name = element.Name;
             if (name.Namespace == TextNs)
             {
+                string? computed = Fields is { } fields && ComputedFieldNames.Contains(name.LocalName) ? fields.Compute(element) : null;
+                if (computed is not null && name.LocalName is not ("bookmark-ref" or "reference-ref")) { AppendComputedField(html, computed, current); continue; }
                 switch (name.LocalName)
                 {
                     case "span":
@@ -469,7 +490,8 @@ public sealed partial class OdtBlockHtmlRenderer
                         string? link = _isInsideLink ? null : DocxBlockHtmlRenderer.LinkTag("#" + (string?)element.Attribute(TextNs + "ref-name"), null);
                         if ((string?)element.Attribute(TextNs + "ref-name") is not { Length: > 0 }) link = null;
                         if (link is not null) { html.Append(link); _isInsideLink = true; }
-                        RenderInline(element, html, paragraphStyle, paragraphBase, current, hasLabel);
+                        if (computed is not null) AppendComputedField(html, computed, current);
+                        else RenderInline(element, html, paragraphStyle, paragraphBase, current, hasLabel);
                         if (link is not null) { html.Append("</a>"); _isInsideLink = false; }
                         continue;
                     }

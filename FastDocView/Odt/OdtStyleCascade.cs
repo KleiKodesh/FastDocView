@@ -25,6 +25,7 @@ public sealed class OdtStyleCascade
     public static readonly XNamespace Draw = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
     public static readonly XNamespace LoExt = "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0";
     public static readonly XNamespace Xml = XNamespace.Xml;
+    public static readonly XNamespace DataStyle = "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0";
 
     /// <summary>Attributes of style:text-properties this cascade maps (the audit counts the rest).</summary>
     public static readonly HashSet<string> HandledTextProperties =
@@ -80,6 +81,12 @@ public sealed class OdtStyleCascade
     private readonly Dictionary<(string? paragraph, string text), WordRunFormatting> _resolvedSpans = new();
     private readonly OdtNotesConfiguration[] _notesConfigurations = [new(), new()];
     private readonly List<XElement> _sections = new();
+    /// <summary>number:date-style / number:time-style by style:name (ODF 1.3 part 3 16.29.11 / 16.29.19): what a date or time field is shown in.</summary>
+    private readonly Dictionary<string, XElement> _dataStyles = new(StringComparer.Ordinal);
+
+    public XElement? DataStyleNamed(string? name) => name is not null && _dataStyles.TryGetValue(name, out XElement? style) ? style : null;
+
+    private static bool IsDateTimeDataStyle(XName name) => name == DataStyle + "date-style" || name == DataStyle + "time-style";
 
     /// <summary>A resolved paragraph style: formatting, page break before, the list style it names.</summary>
     public sealed record OdtParagraphStyle(WordParagraphFormatting Formatting, bool IsPageBreakBefore, string? ListStyleName);
@@ -127,6 +134,10 @@ public sealed class OdtStyleCascade
             else if (IsDrawingStyle(element.Name))
             {
                 if ((string?)element.Attribute(Draw + "name") is { } name) _drawingStyles[(element.Name.LocalName, name)] = element;
+            }
+            else if (IsDateTimeDataStyle(element.Name))
+            {
+                if ((string?)element.Attribute(Style + "name") is { } name) _dataStyles[name] = element;
             }
             else if (element.Name == Text + "list-style")
             {
@@ -193,8 +204,8 @@ public sealed class OdtStyleCascade
                     }
                     copy.Add(style);
                 }
-                else if (IsDrawingStyle(element.Name))
-                    copy.Add(new XElement(element));             // whole: gradient stops, marker paths, fill images
+                else if (IsDrawingStyle(element.Name) || IsDateTimeDataStyle(element.Name))
+                    copy.Add(new XElement(element));             // whole: gradient stops, marker paths, fill images, date / time parts
             }
             return copy;
         }).ToArray();

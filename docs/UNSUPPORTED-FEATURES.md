@@ -77,7 +77,10 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | USERNAME / USERINITIALS / USERADDRESS without an argument | docx, doc, rtf | Word's user settings, not the document's | won't do |
 | STYLEREF page-relative search and \l | docx, doc, rtf | Flow view has no page | planned (paged view) |
 | Lookups during the first open (REF to a bookmark not indexed yet, TOC, INDEX) | docx, doc, rtf | Show nothing until the index completes, instead of Word's "not found" | won't do (by design) |
-| Field computation | odt/fodt | Saved field text only | deferred |
+| Statistics fields (word / character / paragraph count) | odt/fodt | Saved text: the counts need the whole document | won't do |
+| Chapter numbers in chapter fields, sequence chapter prefixes and "chapter" references | odt/fodt | Taken from the heading's saved text:number; heading outline numbering is not drawn | deferred |
+| Hidden paragraphs (text:hidden-paragraph) | odt/fodt | The paragraph is shown | deferred |
+| Search inside computed fields | odt/fodt | Search reads the saved field text | deferred |
 | Fields | txt, mhtml | Format has none | n.a. |
 
 ## Links, bookmarks, TOC
@@ -102,7 +105,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Connector routing (glue points) | docx, doc, rtf | Drawn as their saved geometry only | won't do |
 | .doc / RTF floating groups and shapes with text boxes | doc, rtf | Rendered inline after the anchor, not positioned | deferred |
 | .doc / RTF text boxes positioned | doc, rtf | Inline frame | deferred |
-| Blip / pattern fill inside a:path shapes | docx | Not drawn; the fill below stays | deferred |
+| Half-transparent picture fill in a darken / lighten path | docx | The darkening layer is scaled by the picture's opacity (exact only for an opaque picture) | won't do |
 | Shapes in web archives | mhtml | VML is not drawn | deferred |
 
 ## Charts, SmartArt, objects

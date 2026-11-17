@@ -202,6 +202,12 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
         return level == 255 ? -1 : level;
     }
 
+    public OdtFieldState FieldStateOf(int blockIndex)
+    {
+        Span span = EnsureStarted(blockIndex, out int local);
+        return span.Scanner.BlockFieldStates[local];
+    }
+
     public ReadOnlySpan<OdtNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex)
         => _index.NoteReferencesInBlocks(firstBlockIndex, lastBlockIndex);
 }

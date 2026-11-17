@@ -13,7 +13,7 @@ namespace FastDocView.Odt;
 /// <see cref="OnDemandFirstBlockCount"/> blocks and extends the index as blocks are asked for
 /// (<see cref="OdtIncrementalIndexBuilder"/>); the finished index is saved when the scan completes.
 /// </summary>
-public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSearchScan
+public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSearchScan, IOdtFieldLookups
 {
     public const int OnDemandFirstBlockCount = 100;
 
@@ -30,6 +30,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
     private int _footnoteCount, _endnoteCount, _noteReferencesCounted;
     private WordDocumentFileStream? _releasableFile;   // set by Open(path): released after every window
     private bool _isReadingFromFile;                    // false when content.xml was inflated in memory (small package)
+    private readonly OdtDocumentMeta _meta;              // the document information fields show (meta.xml / office:meta)
 
     public string FilePath { get; }
 
@@ -137,10 +138,10 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         {
             var content = new MemoryStream();
             OdtRandomAccessIndex index = OdtRandomAccessIndexBuilder.BuildFromPackage(file, indexingStyles, sourceLength, sourceLastWriteTicksUtc, progress, long.MaxValue, content, cancellation);
-            string? generator = OdtPackage.ReadGenerator(file, isFlat: false);
+            OdtDocumentMeta meta = OdtPackage.ReadMeta(file, isFlat: false);
             file.Dispose();
             return new OdtWindowedDocument(displayPath, index, null, OdtBlockXmlReader.OverBytes(content.ToArray(), index),
-                                           RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null, generator);
+                                           RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null, meta);
         }
 
         OdtRandomAccessIndex built = OdtRandomAccessIndexBuilder.BuildFromPackage(file, indexingStyles, sourceLength, sourceLastWriteTicksUtc, progress,
@@ -158,7 +159,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
 
     private static OdtWindowedDocument OverIndex(string displayPath, Stream file, OdtRandomAccessIndex index, WordIndexDecision decision)
         => new(displayPath, index, null, index.IsFlat ? OdtBlockXmlReader.OverFlatFile(file, index) : OdtBlockXmlReader.OverPackage(file, index),
-               RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null, OdtPackage.ReadGenerator(file, index.IsFlat));
+               RenderingStyles(index.RootOpenTag, index.StyleSections), decision, sidecarPathToSave: null, OdtPackage.ReadMeta(file, index.IsFlat));
 
     /// <summary>
     /// Returns once the first blocks are known; the rest of the index is scanned as blocks are asked
@@ -181,7 +182,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         }
         var document = new OdtWindowedDocument(displayPath, null, builder, OdtBlockXmlReader.OverIncrementalBuild(file, builder),
                                                RenderingStyles(builder.StyleSectionElementsForRendering()), decision, sidecarPathToSave,
-                                               OdtPackage.ReadGenerator(file, isFlat));
+                                               OdtPackage.ReadMeta(file, isFlat));
         if (builder.IsEveryBlockKnown) document.CompleteIndexLocked();   // a short body: done already
         return document;
     }
@@ -203,7 +204,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
     }
 
     private OdtWindowedDocument(string filePath, OdtRandomAccessIndex? index, OdtIncrementalIndexBuilder? builder, OdtBlockXmlReader reader,
-                                OdtStyleCascade styles, WordIndexDecision decision, string? sidecarPathToSave, string? generator)
+                                OdtStyleCascade styles, WordIndexDecision decision, string? sidecarPathToSave, OdtDocumentMeta meta)
     {
         FilePath = filePath;
         _index = index;
@@ -212,7 +213,9 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         _sidecarPathToSave = sidecarPathToSave;
         _reader = reader;
         _styles = styles;
-        _renderer = new OdtBlockHtmlRenderer(styles) { Generator = generator };
+        _meta = meta;
+        _renderer = new OdtBlockHtmlRenderer(styles) { Generator = meta.Generator };
+        _renderer.Fields = new OdtFieldComputer(this);
         Decision = decision;
         CountNewNoteReferences();
         IsRightToLeft = styles.IsDocumentRightToLeft;
@@ -583,9 +586,13 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
             _renderer.Formulas ??= ReadFormula;
             _renderer.ListStyles ??= _blocks.ListStyleNamed;
             _renderer.ResetProvisional();
+            OdtFieldComputer fields = _renderer.Fields!;
+            fields.UsedIncompleteIndex = false;
+            fields.BeginBlock(blockIndex, element, _blocks.FieldStateOf(blockIndex));
             (string html, IReadOnlyList<WordDocumentNoteHtml> notes) = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), _blocks.ListLevelOf(blockIndex), _blocks.ListLabelLayoutOf(blockIndex),
                                                                                        _blocks.NoteReferencesInBlocks(blockIndex, blockIndex), null);
-            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes, _renderer.LastBlockIsProvisional));
+            fields.EndBlock();
+            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes, _renderer.LastBlockIsProvisional || fields.UsedIncompleteIndex));
         }
         return result;
     }
@@ -740,6 +747,19 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
     {
         get { lock (_readLock) return _builder is { } builder ? builder.KnownHeadings.ToArray() : _index!.Headings; }
     }
+
+    // -- field lookups (OdtFieldComputer): called under _readLock while a window renders; a target not known yet is not scanned for
+
+    bool IOdtFieldLookups.IsIndexComplete => _index is not null;
+    int? IOdtFieldLookups.KnownTargetBlock(string name) => _index is { } index ? index.Bookmarks.BlockOf(name) : _builder!.FindKnownBookmark(name);
+    XElement? IOdtFieldLookups.ReadBlock(int blockIndex)
+        => (uint)blockIndex < (uint)_blocks.BlockCount && _reader.ReadBlocks(blockIndex, 1) is { Count: 1 } blocks ? blocks[0].element : null;
+    OdtFieldState IOdtFieldLookups.FieldStateOf(int blockIndex) => _blocks.FieldStateOf(blockIndex);
+    string? IOdtFieldLookups.ListLabelOf(int blockIndex) => _blocks.ListLabelOf(blockIndex);
+    IReadOnlyList<WordDocumentHeading> IOdtFieldLookups.KnownHeadings => _builder is { } builder ? builder.KnownHeadings : _index!.Headings;
+    IReadOnlyList<OdtNoteReference> IOdtFieldLookups.NotesIn(int blockIndex) => _blocks.NoteReferencesInBlocks(blockIndex, blockIndex).ToArray();
+    OdtDocumentMeta IOdtFieldLookups.Meta => _meta;
+    OdtStyleCascade IOdtFieldLookups.Styles => _styles;
 
     /// <summary>Page text width per section (master pages, see <see cref="OdtPageSetup"/>); the known ones while scanning.</summary>
     public int? FindBookmark(string name)

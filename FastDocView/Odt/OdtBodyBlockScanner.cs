@@ -30,6 +30,7 @@ internal sealed class OdtBodyBlockScanner
         Other, Paragraph, Heading, Table, List, ListItem, ListHeader, Section, SectionSource, IndexBody, IndexElement,
         SoftPageBreak, TrackedChanges, NumberedParagraph, Note, NoteCitation, NoteBody, OfficeBody, OfficeText,
         FontFaceDecls, Styles, AutomaticStyles, BinaryData, Annotation, Bookmark, Drawing,
+        SequenceDecl, UserFieldDecl, Sequence, VariableSet,
     }
 
     /// <summary>
@@ -73,6 +74,17 @@ internal sealed class OdtBodyBlockScanner
     private long _noteBodyStart, _noteBodyEnd;
     private readonly int[] _noteCounts = new int[2];
     private int _footnotesBeforeChapter;          // footnotes counted before the current outline-level-1 heading (start-numbering-at="chapter")
+
+    // fields: sequence / variable / user-field values (OdtFieldState), recorded at each block start
+    private OdtFieldState _fieldState = OdtFieldState.Empty;
+    private string? _pendingStringVariable;       // a string text:variable-set whose text is being read
+    private int _pendingStringVariableDepth;
+    private readonly MemoryStream _pendingStringVariableText = new();     // raw bytes: decoded once (an entity or a character may cross a chunk)
+
+    /// <summary>Prefixes of the reference targets kept in <see cref="BookmarkNames"/> besides bookmarks: a sequence's text:ref-name and a note's text:id (no XML name holds U+0001).</summary>
+    public const string SequenceTargetPrefix = "\u0001s:", NoteTargetPrefix = "\u0001n:";
+    /// <summary>The field values at each block's start (after a heading's chapter restart) - shared snapshots, not copies.</summary>
+    public List<OdtFieldState> BlockFieldStates { get; } = new();
 
     public string RootOpenTag { get; private set; } = "";
     public List<long> BlockStartOffsets { get; } = new();
@@ -132,6 +144,7 @@ internal sealed class OdtBodyBlockScanner
             BlockTextLengths.RemoveRange(complete, extra);
             BlockListLevels.RemoveRange(complete, extra);
             BlockListLabelIds.RemoveRange(complete, extra);
+            BlockFieldStates.RemoveRange(complete, extra);
             Headings.RemoveAll(heading => heading.BlockIndex >= complete);
             NoteReferences.RemoveAll(reference => reference.BlockIndex >= complete);
             int keptBookmarks = BookmarkBlocks.FindIndex(block => block >= complete);
@@ -163,21 +176,29 @@ internal sealed class OdtBodyBlockScanner
     public byte[] ExportScanState()
     {
         byte[] numbering = _numbering.ExportState();
-        var bytes = new List<byte>(_frames.Count + numbering.Length + 4);
+        var bytes = new List<byte>(_frames.Count + numbering.Length + 8);
         IndexBinaryArrays.AppendVarint(bytes, (uint)_frames.Count);
         foreach (Frame frame in _frames) bytes.Add((byte)frame);
+        var fields = new List<byte>();
+        if (!_fieldState.IsEmpty) _fieldState.Write(fields);
+        IndexBinaryArrays.AppendVarint(bytes, (uint)fields.Count);
+        bytes.AddRange(fields);
         bytes.AddRange(numbering);
         return bytes.ToArray();
     }
 
-    /// <summary>The frames part of a scan state (what <see cref="DeltaScanState"/> keeps whole) and its numbering part.</summary>
+    /// <summary>The frames + field values part of a scan state (what <see cref="DeltaScanState"/> keeps whole) and its numbering part.</summary>
     private static (byte[] frames, byte[] numbering) SplitScanState(byte[] state)
     {
         if (state.Length == 0) return ([], []);
         int position = 0;
         int count = (int)IndexBinaryArrays.ReadVarint(state, ref position);
         if (count < 0 || count > state.Length - position) throw new InvalidDataException("OpenDocument index: scan state damaged.");
-        var frames = new byte[position + count];
+        position += count;
+        int fieldBytes = (int)IndexBinaryArrays.ReadVarint(state, ref position);
+        if (fieldBytes < 0 || fieldBytes > state.Length - position) throw new InvalidDataException("OpenDocument index: scan state damaged.");
+        position += fieldBytes;
+        var frames = new byte[position];
         Buffer.BlockCopy(state, 0, frames, 0, frames.Length);
         var numbering = new byte[state.Length - frames.Length];
         Buffer.BlockCopy(state, frames.Length, numbering, 0, numbering.Length);
@@ -221,6 +242,13 @@ internal sealed class OdtBodyBlockScanner
             if (frame > (byte)Frame.NoteBody) throw new InvalidDataException("OpenDocument index: scan state damaged.");
             _frames.Add((Frame)frame);
             _openNames.Add(0);
+        }
+        _fieldState = OdtFieldState.Empty;
+        _pendingStringVariable = null;
+        if (frames.Length > 0)
+        {
+            int fieldBytes = (int)IndexBinaryArrays.ReadVarint(frames, ref position);
+            _fieldState = OdtFieldState.Read(frames.AsSpan(position, fieldBytes).ToArray());
         }
         _numbering.ImportState(numbering);
     }
@@ -430,6 +458,7 @@ internal sealed class OdtBodyBlockScanner
         }
 
         Frame parent = Top;
+        if (name is Name.SequenceDecl or Name.UserFieldDecl) Declare(name, tag, nameEnd);
         Frame frame;
         switch (parent)
         {
@@ -468,6 +497,7 @@ internal sealed class OdtBodyBlockScanner
         _frames.Add(frame);
         _openNames.Add(_tagNameHash);
         if (frame == Frame.Text) HasTextBodyStarted = true;
+        if (name is Name.Sequence or Name.VariableSet && _currentBlock >= 0 && frame is not (Frame.Skip or Frame.Capture)) FieldOpened(name, tag, nameEnd, isSelfClosing);
         // a drawing object with an id (draw:id / xml:id - LibreOffice writes one only on a shape something refers to, such as a connector's
         // draw:start-shape) - its block is read once the index is final to record the shape's geometry (OdtConnectedShapeTable)
         if (name == Name.Drawing && _currentBlock >= 0 && (ConnectedShapeBlocks.Count == 0 || ConnectedShapeBlocks[ConnectedShapeBlocks.Count - 1] != _currentBlock)
@@ -493,6 +523,8 @@ internal sealed class OdtBodyBlockScanner
                     _headingLevel = 1;                                           // txtparai.cxx: text:h defaults to outline level 1
                     if (Attribute(tag, nameEnd, "text:outline-level") is { } level && int.TryParse(level, out int parsed) && parsed >= 1) _headingLevel = Math.Min(10, parsed);
                     if (_headingLevel == 1) _footnotesBeforeChapter = _noteCounts[(int)WordDocumentNoteKind.Footnote];
+                    _fieldState = _fieldState.HeadingStarted(_headingLevel);
+                    BlockFieldStates[_currentBlock] = _fieldState;
                 }
                 return Frame.Block;
             }
@@ -549,6 +581,11 @@ internal sealed class OdtBodyBlockScanner
         if (name == Name.Note && parent is Frame.Block or Frame.Inner)
         {
             _noteKind = Attribute(tag, nameEnd, "text:note-class") == "endnote" ? WordDocumentNoteKind.Endnote : WordDocumentNoteKind.Footnote;
+            if (_currentBlock >= 0 && Attribute(tag, nameEnd, "text:id") is { Length: > 0 } noteId)
+            {
+                BookmarkNames.Add(NoteTargetPrefix + noteId);         // text:note-ref text:ref-name (ODF 1.3 part 3 7.7.7)
+                BookmarkBlocks.Add(_currentBlock);
+            }
             _citationText.SetLength(0);
             _citationLabel = null;
             _noteBodyStart = _noteBodyEnd = -1;
@@ -566,6 +603,12 @@ internal sealed class OdtBodyBlockScanner
         Frame frame = _frames[_frames.Count - 1];
         _frames.RemoveAt(_frames.Count - 1);
         _openNames.RemoveAt(_openNames.Count - 1);
+        if (_pendingStringVariable is not null && _frames.Count < _pendingStringVariableDepth)
+        {
+            _fieldState = _fieldState.SetVariable(_pendingStringVariable, "string", null, null, null, null,
+                WebUtility.HtmlDecode(Encoding.UTF8.GetString(_pendingStringVariableText.GetBuffer(), 0, (int)_pendingStringVariableText.Length)), out _);
+            _pendingStringVariable = null;
+        }
         switch (frame)
         {
             case Frame.Capture: FinishCapture(tagEndOffset); break;
@@ -580,6 +623,7 @@ internal sealed class OdtBodyBlockScanner
 
     private void OnText(ReadOnlySpan<byte> text)
     {
+        if (_pendingStringVariable is not null) _pendingStringVariableText.Write(text.ToArray(), 0, text.Length);
         Frame top = Top;
         if (top is not (Frame.Block or Frame.Inner)) { if (top == Frame.NoteCitation) AppendBounded(_citationText, text, MaxCitationBytes); return; }
         if (_currentBlock < 0) return;
@@ -682,6 +726,43 @@ internal sealed class OdtBodyBlockScanner
         return c <= 0xFFFF ? (char.IsLetter((char)c) ? ListScript.Latin : null) : ListScript.Latin;
     }
 
+    /// <summary>text:sequence-decl / text:user-field-decl (ODF 1.3 part 3 7.4.13.1 / 7.4.7): read wherever they stand (office:text's decls).</summary>
+    private void Declare(Name name, ReadOnlySpan<byte> tag, int nameEnd)
+    {
+        if (Attribute(tag, nameEnd, "text:name") is not { Length: > 0 } fieldName) return;
+        _fieldState = name == Name.SequenceDecl
+            ? _fieldState.Declare(fieldName, Attribute(tag, nameEnd, "text:display-outline-level"))
+            : _fieldState.DeclareUserField(fieldName, Attribute(tag, nameEnd, "office:value-type"), Attribute(tag, nameEnd, "text:formula") ?? Attribute(tag, nameEnd, "office:formula"),
+                                           Attribute(tag, nameEnd, "office:value"), Attribute(tag, nameEnd, "office:string-value"), Attribute(tag, nameEnd, "office:boolean-value"));
+    }
+
+    /// <summary>A text:sequence or text:variable-set inside a block: its new value (the renderer replays the same step, OdtFieldComputer).</summary>
+    private void FieldOpened(Name name, ReadOnlySpan<byte> tag, int nameEnd, bool isSelfClosing)
+    {
+        if (Attribute(tag, nameEnd, "text:name") is not { Length: > 0 } fieldName) return;
+        if (name == Name.Sequence)
+        {
+            _fieldState = _fieldState.Sequence(fieldName, Attribute(tag, nameEnd, "text:formula"), out _);
+            if (Attribute(tag, nameEnd, "text:ref-name") is { Length: > 0 } refName)
+            {
+                BookmarkNames.Add(SequenceTargetPrefix + refName);     // text:sequence-ref text:ref-name (7.7.9)
+                BookmarkBlocks.Add(_currentBlock);
+            }
+            return;
+        }
+        string? valueType = Attribute(tag, nameEnd, "office:value-type");
+        string? stringValue = Attribute(tag, nameEnd, "office:string-value");
+        if (valueType == "string" && stringValue is null && !isSelfClosing)
+        {
+            _pendingStringVariable = fieldName;            // its text is the value: applied when the element closes
+            _pendingStringVariableDepth = _frames.Count;
+            _pendingStringVariableText.SetLength(0);
+            return;
+        }
+        _fieldState = _fieldState.SetVariable(fieldName, valueType, Attribute(tag, nameEnd, "text:formula"), Attribute(tag, nameEnd, "office:value"),
+                                              stringValue, Attribute(tag, nameEnd, "office:boolean-value"), isSelfClosing && valueType == "string" ? "" : null, out _);
+    }
+
     private void StartBlock(WordDocumentBlockKind kind, byte listLevel, string? label)
     {
         BlockStartOffsets.Add(_tagStartOffset);
@@ -689,6 +770,7 @@ internal sealed class OdtBodyBlockScanner
         BlockKinds.Add(kind);
         BlockTextLengths.Add(0);
         BlockListLevels.Add(listLevel);
+        BlockFieldStates.Add(_fieldState);
         if (label is not null) { BlockListLabelIds.Add(ListLabels.Count); ListLabels.Add(label); ListLabelLayouts.Add(_numbering.LastLayout); }
         else BlockListLabelIds.Add(-1);
         _currentBlock = BlockStartOffsets.Count - 1;
@@ -772,14 +854,15 @@ internal sealed class OdtBodyBlockScanner
         using var text = new StringReader(rootOpenTag + section + "</" + rootName + ">");
         try
         {
-            using XmlReader reader = WordDocumentXml.CreateReader(text, tolerateUndeclaredPrefixes: true, ignoreWhitespace: true);
-            return XElement.Load(reader).Elements().First();
+            // whitespace kept: a data style's number:text may be only blanks (the ", " and " " between a date's parts)
+            using XmlReader reader = WordDocumentXml.CreateReader(text, tolerateUndeclaredPrefixes: true, ignoreWhitespace: false);
+            return XElement.Load(reader, LoadOptions.PreserveWhitespace).Elements().First();
         }
         catch (XmlException)
         {
             // Malformed: keep what precedes the first error, as for .docx (only after the strict parse failed).
             using var again = new StringReader(rootOpenTag + section + "</" + rootName + ">");
-            using XmlReader reader = WordDocumentXml.CreateReader(again, tolerateUndeclaredPrefixes: true, ignoreWhitespace: true);
+            using XmlReader reader = WordDocumentXml.CreateReader(again, tolerateUndeclaredPrefixes: true, ignoreWhitespace: false);
             return WordDocumentXml.LoadUntilFirstError(reader)?.Elements().FirstOrDefault() ?? new XElement("empty");
         }
     }
@@ -905,6 +988,8 @@ internal sealed class OdtBodyBlockScanner
             [P("office:annotation")] = Name.Annotation,
             [P("text:bookmark")] = Name.Bookmark, [P("text:bookmark-start")] = Name.Bookmark,
             [P("text:reference-mark")] = Name.Bookmark, [P("text:reference-mark-start")] = Name.Bookmark,
+            [P("text:sequence-decl")] = Name.SequenceDecl, [P("text:user-field-decl")] = Name.UserFieldDecl,
+            [P("text:sequence")] = Name.Sequence, [P("text:variable-set")] = Name.VariableSet,
         };
         foreach (string index in IndexElementNames) names[P(index)] = Name.IndexElement;
         foreach (string drawing in BodyDrawingNames) names[P(drawing)] = Name.Drawing;

@@ -211,6 +211,8 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
 
     public int ListLevelOf(int blockIndex) => _scanner.BlockListLevels[blockIndex] == 255 ? -1 : _scanner.BlockListLevels[blockIndex];
 
+    public OdtFieldState FieldStateOf(int blockIndex) => _scanner.BlockFieldStates[blockIndex];
+
     public byte[] ReadRange(Stream view, long start, long end) => OdtXmlFragment.ReadRange(view, start, end);
 
     public ReadOnlySpan<OdtNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex)

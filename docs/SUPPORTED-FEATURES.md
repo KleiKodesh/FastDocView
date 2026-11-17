@@ -143,7 +143,7 @@ T4. ODT: style:writing-mode / loext:writing-mode on the cell (tb-rl, bt-lr, tb-r
 | Page-number fields as a `#` placeholder | yes | yes | yes | partial (15) | n.a. | n.a. |
 
 14. Letter with 1 inch margins (LibreOffice's Word-import default).
-15. ODT shows the saved field text.
+15. ODT shows the saved text of page fields (page number, page count, references by page) until there are pages.
 
 Headers / footers, columns and page layout are not shown (flow view): see UNSUPPORTED-FEATURES.md.
 
@@ -182,9 +182,18 @@ properties, SYMBOL, EQ (as MathML Core), MACROBUTTON, GOTOBUTTON, HYPERLINK, for
 ADVANCE, and the `\*` number / case switches. Page placeholders: PAGE, PAGEREF (\h still links), NUMPAGES, SECTION,
 SECTIONPAGES. Show nothing: XE, TC, TA, RD, SET, ASK, PRIVATE, NEXT, NEXTIF, SKIPIF, PRINT.
 
+ODT / FODT (`Odt/OdtFieldComputer`): what LibreOffice recomputes when it prints. Sequences (formula, number format, restart per
+chapter), variables (set / get, string and number), user fields, expressions, conditional and hidden text, references to
+bookmarks, reference marks, sequences and notes (text, number, category and value, caption, direction, chapter), chapter
+fields, dates and times that are not fixed (data styles: day, month, year, weekday, hours, minutes, seconds, AM / PM), and
+the document information (title, subject, description, keywords, creator, creation / modification date, custom
+properties, file name). Kept as saved, as LibreOffice keeps them: author, sender, text input, placeholder. Sequence and
+variable values are recorded per block at index time; a reference reads its target block. During the first open a target
+not indexed yet shows nothing and the block is fetched again once the index is complete (the .docx rule).
+
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
-| Field results and computation | yes | yes | yes | partial (15) | n.a. | n.a. |
+| Field results and computation | yes | yes | yes | yes | n.a. | n.a. |
 
 ## Links, bookmarks, TOC
 

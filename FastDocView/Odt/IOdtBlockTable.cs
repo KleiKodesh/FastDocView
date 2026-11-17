@@ -17,6 +17,8 @@ internal interface IOdtBlockTable
     /// <summary>The label's level geometry ("" when none / not label-alignment): <see cref="OdtListStyle.Level.Layout"/>.</summary>
     string ListLabelLayoutOf(int blockIndex);
     int ListLevelOf(int blockIndex);
+    /// <summary>The sequence / variable / user-field values at the block start (OdtFieldState), as the index pass found them.</summary>
+    OdtFieldState FieldStateOf(int blockIndex);
     ReadOnlySpan<OdtNoteReference> NoteReferencesInBlocks(int firstBlockIndex, int lastBlockIndex);
     /// <summary>
     /// The body's bytes [start, end) - from the table's own recently scanned bytes when it has them (the compact table reads a

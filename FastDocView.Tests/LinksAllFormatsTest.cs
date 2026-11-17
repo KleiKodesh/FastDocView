@@ -56,7 +56,7 @@ public static class LinksAllFormatsTest
         TestReport.Check(links.Contains("class=\"link app-link\"") && links.Contains("href=\"otzaria://open/book/12\""), "odt: an otzaria:// link is kept as an app link");
         TestReport.Check(!links.Contains("javascript") && links.Contains("bad"), "odt: javascript: is not a link, its text shows");
         TestReport.Check(links.Contains("href=\"https://example.org/x\"") && links.Contains("target=\"_blank\""), "odt: an https link opens outside");
-        TestReport.Check(refs.Contains("href=\"#bookmark-Late\">late</a>") && refs.Contains("href=\"#bookmark-Mark\">mark</a>"), "odt: bookmark-ref and reference-ref link to their targets (" + refs + ")");
+        TestReport.Check(refs.Contains("href=\"#bookmark-Late\">late target</a>") && refs.Contains("href=\"#bookmark-Mark\">mark target</a>"), "odt: bookmark-ref and reference-ref link to their targets, showing the text LibreOffice recomputes (" + refs + ")");
         TestReport.Check(document.RenderBlocks(0, 1)[0].Html.Contains("id=\"bookmark-Early\"") && document.RenderBlocks(lateBlock, 1)[0].Html.Contains("id=\"bookmark-Late\""),
                          "odt: bookmarks render as their element ids");
     }

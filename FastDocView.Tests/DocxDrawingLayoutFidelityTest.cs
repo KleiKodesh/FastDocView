@@ -36,6 +36,9 @@ public static class DocxDrawingLayoutFidelityTest
                            + "<a:solidFill><a:srgbClr val=\"0000FF\"/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp>"),
             /* 6 */ Canvas(),
             /* 7 */ VmlGroup(),
+            /* 8 */ Shape("rect", "<a:blipFill><a:blip r:embed=\"rIdP\"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>", geometry: StripGeometry),
+            /* 9 */ Shape("rect", "<a:pattFill prst=\"pct50\"><a:fgClr><a:srgbClr val=\"C86432\"/></a:fgClr><a:bgClr><a:srgbClr val=\"FFFFFF\"/></a:bgClr></a:pattFill>", geometry: StripGeometry),
+            /* 10 */ Shape("rect", "<a:blipFill><a:blip r:embed=\"rIdP\"/><a:tile tx=\"0\" ty=\"0\" sx=\"50000\" sy=\"50000\" algn=\"tl\"/></a:blipFill>", geometry: StripGeometry),
         };
         List<string> html = DocxFidelityTest.RenderAll("drawing-layout", string.Concat(body),
             extraDocumentRelationships: "<Relationship Id=\"rIdP\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/p.png\"/>",
@@ -81,14 +84,46 @@ public static class DocxDrawingLayoutFidelityTest
         TestReport.Check(vml.Contains("translate(108 18)") && vml.Contains("fill=\"red\"") && vml.Contains("translate(54 27)") && vml.Contains("translate(72 36)")
                          && vml.Contains("left:0pt;top:36pt;width:72pt;height:36pt;") && Count(vml, "vmlgrouptext") == 1,
                          "v:group: children in its coordinate system, a nested group, a line, the oval's text box (" + vml + ")");
+
+        // custom geometry with a picture / pattern fill in every filled path (Word 16 printed fidelity-v1-path-fills.docx, sampled
+        // 2026-11-17: picture 200,100,50 -> darken 120,60,30, darkenLess 160,80,40, lighten 222,162,132, lightenLess 210,130,90; the
+        // pattern's both colours change the same way; the fill="none" strip stays empty)
+        string Overlays(string shape) => string.Join(" ", Regex.Matches(shape, "fill=\"(#000000|#FFFFFF)\" fill-opacity=\"([0-9.]+)\"").Select(m => m.Groups[1].Value + "/" + m.Groups[2].Value));
+        string pictureClip = Regex.Match(html[8], "<clipPath id=\"[^\"]+\" clipPathUnits=\"objectBoundingBox\"><path d=\"([^\"]+)\"").Groups[1].Value;
+        TestReport.Check(html[8].Contains("class=\"word-shape-fill-picture\"") && pictureClip.Count(c => c == 'Z') == 5 && !pictureClip.Contains("M0.83333 0")
+                         && Overlays(html[8]) == "#000000/0.4 #000000/0.2 #FFFFFF/0.4 #FFFFFF/0.2",
+                         "custGeom picture fill: drawn in the five filled paths, darkened / lightened per path as Word prints it (" + Overlays(html[8]) + ")");
+        TestReport.Check(html[9].Contains("fill=\"#999999\"") && html[9].Contains("fill=\"#783C1E\"") && html[9].Contains("fill=\"#DEA284\"") && html[9].Contains("fill=\"#CCCCCC\"")
+                         && Regex.Matches(html[9], "fill=\"url\\(#word-shape-pattern-").Count == 5,
+                         "custGeom pattern fill: every filled path, both colours darkened / lightened (" + html[9] + ")");
+        TestReport.Check(Regex.Matches(html[10], "<img class=\"word-picture\"").Count > 1 && Overlays(html[10]) == "#000000/0.4 #000000/0.2 #FFFFFF/0.4 #FFFFFF/0.2",
+                         "custGeom tiled picture fill: tiles in the filled paths, per-path brightness (" + Overlays(html[10]) + ")");
     }
 
     private static int Count(string html, string text) => Regex.Matches(html, text).Count;
 
-    private static string Shape(string preset, string fill, string text = "", string bodyPr = "<wps:bodyPr/>")
+    private static string Shape(string preset, string fill, string text = "", string bodyPr = "<wps:bodyPr/>", string? geometry = null)
         => $"<w:p><w:r><w:drawing><wp:inline {Namespaces}><wp:extent cx=\"914400\" cy=\"457200\"/><wp:docPr id=\"1\" name=\"s\"/><a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">"
-         + $"<wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"914400\" cy=\"457200\"/></a:xfrm><a:prstGeom prst=\"{preset}\"><a:avLst/></a:prstGeom>{fill}</wps:spPr>{text}{bodyPr}"
+         + $"<wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"914400\" cy=\"457200\"/></a:xfrm>{geometry ?? $"<a:prstGeom prst=\"{preset}\"><a:avLst/></a:prstGeom>"}{fill}</wps:spPr>{text}{bodyPr}"
          + "</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>";
+
+    /// <summary>Six vertical strips, one a:path each: normal, darken, darkenLess, lighten, lightenLess, none (fidelity-v1-path-fills.docx, printed by Word 16).</summary>
+    private static string StripGeometry
+    {
+        get
+        {
+            string[] modes = ["norm", "darken", "darkenLess", "lighten", "lightenLess", "none"];
+            var paths = new StringBuilder();
+            for (int i = 0; i < modes.Length; i++)
+            {
+                int x0 = i * 100 / modes.Length, x1 = (i + 1) * 100 / modes.Length;
+                paths.Append("<a:path w=\"100\" h=\"100\"").Append(modes[i] == "norm" ? "" : $" fill=\"{modes[i]}\"").Append('>')
+                     .Append($"<a:moveTo><a:pt x=\"{x0}\" y=\"0\"/></a:moveTo><a:lnTo><a:pt x=\"{x1}\" y=\"0\"/></a:lnTo><a:lnTo><a:pt x=\"{x1}\" y=\"100\"/></a:lnTo>")
+                     .Append($"<a:lnTo><a:pt x=\"{x0}\" y=\"100\"/></a:lnTo><a:close/></a:path>");
+            }
+            return $"<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/><a:pathLst>{paths}</a:pathLst></a:custGeom>";
+        }
+    }
 
     private static string Group(string transform, string children)
         => $"<w:p><w:r><w:drawing><wp:inline {Namespaces}><wp:extent cx=\"914400\" cy=\"457200\"/><wp:docPr id=\"2\" name=\"g\"/><a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">"

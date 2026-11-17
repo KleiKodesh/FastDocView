@@ -575,6 +575,12 @@ public static class WordShapeHtml
                     html.Append(" stroke=\"none\"/>");
                 }
                 if (shape.Pattern is { } pattern) AppendPattern(html, shape, fillData, pattern, brightness);
+                // a picture fill (drawn under the outline as its own layer) in a darken / lighten path: Word 16 prints the picture in
+                // every filled path with the path's brightness, channel by channel as for a solid fill (c x (1 + b) / c + (255 - c) b,
+                // measured 2026-11-17: fidelity-v1-path-fills.docx) - a black / white layer of that opacity over the picture
+                if (shape.FillPictureId is not null && brightness is not 0 and >= -1 and <= 1)
+                    html.Append("<path d=\"").Append(fillData).Append("\" fill-rule=\"evenodd\" fill=\"").Append(brightness < 0 ? "#000000" : "#FFFFFF")
+                        .Append("\" fill-opacity=\"").Append(Opacity(Math.Abs(brightness) * shape.FillPicture.Opacity)).Append("\" stroke=\"none\"/>");
             }
             if (!path.Stroke || shape.LineColor is not { } line) continue;
             var stroke = new StringBuilder(" fill=\"none\" stroke=\"").Append(line).Append("\" stroke-width=\"").Append(Number(lineWidth)).Append('"');

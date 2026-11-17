@@ -1623,6 +1623,12 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   = LibreOffice's hatch for the preset (hatchmap.hxx) over the background colour; a:blipFill = an HTML picture layer between SVG
   layers, clipped to the outline, stretched by fillRect or tiled at the picture's original size (WordPictureSize: PNG pHYs,
   JPEG JFIF, BMP, else 96 per inch as graphichelper.cxx getOriginalSize).
+  In a custom geometry each filled a:path shows the picture / pattern with the path's darken / lighten (2026-11-17): Word 16
+  printed a 6-strip custGeom (norm, darken, darkenLess, lighten, lightenLess, none) with a 200,100,50 picture as 200,100,50 /
+  120,60,30 / 160,80,40 / 222,162,132 / 210,130,90 / empty - the solid-fill rule channel by channel; a pct50 pattern changes
+  both colours alike. Drawn as a black / white layer of opacity |brightness| over the picture in that path. LibreOffice
+  leaves an OOXML bitmap fill unchanged there (EnhancedCustomShape2d.cxx AdaptObjColor :2425-2436 uses the MSO colour
+  data, empty for OOXML shapes), so Word is the reference. Check: DocxDrawingLayoutFidelityTest rows 8-10.
 - SmartArt (2026-11-04): drawn from its diagramDrawing part (the data part's dsp:dataModelExt relId, resolved against the
   drawing's own part as LibreOffice does) as shapes with their DrawingML text (DocxDrawingTextHtml, txXfrm box, bodyPr
   anchor); without a drawing part, an mc:AlternateContent shows its mc:Fallback picture. Pictures of the drawing part get
@@ -1977,7 +1983,7 @@ the renderers keep plain colours because that raw output is what the fidelity ha
   (headings), INDEX / TOA (XE / TA entries), STYLEREF not found backward - shows nothing instead of Word's "not found"
   error and marks its block provisional (`WordFieldContext.UsedIncompleteIndex`, reset per block; .rtf and .docx). The
   page fetches provisional blocks again once the index is complete. .docx drops its note-HTML cache on completion.
-  .odt shows saved field text only, .doc is always complete, .txt / MHTML have no fields.
+  .odt follows the same rule (OdtFieldComputer, 2026-11-17), .doc is always complete, .txt / MHTML have no fields.
 - Theme colours: `url(...)` / `light-dark(...)` are skipped to their matching parenthesis; rgb() / rgba() / hsl() /
   hsla() (MHTML) get the same light-dark pair as hex colours, alpha kept on the dark side.
 - Checks: StreamingFormatsIncrementalOpenTest (early REF to a late bookmark, RTF on demand), DocxThemeAndUnderlineTest.
@@ -2959,3 +2965,30 @@ text lines up with the body text (and its table-indent field goes to about -1 in
 + .pdf (make-table-margin-fixture.ps1, Rows.LeftIndent -5.4): Word's PDF has the body text at 90.05 pt, the cell text at
 90.29 pt and the table border at 84.7 pt; the live rig draws the cell text 1 px from the body text, the border 8 px left.
 Padding stays >= 0.
+
+## OpenDocument fields (2026-11-17)
+
+What LibreOffice recomputes when it prints, measured: a .fodt with a wrong saved text ("XX") in every field exported to PDF by
+soffice 25.8 (TestOutput/fidelity-v1-odt-fields.fodt, OdtFieldsFidelityTest holds the printed values). Recomputed: text:sequence,
+variable-set / -get, user-field-get, expression, conditional-text, hidden-text, sequence-ref / bookmark-ref / reference-ref /
+note-ref, chapter, date / time (not fixed: now; fixed: date-value in its data style), title / subject / description / keywords /
+initial-creator / creation-date / modification-date / user-defined / file-name. Kept: author-name (with or without fixed),
+sender-*, text-input; page-number / page-count / references by page need pages (paged view).
+
+- Sources: sw/source/core/fields/reffld.cxx SwGetRefField::UpdateField :512-760 (formats: Content = the paragraph,
+  CategoryAndNumber = min / max of the number and the first occurrence of the sequence name, CaptionText from
+  GetReferenceTextPos (expfld.cxx:1013-1062: one non-alphanumeric character and the blanks after it skipped), Numbering =
+  the number, Bookmark = start to end or to the paragraph end, footnotes = GetViewNumStr, UpDown = "above" / "below",
+  not found = "Error: Reference source not found"); DocumentFieldsManager.cxx UpdateExpFieldsImpl :1060-1110 (a sequence's
+  counter is set to 0 when the outline node of its level changes, then name=formula is calculated); expfld.cxx SetChapter
+  :644-668; chpfld.cxx ExpandImpl :104-121 and ChangeExpansion (FindOutlineNodeOfLevel); calc.cxx (the formula language).
+- Windowed: the values of sequences / variables / user fields (OdtFieldState) are part of the scanner's scan state, so the
+  index's span anchors carry them and a span rescan gives every block's start values; the renderer replays the block's own
+  sequence / variable-set steps in document order (OdtFieldComputer.BeginBlock), the same steps the index pass took. Sequence
+  ref-names and note ids are kept in the bookmark table under U+0001 prefixes (no XML name holds U+0001). A reference reads
+  its target block (one block, windowed); a chapter field reads its heading block. Index format 21.
+- Data styles: number:date-style / number:time-style are kept in the style sections (whole, whitespace kept: a number:text
+  of blanks); without one, LibreOffice's defaults as printed: date M/D/YY, time HH:MM:SS, creation / modification date
+  MM/DD/YYYY. Document information is read from meta.xml / office:meta at open (small, not the body).
+- Not done: statistics fields (saved text), heading outline numbers (chapter numbers come from a saved text:number), hidden
+  paragraphs, search inside computed values (saved text is searched).
