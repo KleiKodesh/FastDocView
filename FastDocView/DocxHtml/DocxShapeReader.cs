@@ -257,6 +257,11 @@ internal static class DocxShapeReader
         if (lineReference is not null && theme?.LineStyle((int)Attribute(lineReference, "idx")) is { } themeLine) line.Apply(themeLine, theme, linePlaceholder);
         if (properties?.Element("ln") is { } ownLine) line.Apply(ownLine, theme, linePlaceholder);
         line.ApplyTo(shape);
+        // a 3-D scene (a:scene3d + a:sp3d): the extruded, bevelled faces in place of the flat outline
+        if (shape.Geometry == WordShapeGeometry.Path
+            && WordShape3D.FromDrawingML(properties, shape.RotationDegrees, e => DocxDrawingColor.Hex(e, theme) is { } hex ? "#" + hex : null,
+                                         out double sceneRotation, out string? extrusionColor) is { } scene)
+            WordShape3D.Apply(shape, scene, sceneRotation, extrusionColor);
         return shape;
     }
 

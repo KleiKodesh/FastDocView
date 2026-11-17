@@ -3186,3 +3186,26 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
 - Soft edges never shorten the radius: Word's mask is the picture rectangle inset by the half-alpha distance and blurred, so
   on a small picture the two edges overlap (rad 20 on 40 x 40 peaks at 9 / 255, on 60 x 40 at 30; rad 40 on 180 x 120 at 237).
   The gradient is now that two-sided formula, in percent of the side, with stops every 0.1 rad from each edge: never crossing.
+
+## 3-D shapes: scene3d / sp3d, bevels, OfficeArt 3-D (2026-11-17)
+
+- .docx shapes with a:scene3d / a:sp3d become an `OdtExtrusion` scene (Html/WordShape3D.cs): LibreOffice's mapping
+  (oox/source/drawingml/scene3dhelper.cxx, master 2026-11-17: camera presets :69-160, angles :175-286, depth :299-327, projection
+  :329-376, when a scene is made :378-444, materials :940-960) drawn by the ODT extrusion projection. LibreOffice draws no bevel:
+  bevels are our own faces (OdtExtrusion.Bevel: bands inset along the outline by the bevel's width, raised along the preset's
+  profile, one flat face per edge and step: angle / slope 1 step, curved profiles 6). A bevel makes a scene even with a front camera.
+- The drawing stripper keeps a:scene3d, a:camera, a:rot, a:lightRig, a:sp3d, a:bevelT / B, a:extrusionClr, a:contourClr on shapes
+  (render-time only, no index change).
+- Lighting is Word's, not LibreOffice's two-light model: the rig table of scene3dhelper.cxx :475-640 ([MS-OI29500]) turned into the
+  shape's frame by V = (-Ly, -Lx, Lz); a face = colour x (ambient + sum of level x cos to each light) x the material's diffuse share
+  + a lift. threePt on a front face gives 1.043, Word's measured picture gain (3a569fa). Lift by material from Word's PDF: warm matte
+  5, legacy matte 0, legacy metal 10 at 0.667 diffuse. The lights stay with the shape (own normal): keeping them with the viewer
+  measured much worse on turned shapes (60-110 levels). Flat material is unlit.
+- Word 16 measurements (test-data/word-shapes-3d, make-shapes-3d-fixture.ps1, 12 shapes): extents within 0.47-0.6 pt for 10 of 12
+  (perspective + bevel triangle 2.3 pt; contour not drawn 2.3 pt); centre colours 1-6 levels except the turned green-sided shape
+  (13) and the balanced rig (19). Word prints .docx 3-D shapes as pictures (one image per shape in the PDF).
+- .doc / RTF: Word 16 saves a modern 3-D format with f3D off (only the 3-D style's skew / view point / parallel flags) and prints it
+  flat; we read f3D like msdffimp.cxx:1675-1960 and draw legacy 3-D when it is on. LibreOffice's RTF import reads no 3-D property
+  (rtfsdrimport.cxx), so the RTF names are the [MS-ODRAW] names Word writes (c3D*, f3D, fc3D*; booleans with their use bits).
+  shapes-3d-on-v1.rtf (make_rtf_3d.py: f3D on) printed by Word: legacy outlines within 0.5 pt; Word prints legacy 3-D as vectors,
+  lit darker than LibreOffice's model (front 93 vs 144 grey) - left as LibreOffice draws it.

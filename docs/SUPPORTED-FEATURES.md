@@ -243,12 +243,14 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 | Text boxes (linked chains shown in the first box) | yes | yes (21) | yes (21) | yes | n.a. | n.a. |
 | WordArt / Fontwork (text on outlines) | yes | yes | yes | yes | n.a. | n.a. |
 | Connectors | partial (22) | partial (22) | partial (22) | yes | n.a. | n.a. |
-| 3-D extrusion | no | no | no | yes (23) | n.a. | n.a. |
+| 3-D extrusion | yes (23a) | yes (23b) | yes (23b) | yes (23) | n.a. | n.a. |
 
 20. A .doc / RTF group, or a shape holding a text box, floats as one object where Word puts it, as .docx drawings do: its wrap (square, tight, top and bottom, none), its gap to the text (dxWrapDist*, 9 pt left / right when the file gives none, as Word reports) and its horizontal position (posh alignment, or the offset from the column / margin, page or character: posrelh over the FSPA's bx / \shpbx*); rotated and flipped groups turn as one. A page- or margin-relative vertical position waits for the paged view, as for .docx.
 21. Positioned as in 20: a plain text box is a box with its line and fill, any other one is its shape with the text over it.
 22. Drawn as the line / preset geometry saved; no connection routing.
 23. ODT `draw:extrusion` is projected and lit as LibreOffice draws it (OdtExtrusion: faces back to front, parallel / perspective, lights).
+23a. .docx a:scene3d / a:sp3d on shapes: the camera presets (legacy oblique / perspective, isometric, oblique, perspective; a:rot; fov), extrusion depth and z, the extrusion colour, bevels on the front and back (a:bevelT / a:bevelB: width, height, preset profile, drawn as lit bands along the outline) and the material and light rig, by the same projection as ODT extrusions with Word's rig lights (each light's level times its cosine, plus a lift by material). Against Word 16's PDF (test-data/word-shapes-3d): outlines within 0.6 pt, colours within 1-6 levels for front, bevelled and legacy shapes (see UNSUPPORTED-FEATURES.md for the rest).
+23b. .doc / RTF OfficeArt 3-D properties (f3D on; depth, rotation, rotation centre, skew, view point, origin, parallel, lights, metal, wireframe, extrusion colour; RTF by their property names) as LibreOffice reads them (msdffimp.cxx) and draws them; Word itself saves a modern 3-D shape to .doc / RTF with f3D off and prints it flat, as we do. Legacy 3-D outlines within 0.5 pt of Word's print.
 
 ## Charts, SmartArt, objects
 

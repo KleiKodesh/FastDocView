@@ -447,6 +447,9 @@ internal static class DocBinaryDrawnShapes
             texts.Add(text);
         }
         if (textEffect && shapeText?.Literal is null) { shape.Geometry = WordShapeGeometry.Path; shape.Paths = []; }
+        if (!textEffect && shape.Geometry != WordShapeGeometry.Picture
+            && WordShape3D.FromOfficeArt(id => p.TryGetValue(id, out uint v) ? v : null, out uint? extrusionColor) is { } scene)
+            WordShape3D.Apply(shape, scene, -shape.RotationDegrees, extrusionColor is { } c ? Color(p, 647, c, stroked) : null);
         shapes.Add(shape);
     }
 

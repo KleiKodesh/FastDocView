@@ -173,9 +173,46 @@ internal sealed class RtfShapePlacement
     public string? WordArtFont;
     public double WordArtSizePt;
     public string? TextHtml;
+    /// <summary>The 3-D properties (OfficeArt ids 640-767, booleans gathered into 703 / 767 with their "use" bits), or null.</summary>
+    public Dictionary<int, uint>? ThreeD;
+
+    // [MS-ODRAW] 2.3.18-2.3.19 property names as Word writes them in RTF (\sn), by OfficeArt id
+    private static readonly Dictionary<string, int> ThreeDNumbers = new()
+    {
+        ["c3DSpecularAmt"] = 640, ["c3DDiffuseAmt"] = 641, ["c3DShininess"] = 642, ["c3DExtrudeForward"] = 644, ["c3DExtrudeBackward"] = 645,
+        ["c3DExtrusionColor"] = 647, ["c3DYRotationAngle"] = 704, ["c3DXRotationAngle"] = 705, ["c3DRotationCenterX"] = 710,
+        ["c3DRotationCenterY"] = 711, ["c3DRotationCenterZ"] = 712, ["c3DRenderMode"] = 713, ["c3DTolerance"] = 714, ["c3DXViewpoint"] = 715,
+        ["c3DYViewpoint"] = 716, ["c3DZViewpoint"] = 717, ["c3DOriginX"] = 718, ["c3DOriginY"] = 719, ["c3DSkewAngle"] = 720, ["c3DSkewAmount"] = 721,
+        ["c3DAmbientIntensity"] = 722, ["c3DKeyX"] = 723, ["c3DKeyY"] = 724, ["c3DKeyZ"] = 725, ["c3DKeyIntensity"] = 726, ["c3DFillX"] = 727,
+        ["c3DFillY"] = 728, ["c3DFillZ"] = 729, ["c3DFillIntensity"] = 730,
+    };
+
+    // the boolean groups: 3-D Object (703: fc3DLightFace 0, fc3DUseExtrusionColor 1, fc3DMetallic 2, f3D 3) and 3-D Style
+    // (767: fc3DFillHarsh 0, fc3DKeyHarsh 1, fc3DParallel 2, fc3DRotationCenterAuto 3, fc3DConstrainRotation 4)
+    private static readonly Dictionary<string, (int Id, int Bit)> ThreeDFlags = new()
+    {
+        ["fc3DLightFace"] = (703, 0), ["fc3DUseExtrusionColor"] = (703, 1), ["fc3DMetallic"] = (703, 2), ["f3D"] = (703, 3),
+        ["fc3DFillHarsh"] = (767, 0), ["fc3DKeyHarsh"] = (767, 1), ["fc3DParallel"] = (767, 2), ["fc3DRotationCenterAuto"] = (767, 3),
+        ["fc3DConstrainRotation"] = (767, 4),
+    };
 
     public void SetProperty(string name, string value)
     {
+        if (ThreeDNumbers.ContainsKey(name) || ThreeDFlags.ContainsKey(name))
+        {
+            if (!long.TryParse(value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out long threeD)) return;
+            ThreeD ??= new Dictionary<int, uint>();
+            if (ThreeDNumbers.TryGetValue(name, out int id)) ThreeD[id] = (uint)threeD;
+            else
+            {
+                (int group, int bit) = ThreeDFlags[name];
+                uint flags = ThreeD.TryGetValue(group, out uint old) ? old : 0;
+                flags |= 1u << (bit + 16);
+                flags = threeD != 0 ? flags | (1u << bit) : flags & ~(1u << bit);
+                ThreeD[group] = flags;
+            }
+            return;
+        }
         if (name == "gtextFont") { WordArtFont = value; return; }
         if (name == "pVerticies")
         {

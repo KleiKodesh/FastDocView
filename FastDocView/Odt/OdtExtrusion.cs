@@ -81,6 +81,12 @@ internal sealed class OdtExtrusion
     public bool FirstLightHarsh = true, SecondLightHarsh = true;
     public double Brightness = 33, Diffusion, Specularity, Shininess = 50;
     public bool Metal, MetalMicrosoftCompatible;
+    /// <summary>Word's bevels on the front (a:sp3d a:bevelT) and back (a:bevelB); null = none. Not an ODF attribute: set by the
+    /// DrawingML reader (<see cref="FastDocView.Html.WordShape3D"/>).</summary>
+    internal FastDocView.Html.WordShapeBevel? BevelTop, BevelBottom;
+    /// <summary>Lights a face instead of LibreOffice's model: (normal in the shape's own frame, x right / y down / z to the viewer;
+    /// the same normal after the scene's rotation; the material colour) to the lit colour. Set for Word's light rigs.</summary>
+    internal Func<(double X, double Y, double Z), (double X, double Y, double Z), (double R, double G, double B), (double R, double G, double B)>? Shader;
 
     /// <summary>The extrusion of a draw:enhanced-geometry, or null when it has no draw:extrusion="true".</summary>
     public static OdtExtrusion? Read(XElement? geometry)
@@ -267,6 +273,17 @@ internal sealed class OdtExtrusion
                         var face = new Face { Kind = front ? "front" : "back", Normal = (0, 0, front ? 1 : -1), Material = capColour,
                                               DoubleSided = doubleSidedScene || !source.Filled, Textured = fillTextured && source.Filled };
                         double z = front ? depth : 0;
+                        var bevel = front ? BevelTop : BevelBottom;
+                        if (bevel is not null && closed.Count == 1 && Bevel(outer, ccw, z, front, bevel, capColour, faces) is { } inner)
+                        {
+                            // the cap is the bevel's innermost ring, raised (front) or lowered (back) by the bevel's height
+                            face.Rings.Add(inner);
+                            var innerFacing = new List<(double X, double Y, double Z)>(inner);
+                            if (ccw != front) innerFacing.Reverse();
+                            face.Facing = innerFacing;
+                            faces.Add(face);
+                            continue;
+                        }
                         foreach (var r in closed) face.Rings.Add(r.Points.Select(p => At(p, z)).ToList());
                         var facing = outer.Select(p => At(p, z)).ToList();
                         if (ccw != front) facing.Reverse();
@@ -313,6 +330,13 @@ internal sealed class OdtExtrusion
         if (yRotate != 0) m.Rotate(0, -yRotate, 0);
         if (xRotate != 0) m.Rotate(-xRotate, 0, 0);
         m.Translate(rcx, -rcy, rcz);
+        // the scene's turn alone (no shear, no translation): a face's normal as the viewer sees it, for the Shader
+        Matrix turn = Matrix.Identity;
+        if (zRotate != 0) turn.Rotate(0, 0, zRotate);
+        if (mirrorX) turn.Scale(-1, 1, 1);
+        if (mirrorY) turn.Scale(1, -1, 1);
+        if (yRotate != 0) turn.Rotate(0, -yRotate, 0);
+        if (xRotate != 0) turn.Rotate(-xRotate, 0, 0);
         if (!Perspective && SkewAmount != 0)
         {
             double alpha = SkewAngleDegrees * Math.PI / 180, invTanBeta = SkewAmount / 100.0;
@@ -381,6 +405,16 @@ internal sealed class OdtExtrusion
             {
                 var normal = m.Vector(face.Normal);
                 if (twoSidedLighting && !facesViewer) normal = (-normal.X, -normal.Y, -normal.Z);
+                if (Shader is not null)
+                {
+                    // the shader's frames are y down (the shape's own), the scene's y up
+                    var own = face.Normal;
+                    if (twoSidedLighting && !facesViewer) own = (-own.X, -own.Y, -own.Z);
+                    var eye = Normalized(turn.Vector(own));
+                    outFace.Color = Hex(Shader((own.X, -own.Y, own.Z), (eye.X, -eye.Y, eye.Z), face.Material));
+                    result.Add(outFace);
+                    continue;
+                }
                 var material = DiffusedMaterial(face.Material);
                 var specular = MetalMicrosoftCompatible && Metal ? MetalSpecular(face.Material) : specularColour;
                 outFace.Color = Hex(Solve(normal, material, specular, specularIntensity, ambient, lights));
@@ -389,6 +423,76 @@ internal sealed class OdtExtrusion
         }
         // painter's order: farthest (smallest z, the viewer looks down -z) first; stable for equal depths
         return result.Select((f, i) => (f, i)).OrderBy(t => t.f.Depth).ThenBy(t => t.i).Select(t => t.f).ToList();
+    }
+
+    /// <summary>
+    /// A bevel along a cap's single outer ring (box points, y down; <paramref name="ccw"/> = its winding in object coordinates):
+    /// bands from the outline inward by the bevel's width, rising (front) or sinking (back) by its height along the preset's
+    /// profile, one flat face per edge and profile step, added to <paramref name="faces"/>. Returns the innermost ring at the
+    /// bevel's full height (the cap, object coordinates), or null when the ring cannot be bevelled. The width is kept to half the
+    /// ring's smaller extent (the bands meet in the middle).
+    /// </summary>
+    private static List<(double X, double Y, double Z)>? Bevel(List<(double X, double Y)> ring, bool ccw, double z, bool front, FastDocView.Html.WordShapeBevel bevel,
+                                                              (double R, double G, double B) colour, List<Face> faces)
+    {
+        // consecutive points closer than 0.01 pt (a closing point, rounding) would give an edge without a direction
+        var points = new List<(double X, double Y)>();
+        foreach (var p in ring)
+            if (points.Count == 0 || Math.Abs(p.X - points[points.Count - 1].X) + Math.Abs(p.Y - points[points.Count - 1].Y) > 0.01) points.Add(p);
+        while (points.Count > 1 && Math.Abs(points[0].X - points[points.Count - 1].X) + Math.Abs(points[0].Y - points[points.Count - 1].Y) <= 0.01) points.RemoveAt(points.Count - 1);
+        if (points.Count < 3 || bevel.Width <= 0) return null;
+        double minX = points.Min(p => p.X), maxX = points.Max(p => p.X), minY = points.Min(p => p.Y), maxY = points.Max(p => p.Y);
+        double width = Math.Min(bevel.Width, Math.Min(maxX - minX, maxY - minY) / 2 * 0.999);
+        if (width <= 0) return null;
+        int n = points.Count;
+        // inward normal of edge i (points[i] -> points[i + 1]) in object coordinates (y up): left of the edge on a counter-clockwise ring
+        var inward = new (double X, double Y)[n];
+        for (int i = 0; i < n; i++)
+        {
+            var a = points[i]; var b = points[(i + 1) % n];
+            double ex = b.X - a.X, ey = -(b.Y - a.Y), length = Math.Sqrt(ex * ex + ey * ey);
+            inward[i] = length == 0 ? (0, 0) : ccw ? (-ey / length, ex / length) : (ey / length, -ex / length);
+        }
+        // vertex offsets: the miter of the two edges' inward normals, kept to 4 widths at sharp corners
+        var miter = new (double X, double Y)[n];
+        for (int i = 0; i < n; i++)
+        {
+            var n1 = inward[(i - 1 + n) % n]; var n2 = inward[i];
+            if (n1 == (0, 0)) n1 = n2;
+            if (n2 == (0, 0)) n2 = n1;
+            double mx = n1.X + n2.X, my = n1.Y + n2.Y, ml = Math.Sqrt(mx * mx + my * my);
+            if (ml < 1e-9) { miter[i] = n2; continue; }
+            mx /= ml; my /= ml;
+            double cos = mx * n2.X + my * n2.Y;
+            double scale = Math.Min(4, 1 / Math.Max(cos, 0.25));
+            miter[i] = (mx * scale, my * scale);
+        }
+        int steps = bevel.Steps;
+        double sign = front ? 1 : -1;
+        var rings = new List<List<(double X, double Y, double Z)>>();
+        for (int k = 0; k <= steps; k++)
+        {
+            double t = (double)k / steps;
+            double inset = width * t, rise = bevel.Height * bevel.Profile(t);
+            rings.Add(points.Select((p, i) => (p.X + miter[i].X * inset, -p.Y + miter[i].Y * inset, z + sign * rise)).ToList());
+        }
+        // an inset that turns the ring over or pushes a corner outside the outline (concave or thin shapes): no bevel
+        var innermost = rings[steps].Select(q => (q.X, -q.Y)).ToList();
+        if (Math.Sign(SignedArea(innermost)) != Math.Sign(SignedArea(points)) || innermost.Any(q => !Contains(points, q))) return null;
+        for (int k = 0; k < steps; k++)
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n;
+                var quad = new List<(double X, double Y, double Z)> { rings[k][i], rings[k][j], rings[k + 1][j], rings[k + 1][i] };
+                // the edge's outward direction and the profile's slope give the normal (away from the solid)
+                double slope = bevel.Height * (bevel.Profile((k + 1.0) / steps) - bevel.Profile((double)k / steps)) / (width / steps);
+                var normal = Normalized((-inward[i].X * slope, -inward[i].Y * slope, sign));
+                if (front != ccw) quad.Reverse();
+                var face = new Face { Kind = "bevel", Normal = normal, Material = colour, Facing = quad };
+                face.Rings.Add(quad);
+                faces.Add(face);
+            }
+        return rings[steps];
     }
 
     /// <summary>The scene's lights (Create3DObject :822-1080) in the order createNewSdrLightingAttribute lists them (lights 1 - 8,

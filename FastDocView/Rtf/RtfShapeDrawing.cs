@@ -122,6 +122,9 @@ internal static class RtfShapeDrawing
             drawn.PictureId = pictureId(picture);
         }
         if (shape.HasText && !(shape.IsTextEffect && shape.WordArtText is not null)) { drawn.TextIndex = texts.Count; texts.Add(shape.TextHtml ?? ""); }
+        if (shape.ThreeD is { } threeD && !shape.IsTextEffect && shape.Picture is null
+            && WordShape3D.FromOfficeArt(id => threeD.TryGetValue(id, out uint v) ? v : null, out uint? extrusionColor) is { } scene)
+            WordShape3D.Apply(drawn, scene, -drawn.RotationDegrees, extrusionColor is { } c ? WordOfficeArtColor.Css(c, 647, id => threeD.TryGetValue(id, out uint v) ? v : null, true) : null);
         shapes.Add(drawn);
     }
 }

@@ -322,6 +322,8 @@ internal static class DocxDrawingStripper
         // canvases (wpc), picture and pattern fills, the custom geometry's text rectangle
         "wpc:wpc", "wpc:bg", "wpc:whole", "a:prstTxWarp", "a:blipFill", "a:stretch", "a:fillRect", "a:tile", "a:alphaModFix", "a:pattFill", "a:fgClr", "a:bgClr", "a:rect",
         "a:ln", "a:prstDash", "a:headEnd", "a:tailEnd", "a:lnRef", "a:fillRef", "a:spAutoFit",
+        // 3-D shapes (WordShape3D): the scene's camera and light rig, the extrusion, bevels and their colours
+        "a:scene3d", "a:camera", "a:rot", "a:lightRig", "a:sp3d", "a:bevelT", "a:bevelB", "a:extrusionClr", "a:contourClr",
     };
 
     private static string LocalName(string name) => name.IndexOf(':') is var colon and >= 0 ? name.Substring(colon + 1) : name;
