@@ -78,6 +78,9 @@ internal sealed class DocBinaryFieldReader
         return true;
     }
 
+    /// <summary>The note references (their CPs) met inside field codes, in order, each a <see cref="WordFieldRuby.NoteMarkPlaceholder"/> in the code.</summary>
+    public Queue<int> InstructionNoteCps { get; } = new();
+
     public Step Consume(char c, int cp, uint? picture, bool quiet = false)
     {
         switch (c)
@@ -121,7 +124,11 @@ internal sealed class DocBinaryFieldReader
             && DataLocationAt?.Invoke(cp) is { } location)
             owner.Form = FormData(location);
         // control characters are not instruction text (HYPERLINK codes carry a 0x01 object mark: Word's hyperlink data)
-        WordFieldTextRoute route = _stack.Route(c < ' ' ? " " : c.ToString());
+        // a tab stays a tab (an EQ ruby draws it, Word's PDF of test-data/word-ruby/ruby-edges-v1.doc); a note reference (0x02)
+        // in the code is drawn where the code puts it: a placeholder the renderer swaps for the note's mark (InstructionNoteCps)
+        string text = c == '\t' ? "\t" : c == '\u0002' ? WordFieldRuby.NoteMarkPlaceholder.ToString() : c < ' ' ? " " : c.ToString();
+        WordFieldTextRoute route = _stack.Route(text);
+        if (c == '\u0002' && route == WordFieldTextRoute.Instruction && !quiet) InstructionNoteCps.Enqueue(cp);
         return new(route != WordFieldTextRoute.Visible, WordFieldOutput.None, null, false, null);
     }
 

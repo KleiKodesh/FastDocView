@@ -102,6 +102,10 @@ public sealed class WordFieldInstruction
 
     public static WordFieldInstruction Parse(string code)
     {
+        // a note reference inside the code (WordFieldRuby.NoteMarkPlaceholder) is only drawn by an EQ ruby; for any other field it
+        // separates tokens as the space it was read as before (its mark is drawn after the field's result)
+        if (code.IndexOf(WordFieldRuby.NoteMarkPlaceholder) >= 0 && !code.TrimStart().StartsWith("EQ", StringComparison.OrdinalIgnoreCase))
+            code = code.Replace(WordFieldRuby.NoteMarkPlaceholder, ' ');
         var tokens = new List<WordFieldToken>();
         int index = 0;
         // DomainMapper_Impl.cxx:6024-6031: a field may start with a stray backslash ("\REF ..."); Word skips it

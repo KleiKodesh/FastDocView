@@ -48,6 +48,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     // per block
     private RtfNoteReference[] _blockNotes = [];
+    private readonly Queue<string> _instructionNoteMarks = new();   // marks of notes met inside a field code, until the field's HTML places them
     private int _nextNote;
     private List<WordDocumentNoteHtml>? _renderedNotes;
     private string? _indexListLabel;
@@ -95,6 +96,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         ReadOnlySpan<RtfNoteReference> notes = index.NoteReferencesInBlock(blockIndex);
         _blockNotes = notes.ToArray();
         _nextNote = 0;
+        _instructionNoteMarks.Clear();
         _renderedNotes = notes.Length == 0 ? null : new List<WordDocumentNoteHtml>(notes.Length);
         _indexListLabel = table.ListLabelOf(blockIndex);
         _cellsMergedBelow = index.CellsMergedBelow(blockIndex);
@@ -125,7 +127,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     public override void Text(ReadOnlySpan<char> text, in RtfGroupState state)
     {
-        if (!_fields.IsIdle && !_fields.Shows(text)) return;                 // a replaced result (page placeholder, recomputed, hidden)
+        // (a note inside a field code is not part of that code: Shows would add its text to it)
+        if (!_parser.IsNoteInFieldInstruction && !_fields.IsIdle && !_fields.Shows(text)) return;                 // a replaced result (page placeholder, recomputed, hidden)
         if (_runText.Length > 0 && !HasSameCharacterFormatting(_runState, state)) FlushRun();
         _runState = state;
         _runText.Append(text.ToArray());
@@ -785,7 +788,17 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (output.Text is null && output.Html is null) return;
         bool wrap = link is not null && _flow.OpenLink is null;
         if (wrap) _flow.Inline.Append(link);
-        if (output.Html is { } markup) _flow.Inline.Append(markup);
+        if (output.Html is { } markup)
+        {
+            // note marks from the field's code (RtfParser.IsNoteInFieldInstruction) where its placeholders landed; unshown ones dropped
+            if (markup.IndexOf(Fields.WordFieldRuby.NoteMarkPlaceholder) >= 0)
+                foreach (char c in markup)
+                {
+                    if (c != Fields.WordFieldRuby.NoteMarkPlaceholder) _flow.Inline.Append(c);
+                    else if (_instructionNoteMarks.TryDequeue(out string? mark)) _flow.Inline.Append(mark);
+                }
+            else _flow.Inline.Append(markup);
+        }
         else
         {
             string css = RunFormatting(_parser.Current, IsComplexScript(output.Text!)).ToCss(_documentRun);
@@ -830,6 +843,19 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             linkFlow.OpenLink = null;
         }
         foreach ((Fields.WordFieldOutput output, string? link) in outputs) AppendFieldOutput(output, link);
+        if (_fields.Depth < before) AppendInstructionNoteMarks();             // only when a field ended (not the code's own groups)
+    }
+
+    /// <summary>
+    /// Marks of notes inside a field code that the field's HTML did not place (any field but an EQ ruby): drawn where the field
+    /// ends (its output, computed at the end, has placed its own first), so every note listed with the block keeps a mark.
+    /// </summary>
+    private void AppendInstructionNoteMarks()
+    {
+        if (_instructionNoteMarks.Count == 0) return;
+        FlushRun();
+        while (_instructionNoteMarks.TryDequeue(out string? mark)) _flow.Inline.Append(mark);
+        _flow.HasInline = true;
     }
 
     /// <summary>{\*\bkmkend name}: an empty marker where the bookmark ends (REF without a result reads up to it).</summary>
@@ -1130,9 +1156,15 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         int number = reference?.Number ?? 0;
         string label = reference?.Label ?? "*";
         string kindName = kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote";
-        _flow.Inline.Append("<sup class=\"note-reference\" data-note-kind=\"").Append(kindName).Append("\" data-note-number=\"")
-            .Append(number.ToString(CultureInfo.InvariantCulture)).Append("\">").Append(number > 0 ? WordHtmlText.Encode(label) : "").Append("</sup>");
-        _flow.HasInline = true;
+        string mark = "<sup class=\"note-reference\" data-note-kind=\"" + kindName + "\" data-note-number=\""
+                      + number.ToString(CultureInfo.InvariantCulture) + "\">" + (number > 0 ? WordHtmlText.Encode(label) : "") + "</sup>";
+        // a note inside a field code: its mark goes where the code's placeholder lands in the field's HTML (AppendFieldOutput)
+        if (_parser.IsNoteInFieldInstruction) _instructionNoteMarks.Enqueue(mark);
+        else
+        {
+            _flow.Inline.Append(mark);
+            _flow.HasInline = true;
+        }
         _renderedNotes?.Add(new WordDocumentNoteHtml(kind, number, label, body));
     }
 }

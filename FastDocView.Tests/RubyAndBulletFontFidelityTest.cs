@@ -152,19 +152,29 @@ public static class RubyAndBulletFontFidelityTest
                 string baseText = System.Text.RegularExpressions.Regex.Replace(PlainText(baseHtml), @"\s+", " ").Trim();
                 string guideText = rt < 0 || end < 0 ? "" : PlainText(block.Substring(rt, end - rt));
                 string wantBase = file.Contains("semicolon") && c.Case == 6 ? ";b;6" : c.Base;
-                // .doc / RTF: a note mark inside the EQ code is not drawn yet (docs/UNSUPPORTED-FEATURES.md); the text around it is
-                if (!file.EndsWith(".docx", StringComparison.Ordinal) && c.Case is 1 or 3) wantBase = wantBase.Substring(0, wantBase.Length - 1);
                 bool extra = c.Case switch
                 {
-                    0 => baseHtml.Contains('\t') || file.EndsWith(".doc", StringComparison.Ordinal),   // .doc field code reads the tab as a space (still a gap)
+                    0 => baseHtml.Contains('\t'),                                                    // the tab is a tab in every format
+                    1 or 3 => baseHtml.Contains("note-reference", StringComparison.Ordinal),        // the note's mark, numbered as Word does
                     2 => block.Contains("EdgeTwo", StringComparison.Ordinal) || file != "ruby-edges-v1.docx",
                     4 => block.Contains("EdgeFour", StringComparison.Ordinal) || file != "ruby-edges-v1.docx",
                     5 => !System.Text.RegularExpressions.Regex.IsMatch(baseHtml, @"linex\s+<"),      // trailing spaces at the paragraph end are not drawn
                     _ => true,
                 };
                 TestReport.Check(guideText == c.Guide && baseText == wantBase && extra,
-                                 $"{file}: ruby edge {c.Case}: \"{c.Guide}\" over \"{wantBase}\" as Word's PDF draws it (got \"{guideText}\" over \"{baseText}\")");
+                                 $"{file}: ruby edge {c.Case}: \"{c.Guide}\" over \"{wantBase}\" as Word's PDF draws it (got \"{guideText}\" over \"{baseText}\")"
+                                 + (Environment.GetEnvironmentVariable("FASTDOCVIEW_RUBY_DUMP") is null ? "" : " " + block));
             }
+        }
+        // the notes inside rubies keep Word's numbering and come with their blocks, in order (the pane)
+        foreach (string file in new[] { "ruby-edges-v1.docx", "ruby-edges-v1.doc", "ruby-edges-v1.rtf" })
+        {
+            var notePolicy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-ruby-notes-" + file.Replace('.', '-')) };
+            using IWordWindowedDocument noted = WordWindowedDocumentOpener.Open(Path.Combine(root, "word-ruby", file), notePolicy);
+            List<WordDocumentNoteHtml> notes = noted.RenderBlocks(0, noted.BlockCount).SelectMany(block => block.Notes).ToList();
+            TestReport.Check(notes.Count == 2 && notes[0].Number == 1 && notes[0].Label == "1" && PlainText(notes[0].Html).Contains("note one")
+                             && notes[1].Number == 2 && notes[1].Label == "2" && PlainText(notes[1].Html).Contains("note two"),
+                             $"{file}: the notes inside rubies numbered 1 and 2 in order, each with its text ({notes.Count} note(s))");
         }
         // search and GetText read the .docx base as drawn
         string docx = Path.Combine(root, "word-ruby", "ruby-edges-v1.docx");

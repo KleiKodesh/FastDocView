@@ -19,6 +19,12 @@ namespace FastDocView.Fields;
 /// </summary>
 public static class WordFieldRuby
 {
+    /// <summary>
+    /// Stands for a note reference inside a field code (.doc 0x02, an RTF {\footnote} in \fldinst): the readers put it in the
+    /// code, the renderers swap it for the note's mark in the field's HTML (a private-use character, never document text here).
+    /// </summary>
+    public const char NoteMarkPlaceholder = '';
+
     /// <summary>The ruby HTML, or null when the code is not Word's phonetic-guide form.</summary>
     public static string? ToHtml(string equationCode)
     {

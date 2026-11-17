@@ -107,6 +107,8 @@ internal sealed class RtfParser
     public int Depth => _depth;
     public ref readonly RtfGroupState Current => ref _stack[_depth < 0 ? 0 : _depth];
     public bool IsInFootnote => _footnoteDepth >= 0;
+    /// <summary>The open note sits inside a field code (its mark goes where the code puts it, not before the field).</summary>
+    public bool IsNoteInFieldInstruction { get; private set; }
     public bool IsInListText => _listTextDepth >= 0;
     /// <summary>Inside a shape's {\shptxt}: text-box text (not the block's own text: no heading text, length or list counting).</summary>
     public bool IsInTextBox => _textBoxDepth >= 0;
@@ -232,6 +234,7 @@ internal sealed class RtfParser
         _skipCount = 0;
         _textByteCount = 0;
         _captureDepth = -1;
+        IsNoteInFieldInstruction = false;
         _captured.Clear();
         _pendingCell = default;
         _isEndnote = false;
@@ -384,7 +387,12 @@ internal sealed class RtfParser
         _skipCount = 0;
         _isIgnorableNext = false;
         if (_depth < 0) return true;                  // stray '}' after the end
-        if (_depth == _footnoteDepth) { _footnoteDepth = -1; _sink.FootnoteEnd(_isEndnote); }
+        if (_depth == _footnoteDepth)
+        {
+            _footnoteDepth = -1;
+            _sink.FootnoteEnd(_isEndnote);
+            if (IsNoteInFieldInstruction) { _captured.Append(Fields.WordFieldRuby.NoteMarkPlaceholder); IsNoteInFieldInstruction = false; }
+        }
         if (_depth == _listTextDepth) { _listTextDepth = -1; _sink.ListTextEnd(); }
         if (_depth == _unicodePairDepth) _unicodePairDepth = -1;
         if (_depth == _nestedTablePropertiesDepth) _nestedTablePropertiesDepth = -1;
@@ -795,7 +803,11 @@ internal sealed class RtfParser
 
             // ── rendered destinations ──
             case RtfWord.Footnote:
-                if (_footnoteDepth >= 0 || state.Destination != RtfDestination.Body) { SkipGroup(name); return; }
+                // a note inside a field code (Word's EQ ruby keeps the base's note there): a note like any other, its mark a
+                // placeholder in the captured code (WordFieldRuby.NoteMarkPlaceholder) where Word draws it
+                if (_footnoteDepth >= 0 || state.Destination is not (RtfDestination.Body or RtfDestination.FieldInstruction) || state.Destination == RtfDestination.FieldInstruction && _captureDepth < 0)
+                { SkipGroup(name); return; }
+                IsNoteInFieldInstruction = state.Destination == RtfDestination.FieldInstruction;
                 state.Destination = RtfDestination.Footnote;
                 _footnoteDepth = _depth;
                 _isEndnote = false;
@@ -993,7 +1005,8 @@ internal sealed class RtfParser
             case RtfWord.Page: case RtfWord.Line: case RtfWord.Column:
                 if (IsTextDestination(state)) _sink.Break(word, state);
                 return;
-            case RtfWord.FootnoteMark: if (IsTextDestination(state)) _sink.FootnoteMark(state); return;
+            // \chftn also in a field code (the automatic mark of a note kept inside an EQ ruby's code)
+            case RtfWord.FootnoteMark: if (IsTextDestination(state) || state.Destination == RtfDestination.FieldInstruction && _captureDepth >= 0) _sink.FootnoteMark(state); return;
             case RtfWord.Tab: AddCharacter('\t'); return;
             // \emdash ... \rdblquote: LibreOffice rtfdispatchsymbol.cxx inserts cp1252 151, 150, 149, 145-148
             case RtfWord.EmDash: AddCharacter('\u2014'); return;

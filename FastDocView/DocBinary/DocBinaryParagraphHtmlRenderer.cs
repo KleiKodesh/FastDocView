@@ -916,9 +916,16 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 {
                     // a computed result or placeholder, in the run's formatting, in the field's link when no link is open
                     if (step.OutputLink is { } outputLink) { Flush(); html.Append(outputLink); }
-                    if (step.Output.Html is { } markup) { Flush(); html.Append(markup); }
+                    if (step.Output.Html is { } markup) { Flush(); html.Append(WithNoteMarks(markup, fieldState)); }
                     else visible.Append(WordHtmlText.Encode(step.Output.Text!));
                     if (step.OutputLink is not null) { Flush(); html.Append("</a>"); }
+                }
+                // marks of notes in a field code the field's HTML did not place (any field but an EQ ruby): drawn where the
+                // code ends (0x14) or the field ends (0x15), so every note keeps its mark in the text
+                if (c is '\u0014' or '\u0015' && fieldState.InstructionNoteCps.Count > 0)
+                {
+                    Flush();
+                    while (fieldState.InstructionNoteCps.TryDequeue(out int noteCp)) AppendNoteMark(html, noteCp, null);
                 }
                 continue;
             }
@@ -1097,6 +1104,22 @@ public sealed class DocBinaryParagraphHtmlRenderer
             return root.Descendants().FirstOrDefault(WordOfficeMathHtml.IsMathZone);
         }
         catch (System.Xml.XmlException) { return null; }
+    }
+
+    /// <summary>
+    /// A field's HTML with each note-reference placeholder of its code (<see cref="WordFieldRuby.NoteMarkPlaceholder"/>) as that
+    /// note's mark, in code order (an EQ ruby's base in Word's PDF: "abc" then the mark). Marks it does not place are drawn after it (the 0x14 / 0x15 step).
+    /// </summary>
+    private string WithNoteMarks(string markup, DocBinaryFieldReader fields)
+    {
+        if (markup.IndexOf(Fields.WordFieldRuby.NoteMarkPlaceholder) < 0) return markup;
+        var result = new StringBuilder(markup.Length + 64);
+        foreach (char c in markup)
+        {
+            if (c != Fields.WordFieldRuby.NoteMarkPlaceholder) { result.Append(c); continue; }
+            if (fields.InstructionNoteCps.TryDequeue(out int cp)) AppendNoteMark(result, cp, null);
+        }
+        return result.ToString();
     }
 
     /// <summary>In the main text: a numbered note reference. Inside a note body: the note's own number.</summary>

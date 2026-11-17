@@ -21,7 +21,7 @@ for (const path of process.argv.slice(2)) {
     check(wingdings, `${path}: the font-face bullet draws in Wingdings`)
     continue
   }
-  if (/ruby-edges-v1\.docx$/.test(path)) {
+  if (/ruby-edges-v1\.(docx|doc|rtf)$/.test(path)) {
     // Word's PDF: ")" dropped with the text after it kept, tab / note mark / bookmark kept, a comma guide's rest before the base
     await page.waitForFunction(() => document.querySelectorAll('ruby').length >= 7, null, { timeout: 60_000 })
     const got = await page.evaluate(() => [...document.querySelectorAll('ruby')].map(r => {
@@ -30,7 +30,9 @@ for (const path of process.argv.slice(2)) {
     }))
     const expected = ['g0|abc d', 'g1|abc1', 'g2|abcy', 'g|3,base2', 'g|4,basew', 'g5|end of linex', 'g;6|b;6']
     expected.forEach((e, n) => check(got[n] === e, `${path}: ruby edge ${n}: ${e} (got ${got[n]})`))
-    check(await page.evaluate(() => !!document.querySelector('[id*="EdgeTwo"]') && !!document.querySelector('[id*="EdgeFour"]')), `${path}: bookmarks inside the rubies kept`)
+    if (/docx$/.test(path)) check(await page.evaluate(() => !!document.querySelector('[id*="EdgeTwo"]') && !!document.querySelector('[id*="EdgeFour"]')), `${path}: bookmarks inside the rubies kept`)
+    // the note marks inside rubies 1 and 3 are links to notes 1 and 2; the tab in ruby 0 is a tab
+    check(await page.evaluate(() => { const r = [...document.querySelectorAll('ruby')]; return r[1].querySelector('.note-reference')?.textContent === '1' && r[3].querySelector('.note-reference')?.textContent === '2' && r[0].textContent.includes(String.fromCharCode(9)) }), `${path}: note marks 1 and 2 inside the rubies, the tab kept`)
     continue
   }
   if (/ruby-escapes/.test(path)) {
