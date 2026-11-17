@@ -3013,6 +3013,8 @@ sender-*, text-input; page-number / page-count / references by page need pages (
   meta:document-statistic (999 printed for a short text), so they come from meta.xml, not from a count.
 - Search reads what is shown: OdtSearchTextScanner (and the reference reader) number the computed-field elements of a block
   in document order (skipped regions included) and ask the document for each one's shown text (OdtFieldComputer over the
-  block, read only when it holds such a field); a block whose paragraph is hidden reports no hit. WordDocumentText reads
-  through the same scan. Limit: only a block that is itself a hidden paragraph drops its hits; a hidden paragraph inside a
-  table cell is not drawn but its words are still found.
+  block, read only when it holds such a field). Hidden paragraphs (2026-11-17): both readers number every text:p / text:h
+  of the block in document order (the block itself 0, skipped regions included), mark the matcher where each starts, and
+  when a paragraph holding its own text:hidden-paragraph closes, ask the document whether it is hidden (the renderer's
+  OdtFieldComputer.IsParagraphHidden per paragraph) and roll the matcher back - hits and captured text - so a hidden
+  paragraph inside a table cell is neither found nor in WordDocumentText, while its cell's other paragraphs are.

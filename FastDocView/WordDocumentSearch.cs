@@ -124,6 +124,22 @@ public sealed class WordDocumentSearchMatcher
 
     internal void RestoreState((int state, int count) saved) { _state = saved.state; Count = saved.count; }
 
+    /// <summary>A point to undo text back to (<see cref="RollBack"/>): partial match, count and, when capturing, the captured text.</summary>
+    internal readonly record struct Position(int State, int Count, System.Text.StringBuilder? Entry, int EntryLength, int CapturedCount);
+
+    internal Position Mark() => new(_state, Count, _entry, _entry?.Length ?? 0, _captured?.Count ?? 0);
+
+    /// <summary>Forgets everything fed since <paramref name="position"/> (text that turned out not to be shown, e.g. a hidden paragraph).</summary>
+    internal void RollBack(Position position)
+    {
+        _state = position.State;
+        Count = position.Count;
+        if (_captured is null) return;
+        if (_captured.Count > position.CapturedCount) _captured.RemoveRange(position.CapturedCount, _captured.Count - position.CapturedCount);
+        _entry = position.Entry;
+        if (_entry is not null) _entry.Length = position.EntryLength;
+    }
+
     /// <summary>A paragraph / cell / line boundary: the partial match is dropped.</summary>
     public void Separator()
     {
@@ -591,7 +607,11 @@ internal sealed class WordXmlSearchText
     /// (comments), text:note-body (the note's text: the block's HTML shows only its mark), and what the renderer does not show
     /// (<see cref="IsHiddenOdf"/>: svg:title / svg:desc, shapes, images, other namespaces inside a paragraph...).
     /// </summary>
-    public void FeedOdf(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher, Func<int, string?>? computedFieldText = null, IReadOnlyCollection<string>? computedFieldNames = null)
+    /// <paramref name="paragraphHidden"/>: whether the block's text:p / text:h with this ordinal (document order, the block
+    /// itself 0, skipped subtrees counted) is not printed; asked only for a paragraph holding its own text:hidden-paragraph,
+    /// whose text is then taken back.
+    public void FeedOdf(byte[] bytes, int start, int length, WordDocumentSearchMatcher matcher, Func<int, string?>? computedFieldText = null, IReadOnlyCollection<string>? computedFieldNames = null,
+                        Func<int, bool>? paragraphHidden = null)
     {
         try
         {
@@ -602,15 +622,33 @@ internal sealed class WordXmlSearchText
             var contexts = new List<(int depth, OdfTextContext context)>();   // what the renderer shows inside the open elements
             byte[] localBytes = new byte[32];
             int fieldOrdinal = 0;                  // computed fields (OdtFieldComputer) by ordinal in document order, skipped subtrees included
+            int paragraphOrdinal = 0;              // text:p / text:h in document order, skipped subtrees included
+            var paragraphs = new List<(int depth, int ordinal, WordDocumentSearchMatcher.Position mark, bool lastWasSpace, bool hasHidden)>();   // the open fed ones
+            bool IsParagraph(XmlReader at) => at.NamespaceURI == OdfTextNamespace && at.LocalName is "p" or "h";
+            void MarkHidden()
+            {
+                // a text:hidden-paragraph belongs to the nearest paragraph around it
+                if (paragraphs.Count > 0) paragraphs[paragraphs.Count - 1] = paragraphs[paragraphs.Count - 1] with { hasHidden = true };
+            }
             bool IsComputed(XmlReader at) => computedFieldNames is not null && at.NamespaceURI == OdfTextNamespace && computedFieldNames.Contains(at.LocalName);
             void SkipCounting()
             {
                 // Skip(), counting the computed fields inside; leaves the reader on the element's end (the loop's Read moves past it)
-                if (computedFieldNames is null || reader.IsEmptyElement) { reader.Skip(); skipped = true; return; }
+                if (reader.IsEmptyElement) { reader.Skip(); skipped = true; return; }
+                bool isParagraph = IsParagraph(reader);
+                if (isParagraph && paragraphs.Count > 0 && paragraphs[paragraphs.Count - 1].depth == reader.Depth) paragraphs.RemoveAt(paragraphs.Count - 1);   // its end is never read
                 using (XmlReader subtree = reader.ReadSubtree())
                 {
                     subtree.Read();
-                    while (subtree.Read()) if (subtree.NodeType == XmlNodeType.Element && IsComputed(subtree)) fieldOrdinal++;
+                    int innerParagraphs = isParagraph ? 1 : 0;   // open paragraphs inside the skipped subtree: a hidden-paragraph there is theirs
+                    while (subtree.Read())
+                    {
+                        if (subtree.NodeType == XmlNodeType.EndElement) { if (IsParagraph(subtree)) innerParagraphs--; continue; }
+                        if (subtree.NodeType != XmlNodeType.Element) continue;
+                        if (IsComputed(subtree)) fieldOrdinal++;
+                        if (IsParagraph(subtree)) { paragraphOrdinal++; if (!subtree.IsEmptyElement) innerParagraphs++; }
+                        else if (innerParagraphs == 0 && subtree.NamespaceURI == OdfTextNamespace && subtree.LocalName == "hidden-paragraph") MarkHidden();
+                    }
                 }
                 skipped = false;
             }
@@ -622,6 +660,12 @@ internal sealed class WordXmlSearchText
                     case XmlNodeType.Element:
                     {
                         OdfTextContext? context = contexts.Count == 0 ? null : contexts[contexts.Count - 1].context;
+                        if (paragraphHidden is not null && reader.NamespaceURI == OdfTextNamespace && reader.LocalName == "hidden-paragraph") MarkHidden();
+                        if (IsParagraph(reader))
+                        {
+                            int ordinal = paragraphOrdinal++;
+                            if (paragraphHidden is not null && !reader.IsEmptyElement) paragraphs.Add((reader.Depth, ordinal, matcher.Mark(), lastWasSpace, false));
+                        }
                         if (IsComputed(reader))
                         {
                             int ordinal = fieldOrdinal++;
@@ -667,6 +711,12 @@ internal sealed class WordXmlSearchText
                         break;
                     case XmlNodeType.EndElement:
                         if (contexts.Count > 0 && contexts[contexts.Count - 1].depth == reader.Depth) contexts.RemoveAt(contexts.Count - 1);
+                        if (paragraphs.Count > 0 && paragraphs[paragraphs.Count - 1].depth == reader.Depth && IsParagraph(reader))
+                        {
+                            var paragraph = paragraphs[paragraphs.Count - 1];
+                            paragraphs.RemoveAt(paragraphs.Count - 1);
+                            if (paragraph.hasHidden && paragraphHidden!(paragraph.ordinal)) { matcher.RollBack(paragraph.mark); lastWasSpace = paragraph.lastWasSpace; }   // not printed: not found
+                        }
                         if (reader.NamespaceURI == OdfTextNamespace && reader.LocalName is "p" or "h") { paragraphDepth--; matcher.Separator(); }
                         break;
                     case XmlNodeType.Text or XmlNodeType.CDATA or XmlNodeType.SignificantWhitespace:

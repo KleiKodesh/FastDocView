@@ -646,11 +646,11 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                 {
                     _searchText ??= new OdtSearchTextScanner(_blocks.RootOpenTag);
                     _searchText.ComputedFieldText = SearchFieldText;     // what is shown: computed fields searched by their shown text
+                    _searchText.ParagraphHidden = IsSearchParagraphHidden;   // and a paragraph a text:hidden-paragraph hides is not searched
                     long pieceStartOffset = -1;            // a byte piece's start in the part while it is scanned: hit block starts are recorded
                     var pieceHitStarts = new List<long>();  // to verify the scanner's numbering if the piece fails
                     void BlockEnded(int blockIndex)
                     {
-                        if (matcher.Count > 0 && _searchText!.CurrentBlockHasHiddenParagraph && IsBlockHidden(blockIndex)) matcher.Reset();   // not printed: not found
                         if (matcher.Count > 0)
                         {
                             hits.Add(blockIndex);
@@ -668,8 +668,8 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                             matcher.Reset();
                             if (mode == OdtSearchTextMode.ReferenceXmlReader)
                             {
-                                _referenceSearchText!.FeedOdf(bytes, start, length, matcher, ordinal => SearchFieldText(blockIndex, ordinal), OdtBlockHtmlRenderer.ComputedFieldElementNames);
-                                if (matcher.Count > 0 && bytes.AsSpan(start, length).IndexOf("hidden-paragraph"u8) >= 0 && IsBlockHidden(blockIndex)) matcher.Reset();
+                                _referenceSearchText!.FeedOdf(bytes, start, length, matcher, ordinal => SearchFieldText(blockIndex, ordinal), OdtBlockHtmlRenderer.ComputedFieldElementNames,
+                                                              ordinal => IsSearchParagraphHidden(blockIndex, ordinal));
                             }
                             else _searchText.Feed(bytes, start, length, matcher, blockIndex);
                             BlockEnded(blockIndex);
@@ -760,14 +760,14 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
     private OdtFieldComputer? _searchFields;
     private int _searchFieldsBlock = -1;
     private string?[] _searchFieldTexts = [];
-    private bool _searchBlockHidden;
+    private bool[] _searchParagraphHidden = [];   // by paragraph ordinal in the block (text:p / text:h in document order, the block itself 0)
 
     private void ComputeSearchFields(int blockIndex)
     {
         if (_searchFieldsBlock == blockIndex) return;
         _searchFieldsBlock = blockIndex;
         _searchFieldTexts = [];
-        _searchBlockHidden = false;
+        _searchParagraphHidden = [];
         if ((uint)blockIndex >= (uint)_blocks.BlockCount || _reader.ReadBlocks(blockIndex, 1) is not { Count: 1 } blocks) return;
         XElement block = blocks[0].element;
         _searchFields ??= new OdtFieldComputer(this);
@@ -776,7 +776,11 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         {
             IReadOnlyCollection<string> names = OdtBlockHtmlRenderer.ComputedFieldElementNames;
             _searchFieldTexts = block.Descendants().Where(e => e.Name.Namespace == OdtStyleCascade.Text && names.Contains(e.Name.LocalName)).Select(_searchFields.Compute).ToArray();
-            _searchBlockHidden = (block.Name == OdtStyleCascade.Text + "p" || block.Name == OdtStyleCascade.Text + "h") && _searchFields.IsParagraphHidden(block);
+            // the renderer's own test (OdtBlockHtmlRenderer: IsParagraphHidden per paragraph), for every paragraph of the block,
+            // a table's cells included; only paragraphs with a text:hidden-paragraph field can be hidden
+            if (block.DescendantsAndSelf(OdtStyleCascade.Text + "hidden-paragraph").Any())
+                _searchParagraphHidden = block.DescendantsAndSelf().Where(e => e.Name == OdtStyleCascade.Text + "p" || e.Name == OdtStyleCascade.Text + "h")
+                                              .Select(_searchFields.IsParagraphHidden).ToArray();
         }
         finally { _searchFields.EndBlock(); }
     }
@@ -787,10 +791,10 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         return (uint)ordinal < (uint)_searchFieldTexts.Length ? _searchFieldTexts[ordinal] : null;
     }
 
-    private bool IsBlockHidden(int blockIndex)
+    private bool IsSearchParagraphHidden(int blockIndex, int paragraphOrdinal)
     {
         ComputeSearchFields(blockIndex);
-        return _searchBlockHidden;
+        return (uint)paragraphOrdinal < (uint)_searchParagraphHidden.Length && _searchParagraphHidden[paragraphOrdinal];
     }
 
     // -- field lookups (OdtFieldComputer): called under _readLock while a window renders; a target not known yet is not scanned for

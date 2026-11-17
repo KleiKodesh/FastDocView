@@ -77,7 +77,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | USERNAME / USERINITIALS / USERADDRESS without an argument | docx, doc, rtf | Word's user settings, not the document's | won't do |
 | STYLEREF page-relative search and \l | docx, doc, rtf | Flow view has no page | planned (paged view) |
 | Lookups during the first open (REF to a bookmark not indexed yet, TOC, INDEX) | docx, doc, rtf | Show nothing until the index completes, instead of Word's "not found" | won't do (by design) |
-| Search in a hidden paragraph inside a table | odt/fodt | Not drawn, but its words are still found (only a hidden top-level paragraph drops its hits) | deferred |
 | Fields | txt, mhtml | Format has none | n.a. |
 
 ## Links, bookmarks, TOC

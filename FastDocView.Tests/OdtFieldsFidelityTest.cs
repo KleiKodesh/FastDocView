@@ -170,7 +170,7 @@ public static class OdtFieldsFidelityTest
     private static void RunOutline()
     {
         TestReport.Step("OpenDocument heading numbering, chapter numbers, hidden paragraphs, statistics; search reads shown field text");
-        string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v1-odt-outline.fodt");
+        string path = Path.Combine(TestReport.OutputDirectory, "fidelity-v2-odt-outline.fodt");
         if (!File.Exists(path) || File.ReadAllText(path) != OutlineFixture) File.WriteAllText(path, OutlineFixture, new UTF8Encoding(false));
         List<string> html = OdtDrawingFidelityTest.Render(path);
         List<string> texts = html.Select(block => WebUtility.HtmlDecode(Regex.Replace(block, "<[^>]+>", "")).Trim()).ToList();
@@ -207,6 +207,20 @@ public static class OdtFieldsFidelityTest
         TestReport.Check(Hits(fields, "RealTitle") == 1 && Hits(fields, "XX") == 6 && Hits(fields, "Cap text") == 3, $"search over the fields fixture: computed title found (1), saved XX only where shown (6: 2 author, input, sender, 2 page), caption reference (3) - got {Hits(fields, "RealTitle")} / {Hits(fields, "XX")} / {Hits(fields, "Cap text")}");
         string text = WordDocumentText.GetText(document);
         TestReport.Check(text.Contains("1.1") && !text.Contains("HIDDENTRUE") && !text.Contains("XX"), "document text follows search: shown field values, no hidden paragraph");
+
+        // a hidden paragraph inside a table cell: not drawn, not found, not in the text; its cell's other paragraphs stay
+        string table = html.FirstOrDefault(block => block.Contains("CELLSHOWN")) ?? "";
+        TestReport.Check(table.Contains("CELLAFTER") && table.Contains("CELLKEPT") && !table.Contains("CELLHIDDEN"), "table cell: the hidden paragraph is not drawn, the others are");
+        TestReport.Check(Hits(document, "CELLHIDDEN") == 0 && Hits(document, "CELLSHOWN") == 1 && Hits(document, "CELLAFTER") == 1 && Hits(document, "CELLKEPT") == 1 && Hits(document, "CELL") == 3,
+                         $"table cell search: hidden paragraph not found, shown ones are (CELL hits {Hits(document, "CELL")}, expected 3)");
+        TestReport.Check(!text.Contains("CELLHIDDEN") && text.Contains("CELLSHOWN one") && text.Contains("CELLAFTER three") && text.Contains("CELLKEPT"), "document text: no hidden cell paragraph");
+        var odt = (FastDocView.Odt.OdtWindowedDocument)document;
+        int ReferenceHits(string query)
+        {
+            WordDocumentSearchBatch batch = odt.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount, FastDocView.Odt.OdtWindowedDocument.OdtSearchTextMode.ReferenceXmlReader);
+            return batch.HitCounts.Sum();
+        }
+        TestReport.Check(ReferenceHits("CELLHIDDEN") == 0 && ReferenceHits("CELL") == 3 && ReferenceHits("HIDDENTRUE") == 0 && ReferenceHits("HIDDENFALSE") == 1, "reference reader agrees: hidden paragraphs (top level and in a cell) not found");
     }
 
     private const string OutlineFixture = """
@@ -236,6 +250,10 @@ public static class OdtFieldsFidelityTest
         <text:p>refchap [<text:sequence-ref text:reference-format="chapter" text:ref-name="r1">XX</text:sequence-ref>]</text:p>
         <text:p>HIDDENTRUE <text:hidden-paragraph text:condition="ooow:1" text:is-hidden="true"/></text:p>
         <text:p>HIDDENFALSE <text:hidden-paragraph text:condition="ooow:0" text:is-hidden="false"/></text:p>
+        <table:table table:name="T1"><table:table-column/><table:table-column/>
+        <table:table-row><table:table-cell><text:p>CELLSHOWN one</text:p><text:p>CELLHIDDEN two <text:hidden-paragraph text:condition="ooow:1" text:is-hidden="true"/></text:p><text:p>CELLAFTER three</text:p></table:table-cell>
+        <table:table-cell><text:p>CELLKEPT <text:hidden-paragraph text:condition="ooow:0" text:is-hidden="false"/></text:p><text:p>CELLHIDDEN four<text:hidden-paragraph text:is-hidden="true"/></text:p></table:table-cell></table:table-row>
+        </table:table>
         <text:p>words [<text:word-count>XX</text:word-count>]</text:p>
         <text:p>chars [<text:character-count>XX</text:character-count>]</text:p>
         <text:p>paras [<text:paragraph-count>XX</text:paragraph-count>]</text:p>
