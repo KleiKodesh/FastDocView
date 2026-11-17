@@ -125,8 +125,22 @@ internal sealed class DocBinaryFloatingPictures
     /// </summary>
     private WordPictureLayout WithContour(WordPictureLayout layout, int flags, (long start, long end, bool isGroup) container, Func<IReadOnlyList<IReadOnlyList<(double X, double Y)>>?>? outline)
     {
-        if (layout.Wrap == WordPictureWrap.Square && layout.TextSides == WordPictureTextSides.Both
-            && DocBinaryDrawnShapes.HorizontalAlignment(_tableStream, container.start, container.end, container.isGroup) is var align and > 0)
+        DocBinaryShapePlacement placement = DocBinaryDrawnShapes.Placement(_tableStream, container.start, container.end, container.isGroup);
+        // the gap to the text (ww8graf.cxx:2050-2062 LR / UL space) and what the offset counts from: posrelh over the FSPA's bx
+        // (ww8graf.cxx:2318-2320) - page text area / column = the column's edge, page = the page edge, character = not convertible
+        layout = layout with
+        {
+            LeftPt = placement.WrapLeftPt, TopPt = placement.WrapTopPt, RightPt = placement.WrapRightPt, BottomPt = placement.WrapBottomPt,
+            OffsetOrigin = placement.HorizontalRelation switch
+            {
+                1 => WordPictureOffsetOrigin.Page,
+                3 => WordPictureOffsetOrigin.Other,
+                0 or 2 => WordPictureOffsetOrigin.Column,
+                _ => layout.OffsetOrigin,
+            },
+        };
+        if ((layout.Wrap != WordPictureWrap.Square || layout.TextSides == WordPictureTextSides.Both)
+            && placement.HorizontalAlignment is var align and > 0)
             // placed by alignment (posh 1 left, 2 centre, 3 right, 4 inside, 5 outside - odd page taken): the side it floats to
             layout = layout with { Side = align is 3 or 5 ? WordPictureSide.Right : align == 2 ? WordPictureSide.Center : WordPictureSide.Left, OffsetPt = 0 };
         if ((flags >> 5 & 0xF) is not (4 or 5) || layout.Wrap != WordPictureWrap.Square) return layout;

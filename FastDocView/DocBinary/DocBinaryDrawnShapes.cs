@@ -2,6 +2,12 @@ using FastDocView.Html;
 
 namespace FastDocView.DocBinary;
 
+/// <summary>A .doc drawing object's placement properties (<see cref="DocBinaryDrawnShapes.Placement"/>): posh, posrelh (null = the FSPA's bx), wrap distances in points.</summary>
+internal readonly record struct DocBinaryShapePlacement(int HorizontalAlignment, int? HorizontalRelation, double WrapLeftPt, double WrapTopPt, double WrapRightPt, double WrapBottomPt)
+{
+    public static DocBinaryShapePlacement Default => new(0, null, DocBinaryDrawnShapes.DefaultWrapDistance / 12700, 0, DocBinaryDrawnShapes.DefaultWrapDistance / 12700, 0);
+}
+
 /// <summary>A .doc drawing object anchored in the text: its frame placement and drawn shapes, and the CP range of each shape's text box (by <see cref="WordShape.TextIndex"/>).</summary>
 internal sealed record DocBinaryDrawing(WordPictureLayout Layout, List<WordShape> Shapes, List<DocBinaryShapeText> TextRanges, bool IsPlainTextBox, bool GrowsWithText);
 
@@ -94,32 +100,54 @@ internal static class DocBinaryDrawnShapes
     }
 
     /// <summary>
-    /// The shape's horizontal alignment posh (0x038F in the 0xF122 tertiary property record, 6-byte entries u16 id / u32 value -
-    /// LibreOffice msdffimp.cxx:5199-5216 nXAlign; ww8graf.cxx:2326 "abs. Position, Left, Centered, Right, Inside, Outside"), the
-    /// group's own shape for a group; 0 (absolute) when not given.
+    /// Where Word places the object, from the group's own shape for a group (its first SpContainer):
+    /// - posh 0x038F (LibreOffice msdffimp.cxx:5216 nXAlign; ww8graf.cxx:2327 "abs. Position, Left, Centered, Right, Inside,
+    ///   Outside"), 0 when not given;
+    /// - posrelh 0x0390 (msdffimp.cxx:5217-5219 nXRelTo; ww8graf.cxx:2330 / 2404-2410: 0 page text area, 1 page, 2 column,
+    ///   3 character; LibreOffice reads values past 3 as 1, ww8graf.cxx:2352-2353), null when not given (the FSPA's bx counts,
+    ///   ww8graf.cxx:2318-2320);
+    /// - the wrap distances dxWrapDistLeft / dyWrapDistTop / dxWrapDistRight / dyWrapDistBottom (900..903, msdffdef.hxx:261-264)
+    ///   in EMU; not given = 114300 / 0 / 114300 / 0: Word 16 reports 9 pt left / right (WrapFormat.DistanceLeft / Right through
+    ///   COM, test-data/word-shapes/make-floating-fixtures.ps1) for shapes whose file leaves them out (LibreOffice reads 114935,
+    ///   ww8par.cxx:1002-1009, msdffimp.cxx:5564-5571).
+    /// Both property records are read: the 0xF00B primary and the 0xF122 tertiary (where Word 2000+ writes posh / posrelh;
+    /// LibreOffice reads those there, msdffimp.cxx:5199-5216); entries are 6 bytes, u16 id / u32 value.
     /// </summary>
-    public static int HorizontalAlignment(Stream table, long start, long end, bool isGroup)
+    public static DocBinaryShapePlacement Placement(Stream table, long start, long end, bool isGroup)
     {
         if (isGroup)
         {
-            if (DocBinaryPictures.RecordHeader(table, start) is not { Type: 0xF004 } first) return 0;
+            if (DocBinaryPictures.RecordHeader(table, start) is not { Type: 0xF004 } first) return DocBinaryShapePlacement.Default;
             end = Math.Min(end, start + 8 + first.Length);
             start += 8;
         }
+        var values = new Dictionary<int, uint>();
         for (long position = start; position + 8 <= end;)
         {
             if (DocBinaryPictures.RecordHeader(table, position) is not { } record) break;
-            if (record.Type == 0xF122)
+            if (record.Type is 0xF00B or 0xF122)
             {
-                byte[] entries = DocBinaryPictures.Read(table, position + 8, (int)Math.Min(record.Length, end - position - 8));
+                // the instance counts the entries; complex data follows them (dffpropset.cxx:1111)
+                byte[] entries = DocBinaryPictures.Read(table, position + 8, (int)Math.Min(Math.Min(record.Length, (long)record.Instance * 6), end - position - 8));
                 for (int at = 0; at + 6 <= entries.Length; at += 6)
-                    if (BitConverter.ToUInt16(entries, at) == 0x038F) return (int)Math.Min(5, BitConverter.ToUInt32(entries, at + 2));
-                return 0;
+                {
+                    int id = BitConverter.ToUInt16(entries, at);
+                    if ((id & 0x8000) == 0) values[id & 0x3FFF] = BitConverter.ToUInt32(entries, at + 2);
+                }
             }
             position += 8 + record.Length;
         }
-        return 0;
+        double Emu(int id, double fallback) => values.TryGetValue(id, out uint value) ? Math.Max(0, unchecked((int)value)) / 12700.0 : fallback / 12700.0;
+        return new DocBinaryShapePlacement(
+            values.TryGetValue(0x038F, out uint posh) ? (int)Math.Min(5, posh) : 0,
+            values.TryGetValue(0x0390, out uint posrelh) ? (int)(posrelh > 3 ? 1 : posrelh) : null,
+            Emu(PropertyWrapDistLeft, DefaultWrapDistance), Emu(PropertyWrapDistTop, 0), Emu(PropertyWrapDistRight, DefaultWrapDistance), Emu(PropertyWrapDistBottom, 0));
     }
+
+    /// <summary>Word's left / right gap to the text when the file gives none: 114300 EMU = 9 pt (see <see cref="Placement"/>).</summary>
+    public const double DefaultWrapDistance = 114300;
+
+    private const int PropertyWrapDistLeft = 900, PropertyWrapDistTop = 901, PropertyWrapDistRight = 902, PropertyWrapDistBottom = 903;
 
     /// <summary>The text-box ranges of every shape in a drawing (the search: each story part once, where its shape is anchored).</summary>
     public static IEnumerable<DocBinaryShapeText> TextRanges(Stream table, long start, long end, bool isGroup, DocBinaryTextBoxStories stories)

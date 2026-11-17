@@ -68,7 +68,7 @@ public static class DocxRubyText
         {
             XElement text = copiedTexts[i];
             string value = text.Value;
-            int from = Math.Clamp(start - offset, 0, value.Length), to = Math.Clamp(end - offset, 0, value.Length);
+            int from = Math.Min(Math.Max(start - offset, 0), value.Length), to = Math.Min(Math.Max(end - offset, 0), value.Length);
             offset += value.Length;
             text.Value = (to > from ? value.Substring(from, to - from) : "").Replace(")", "");
             originals[text] = originalTexts[i];

@@ -106,8 +106,10 @@ internal sealed class RtfShapePlacement
     public bool IsCharacterRelative;
     /// <summary>posh (0 = not given: placed at \shpleft).</summary>
     public int HorizontalPosition;
-    /// <summary>dxWrapDistLeft, dyWrapDistTop, dxWrapDistRight, dyWrapDistBottom in EMU.</summary>
-    public long WrapLeft, WrapTop, WrapRight, WrapBottom;
+    /// <summary>dxWrapDistLeft, dyWrapDistTop, dxWrapDistRight, dyWrapDistBottom in EMU; left / right not given = Word's 9 pt
+    /// (Word 16 leaves the default out of its RTF and reports 9 pt through COM - <see cref="DocBinary.DocBinaryDrawnShapes.DefaultWrapDistance"/>;
+    /// LibreOffice's RTF import sets no default, rtfsdrimport.cxx:640-675).</summary>
+    public long WrapLeft = (long)DocBinary.DocBinaryDrawnShapes.DefaultWrapDistance, WrapTop, WrapRight = (long)DocBinary.DocBinaryDrawnShapes.DefaultWrapDistance, WrapBottom;
 
     /// <summary>{\shpgrp}: a group whose children are placed in its groupLeft..groupBottom coordinates.</summary>
     public bool IsGroup;

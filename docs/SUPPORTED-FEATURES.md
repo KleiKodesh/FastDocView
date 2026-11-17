@@ -226,14 +226,14 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 |---|---|---|---|---|---|---|
 | Preset / custom shapes as SVG (geometry, fills, lines, line ends) | yes | yes | yes | yes | n.a. | n.a. |
 | VML shapes | yes | n.a. | n.a. | n.a. | n.a. | no |
-| Groups, drawing canvas | yes | partial (20) | partial (20) | yes | n.a. | n.a. |
-| Text boxes (linked chains shown in the first box) | yes | partial (21) | partial (21) | yes | n.a. | n.a. |
+| Groups, drawing canvas | yes | yes (20) | yes (20) | yes | n.a. | n.a. |
+| Text boxes (linked chains shown in the first box) | yes | yes (21) | yes (21) | yes | n.a. | n.a. |
 | WordArt / Fontwork (text on outlines) | yes | yes | yes | yes | n.a. | n.a. |
 | Connectors | partial (22) | partial (22) | partial (22) | yes | n.a. | n.a. |
 | 3-D extrusion | no | no | no | yes (23) | n.a. | n.a. |
 
-20. A group, or a shape holding a text box, is not drawn as a floating object; its parts render inline.
-21. Rendered as an inline frame after the anchoring paragraph, not positioned.
+20. A .doc / RTF group, or a shape holding a text box, floats as one object where Word puts it, as .docx drawings do: its wrap (square, tight, top and bottom, none), its gap to the text (dxWrapDist*, 9 pt left / right when the file gives none, as Word reports) and its horizontal position (posh alignment, or the offset from the column / margin, page or character: posrelh over the FSPA's bx / \shpbx*); rotated and flipped groups turn as one. A page- or margin-relative vertical position waits for the paged view, as for .docx.
+21. Positioned as in 20: a plain text box is a box with its line and fill, any other one is its shape with the text over it.
 22. Drawn as the line / preset geometry saved; no connection routing.
 23. ODT `draw:extrusion` is projected and lit as LibreOffice draws it (OdtExtrusion: faces back to front, parallel / perspective, lights).
 

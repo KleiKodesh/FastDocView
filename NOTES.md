@@ -1403,8 +1403,22 @@ others hold the files, as Word retries a save.
   (WW8_FSPA), ww8scan.cxx:1808-1811 / 6117 / 6138, msdffimp.cxx:5967-6095 (GetCtrlData, BStore), 6215-6245 (FSP, FOPT),
   6414-6475 (GetBLIP), dffpropset.cxx:1128 (id & 0x3FFF). Id = "s" + spid. Wrap 1 = above and below, 3 = through,
   else square (wrk 1 = picture right); size from the FSPA; xaLeft kept as the offset when bx is column / margin.
-  Not drawn: yaTop / page origin, wrap gaps (FOPT dxWrapDist*), header shapes (PlcSpaHdr); groups, shapes and text boxes: see .doc text boxes and shapes. Check: `--fidelity` DocBinaryFloatingPicturesTest (POI PngPicture.doc,
+  Not drawn: yaTop / page origin, header shapes (PlcSpaHdr); groups, shapes and text boxes: see .doc text boxes and shapes. Check: `--fidelity` DocBinaryFloatingPicturesTest (POI PngPicture.doc,
   FloatingPictures.doc, pictures_escher.doc). Golden dumps change only on those three files.
+- **.doc / RTF floating text boxes, groups and shapes placed as Word places them** (2026-11-17): every drawing (a lone
+  picture, a plain text box, a shape with text, a group) takes one placement, the same WordPictureLayout .docx drawings use.
+  .doc (DocBinaryDrawnShapes.Placement, read from the shape's - or the group's own shape's - 0xF00B and 0xF122 property
+  records): posh 0x038F (alignment, now for every wrap, not only square), posrelh 0x0390 over the FSPA's bx (ww8graf.cxx:2318-2320,
+  2404-2410: 0 page text area / 2 column = the column, 1 page, 3 character; values past 3 read as 1, ww8graf.cxx:2352-2353) and
+  the wrap gaps dxWrapDistLeft..dyWrapDistBottom 900..903 (msdffdef.hxx:261-264; ww8graf.cxx:2050-2062 uses them as the frame's
+  LR / UL space). RTF already read posh / posrelh / dxWrapDist*. Gaps not in the file: Word 16 leaves left / right out when they are
+  the default and reports 9 pt (114300 EMU) for them through COM, so both readers use 114300 (LibreOffice: 114935 for .doc,
+  ww8par.cxx:1002-1009; none for RTF, rtfsdrimport.cxx:640-675). Fixture: test-data/word-shapes/make-floating-fixtures.ps1
+  (Word 16 COM; `--floating`, also in `--fidelity`). Word's PDF of those files prints the wrap-none box at margin + offset as
+  read, but every wrapped object (square, top and bottom - also in a one-shape .docx Word wrote itself) centred on the page
+  whatever the file says: a quirk of this Word install, so wrapped objects are checked against the values Word reports through
+  COM. Word 16 refuses Group() through COM on Word 2013 shapes (E_ACCESSDENIED), so the group fixture is made in Word 2003
+  mode. Vertical offsets stay with the paged view (no vertical position in the flow view, as for .docx).
 - **VML** (w:pict / w:object): v:imagedata r:id (o:relid), shape style width / height / position /
   mso-position-horizontal / margin-left / mso-wrap-distance-*, w10:wrap type / side, read as oox vmlshapecontext.cxx and
   vmlshape.cxx lcl_setSurround / lcl_SetAnchorType (static = inline; no wrap = through).

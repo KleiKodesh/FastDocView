@@ -99,8 +99,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | 3-D shapes (scene3d / sp3d, bevels, extrusion) | docx, doc, rtf | Not read (ODT extrusion is drawn) | deferred |
 | Connector routing (glue points) | docx, doc, rtf | Drawn as their saved geometry only | won't do |
-| .doc / RTF floating groups and shapes with text boxes | doc, rtf | Rendered inline after the anchor, not positioned | deferred |
-| .doc / RTF text boxes positioned | doc, rtf | Inline frame | deferred |
 | Half-transparent picture fill in a darken / lighten path | docx | The darkening layer is scaled by the picture's opacity (exact only for an opaque picture) | won't do |
 | Shapes in web archives | mhtml | VML is not drawn | deferred |
 
