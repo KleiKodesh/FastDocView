@@ -25,6 +25,7 @@ public static class CorpusRegressionTest
         @"apache-poi\clusterfuzz-testcase-minimized-POIHWPFFuzzer-4951943183990784.doc",
         @"apache-poi\clusterfuzz-testcase-minimized-POIHWPFFuzzer-6610789829836800.doc",
         @"apache-poi\clusterfuzz-testcase-minimized-POIHWPFFuzzer-5440721166139392.doc",   // bin table outside the table stream: read without it
+        @"apache-poi\52117.doc",                                              // Word 6.0 (nFib 101): read since 2026-11-17
     ];
 
     private static readonly (string file, Type exception, string messagePart)[] MustFailClearly =
@@ -33,7 +34,6 @@ public static class CorpusRegressionTest
         (@"libreoffice\sw\qa\core\data\ww8\pass\crash-2.doc", typeof(InvalidDataException), "piece table"),
         (@"libreoffice\sw\qa\core\data\ww8\fail\hang-2.doc", typeof(InvalidDataException), "piece table"),
         (@"libreoffice\sw\qa\core\data\odt\fail\tdf102018.odt", typeof(InvalidDataException), "office:text body"),   // styles.xml is repaired (content before the first error); the body never closes
-        (@"apache-poi\52117.doc", typeof(NotSupportedException), "Word 6.0 / Word 95"),
         (@"apache-poi\word2.doc", typeof(NotSupportedException), "Word for Windows 2.0"),
         (@"libreoffice\sw\qa\extras\ooxmlexport\data\Encrypted_MSO2007_abc.docx", typeof(WordDocumentEncryptedException), "Encrypted"),
     ];

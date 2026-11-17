@@ -30,6 +30,7 @@ public sealed class DocBinaryPieceTable
     public DocBinaryPieceTable(Stream wordDocument, Stream tableStream, DocBinaryFileInformationBlock fib)
     {
         _wordDocument = wordDocument;
+        _word6Sprms = fib.IsWord6 ? new DocBinaryWord6Sprms(fib.IsWord6FontCodeVariant) : null;
         (uint offset, uint length) clx = fib.PieceTable;
         if (clx.length == 0)
         {
@@ -50,7 +51,7 @@ public sealed class DocBinaryPieceTable
             int available = Math.Max(0, Math.Min(cb, bytes.Length - position - 3));
             var grpprl = new byte[available];
             Buffer.BlockCopy(bytes, position + 3, grpprl, 0, available);
-            prcGrpprls.Add(grpprl);
+            prcGrpprls.Add(_word6Sprms?.ToWord97(grpprl, 0, grpprl.Length) ?? grpprl);
             position += 3 + cb;
         }
         PrcGrpprls = prcGrpprls;
@@ -72,12 +73,37 @@ public sealed class DocBinaryPieceTable
             int cpStart = BitConverter.ToInt32(bytes, plcStart + i * 4);
             int cpEnd = BitConverter.ToInt32(bytes, plcStart + (i + 1) * 4);
             uint fc = BitConverter.ToUInt32(bytes, pcdStart + i * 8 + 2);
-            bool isCompressed = (fc & 0x40000000) != 0;
-            fc &= 0x3FFFFFFF;
-            if (isCompressed) fc /= 2;
+            // Word 6/95: the fc is a plain file offset and the FIB's fExtChar says whether all pieces are UTF-16 or 8-bit
+            // (ww8scan.cxx WW8Cp2Fc / CurrentPieceStartCp2Fc: no TransformPieceAddress for bVer67)
+            bool isCompressed = _word6Sprms is not null ? !fib.HasExtendedCharacters : (fc & 0x40000000) != 0;
+            if (_word6Sprms is null)
+            {
+                fc &= 0x3FFFFFFF;
+                if (isCompressed) fc /= 2;
+            }
             ushort prm = BitConverter.ToUInt16(bytes, pcdStart + i * 8 + 6);
-            _pieces[i] = new Piece(cpStart, cpEnd, fc, isCompressed, PrmGrpprlOf(prm, prcGrpprls));
+            _pieces[i] = new Piece(cpStart, cpEnd, fc, isCompressed, _word6Sprms is null ? PrmGrpprlOf(prm, prcGrpprls) : Word6PrmGrpprlOf(prm, prcGrpprls));
         }
+    }
+
+    private readonly DocBinaryWord6Sprms? _word6Sprms;
+
+    /// <summary>
+    /// The upper half (0x80-0xFF) of the code page 8-bit text is decoded with; null = cp1252 (Word 97+ compressed text, and
+    /// Word 6/95 files whose fonts and language name no other code page - see DocBinaryWindowedDocument).
+    /// </summary>
+    public char[]? UpperHalf { get; set; }
+
+    /// <summary>
+    /// A Word 6/95 Prm: a Prm1 as in Word 97; a Prm0 holds the one-byte sprm id itself and its one-byte operand (ww8scan.cxx
+    /// WW8PLCFx_PCD::GetSprms, IsSevenMinus: aShortSprm = (prm &amp; 0xFE) >> 1, prm >> 8), translated to Word 97.
+    /// </summary>
+    private byte[]? Word6PrmGrpprlOf(ushort prm, List<byte[]> prcGrpprls)
+    {
+        if (prm == 0) return null;
+        if ((prm & 1) != 0) return PrmGrpprlOf(prm, prcGrpprls);
+        byte[] translated = _word6Sprms!.ToWord97([(byte)((prm & 0xFE) >> 1), (byte)(prm >> 8)], 0, 2);
+        return translated.Length == 0 ? null : translated;
     }
 
     /// <summary>The Prc grpprls of the Clx (in order); a Prm1.igrpprl indexes this list.</summary>
@@ -241,7 +267,7 @@ public sealed class DocBinaryPieceTable
             _wordDocument.Position = fileOffset;
             int read = 0;
             while (read < byteCount) { int n = _wordDocument.Read(bytes, read, byteCount - read); if (n <= 0) break; read += n; }
-            DocBinaryTextDecoder.Append(text, bytes, read, piece.IsCompressed);
+            DocBinaryTextDecoder.Append(text, bytes, read, piece.IsCompressed, UpperHalf);
         }
         return text.ToString();
     }
@@ -262,7 +288,7 @@ public sealed class DocBinaryPieceTable
                 int read = 0;
                 while (read < byteCount) { int n = _wordDocument.Read(bytes, read, byteCount - read); if (n <= 0) break; read += n; }
                 if (read == 0) break;                    // the rest of this piece lies past the stream's end (damaged piece table): no text there
-                int decoded = DocBinaryTextDecoder.Decode(bytes, read, piece.IsCompressed, characters);
+                int decoded = DocBinaryTextDecoder.Decode(bytes, read, piece.IsCompressed, characters, UpperHalf);
                 onChunk(characters, decoded, (int)cp);
             }
         }

@@ -494,3 +494,8 @@ window) and the p95 (a slow path hit by more than one window in twenty); the wor
   c:perspective 30 as 30, LibreOffice treats it as its 0..100 scale (twice the OOXML angle). When LibreOffice and Word's own
   round trip disagree, the round trip wins. And the BIFF8 colours of an Office 2007+ chart are only palette approximations even
   in their RGB fields; the exact colours sit in the DrawingML future records (0x08A4 / 0x08A5 / 0x08A6).
+## 2026-11-17 - Word 6/95 .doc: fExtChar makes every piece UTF-16
+
+A Word 6/95 piece fc has no "compressed" bit. Whether the text is 8-bit or UTF-16 is one FIB flag for the whole file
+(fExtChar, 0x1000 at 0x0A; LibreOffice ww8scan.cxx WW8Cp2Fc for nVersion < 8). Reading Bug51944.doc (wIdent 0xA699, a
+far-east Word 95 save) as 8-bit showed every other byte as a NUL and cut words apart; the check is in Word6DocumentsTest.

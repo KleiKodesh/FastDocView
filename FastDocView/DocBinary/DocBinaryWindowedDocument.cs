@@ -119,14 +119,17 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
         _tableStream = _compoundFile.OpenRootStream(FileInformationBlock.TableStreamName)
                        ?? throw new InvalidDataException($"Table stream {FileInformationBlock.TableStreamName} is missing.");
         PieceTable = new DocBinaryPieceTable(_wordDocument, _tableStream, FileInformationBlock);
-        _styles = new DocBinaryStyleSheet(_tableStream, FileInformationBlock.StyleSheet)
+        DocBinaryWord6Sprms? word6Sprms = FileInformationBlock.IsWord6 ? new DocBinaryWord6Sprms(FileInformationBlock.IsWord6FontCodeVariant) : null;
+        _styles = new DocBinaryStyleSheet(_tableStream, FileInformationBlock.StyleSheet, word6Sprms)
         {
-            Fonts = DocBinaryFontTable.Read(_tableStream, FileInformationBlock.FontTable),
+            Fonts = DocBinaryFontTable.Read(_tableStream, FileInformationBlock.FontTable, FileInformationBlock.IsWord6),
         };
-        _dataStream = _compoundFile.OpenRootStream("Data");
+        if (FileInformationBlock.IsWord6) PieceTable.UpperHalf = DocBinaryTextDecoder.UpperHalfOf(Word6CodePage(_styles.Fonts, FileInformationBlock.Language));
+        // Word 6/95 keeps picture data in the WordDocument stream (no Data stream; ww8par.cxx: m_pDataStream = m_pStrm for bVer67)
+        _dataStream = FileInformationBlock.IsWord6 ? _compoundFile.OpenRootStream("WordDocument") : _compoundFile.OpenRootStream("Data");
         FormattedDiskPages = new DocBinaryFormattedDiskPages(_wordDocument, _tableStream, FileInformationBlock, _dataStream);
         _notes = new DocBinaryNoteReferences(_tableStream, FileInformationBlock);
-        _notes.Numbering = DocBinarySectionTable.ReadNoteNumbering(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors);
+        _notes.Numbering = DocBinarySectionTable.ReadNoteNumbering(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, word6Sprms);
         _renderer = new DocBinaryParagraphHtmlRenderer(PieceTable, FormattedDiskPages, _styles, _notes);
         ListDefinitions = DocBinaryListDefinitions.Read(_tableStream, FileInformationBlock.ListFormats, FileInformationBlock.ListFormatOverrides);
         _renderer.Lists = ListDefinitions;
@@ -155,14 +158,29 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                                            sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
 
         _table = new DocBinaryCompactBlockTable(_index, PieceTable, _renderer, _styles, ListDefinitions);
+        // a Word 6/95 Dop ends at 0x54: no iGutterPos word there (that is a Word 97 addition) - the gutter stays at the side
         Sections = DocBinarySectionTable.Read(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, _index.SectionFirstBlocks,
-                                              FileInformationBlock.DocumentProperties);
+                                              FileInformationBlock.IsWord6 ? default : FileInformationBlock.DocumentProperties, word6Sprms);
         IsRightToLeft = DetectRightToLeft();
         if (_renderer.FieldContext is { } fieldContext) fieldContext.IsRightToLeftText = IsRightToLeft;
         // the document default in the set its (mostly right-to-left) text draws in: sprmPFBiDi no longer makes runs complex
         WordRunFormatting defaultRun = _styles.ResolveParagraphStyle(0).RunFormatting;
         if (IsRightToLeft && !defaultRun.IsRightToLeft) { defaultRun = defaultRun.Clone(); defaultRun.IsRightToLeft = true; }
         Stylesheet = WordDocumentHtmlStylesheet.Build(WordDocumentHtmlStylesheet.WithWordShaping(defaultRun), IsRightToLeft);
+    }
+
+    /// <summary>
+    /// The code page of a Word 6/95 file's 8-bit text. LibreOffice decides per run (ww8par.cxx GetCurrentCharSet: the run's
+    /// font character set, else its style's, else the language's code page; an ANSI font counts as "don't know", ww8par6.cxx
+    /// GetFontParams #i52786#). FastDocView decodes a whole document with one code page: the first font in the font table with
+    /// a single-byte non-ANSI character set (Hebrew fonts are 177 = cp1255), else the code page of the FIB's language, else
+    /// cp1252. A document mixing two non-Latin scripts in one 8-bit file shows only one of them right (docs/UNSUPPORTED-FEATURES).
+    /// </summary>
+    internal static int Word6CodePage(DocBinaryFontTable fonts, int fibLanguage)
+    {
+        foreach (byte characterSet in fonts.CharacterSets)
+            if (DocBinaryTextDecoder.CodePageOfCharacterSet(characterSet) is var codePage and > 0) return codePage;
+        return DocBinaryTextDecoder.CodePageOfLanguage(fibLanguage);
     }
 
     private Fields.WordFieldContext FieldContext(string path)

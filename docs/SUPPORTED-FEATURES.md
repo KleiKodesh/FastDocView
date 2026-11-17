@@ -297,6 +297,7 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 | Variants: .docm / .dotx / .dotm, .ott, RTF saved as .doc | yes | n.a. | yes | yes | n.a. | n.a. |
 | Word XML Document (Flat OPC, `pkg:package`): read by the .docx reader through its parts, windowed (2) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
 | Word 2003 XML Document (`w:wordDocument`): translated once into a .docx package beside the sidecar (3) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
+| Word 6.0 / 95 .doc (nFib 101-105): read by the .doc reader's version branches, windowed (4) | n.a. | partial | n.a. | n.a. | n.a. | n.a. |
 
 1. ODT / FODT: a body cut short or broken by a mismatched end tag (the first fatal XML error) keeps every block complete
    before it, followed by one "[this part of the document could not be read]" block; a malformed styles.xml keeps the styles
@@ -307,3 +308,11 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 3. Detected by content (Tika's sample is named .doc). Styles, default fonts, lists (w:listDef / w:list), footnotes and
    endnotes (inline in the run), hyperlinks, bookmarks, tables, VML pictures (w:binData), sections; tracked insertions kept,
    deletions and comments dropped. Re-translated only when the file changes.
+4. Word 6.0 / 95: the shorter FIB, the WordDocument stream as table stream, 8-bit text in the code page of the fonts'
+   character set (Hebrew cp1255, Cyrillic, Central European, Greek, Turkish, Baltic, Arabic, Thai, Vietnamese) or UTF-16 when
+   the FIB says so, the one-byte sprms (translated to their Word 97 form as LibreOffice's ww8scan.cxx / ww8par6.cxx Word 6
+   tables read them: character, paragraph, section and table properties, the right-to-left paragraph sprm and the
+   right-to-left bold / italic / font / size sprms 111-116), the Word 6 style sheet (8-bit names), font table, FKPs (2-byte bin
+   table entries, incomplete bin tables rebuilt), fast-saved piece tables, footnotes, endnotes, fields and tables (10-byte
+   Word 6 TCs and 2-byte borders). Text matches LibreOffice's text export word for word on the test-data files compared (Word95, 57843, Word6_sections2, Bug50955).
+   Not yet: Word 6 numbering, drawing objects and Asian double-byte text (UNSUPPORTED-FEATURES.md, Document level).

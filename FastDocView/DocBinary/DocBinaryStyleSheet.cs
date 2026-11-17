@@ -48,7 +48,9 @@ public sealed class DocBinaryStyleSheet
         RunFormatting = new WordRunFormatting { FontSizeHalfPoints = 20, FontName = "Times New Roman", HasComplexScriptBoldItalic = true },
     };
 
-    public DocBinaryStyleSheet(Stream tableStream, (uint offset, uint length) location)
+    /// <param name="word6Sprms">Word 6/95: style names are 8-bit Pascal strings and the UPX grpprls one-byte sprms (translated);
+    /// null for Word 97+.</param>
+    public DocBinaryStyleSheet(Stream tableStream, (uint offset, uint length) location, DocBinaryWord6Sprms? word6Sprms = null)
     {
         byte[]? bytes = location.length < 6 ? null : DocBinaryStructureReader.TryRead(tableStream, location);
         if (bytes is null) { _styles = []; return; }       // no style sheet, or one outside the table stream: document defaults only
@@ -70,12 +72,12 @@ public sealed class DocBinaryStyleSheet
             if (stdLength == 0) continue;
             // An STD that runs past the style sheet is cut at its end; one too short for its fixed part (StdfBase) is no style.
             int available = Math.Min(stdLength, bytes.Length - position);
-            if (available >= MinimumStdfBaseLength) _styles[index] = ParseStyle(bytes, position, available, stdBaseLength, index);
+            if (available >= MinimumStdfBaseLength) _styles[index] = ParseStyle(bytes, position, available, stdBaseLength, index, word6Sprms);
             position += stdLength;
         }
     }
 
-    private static StyleDefinition ParseStyle(byte[] bytes, int start, int length, int stdBaseLength, int index)
+    private static StyleDefinition ParseStyle(byte[] bytes, int start, int length, int stdBaseLength, int index, DocBinaryWord6Sprms? word6Sprms)
     {
         var style = new StyleDefinition { Index = index };
         ushort word0 = BitConverter.ToUInt16(bytes, start);
@@ -90,10 +92,25 @@ public sealed class DocBinaryStyleSheet
 
         int position = start + stdBaseLength;
         if (position + 2 > start + length) return style;       // no room for the name (xstzName) or UPXs
-        int nameLength = BitConverter.ToUInt16(bytes, position);
-        position += 2;
-        if (position + nameLength * 2 <= start + length) style.Name = Encoding.Unicode.GetString(bytes, position, nameLength * 2);
-        position += nameLength * 2 + 2;                        // + terminating null
+        if (word6Sprms is not null)
+        {
+            // Word 6/95: a Pascal string (length byte, 8-bit characters, a null) read as cp1252 (ww8scan.cxx WW8Style::Read1Style, case 6 / 7)
+            int nameBytes = bytes[position];
+            if (position + 1 + nameBytes <= start + length)
+            {
+                var name = new StringBuilder(nameBytes);
+                for (int i = 0; i < nameBytes; i++) name.Append(DocBinaryTextDecoder.DecodeCompressed(bytes[position + 1 + i]));
+                style.Name = name.ToString();
+            }
+            position += nameBytes + 2;
+        }
+        else
+        {
+            int nameLength = BitConverter.ToUInt16(bytes, position);
+            position += 2;
+            if (position + nameLength * 2 <= start + length) style.Name = Encoding.Unicode.GetString(bytes, position, nameLength * 2);
+            position += nameLength * 2 + 2;                    // + terminating null
+        }
         if ((position - start) % 2 != 0) position++;
 
         for (int upx = 0; upx < upxCount && position + 2 <= start + length; upx++)
@@ -103,6 +120,16 @@ public sealed class DocBinaryStyleSheet
             int available = Math.Max(0, Math.Min(upxLength, start + length - position));
             var grpprl = new byte[available];
             Buffer.BlockCopy(bytes, position, grpprl, 0, available);
+            if (word6Sprms is not null)
+            {
+                // the paragraph UPX starts with the istd (2 bytes, kept); the rest is a Word 6 grpprl (ww8par2.cxx WW8RStyle::ImportUPX)
+                int keep = style.IsParagraphStyle && upx == 0 ? Math.Min(2, available) : 0;
+                byte[] word97 = word6Sprms.ToWord97(grpprl, keep, available - keep);
+                var translated = new byte[keep + word97.Length];
+                Buffer.BlockCopy(grpprl, 0, translated, 0, keep);
+                Buffer.BlockCopy(word97, 0, translated, keep, word97.Length);
+                grpprl = translated;
+            }
             if (style.IsParagraphStyle && upx == 0) style.ParagraphGrpprl = grpprl;      // starts with istd (2 bytes)
             else style.CharacterGrpprl = grpprl;
             position += upxLength;

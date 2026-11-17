@@ -4,7 +4,7 @@ namespace FastDocView.DocBinary;
 /// The parts of the File Information Block ([MS-DOC] §2.5.1, the first bytes of the WordDocument
 /// stream) that random access needs: which table stream to use, the text piece counts, and the
 /// (offset, length) of the piece table (Clx), style sheet and the paragraph/character bin tables.
-/// Word 97 and later only; Word 6/95 and encrypted files are rejected.
+/// Word 97 and later, and Word 6.0 / 95 (its shorter FIB, LibreOffice ww8scan.cxx WW8Fib); encrypted files are rejected.
 /// </summary>
 public sealed class DocBinaryFileInformationBlock
 {
@@ -23,6 +23,8 @@ public sealed class DocBinaryFileInformationBlock
     public int FootnoteCharacterCount { get; }      // ccpFtn
     public int HeaderCharacterCount { get; }        // ccpHdd
     public int CommentCharacterCount { get; }       // ccpAtn
+    /// <summary>ccpMcr: a story between the headers and the comments (ww8scan.cxx GetBaseCp MAN_AND adds it); Word 97+ writes 0.</summary>
+    public int MacroCharacterCount { get; }
     public int EndnoteCharacterCount { get; }       // ccpEdn
     public int TextBoxCharacterCount { get; }
     public int HeaderTextBoxCharacterCount { get; } // ccpHdrTxbx (after ccpTxbx, ww8scan.cxx:5976)       // ccpTxbx (FibRgLw97 after ccpEdn; LibreOffice ww8scan.cxx:5969-5976 read order)
@@ -52,7 +54,7 @@ public sealed class DocBinaryFileInformationBlock
 
     /// <summary>Where each story starts in the CP space: main text, footnotes, headers, comments, endnotes ([MS-DOC] §2.3).</summary>
     public int FootnoteStoryStart => MainTextCharacterCount;
-    public int EndnoteStoryStart => MainTextCharacterCount + FootnoteCharacterCount + HeaderCharacterCount + CommentCharacterCount;
+    public int EndnoteStoryStart => MainTextCharacterCount + FootnoteCharacterCount + HeaderCharacterCount + MacroCharacterCount + CommentCharacterCount;
     /// <summary>The main text-box story starts after the endnotes (ww8scan.cxx GetBaseCp MAN_TXBX).</summary>
     public int TextBoxStoryStart => EndnoteStoryStart + EndnoteCharacterCount;
     /// <summary>The header text-box story follows the main one (ww8scan.cxx GetBaseCp MAN_TXBX_HDFT adds ccpTxbx).</summary>
@@ -67,37 +69,63 @@ public sealed class DocBinaryFileInformationBlock
         int read = 0;
         while (read < fib.Length) { int n = wordDocumentStream.Read(fib, read, fib.Length - read); if (n <= 0) break; read += n; }
         ushort identifier = read >= 4 ? BitConverter.ToUInt16(fib, 0) : (ushort)0;
-        // Word 6.0 / 95 FIBs: wIdent 0xA5DC, or 0xA697-0xA699 — the magic values LibreOffice's
-        // ww8par.cxx accepts besides Word 1/2's; nFib 101-104 (seen in the corpus: 101 Word 6, 104 Word 95).
-        if (identifier is 0xA5DC or >= 0xA697 and <= 0xA699)
-            throw new NotSupportedException($"Word 6.0 / Word 95 documents are not supported yet (wIdent 0x{identifier:X4}, nFib {BitConverter.ToUInt16(fib, 2)}); only Word 97 and later.");
         if (identifier is 0xA59B or 0xA59C or 0xA5DB)       // Word 1 / Word 2 FIBs (LibreOffice ww8scan.cxx GetFIBVersion)
             throw new NotSupportedException($"Word for Windows {(identifier == 0xA5DB ? "2.0" : "1.x")} documents are not supported.");
-        if (read < 0x1AA || identifier != WordIdentifier)
+        // Word 6.0 / 95 FIBs: wIdent 0xA5DC, or 0xA697-0xA699 (LibreOffice ww8par.cxx accepts them; GetWW6SprmSearcher treats
+        // the 0xA697-0xA699 ones as the far-east variant, sprms 111-113 = font codes); nFib 101-105 (ww8scan.cxx WW8Fib ctor).
+        IsWord6 = identifier is 0xA5DC or >= 0xA697 and <= 0xA699;
+        IsWord6FontCodeVariant = identifier is >= 0xA697 and <= 0xA699;
+        if (IsWord6 && read < 0x192 + 22 * 8)
+            throw new InvalidDataException($"Damaged Word 6/95 document: the WordDocument stream ({read} bytes) is shorter than its FIB.");
+        if (!IsWord6 && (read < 0x1AA || identifier != WordIdentifier))
             throw new InvalidDataException($"Not a Word 97+ binary document: the WordDocument stream starts with 0x{identifier:X4}, not the FIB identifier 0xA5EC.");
 
         Version = BitConverter.ToUInt16(fib, 2);
-        if (Version < FirstWord97Version) throw new NotSupportedException("Word 6/95 documents are not supported (only Word 97 and later).");
+        if (!IsWord6 && Version < FirstWord97Version) throw new NotSupportedException($"Word 6/95 documents with a Word 97 FIB identifier are not supported (nFib {Version}).");
         ushort flags = BitConverter.ToUInt16(fib, 0x0A);
         IsComplex = (flags & 0x0004) != 0;
         IsEncrypted = (flags & 0x0100) != 0;
-        HasExtendedCharacters = (flags & 0x1000) != 0;
+        HasExtendedCharacters = (flags & 0x1000) != 0;     // Word 6/95: every piece is UTF-16 when set, else 8-bit (ww8scan.cxx WW8Cp2Fc: m_fExtChar for nVersion < 8)
         TextStartFileOffset = BitConverter.ToUInt32(fib, 0x18);
         TextEndFileOffset = BitConverter.ToUInt32(fib, 0x1C);
         if (IsEncrypted) throw new WordDocumentEncryptedException("Encrypted (password-protected) Word documents are not supported.");
-        TableStreamName = (flags & 0x0200) != 0 ? "1Table" : "0Table";
+        // Word 6/95 has no table stream: the tables live in the WordDocument stream (ww8par.cxx: pTableStream = pStrm for bVer67).
+        TableStreamName = IsWord6 ? "WordDocument" : (flags & 0x0200) != 0 ? "1Table" : "0Table";
+        Language = BitConverter.ToUInt16(fib, 6);
 
-        MainTextCharacterCount = BitConverter.ToInt32(fib, 0x4C);
-        FootnoteCharacterCount = BitConverter.ToInt32(fib, 0x50);
-        HeaderCharacterCount = BitConverter.ToInt32(fib, 0x54);
-        CommentCharacterCount = BitConverter.ToInt32(fib, 0x5C);
-        EndnoteCharacterCount = BitConverter.ToInt32(fib, 0x60);
-        TextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x64));
-        HeaderTextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x68));
+        if (IsWord6)
+        {
+            // Word 6/95 rglw (ww8scan.cxx WW8Fib ctor, IsSevenMinus branches): cbMac at 0x20, four longs skipped, then ccpText,
+            // ccpFtn, ccpHdr, ccpMcr, ccpAtn, ccpEdn, ccpTxbx, ccpHdrTxbx from 0x34; one long skipped; the fc/lcb pairs from 0x58.
+            MainTextCharacterCount = BitConverter.ToInt32(fib, 0x34);
+            FootnoteCharacterCount = BitConverter.ToInt32(fib, 0x38);
+            HeaderCharacterCount = BitConverter.ToInt32(fib, 0x3C);
+            MacroCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x40));
+            CommentCharacterCount = BitConverter.ToInt32(fib, 0x44);
+            EndnoteCharacterCount = BitConverter.ToInt32(fib, 0x48);
+            TextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x4C));
+            HeaderTextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x50));
+            // after pair 37 (fcSttbfAtnbkmk): a short, pnChpFirst, pnPapFirst, cpnBteChp, cpnBtePap (0x188..0x191), then pairs 38.. at 0x192
+            CharacterFirstPage = BitConverter.ToInt16(fib, 0x18A);
+            ParagraphFirstPage = BitConverter.ToInt16(fib, 0x18C);
+            CharacterBinPageCount = BitConverter.ToInt16(fib, 0x18E);
+            ParagraphBinPageCount = BitConverter.ToInt16(fib, 0x190);
+        }
+        else
+        {
+            MainTextCharacterCount = BitConverter.ToInt32(fib, 0x4C);
+            FootnoteCharacterCount = BitConverter.ToInt32(fib, 0x50);
+            HeaderCharacterCount = BitConverter.ToInt32(fib, 0x54);
+            CommentCharacterCount = BitConverter.ToInt32(fib, 0x5C);
+            EndnoteCharacterCount = BitConverter.ToInt32(fib, 0x60);
+            TextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x64));
+            HeaderTextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x68));
+        }
         if (MainTextCharacterCount < 0 || FootnoteCharacterCount < 0 || HeaderCharacterCount < 0 || CommentCharacterCount < 0 || EndnoteCharacterCount < 0)
             throw new InvalidDataException("Damaged Word document: the FIB gives a negative character count.");
 
-        _fcLcbCount = BitConverter.ToUInt16(fib, 0x98);
+        _isWord6 = IsWord6;
+        _fcLcbCount = IsWord6 ? Word6FcLcbCount : BitConverter.ToUInt16(fib, 0x98);
         StyleSheet = FcLcb(fib, 1);
         FootnoteReferences = FcLcb(fib, 2);
         FootnoteTexts = FcLcb(fib, 3);
@@ -130,11 +158,25 @@ public sealed class DocBinaryFileInformationBlock
     public (uint offset, uint length) FieldTable(int pair) => _fieldTables.TryGetValue(pair, out var table) ? table : (0, 0);
 
     private readonly int _fcLcbCount;
+    private readonly bool _isWord6;
+    private const int Word6FcLcbCount = 62;    // pairs 0..61 (through fcSttbttmbd), ww8scan.cxx WW8Fib ctor read order for eWW6 / eWW7
+
+    /// <summary>A Word 6.0 / 95 file (wIdent 0xA5DC or 0xA697-0xA699): one-byte sprms, 8-bit text, no table stream.</summary>
+    public bool IsWord6 { get; }
+    /// <summary>wIdent 0xA697-0xA699: sprms 111-113 are font codes, not the right-to-left bold / italic / font (ww8scan.cxx patchCJKVariant).</summary>
+    public bool IsWord6FontCodeVariant { get; }
+    /// <summary>The FIB's lid (the language of the Word that saved the file); picks the 8-bit code page of Word 6/95 text when no font names one.</summary>
+    public ushort Language { get; }
+    /// <summary>Word 6/95: the first FKP page and the FKP page counts the bin tables may list only partly (ww8scan.cxx WW8PLCF::GeneratePLCF).</summary>
+    public int CharacterFirstPage { get; }
+    public int ParagraphFirstPage { get; }
+    public int CharacterBinPageCount { get; }
+    public int ParagraphBinPageCount { get; }
 
     /// <summary>An (offset, length) pair of FibRgFcLcb; (0, 0) when this file's FIB is too short to have it.</summary>
     private (uint, uint) FcLcb(byte[] fib, int index)
     {
-        int at = FibRgFcLcbStart + index * 8;
+        int at = !_isWord6 ? FibRgFcLcbStart + index * 8 : index < 38 ? 0x58 + index * 8 : 0x192 + (index - 38) * 8;
         if (index >= _fcLcbCount || at + 8 > fib.Length) return (0, 0);
         return (BitConverter.ToUInt32(fib, at), BitConverter.ToUInt32(fib, at + 4));
     }

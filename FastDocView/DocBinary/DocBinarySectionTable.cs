@@ -29,7 +29,8 @@ internal static class DocBinarySectionTable
     /// <param name="firstBlocks">The block each section starts in, in the order of <see cref="ReadStartCps"/> (from the index).</param>
     /// <param name="documentProperties">The Dop, for iGutterPos (gutter at the top - <see cref="IsGutterAtTop"/>).</param>
     public static IReadOnlyList<WordDocumentSection> Read(Stream wordDocument, Stream tableStream, (uint offset, uint length) plcfSed,
-                                                         IReadOnlyList<int> firstBlocks, (uint offset, uint length) documentProperties = default)
+                                                         IReadOnlyList<int> firstBlocks, (uint offset, uint length) documentProperties = default,
+                                                         DocBinaryWord6Sprms? word6Sprms = null)
     {
         bool isGutterAtTop = IsGutterAtTop(tableStream, documentProperties);
         var fallback = new[] { new WordDocumentSection(0, DefaultTextWidthTwips) };
@@ -40,7 +41,7 @@ internal static class DocBinarySectionTable
         for (int i = 0; i < count; i++)
         {
             uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * SedSize + 2);
-            (int width, int left) = PageSetupOf(wordDocument, fcSepx, isGutterAtTop);
+            (int width, int left) = PageSetupOf(wordDocument, fcSepx, isGutterAtTop, word6Sprms);
             starts.Add(new WordDocumentSection(firstBlocks[i], width, left));
         }
         return WordDocumentPageSetup.FromSectionStarts(starts);
@@ -54,7 +55,8 @@ internal static class DocBinarySectionTable
 
     /// <summary>Each section's footnote / endnote numbering, keyed by the section's start CP (<see cref="WordDocumentNoteNumbering"/>
     /// positions are main-text CPs here). A section without the sprms takes the Sep defaults: decimal / lower roman, from 1, continuous.</summary>
-    public static WordDocumentNoteNumbering ReadNoteNumbering(Stream wordDocument, Stream tableStream, (uint offset, uint length) plcfSed)
+    public static WordDocumentNoteNumbering ReadNoteNumbering(Stream wordDocument, Stream tableStream, (uint offset, uint length) plcfSed,
+                                                              DocBinaryWord6Sprms? word6Sprms = null)
     {
         if (!TryReadPlc(tableStream, plcfSed, out byte[] plc, out int count, out int sedsAt)) return WordDocumentNoteNumbering.Defaults;
         var starts = new int[count];
@@ -65,7 +67,7 @@ internal static class DocBinarySectionTable
             starts[i] = i == 0 ? 0 : Math.Max(starts[i - 1], BitConverter.ToInt32(plc, i * 4));
             WordDocumentNoteNumberRule footnote = WordDocumentNoteNumberRule.FootnoteDefault, endnote = WordDocumentNoteNumberRule.EndnoteDefault;
             uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * SedSize + 2);
-            if (ReadSepx(wordDocument, fcSepx) is { } grpprl)
+            if (ReadSepx(wordDocument, fcSepx, word6Sprms) is { } grpprl)
                 foreach ((ushort opcode, int at, int length) in DocBinaryPropertyModifiers.Sprms(grpprl, 0, grpprl.Length))
                 {
                     if (length == 1 && opcode is SprmSRncFtn or SprmSRncEdn)
@@ -90,11 +92,14 @@ internal static class DocBinarySectionTable
         return new WordDocumentNoteNumbering(starts, footnotes, endnotes);
     }
 
-    private static byte[]? ReadSepx(Stream wordDocument, uint fcSepx)
+    /// <summary>The Sepx grpprl at fcSepx (a 2-byte cb in Word 6/95 too - ww8scan.cxx WW8PLCFx_SEPX::GetSprms reads one byte only
+    /// for Word 2); a Word 6/95 one translated to Word 97 sprms.</summary>
+    private static byte[]? ReadSepx(Stream wordDocument, uint fcSepx, DocBinaryWord6Sprms? word6Sprms)
     {
         if (fcSepx == 0xFFFFFFFF || DocBinaryStructureReader.TryRead(wordDocument, (fcSepx, 2)) is not { } sizeBytes) return null;
         short cb = BitConverter.ToInt16(sizeBytes, 0);
-        return cb > 0 ? DocBinaryStructureReader.TryRead(wordDocument, (fcSepx + 2, (uint)cb)) : null;
+        byte[]? grpprl = cb > 0 ? DocBinaryStructureReader.TryRead(wordDocument, (fcSepx + 2, (uint)cb)) : null;
+        return grpprl is not null && word6Sprms is not null ? word6Sprms.ToWord97(grpprl, 0, grpprl.Length) : grpprl;
     }
 
     private static bool TryReadPlc(Stream tableStream, (uint offset, uint length) plcfSed, out byte[] plc, out int count, out int sedsAt)
@@ -122,14 +127,12 @@ internal static class DocBinarySectionTable
     }
 
     /// <summary>The section's text width and where its column starts (left margin + a left gutter - <see cref="WordDocumentPageSetup.GutterPlacement"/>).</summary>
-    private static (int width, int columnLeft) PageSetupOf(Stream wordDocument, uint fcSepx, bool isGutterAtTop)
+    private static (int width, int columnLeft) PageSetupOf(Stream wordDocument, uint fcSepx, bool isGutterAtTop, DocBinaryWord6Sprms? word6Sprms)
     {
         int page = DefaultPageWidthTwips, left = DefaultMarginTwips, right = DefaultMarginTwips, gutter = 0;
         bool isRightToLeftGutter = false;
-        if (fcSepx != 0xFFFFFFFF && DocBinaryStructureReader.TryRead(wordDocument, (fcSepx, 2)) is { } sizeBytes)
         {
-            short cb = BitConverter.ToInt16(sizeBytes, 0);
-            if (cb > 0 && DocBinaryStructureReader.TryRead(wordDocument, (fcSepx + 2, (uint)cb)) is { } grpprl)
+            if (ReadSepx(wordDocument, fcSepx, word6Sprms) is { } grpprl)
             {
                 foreach ((ushort opcode, int at, int length) in DocBinaryPropertyModifiers.Sprms(grpprl, 0, grpprl.Length))
                 {

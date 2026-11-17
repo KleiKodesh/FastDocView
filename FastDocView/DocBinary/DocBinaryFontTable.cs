@@ -15,15 +15,19 @@ public sealed class DocBinaryFontTable
 
     public static DocBinaryFontTable Empty { get; } = new([]);
 
-    private DocBinaryFontTable(string[] names) { _names = names; }
+    private DocBinaryFontTable(string[] names, byte[]? characterSets = null) { _names = names; CharacterSets = characterSets ?? []; }
+
+    /// <summary>Each font's character set (FFN chs); filled for Word 6/95 files, where it picks the code page of 8-bit text.</summary>
+    public IReadOnlyList<byte> CharacterSets { get; }
 
     public string? NameOf(int fontIndex) => fontIndex >= 0 && fontIndex < _names.Length && _names[fontIndex].Length > 0 ? _names[fontIndex] : null;
 
     public int Count => _names.Length;
 
-    public static DocBinaryFontTable Read(Stream tableStream, (uint offset, uint length) location)
+    public static DocBinaryFontTable Read(Stream tableStream, (uint offset, uint length) location, bool isWord6 = false)
     {
         if (location.length < 4 || DocBinaryStructureReader.TryRead(tableStream, location) is not { } bytes) return Empty;   // none, or outside the table stream
+        if (isWord6) return ReadWord6(bytes);
 
         int count = BitConverter.ToUInt16(bytes, 0);
         int position = 4;                                     // cData, cbExtra
@@ -44,5 +48,31 @@ public sealed class DocBinaryFontTable
             position += entryLength;
         }
         return new DocBinaryFontTable(names);
+    }
+
+    /// <summary>
+    /// Word 6/95 SttbfFfn (ww8scan.cxx WW8Fonts ctor, eVersion &lt; eWW8): the table's byte length (2 bytes), then FFNs until the
+    /// end - no count. FFN: cbFfnM1, flags, wWeight (2), chs, ibszAlt, then the name as null-terminated 8-bit text in the
+    /// font's own code page (#i8726#), cp1252 for an ANSI or symbol font. LibreOffice caps a name at 65 bytes (maxStrSize).
+    /// </summary>
+    private static DocBinaryFontTable ReadWord6(byte[] bytes)
+    {
+        var names = new List<string>();
+        var characterSets = new List<byte>();
+        int position = 2;
+        while (position + 6 < bytes.Length)
+        {
+            int entryLength = bytes[position] + 1;
+            int entryEnd = Math.Min(bytes.Length, position + entryLength);
+            byte characterSet = bytes[position + 4];
+            char[]? upperHalf = DocBinaryTextDecoder.UpperHalfOf(DocBinaryTextDecoder.CodePageOfCharacterSet(characterSet));
+            var name = new StringBuilder();
+            for (int at = position + 6; at < entryEnd && name.Length < 65 && bytes[at] != 0; at++)
+                name.Append(bytes[at] < 0x80 ? (char)bytes[at] : upperHalf is null ? DocBinaryTextDecoder.DecodeCompressed(bytes[at]) : upperHalf[bytes[at] - 0x80]);
+            names.Add(name.ToString());
+            characterSets.Add(characterSet);
+            position += entryLength;
+        }
+        return new DocBinaryFontTable(names.ToArray(), characterSets.ToArray());
     }
 }

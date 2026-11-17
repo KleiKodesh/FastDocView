@@ -132,7 +132,11 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
 | Encrypted files | docx, doc, odt | Rejected with a clear "encrypted" error (no password support) | won't do |
-| Word 6.0 / 95, Word for Windows 1.x / 2.0 | doc | Rejected with a clear message; Word 6/95 is feasible (no Microsoft spec) | deferred |
+| Word for Windows 1.x / 2.0 | doc | Rejected with a clear message. LibreOffice reads both (ww8par.cxx accepts wIdent 0xA59B / 0xA59C / 0xA5DB; ww8scan.cxx eWW2 branches: 2-byte lcbs, its own sprm table, Word2CHPX character runs that are not sprms) - a further branch of the Word 6 work, not done yet | planned |
+| Word 6.0 / 95 numbering (ANLD paragraphs, OLST outline numbers: sprmPAnld / sprmPNLvlAnm / sprmSOlstAnm) | doc | The sprms are read and kept, but no label is counted yet: Word 97 lists count at index time through LST / LFO, Word 6 needs its own counter (LibreOffice ww8par2.cxx StartAnl / NextAnlLine / SetAnld) | planned |
+| Word 6.0 / 95 drawing objects (DO records, PlcfdoaMom) and Word 6 metafile / bitmap pictures | doc | No OfficeArt in a Word 6 file; pictures that are not PNG / JPEG are not shown in any .doc | deferred |
+| Word 6.0 / 95 Asian double-byte text (cp932 / 936 / 949 / 950 fonts) | doc | No double-byte code-page tables (no code-page provider on .NET 10 by design); the text shows as cp1252 | deferred |
+| Word 6.0 / 95 text in two non-Latin 8-bit scripts in one file | doc | One code page per document (the first font with a non-ANSI character set, else the FIB language); LibreOffice decides per run | deferred |
 | Word 2003 XML: embedded fonts, w:docPr note separators | docx | Not translated; separators do not change the flow view | deferred |
 | Flat OPC in UTF-16 or a legacy code page | docx | Rejected with a clear message: Word writes it in UTF-8 and its parts are read in place as UTF-8 (Word 2003 XML is translated, so any encoding works) | won't do |
 | HTML files and HTML saved as .doc | html | Deliberately out of scope (FastDocView has no HTML support) | won't do |

@@ -909,20 +909,36 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
 
 ## Format support limits (corpus pass 2026-10-28)
 
-- Not supported, precise NotSupportedException: Word 6.0/95 (.doc wIdent 0xA5DC / 0xA697-0xA699),
-  Word for Windows 1.x/2.0, Word 2003 XML, HTML saved as .doc, encrypted .doc/.docx/.odt.
+- Not supported, precise NotSupportedException: Word for Windows 1.x/2.0 (Word 6.0/95 is read since
+  2026-11-17, below), Word 2003 XML, HTML saved as .doc, encrypted .doc/.docx/.odt.
 - **Live demo check of every format (2026-10-28):** .odt (121,650 blocks), .fodt, .rtf, .txt (ToratEmet),
   .mhtml and .docx all pass liveCheck.mjs. **Speed gap:** a cold .odt open shows text only after the
   whole index is built (2.6 s on the 121k-block sample) — .odt has no on-demand index like .docx yet.
-- **GAP — older Word formats (open, to do):** Word 6.0/95, Word for Windows 1.x/2.0 and Word 2003
-  XML (.doc that is XML) are rejected, not read. test-data holds 37 Word 6/95 files (nFib 101 / 104,
-  wIdent 0xA5DC; 0xA697–0xA699), 10 Word 1/2 files and 1 Word 2003 XML. None of the user's 3,470 real
-  .doc files failed this way (corpus pass 2026-10-28), so it is low priority, but it is a real gap.
-  Word 6/95 is the feasible one: same piece-table/FKP idea as Word 97, but a different FIB layout,
-  1-byte sprm opcodes and a different style sheet. Sources: LibreOffice ww8 "Ver67" paths
-  (ww8par*.cxx, ww8scan.cxx), Apache POI HWPF old-format support (HWPFOldDocument / OldFIB). There is
-  no Microsoft spec for it — treat facts as unverified until checked in both. Word 2003 XML would be a
-  small streaming reader of its own (WordprocessingML 2003 schema).
+- **Word 6.0 / 95 .doc (read since 2026-11-17).** Version branches in the DocBinary reader, as LibreOffice's ww8 filter
+  takes them (no Microsoft spec exists; every fact below was read in LibreOffice master, ww8scan.cxx / ww8par*.cxx /
+  ww8struc.hxx / sprmids.hxx):
+  - FIB (WW8Fib ctor, IsSevenMinus): ccpText..ccpHdrTxbx at 0x34..0x50 (ccpMcr at 0x40 counts in the story order, GetBaseCp),
+    fc/lcb pairs 0..37 from 0x58, then pnChpFirst / pnPapFirst / cpnBteChp / cpnBtePap at 0x18A..0x190 and pairs 38..61 from
+    0x192 - the same pair indices as Word 97. No table stream: the WordDocument stream holds the tables (and pictures).
+  - Text: piece fcs are plain offsets; all pieces are UTF-16 when the FIB's fExtChar is set, else 8-bit (WW8Cp2Fc). 8-bit text
+    is in the code page of its font's character set (ReadPlainChars -> GetCurrentCharSet; an ANSI font is "don't know",
+    GetFontParams #i52786#, then the language). FastDocView picks ONE code page per document (first font with a non-ANSI
+    single-byte charset, else the FIB lid's code page, else cp1252) - hand-rolled tables for cp874 and cp1250-1258.
+  - Sprms: one-byte ids, sizes from GetWW6SprmSearcher (unknown ids are variable), wIdent 0xA697-0xA699 make 111-113 2-byte
+    font codes (patchCJKVariant / Read_AmbiguousSPRM), else 111-116 are the right-to-left bold, italic, font, language,
+    colour, size; 64 is the right-to-left paragraph. `DocBinaryWord6Sprms` rewrites each Word 6 grpprl as a Word 97 one where
+    it is read (FKP pages, style UPXs, Sepx, Clx Prc, Prm0 = the sprm id itself + operand), so the renderer has no version
+    branch. 2-byte Word 6 BRCs become Brc80 (WW8_BRC(WW8_BRCVer6)); 10-byte TCs become 20-byte TC80s (ReadDef, bVer67).
+  - FKPs: PAPX BX 7 bytes, PAPX length one byte (no Word 97 second length byte), 2-byte bin-table page numbers; a bin table
+    shorter than cpnBte is rebuilt from consecutive FKPs (GeneratePLCF). STSH: 8-bit Pascal style names (cp1252, Read1Style).
+    Font table: byte length then FFNs (cbFfnM1, flags, wWeight, chs, ibszAlt, 8-bit name in the font's code page).
+  - Checked: `Word6DocumentsTest` (in --fidelity); text equals LibreOffice's text export on Word95, 57843, Word6_sections2,
+    Bug50955 (Cyrillic, 74,814 words). Bug51944 (0xA699, fExtChar) needed the UTF-16 rule. The fuzz files crash-7 and
+    ofz21168-1 fail with the piece-table error. Open: numbering (ANLD / OLST), drawing objects, double-byte Asian text
+    (ooo17498-*, ooo8726-1 show cp1252), per-run code pages, a real right-to-left Word 6 file to check sprms 64 / 111-116.
+- **GAP - Word for Windows 1.x / 2.0** (10 files in test-data) stay rejected with a clear message. LibreOffice reads them
+  (ww8par.cxx accepts 0xA59B / 0xA59C / 0xA5DB): FIB with 2-byte lcbs, GetWW2SprmSearcher, Word2CHPX character runs
+  converted to sprms (ww8scan.cxx ChpxToSprms), PAPX with a 1-byte istd and a PHE. Word 2003 XML is read (translated).
 - Malformed XML in any part → InvalidDataException naming the part (LibreOffice opens some of these,
   e.g. math-malformed_xml.docx, with a recovering parser — not done here).
 - Malformed XML: see "Malformed XML (repair mode)" below — .docx keeps the content before the
