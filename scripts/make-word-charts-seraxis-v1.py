@@ -24,7 +24,7 @@ LABELS = ('<c:dLbls><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName
 GREY = '<a:schemeClr val="tx1"><a:lumMod val="65000"/><a:lumOff val="35000"/></a:schemeClr>'
 
 def rgb(value):
-    return '<a:srgbClr val="%s"/>' % value
+    return value if value.startswith('<') else '<a:srgbClr val="%s"/>' % value
 
 def colour_series(x, fills):
     for s, fill in zip(sers(x), fills):
@@ -33,7 +33,7 @@ def colour_series(x, fills):
         x = x.replace(s, s.replace(sp, new))
     return x
 
-def make(kind, title, view3d, label_color=None, fills=None, title_color=None, legend_color=None):
+def make(kind, title, view3d, label_color=None, fills=None, title_color=None, legend_color=None, series_axis=True):
     """kind: col3d (standard grouping), line3d, area3d - each with a shown c:serAx; col for a 2-D column chart."""
     base = {'col': 1, 'col3d': 7, 'line3d': 3, 'area3d': 5}[kind]
     x = charts[base]
@@ -50,7 +50,8 @@ def make(kind, title, view3d, label_color=None, fills=None, title_color=None, le
     if kind != 'col':
         cat = block(x, 'catAx')
         text = re.search(r'<c:txPr>.*?</c:txPr>', cat, re.S).group(0)
-        ser_axis = ('<c:serAx><c:axId val="1999000001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>'
+        ser_axis = ('<c:serAx><c:axId val="1999000001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="%d"/>'
+                    % (0 if series_axis else 1) + '<c:axPos val="b"/>'
                     '<c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>'
                     '<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>%s<c:crossAx val="%s"/><c:crosses val="autoZero"/></c:serAx>'
                     % (text, ids[1]))
@@ -74,23 +75,30 @@ def make(kind, title, view3d, label_color=None, fills=None, title_color=None, le
     x = re.sub(r'(<a:t>)[^<]*Chart(</a:t>)', r'\g<1>' + title + r'\g<2>', x, count=1)
     return x
 
-def write(target, replaced):
+def write(target, replaced, accents=None):
     with zipfile.ZipFile(source) as zin, zipfile.ZipFile(os.path.join(folder, target), 'w', zipfile.ZIP_DEFLATED) as zout:
         for item in zin.infolist():
             data = zin.read(item.filename)
             m = re.match(r'word/charts/chart(\d)\.xml$', item.filename)
             if m and int(m.group(1)) in replaced: data = replaced[int(m.group(1))].encode('utf-8')
+            if accents and item.filename == 'word/theme/theme1.xml':
+                theme = data.decode('utf-8')
+                for name, value in accents.items():
+                    theme = re.sub(r'(<a:%s>)<a:srgbClr val="[0-9A-F]{6}"/>' % name, r'\g<1><a:srgbClr val="%s"/>' % value, theme)
+                data = theme.encode('utf-8')
             zout.writestr(item, data)
     print('written', target)
 
 PERSPECTIVE = {'rotX': 15, 'rotY': 20, 'rAngAx': 0, 'perspective': 30}
 RIGHT = {'rotX': 15, 'rotY': 20, 'rAngAx': 1}
-write('word-charts-seraxis-v1.docx', {
-    1: make('col3d', 'Col3D SerAx R', RIGHT),
-    2: make('col3d', 'Col3D SerAx P', PERSPECTIVE),
-    3: make('line3d', 'Line3D SerAx R', RIGHT),
-    4: make('area3d', 'Area3D SerAx P', PERSPECTIVE),
-    5: make('area3d', 'Area3D SerAx R', {'rotX': 20, 'rotY': 30, 'rAngAx': 1}),
-    6: make('col', 'Col Colors', None, label_color='8A4F1C', fills=['12AB9C', 'C8641E', '5B2C83'], title_color='7A2E9B', legend_color='2F6EA8'),
-    7: make('col3d', 'Col3D Colors', RIGHT, label_color='1E7A6B', fills=['E07B91', '3D9970', 'B8860B'], title_color='C0392B'),
-})
+
+if __name__ == '__main__':
+    write('word-charts-seraxis-v1.docx', {
+        1: make('col3d', 'Col3D SerAx R', RIGHT),
+        2: make('col3d', 'Col3D SerAx P', PERSPECTIVE),
+        3: make('line3d', 'Line3D SerAx R', RIGHT),
+        4: make('area3d', 'Area3D SerAx P', PERSPECTIVE),
+        5: make('area3d', 'Area3D SerAx R', {'rotX': 20, 'rotY': 30, 'rAngAx': 1}),
+        6: make('col', 'Col Colors', None, label_color='8A4F1C', fills=['12AB9C', 'C8641E', '5B2C83'], title_color='7A2E9B', legend_color='2F6EA8'),
+        7: make('col3d', 'Col3D Colors', RIGHT, label_color='1E7A6B', fills=['E07B91', '3D9970', 'B8860B'], title_color='C0392B'),
+    })

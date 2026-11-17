@@ -36,7 +36,7 @@ internal static class ExcelBinaryChart
         ChFont = 0x1026, ChObjectLink = 0x1027, ChBegin = 0x1033, ChEnd = 0x1034, ChChart3D = 0x103A, ChRadarLine = 0x103E,
         ChRadarArea = 0x1040, ChAxesSet = 0x1041, ChSourceLink = 0x1051, ChEscherFormat = 0x1066, ChSeriesIndex = 0x1065,
         ChLabelRange = 0x1020, ChSeriesParent = 0x104A, ChSeriesTrendLine = 0x104B, ChSeriesErrorBar = 0x105B, ChFormat = 0x104E, ChFramePos = 0x104F, Format = 0x041E, PaletteRecord = 0x0092,
-        TextPropsStream = 0x08A5, RichTextStream = 0x08A6, ContinueFrt12 = 0x087F;
+        TextPropsStream = 0x08A5, RichTextStream = 0x08A6, ContinueFrt12 = 0x087F, ThemeRecord = 0x0896, CrtMlFrt = 0x089E, CrtMlFrtContinue = 0x089F;
 
     /// <summary>
     /// The chart of an RTF \objdata (hex digits; [MS-OLEDS] 2.2.4 ObjectHeader, then NativeDataSize and the compound file -
@@ -175,6 +175,13 @@ internal static class ExcelBinaryChart
         object? frtXmlOwner = null;
         bool frtXmlRich = false;
         string? legendExactColor = null;
+        var drawingTexts = new List<(object? Owner, string Xml)>();   // the text streams, coloured once the theme is known
+        // a theme package being read: the workbook's Theme record (0x0896, continued in ContinueFrt12) or a chart's CrtMlFrt
+        // (0x089E, continued in CrtMlFrtContinue 0x089F) holding the chart's theme override
+        MemoryStream? package = null;
+        ushort packageContinue = 0;
+        bool packageIsChart = false;
+        XDocument? workbookTheme = null, chartTheme = null;
 
         var header = new byte[4];
         while (ReadFully(workbook, header, 4))
@@ -194,6 +201,17 @@ internal static class ExcelBinaryChart
                 }
                 if (id == ContinueFrt12) continue;
             }
+            if (package is not null)
+            {
+                if (id == packageContinue && length > 12) { package.Write(body, 12, length - 12); continue; }
+                FinishPackage();
+            }
+            // Theme ([MS-XLS] 2.4.326: FrtHeader 12, dwThemeVersion 4, then the zipped theme package) in the workbook globals
+            if (id == ThemeRecord && length > 16 && substreamType == 0x0005) { package = new MemoryStream(); package.Write(body, 16, length - 16); packageContinue = ContinueFrt12; packageIsChart = false; continue; }
+            // CrtMlFrt (2.4.70: FrtHeader 12, then the XML token chain; continued in CrtMlFrtContinue 0x089F, 2.4.71): Office 2007+
+            // stores the chart's theme override there as a zipped package (theme/theme/themeOverride1.xml) - the theme Word draws the
+            // chart with (Word 16's .doc / .rtf of word-charts-theme-text-v1: the document's accents, not the workbook theme's)
+            if (id == CrtMlFrt && length > 12 && inChart) { package = new MemoryStream(); package.Write(body, 12, length - 12); packageContinue = CrtMlFrtContinue; packageIsChart = true; continue; }
             if (id == Bof && length >= 4)
             {
                 substreamType = BitConverter.ToUInt16(body, 2);
@@ -491,6 +509,17 @@ internal static class ExcelBinaryChart
             }
         }
         if (frtXml is not null) ApplyDrawingText(frtXmlOwner, frtXml.ToArray(), frtXmlRich);
+        if (package is not null) FinishPackage();
+        // the text colours: scheme colours resolve against the chart's theme override, else the workbook's theme
+        XDocument? themeDocument = chartTheme ?? workbookTheme;
+        DocxTheme? theme = themeDocument is null ? null : new DocxTheme(themeDocument, null);
+        foreach ((object? owner, string xml) in drawingTexts)
+        {
+            if (ExactTextColor(xml, theme) is not { } exact) continue;
+            if (owner is AxisData axisText) { axisText.LabelColor = exact; axisText.ExactLabelColor = true; }
+            else if (owner is TextData textData) textData.Color = exact;
+            else if (owner is "legend") legendExactColor = exact;
+        }
         // Word 16 writes no TextPropsStream for the series axis (its .doc / .rtf of word-charts-seraxis-v1), only the TICK palette colour:
         // an axis without its own exact colour takes that of an axis whose record colour is the same
         foreach (AxisData plain in axes.Where(a => !a.ExactLabelColor))
@@ -650,8 +679,8 @@ internal static class ExcelBinaryChart
             return space;
         }
 
-        // a TextPropsStream's language (the first lang="...": c:lang in the .docx Word writes from the same chart) and exact
-        // colour, on the object it belongs to: an axis's tick labels, a text (title / label), the legend
+        // a TextPropsStream's language (the first lang="...": c:lang in the .docx Word writes from the same chart); its XML is kept
+        // with the object it belongs to (an axis's tick labels, a text - title / label -, the legend) for its exact colour
         void ApplyDrawingText(object? owner, byte[] data, bool rich)
         {
             string xml = Encoding.UTF8.GetString(data);
@@ -662,10 +691,17 @@ internal static class ExcelBinaryChart
                     && System.Text.RegularExpressions.Regex.IsMatch(xml.Substring(at + 6, close - at - 6), "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$"))
                     language = xml.Substring(at + 6, close - at - 6);   // a BCP 47 tag only (damaged bytes are dropped)
             }
-            if (ExactTextColor(xml) is not { } exact) return;
-            if (owner is AxisData axisText) { axisText.LabelColor = exact; axisText.ExactLabelColor = true; }
-            else if (owner is TextData textData) textData.Color = exact;
-            else if (owner is "legend") legendExactColor = exact;
+            drawingTexts.Add((owner, xml));
+        }
+
+        void FinishPackage()
+        {
+            if (ThemeOfPackage(package!.ToArray()) is { } found)
+            {
+                if (packageIsChart) chartTheme ??= found;
+                else workbookTheme ??= found;
+            }
+            package = null;
         }
 
         // a BIFF8 palette index (xistyle.cxx:158-167, xlstyle.cxx:78-88 default table, xlstyle.hxx:205-216 system indices):
@@ -716,17 +752,18 @@ internal static class ExcelBinaryChart
 
     /// <summary>
     /// The colour of the first run properties with a solid fill (a:defRPr / a:rPr a:solidFill) in an Office DrawingML text stream, as
-    /// RRGGBB; null when there is none or it needs the chart's theme. The theme travels zipped in a CrtMlFrt record and is not read:
-    /// scheme colours tx1 / bg1 (dk1 / lt1) are the window text and background, black and white in the themes Word writes, so those
-    /// resolve (with their lumMod / lumOff); any other scheme colour keeps the BIFF8 record's colour.
+    /// RRGGBB; null when there is none. Scheme colours resolve against the chart's theme; without one, tx1 / bg1 (dk1 / lt1) are
+    /// the window text and background, black and white in the themes Word writes, and any other scheme colour gives null (the
+    /// BIFF8 record's colour stays).
     /// </summary>
-    internal static string? ExactTextColor(string xml)
+    internal static string? ExactTextColor(string xml, DocxTheme? theme = null)
     {
         XElement root;
         try { root = DocxShapeGeometry.WithoutNamespaces(XElement.Parse(xml)); }
         catch (System.Xml.XmlException) { return null; }
         XElement? fill = root.Descendants().FirstOrDefault(e => e.Name.LocalName is "defRPr" or "rPr" && e.Element("solidFill") is not null)?.Element("solidFill");
         if (fill is null) return null;
+        if (theme is not null && DocxDrawingColor.Hex(fill, theme) is { } themed) return themed;
         foreach (XElement scheme in fill.Elements("schemeClr").ToList())
         {
             string? rgb = (string?)scheme.Attribute("val") switch { "tx1" or "dk1" => "000000", "bg1" or "lt1" => "FFFFFF", _ => null };
@@ -734,6 +771,41 @@ internal static class ExcelBinaryChart
             scheme.ReplaceWith(new XElement("srgbClr", new XAttribute("val", rgb), scheme.Elements()));
         }
         return DocxDrawingColor.Hex(fill, null);
+    }
+
+    /// <summary>
+    /// The theme in a zipped package (a Theme record's or a chart CrtMlFrt's): its theme/theme/themeOverride1.xml (a:themeOverride,
+    /// the colour scheme directly under the root) or theme/theme/theme1.xml, as a theme document; null when there is none. Read
+    /// from the local file headers in order (a CrtMlFrt can hold more than one package, so the central directory is not used);
+    /// stored or deflated entries ([MS-XLS] 2.4.326 / 2.4.70 hold an OPC package, ECMA-376 Part 2).
+    /// </summary>
+    internal static XDocument? ThemeOfPackage(byte[] data)
+    {
+        for (int at = 0; at + 30 <= data.Length; at++)
+        {
+            if (data[at] != 0x50 || data[at + 1] != 0x4B || data[at + 2] != 3 || data[at + 3] != 4) continue;
+            int method = BitConverter.ToUInt16(data, at + 8), nameLength = BitConverter.ToUInt16(data, at + 26), extraLength = BitConverter.ToUInt16(data, at + 28);
+            int start = at + 30 + nameLength + extraLength;
+            if (start > data.Length) break;
+            string name = Encoding.ASCII.GetString(data, at + 30, nameLength);
+            bool overrideTheme = name.EndsWith("themeOverride1.xml", StringComparison.OrdinalIgnoreCase);
+            if (!overrideTheme && !name.EndsWith("theme/theme1.xml", StringComparison.OrdinalIgnoreCase) || method is not (0 or 8)) continue;
+            // a stored entry ends at its own size (the next header follows); a deflated one at its final block
+            int size = method == 0 ? (int)Math.Min(BitConverter.ToUInt32(data, at + 18), (uint)(data.Length - start)) : data.Length - start;
+            try
+            {
+                XDocument document;
+                using (var raw = new MemoryStream(data, start, size, writable: false))
+                using (Stream content = method == 8 ? new System.IO.Compression.DeflateStream(raw, System.IO.Compression.CompressionMode.Decompress) : raw)
+                    document = XDocument.Load(content);
+                if (!overrideTheme) return document;
+                // an override holds the scheme under its root: wrapped as a theme's themeElements for DocxTheme
+                XNamespace a = DocxTheme.A;
+                return document.Root?.Element(a + "clrScheme") is { } scheme ? new XDocument(new XElement(a + "theme", new XElement(a + "themeElements", scheme))) : null;
+            }
+            catch (Exception exception) when (exception is System.Xml.XmlException or InvalidDataException or IOException) { }
+        }
+        return null;
     }
 
     /// <summary>fillColor (0x0181) and lineColor (0x01C0) of an OfficeArtFOPT ([MS-ODRAW] 2.2.9; LibreOffice reads the record through its DFF importer, xichart.cxx:540-560); RGB only when the colour is not a scheme / system index.</summary>

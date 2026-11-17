@@ -2969,6 +2969,24 @@ esult preview}}; objdata = [MS-OLEDS] 2.2.4 header + the same compound file. Wor
   Word writes no TextPropsStream for the series axis: it takes the exact colour of an axis with the same TICK colour.
   LibreOffice reads none of these records. Series fills were already exact (CHESCHERFORMAT).
 
+## Charts: theme colours in .doc / RTF, series names fitted in right-angled scenes (2026-11-17)
+
+- Theme: Word draws a chart's scheme colours from the document theme. Its .doc / .rtf keep that theme twice: the workbook's
+  Theme record (0x0896: FrtHeader 12, dwThemeVersion 4, a zipped theme package, continued in ContinueFrt12; [MS-XLS] 2.4.326)
+  holds Office's DEFAULT theme, while a CrtMlFrt record (0x089E, continued in CrtMlFrtContinue 0x089F, 2.4.70 / 2.4.71) in the
+  chart substream holds a zipped package with theme/theme/themeOverride1.xml - the document's colours (word-charts-theme-text-v1:
+  accents 1F8A70 / 9C27B0 / C2185B / 3949AB / E65100, dk2 5D4037). The same CrtMlFrt holds a second package (chartLegacyPb.xml), so
+  the entries are found by their local file headers, not the central directory. Text streams are coloured after the record pass
+  against override, else workbook theme: all six texts match Word's PDF in .doc and .rtf (accent2 lumMod 75 % = 751D84 etc.).
+- Right-angled scenes with a shown series axis: Word fits the scene with its names. Width-limited: the scene narrows until the
+  farthest-reaching name ends 7.2 pt inside the plot edge; height-limited: scene and names are centred together. The fixed room
+  (widest name + 5.75 pt) stays for perspective scenes. word-charts-right-angled-v1 R 20 30 S names 8-10 -> 3 pt; seraxis medians
+  .docx 1.09 -> 0.53, .doc/.rtf 1.6 -> 0.7 pt. Probes at rotX 25-30 / rotY 45: both rules within 1 pt of each other in total
+  error, because the base scene there is already 3-5 pt narrower in Word with no series axis (R 30 20) - that model gap is
+  deferred (UNSUPPORTED).
+- net48: the library builds on origin master (529873b's NetFrameworkCompilerShims covers Queue.TryDequeue; DocxRubyText no longer
+  uses Math.Clamp).
+
 ## Vertical cell text, RTF border details and groups, ODT drop caps over spans (2026-11-16; index formats RTF 22, ODT 18)
 
 - Cell text direction in every format goes through the .docx mapping (`DocxTableFormatting.TextDirectionCss`): .doc reads

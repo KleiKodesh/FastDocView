@@ -242,6 +242,27 @@ public static class BinaryChartsFidelityTest
             TestReport.Check(TextIn(colours3D, "Col3D Colors", "C0392B") && Regex.Matches(colours3D, "<text[^>]*fill=\"#1E7A6B\"[^>]*>(North|South|West)<").Count == 3 && TextIn(colours3D, "Q1", "1E7A6B"),
                              extension + ": 3-D title, category and series axis labels in Word's exact colours");
             TestReport.Check(Regex.IsMatch(colours, "fill=\"#12AB9C\"") && Regex.IsMatch(colours, "fill=\"#5B2C83\""), extension + ": series fills in Word's exact colours");
+            // word-charts-right-angled-v1 (scripts/make-word-charts-right-theme-v1.py): right-angled scene with the names fitted beside it
+            string rightAngled = Path.Combine(folder, "word-charts-right-angled-v1." + extension);
+            if (File.Exists(rightAngled))
+            {
+                List<string> right = Render(rightAngled);
+                bool Name(string text, double x, double y) => ChartTexts(right, "R 20 30 S").Any(t => t.Text == text && t.Anchor == "start" && Math.Abs(t.X - x) <= 4 && Math.Abs(t.Y - y) <= 3);
+                TestReport.Check(Name("North", 101.2, 164.5) && Name("West", 166.2, 120.1), extension + ": right-angled 3-D area (rotX 20, rotY 30): the scene fitted with the series names as Word does (within 4 pt)");
+            }
+            // word-charts-theme-text-v1: chart text in theme colours under a document theme with non-default accents
+            string themed = Path.Combine(folder, "word-charts-theme-text-v1." + extension);
+            TestReport.Check(File.Exists(themed), "fixture exists: theme text " + extension);
+            if (File.Exists(themed))
+            {
+                string all = string.Concat(Render(themed));
+                string flat = Regex.Match(all, "<svg class=\"word-chart\"(?:(?!</svg>).)*>Theme Text<.*?</svg>", RegexOptions.Singleline).Value;
+                string deep = Regex.Match(all, "<svg class=\"word-chart\"(?:(?!</svg>).)*>Theme Text 3D<.*?</svg>", RegexOptions.Singleline).Value;
+                TestReport.Check(TextIn(flat, "Theme Text", "E65100") && TextIn(flat, "Q1", "751D84") && TextIn(flat, "3", "751D84") && TextIn(flat, "North", "58D9BA"),
+                                 extension + ": title, axis and legend text in theme colours (accent6, accent2 75 %, accent1 60 / 40 %) of the chart's own theme");
+                TestReport.Check(TextIn(deep, "Theme Text 3D", "5D4037") && TextIn(deep, "Q1", "1D2556") && Regex.Matches(deep, "<text[^>]*fill=\"#1D2556\"[^>]*>(North|South|West)<").Count == 3 && Regex.Matches(deep, "<text[^>]*fill=\"#C2185B\"[^>]*>(North|South|West)<").Count == 3,
+                                 extension + ": 3-D title (tx2), axis and series axis labels (accent5 50 %) and legend (accent4) in theme colours");
+            }
         }
     }
 

@@ -932,10 +932,16 @@ internal sealed partial class DocxChart
             {
                 left = Math.Min(right - 1, left + 2.8);
                 right = Math.Max(left + 1, right - (MidCategory() && categoryAxis is not { NoLabels: true } ? 2.35 : 7.15));
-                // a shown series axis (c:serAx): Word keeps the series names' room on the right (its PDF of word-charts-3d-rows-v1's
-                // Line3D SerAx: plot 34.3 pt narrower); the names are drawn by Draw3DFrame
+                // a shown series axis (c:serAx), its names drawn by Draw3DFrame beside the rows: with right-angled axes Word narrows the
+                // scene until the farthest-reaching name ends 7.2 pt inside the plot's right edge (its PDFs of word-charts-seraxis-v1 and
+                // word-charts-right-angled-v1, rotX 15..25, rotY 20..35: scene within 1.5 pt; the room depends on how far the depth
+                // carries the back rows to the right); with perspective it keeps the widest name + 5.75 pt (word-charts-3d-rows-v1's
+                // Line3D SerAx: plot 34.3 pt narrower; fitting the names to the edge there made the scene 20 pt too wide)
                 if (SeriesAxis() is { } rowsSeriesAxis)
-                    right = Math.Max(left + 1, right - _groups[0].Series.Max(x => TextWidth(x.Name ?? "", rowsSeriesAxis.LabelSize)) - SeriesAxisGap);
+                {
+                    if ((_view3D ?? new View3D()).RightAngled) (left, right) = SeriesAxisFit(categoryCount, left, top, right, bottom, rowsSeriesAxis);
+                    else right = Math.Max(left + 1, right - _groups[0].Series.Max(x => TextWidth(x.Name ?? "", rowsSeriesAxis.LabelSize)) - SeriesAxisGap);
+                }
             }
             if (_groups[0].Kind == Kind.Bar)
                 Draw3DColumns(svg, categoryCount, false, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { NoLabels: true }, textColor, gridColor, plotFill, labelSize);

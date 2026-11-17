@@ -1,6 +1,7 @@
-# Opens test-data/word-charts-binary/word-charts-seraxis-v1.docx in Word 16 (hidden, no alerts)
+# Opens test-data/word-charts-binary/word-charts-seraxis-v1, word-charts-right-angled-v1 and word-charts-theme-text-v1 (.docx) in Word 16 (hidden, no alerts; -Names picks some)
 # and saves it as PDF (chart text stays text), .doc and .rtf. No chart is inserted or edited, so Excel is never driven.
 # Word is quit in finally; only the Word process this script started is stopped.
+param([string[]]$Names = @('word-charts-seraxis-v1', 'word-charts-right-angled-v1', 'word-charts-theme-text-v1'))
 $ErrorActionPreference = 'Stop'
 $folder = (Resolve-Path (Join-Path $PSScriptRoot '..\test-data\word-charts-binary')).Path
 $before = @(Get-Process WINWORD -ErrorAction SilentlyContinue | ForEach-Object Id)
@@ -11,7 +12,7 @@ try {
     $word.Visible = $false
     $word.DisplayAlerts = 0
     $word.Options.DoNotPromptForConvert = $true
-    foreach ($name in @('word-charts-seraxis-v1')) {
+    foreach ($name in $Names) {
         $base = Join-Path $folder $name
         $doc = $word.Documents.Open($base + '.docx', $false, $true, $false)
         # the PDF first: once saved as .doc / .rtf the charts are OLE pictures and print their text as outlines

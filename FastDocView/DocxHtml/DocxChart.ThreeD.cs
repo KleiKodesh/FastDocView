@@ -241,6 +241,55 @@ internal sealed partial class DocxChart
     // Word 16's PDFs of word-charts-seraxis-v1 (right-angled and perspective columns and areas): the names start 10 pt right of the floor edge
     private const double SeriesLabelGap = 10;
 
+    /// <summary>
+    /// The plot's left and right edges for a right-angled 3-D line / area / standard column scene with a shown series axis. Word fits
+    /// the scene together with the series names beside its rows: when the width limits, the scene narrows until the farthest-reaching
+    /// name ends <see cref="SeriesAxisMargin"/> inside the plot's right edge (a few fixed-point steps; the scene scales uniformly);
+    /// when the height limits, the scene and its names are centred together across the plot.
+    /// </summary>
+    private (double Left, double Right) SeriesAxisFit(int categoryCount, double left, double top, double right, double bottom, Axis seriesAxis)
+    {
+        View3D view = _view3D ?? new View3D();
+        int rows = _groups[0].Series.Count;
+        if (rows == 0) return (left, right);
+        double rowDepth = view.DepthPercent / 100 / Math.Max(1, categoryCount), depth = rowDepth * rows;
+        double Reach(Projection projection)
+        {
+            double reach = double.MinValue;
+            for (int s = 0; s < rows; s++)
+                reach = Math.Max(reach, projection.Point(1, 0, (s + 0.5) * rowDepth).X + SeriesLabelGap + TextWidth(_groups[0].Series[s].Name ?? "", seriesAxis.LabelSize));
+            return reach + SeriesAxisMargin;
+        }
+        double edge = right;
+        for (int step = 0; step < 8; step++)
+        {
+            double h = SceneHeight(view, categoryCount, rows, true, left, top, edge, bottom);
+            var trial = new Projection(view, 1, h, depth, true);
+            trial.Fit(1, h, depth, left, top, edge, bottom);
+            double next = Math.Max(left + 1, Math.Min(right, edge - (Reach(trial) - right)));
+            if (Math.Abs(next - edge) < 0.01) { edge = next; break; }
+            edge = next;
+        }
+        double height = SceneHeight(view, categoryCount, rows, true, left, top, edge, bottom);
+        var projection = new Projection(view, 1, height, depth, true);
+        projection.Fit(1, height, depth, left, top, edge, bottom);
+        double sceneLeft = double.MaxValue, sceneRight = double.MinValue;
+        foreach (double x in new[] { 0.0, 1.0 })
+            foreach (double y in new[] { 0.0, height })
+                foreach (double z in new[] { 0.0, depth })
+                {
+                    double px = projection.Point(x, y, z).X;
+                    sceneLeft = Math.Min(sceneLeft, px); sceneRight = Math.Max(sceneRight, px);
+                }
+        if (sceneRight - sceneLeft >= edge - left - 0.05) return (left, edge);   // the width limits
+        // the height limits: the scene and its names centred together between the plot's edges
+        double overhang = Reach(projection) - sceneRight, width = sceneRight - sceneLeft;
+        double shift = left + Math.Max(0, (right - left - width - overhang) / 2) - sceneLeft;   // the same rectangle moved: same scene
+        return (left + shift, edge + shift);
+    }
+
+    private const double SeriesAxisMargin = 7.2;   // Word 16 PDFs, word-charts-seraxis-v1 / word-charts-right-angled-v1 (right-angled)
+
     /// <summary>The shown series axis (c:serAx not deleted, with tick labels), or null.</summary>
     private Axis? SeriesAxis() => _axes.Values.FirstOrDefault(a => a.IsSeries && !a.Deleted && !a.NoLabels);
 
