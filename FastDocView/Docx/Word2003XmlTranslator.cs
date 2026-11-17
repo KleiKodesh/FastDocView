@@ -149,6 +149,9 @@ internal static class Word2003XmlTranslator
                     .Append(Escape(target)).Append("\" TargetMode=\"External\"/>");
         document.Append(imageRelationships).Append("</Relationships>");
         WriteText(zip, "word/_rels/document.xml.rels", document.ToString());
+        if (header.Lists is not null)      // picture bullets (w:listPicBullet) name their pictures through numbering.xml's own relationships
+            WriteText(zip, "word/_rels/numbering.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">"
+                                                         + imageRelationships + "</Relationships>");
         foreach (string notes in new[] { state.FootnoteCount > 0 ? "footnotes" : null, state.EndnoteCount > 0 ? "endnotes" : null })
             if (notes is not null)
                 WriteText(zip, "word/_rels/" + notes + ".xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">"
@@ -576,7 +579,7 @@ internal static class Word2003XmlTranslator
             switch (local)
             {
                 case "binData": reader.Skip(); return;                         // written into word/media by its own pass
-                case "listPicture": reader.Skip(); return;                     // picture bullets' pictures (not translated)
+                case "listPicture": reader.Skip(); return;                     // not a .docx element (picture bullets come from w:listPicBullet)
                 case "fonts": reader.Skip(); return;
                 case "pict":
                 case "object":
@@ -621,6 +624,7 @@ internal static class Word2003XmlTranslator
                 {
                     ("listDef", "listDefId") => "abstractNumId",
                     ("list", "ilfo") => "numId",
+                    ("listPicBullet", "listPicBulletId") => "numPicBulletId",
                     (_, "fareast") => "eastAsia",
                     _ => CamelCase(local),
                 };
@@ -646,6 +650,7 @@ internal static class Word2003XmlTranslator
         "plt" => "multiLevelType",
         "nfc" => "numFmt",
         "listStyleLink" => "numStyleLink",
+        "listPicBullet" => "numPicBullet",
         "vmerge" => "vMerge",
         "hmerge" => "hMerge",
         "docPr" => "settings",

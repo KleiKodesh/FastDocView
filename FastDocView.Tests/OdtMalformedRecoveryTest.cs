@@ -40,6 +40,7 @@ public static class OdtMalformedRecoveryTest
     {
         TestReport.Step("ODT malformed XML: blocks before the first error kept, the rest a placeholder (.odt and .fodt)");
         string folder = Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TestOutput", "odt-malformed")).FullName;
+        UnreadableRestBlock(folder);
         foreach ((string name, string body, string styles, int kept, int expectedBlocks, bool placeholder, bool flatFails) in Cases)
         foreach (bool isFlat in new[] { false, true })
         {
@@ -76,6 +77,43 @@ public static class OdtMalformedRecoveryTest
                     TestReport.Check(false, $"{label}: opens - {exception.GetType().Name}: {exception.Message}");
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// The "could not be read" block after the last kept one, through every per-block path: windows that end on it, start on
+    /// it or lie past it, the search (it holds no text, the batch reaches the end), the plain text, the estimated length.
+    /// </summary>
+    private static void UnreadableRestBlock(string folder)
+    {
+        string path = Path.Combine(folder, "rest-block.odt");
+        WritePackage(path, Paragraphs(3) + "<text:p>Paragraph 4 is cut", GoodStyles);
+        foreach ((string mode, WordIndexPolicy policy) in new[]
+        {
+            ("in memory", new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory, CacheDirectory = Path.Combine(folder, "rest-cache") }),
+            ("sidecar", new WordIndexPolicy { ForcedMode = WordIndexMode.Sidecar, CacheDirectory = Path.Combine(folder, "rest-cache") }),
+            ("on demand", new WordIndexPolicy { ForcedMode = WordIndexMode.Sidecar, CacheDirectory = Path.Combine(folder, "rest-cache-demand-" + Guid.NewGuid().ToString("N")), IndexesOnDemand = true }),
+        })
+        {
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+            int count = document.ScanAhead(1000);
+            bool IsRest(WordDocumentBlockHtml block) => block.BlockIndex == 3 && block.Html == WordDocumentBlockRenderGuard.PlaceholderHtml;
+            var last = document.RenderBlocks(count - 1, 1);
+            var ending = document.RenderBlocks(1, 3);
+            var straddling = document.RenderBlocks(2, 10);
+            var past = document.RenderBlocks(count, 5);
+            TestReport.Check(count == 4 && document.BlockCount == 4 && document.IsIndexComplete, $"rest block ({mode}): 3 blocks + the rest = {count}");
+            TestReport.Check(last.Count == 1 && IsRest(last[0]), $"rest block ({mode}): a window of just the last block is the placeholder");
+            TestReport.Check(ending.Count == 3 && IsRest(ending[2]) && ending[0].Html.Contains("Paragraph 2"), $"rest block ({mode}): a window ending on it ({ending.Count} blocks)");
+            TestReport.Check(straddling.Count == 2 && IsRest(straddling[1]), $"rest block ({mode}): a window running past the end stops after it ({straddling.Count})");
+            TestReport.Check(past.Count == 0, $"rest block ({mode}): a window past it is empty ({past.Count})");
+            WordDocumentSearchBatch all = document.Search("Paragraph", WordDocumentSearchOptions.Default, 0, 100);
+            WordDocumentSearchBatch onRest = document.Search("Paragraph", WordDocumentSearchOptions.Default, 3, 100);
+            TestReport.Check(all.HitBlocks.SequenceEqual([0, 1, 2]) && all.ReachedEnd && onRest.HitBlocks.Length == 0 && onRest.ReachedEnd,
+                             $"rest block ({mode}): search finds the 3 kept paragraphs and reaches the end, also from the rest block (hits {string.Join(",", all.HitBlocks)}; end {all.ReachedEnd}/{onRest.ReachedEnd})");
+            string text = WordDocumentText.GetText(document);
+            TestReport.Check(text.Contains("Paragraph 3") && !text.Contains("could not be read") && !text.Contains("is cut"), $"rest block ({mode}): plain text holds the kept paragraphs only");
+            TestReport.Check(document.EstimatedTextLength(3) == 0, $"rest block ({mode}): no text length estimated for it");
         }
     }
 

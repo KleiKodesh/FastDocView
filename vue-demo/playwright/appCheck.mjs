@@ -86,7 +86,17 @@ if (complete.footnoteCount + complete.endnoteCount > 0) {
     const reference = await page.$('.fast-doc-view-content .note-reference[data-note-kind]')
     const referenceLabel = ((await reference.textContent()) ?? '').trim()
     await reference.click()
-    await page.waitForTimeout(900)
+    // wait for the page's own outcome - the pane open and the reference's note landed at its top - never a fixed delay:
+    // (a reference clicked before the note list caught up once found no note - the page now waits for it, useFastDocViewNotes)
+    await page.waitForFunction(label => {
+      const viewport = document.querySelector('.fast-doc-view-notes-pane .notes-scroller')
+      if (!window.__fastDocViewTest.state().notesPaneOpen || !viewport) return false
+      const top = viewport.getBoundingClientRect().top
+      return [...viewport.querySelectorAll('.fast-doc-view-note')].some(row => {
+        const mark = row.querySelector('.note-label') ?? row.querySelector('.note-mark')
+        return (mark?.textContent ?? '').trim() === label && Math.abs(row.getBoundingClientRect().top - top) <= 12
+      })
+    }, referenceLabel, { timeout: 60000 }).catch(() => {})
     const landed = await page.evaluate(() => {
       const viewport = document.querySelector('.fast-doc-view-notes-pane .notes-scroller')
       if (!viewport) return null

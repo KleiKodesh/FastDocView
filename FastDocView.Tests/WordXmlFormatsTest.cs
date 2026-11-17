@@ -75,6 +75,20 @@ public static class WordXmlFormatsTest
                                  "Word 2003 XML: the picture decoded from its w:binData (150 pt wide)");
                 TestReport.Check(Regex.Matches(html, "list-style|word-list-label|•||·").Count > 0, "Word 2003 XML: the bullet item has a label");
             }
+            // a picture bullet (Word: w:listPicBullet in 2003 XML, w:numPicBullet in .docx): the same picture label as Word's .docx
+            string bulletDocx = Path.Combine(folder, "word-xml-picture-bullet-v1.docx"), bullet2003 = Path.Combine(folder, "word-xml-picture-bullet-v1-2003.xml");
+            if (File.Exists(bulletDocx) && File.Exists(bullet2003))
+            {
+                var docxBullet = Render(bulletDocx, inMemory); var xmlBullet = Render(bullet2003, inMemory);
+                int Pictures(string html) => Regex.Matches(html, "<img").Count;
+                TestReport.Check(Pictures(docxBullet.html) == 2 && Pictures(xmlBullet.html) == 2 && Normalise(Text(xmlBullet.html)) == Normalise(Text(docxBullet.html)),
+                                 $"Word 2003 XML picture bullet: two picture labels like the .docx ({Pictures(xmlBullet.html)} vs {Pictures(docxBullet.html)})");
+                using IWordWindowedDocument bulletDocument = WordWindowedDocumentOpener.Open(bullet2003, inMemory);
+                string bulletHtml = bulletDocument.RenderBlocks(0, 1)[0].Html;
+                string bulletId = Regex.Match(bulletHtml, "word-picture-bullet[^>]*data-word-picture=\"([^\"]*)\"").Groups[1].Value;
+                TestReport.Check(bulletId.Length > 0 && bulletDocument.ReadPicture(bulletId) is { } bulletPicture && FastDocView.Html.WordPictureSize.Read(bulletPicture.Bytes) is not null, $"Word 2003 XML picture bullet: the label is a picture -- {Shorten(bulletHtml.Substring(Math.Max(0, bulletHtml.IndexOf("list-marker"))))}");
+            }
+
             // Apache Tika's Word 2003 XML saved under a .doc name (a table inside a paragraph): detected by content, opens with its table
             string tika = Path.Combine(folder, "..", "apache-tika", "testWORDML_tableInsideParagraph.doc");
             if (File.Exists(tika))

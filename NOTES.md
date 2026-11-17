@@ -1011,11 +1011,15 @@ never the extension (Tika's Word 2003 sample is named .doc). LibreOffice reads W
   bookmarks -> w:bookmarkStart/End, insertions unwrapped, deletions / comments / formatting changes dropped; w:binData
   "wordml://..." -> word/media + v:imagedata r:id; hyphenated names to camel case (b-cs, first-line, line-rule, h-ansi),
   fareast -> eastAsia, vmerge -> vMerge, on/off -> 1/0; w:defaultFonts -> styles docDefaults; xml:space="preserve" on
-  every w:t (the 2003 root's attribute is not inherited by a separate part).
+  every w:t (the 2003 root's attribute is not inherited by a separate part); picture bullets: w:listPicBullet /
+  w:listPicBulletId -> w:numPicBullet / w:numPicBulletId (w:lvlPicBulletId keeps its name), its w:pict's w:binData ->
+  word/media with word/_rels/numbering.xml.rels naming the pictures (LibreOffice wordml2ooo_list.xsl:255-267 reads the
+  same w:listPicBullet/w:pict/w:binData and v:shape style as a list-level-style-image).
 - Check (`--word-xml`): test-data/word-xml (made by Word: make-word-xml-fixtures.ps1, SaveAs2 19 / 11, PDF by
   ExportAsFixedFormat). The Flat OPC file renders exactly as the .docx (in memory, sidecar, reopen, on demand); the 2003
   file has the .docx's text, formatting, list labels, notes, table, link and picture (Word's PDF text, pdftotext, has the
-  same lines). Remaining differences against the .docx come from what 2003 XML cannot hold: theme colours (a literal
+  same lines); the picture-bullet fixture (make-picture-bullet-fixture.ps1) draws the same two picture labels as its
+  .docx. Remaining differences against the .docx come from what 2003 XML cannot hold: theme colours (a literal
   colour instead), Word 2010 ligatures, the picture's DrawingML extent (150 pt vs 149.98 pt).
 
 ## Word fidelity pass (.docx, branch work/oxpt-ideas, 2026-10-28/29)

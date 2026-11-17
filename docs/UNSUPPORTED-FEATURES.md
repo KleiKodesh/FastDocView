@@ -135,7 +135,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Encrypted files | docx, doc, odt | Rejected with a clear "encrypted" error (no password support) | won't do |
 | Word 6.0 / 95, Word for Windows 1.x / 2.0 | doc | Rejected with a clear message; Word 6/95 is feasible (no Microsoft spec) | deferred |
-| Word 2003 XML: picture bullets (w:listPicture), embedded fonts, w:docPr note separators | docx | Not translated (the bullet falls back to its text); separators do not change the flow view | deferred |
+| Word 2003 XML: embedded fonts, w:docPr note separators | docx | Not translated; separators do not change the flow view | deferred |
 | Flat OPC in UTF-16 or a legacy code page | docx | Rejected with a clear message: Word writes it in UTF-8 and its parts are read in place as UTF-8 (Word 2003 XML is translated, so any encoding works) | won't do |
 | HTML files and HTML saved as .doc | html | Deliberately out of scope (FastDocView has no HTML support) | won't do |
 | Malformed XML recovery before office:text in a .fodt | fodt | The file's first fatal error comes before the body, so nothing is left to keep: a clear "not well-formed" error, as LibreOffice's parser stops there too | won't do |
