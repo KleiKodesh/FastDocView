@@ -2265,6 +2265,12 @@ both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Ch
   (a backslash-comma still splits). `WordFieldRuby` follows Word, not LibreOffice (which cuts at the first / last ")"). An unquoted
   multi-word Font: option runs to the next switch (Word draws the guide in it; LibreOffice keeps one word). Not handled: in the
   guide-comma case Word draws the guide's second piece in the guide font on the base line; it is drawn in the base font here.
+- Ruby, the rest (2026-11-17): (a) .doc / RTF: the guide's rest after a comma, up to its first ")", is drawn on the base line in
+  the guide's font and size (`WordFieldRuby`, ruby-docx-commas-v1.doc.pdf). (b) .docx: Word prints its own w:ruby through EQ-like
+  rules too, a little differently: guide and base each end at their first ")", and a comma in the guide puts "rest,rest" on the
+  base line in place of the base, the rests in the guide's runs and the comma in the base's (`DocxRubyText`, a per-ruby copy of
+  the two small elements; Word 16 PDFs of ruby-escapes-v1.docx and ruby-docx-commas-v1.docx). LibreOffice keeps the text as
+  written (DomainMapper.cxx:4587). Check: `RubyAndBulletFontFidelityTest` (54 ruby cases).
 - .doc (render time, no index change): sprmCPbiGrf 0x4888 bit 0 + sprmCPbiIBullet 0x6887 (4 bytes) in the LVL grpprlChpx (ww8par3.cxx:808-819,
   :839-845; writer wrtw8num.cxx:355-358) name picture N of the paragraph holding the "_PictureBullets" bookmark, counted from the bookmark start
   (ww8par.cxx:5302-5348); that paragraph's runs are read once per renderer, the id is the PICF offset as for any inline picture. Hidden (vanish)

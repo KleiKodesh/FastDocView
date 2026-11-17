@@ -884,8 +884,11 @@ public sealed class DocxBlockHtmlRenderer
                     // w:ruby (phonetic guide): the base text with its guide above it - HTML ruby; the guide is shown, not searched
                     // (search feeds the base only, as the reference reader and the byte scanner skip w:rt)
                     html.Append("<ruby>");
-                    if (child.Element(W + "rubyBase") is { } rubyBase) yield return new(RenderInlineChildren(rubyBase, html, formatting));
-                    if (child.Element(W + "rt") is { } rubyText)
+                    XElement? rubyBase = child.Element(W + "rubyBase"), rubyText = child.Element(W + "rt");
+                    // brackets and commas change the text as Word prints it (DocxRubyText)
+                    if (rubyBase is not null && rubyText is not null) (rubyBase, rubyText) = DocxRubyText.AsWordPrints(rubyBase, rubyText);
+                    if (rubyBase is not null) yield return new(RenderInlineChildren(rubyBase, html, formatting));
+                    if (rubyText is not null)
                     {
                         // w:rubyAlign as .doc / RTF's EQ jc (Fields.WordFieldRuby: the same markup for all three)
                         string align = Fields.WordFieldRuby.AlignCss((string?)child.Element(W + "rubyPr")?.Element(W + "rubyAlign")?.Attribute(W + "val"));

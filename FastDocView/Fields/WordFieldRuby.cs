@@ -76,12 +76,25 @@ public static class WordFieldRuby
         string guide = part.Substring(open + 1, comma - open - 1).Replace(")", "");
         string baseText = part.Substring(comma + 1, last - comma - 1).Replace(")", "");
         if (guide.Length == 0 || baseText.Length == 0) return null;
+        // a comma inside the guide (before its first ")"): the guide's rest, up to that ")", is drawn on the base line in the
+        // guide's font and size (ruby-docx-commas-v1.doc.pdf: guide "g,1,2" over base "base" prints "1,2" in Courier New, then
+        // ",base" in the base font)
+        int firstClose = part.IndexOf(')', open + 1);
+        string guideRest = "";
+        if (firstClose > comma)
+        {
+            guideRest = part.Substring(comma + 1, firstClose - comma - 1);
+            baseText = part.Substring(firstClose, last - firstClose).Replace(")", "");
+            if (guideRest.Length + baseText.Length == 0) return null;
+        }
 
-        var style = new StringBuilder();
-        if (halfPoints > 0) style.Append("font-size:").Append((halfPoints / 2m).ToString(CultureInfo.InvariantCulture)).Append("pt;");
-        if (fontName.Length > 0) style.Append("font-family:'").Append(WordHtmlText.CssFontName(fontName)).Append("';");
-        style.Append(AlignCss(justification));
-        return "<ruby>" + WordHtmlText.Encode(baseText) + "<rt" + (style.Length > 0 ? " style=\"" + style + "\"" : "") + ">"
+        var font = new StringBuilder();
+        if (halfPoints > 0) font.Append("font-size:").Append((halfPoints / 2m).ToString(CultureInfo.InvariantCulture)).Append("pt;");
+        if (fontName.Length > 0) font.Append("font-family:'").Append(WordHtmlText.CssFontName(fontName)).Append("';");
+        string style = font + AlignCss(justification);
+        string baseHtml = (guideRest.Length == 0 ? "" : font.Length > 0 ? "<span style=\"" + font + "\">" + WordHtmlText.Encode(guideRest) + "</span>" : WordHtmlText.Encode(guideRest))
+                          + WordHtmlText.Encode(baseText);
+        return "<ruby>" + baseHtml + "<rt" + (style.Length > 0 ? " style=\"" + style + "\"" : "") + ">"
                + WordHtmlText.Encode(guide) + "</rt></ruby>";
     }
 
