@@ -62,7 +62,7 @@ internal static class DocxDrawingStripper
     /// <summary>
     /// A DrawingML picture's layout, kept as one small element: wp:inline / wp:anchor (ECMA-376 20.4.2.8 / 20.4.2.3) with
     /// its dist*, behindDoc, wp:extent (20.4.2.7), the wrap type (20.4.2.15-20.4.2.18: wrapSquare / wrapTight / wrapThrough /
-    /// wrapTopAndBottom / wrapNone) and its wrapText, wp:positionH (20.4.2.10: relativeFrom, align or posOffset) and the
+    /// wrapTopAndBottom / wrapNone) and its wrapText, wp:positionH (20.4.2.10: relativeFrom, align or posOffset), wp:positionV (20.4.2.11: as relativeFromV, alignV, posOffsetV) and the
     /// first a:blip r:embed (20.1.8.13). Only the drawing's first wp:inline / wp:anchor is read; the prefixes are the ones
     /// Word writes (wp:, a:, r:), as w: is for the drawing itself. The picture bytes are not here: the renderer reads them
     /// from the package by the relationship.
@@ -97,15 +97,17 @@ internal static class DocxDrawingStripper
                     if (wrap is "wrapTight" or "wrapThrough") AppendWrapPolygon(layout, drawing, at, wrap);
                     break;
                 }
-            if (IndexOfOpenTag(drawing, frame, "wp:positionH") is var horizontal and >= 0)
+            // wp:positionH (20.4.2.10) and wp:positionV (20.4.2.11: relativeFrom ST_RelFromV, align or posOffset, kept with a V suffix)
+            foreach ((string element, string suffix) in new[] { ("wp:positionH", ""), ("wp:positionV", "V") })
             {
-                Copy("relativeFrom", OpenTagAt(drawing, horizontal), "relativeFrom");
-                int end = drawing.Slice(horizontal).IndexOf("</wp:positionH>"u8);
-                ReadOnlySpan<byte> position = end < 0 ? default : drawing.Slice(horizontal, end);
-                foreach ((string element, string attribute) in new[] { ("wp:align", "align"), ("wp:posOffset", "posOffset") })
-                    if (IndexOfOpenTag(position, 0, element) is var at and >= 0 && position.Slice(at).IndexOf((byte)'>') is var open and >= 0
-                        && position.Slice(at + open + 1).IndexOf((byte)'<') is var length and >= 0)
-                        layout.Append(' ').Append(attribute).Append("=\"").Append(Encoding.UTF8.GetString(position.Slice(at + open + 1, length).ToArray()).Trim().Replace("\"", "&quot;")).Append('"');
+                if (IndexOfOpenTag(drawing, frame, element) is not (var at and >= 0)) continue;
+                Copy("relativeFrom" + suffix, OpenTagAt(drawing, at), "relativeFrom");
+                int end = drawing.Slice(at).IndexOf(Encoding.UTF8.GetBytes("</" + element + ">"));
+                ReadOnlySpan<byte> position = end < 0 ? default : drawing.Slice(at, end);
+                foreach ((string child, string attribute) in new[] { ("wp:align", "align"), ("wp:posOffset", "posOffset") })
+                    if (IndexOfOpenTag(position, 0, child) is var childAt and >= 0 && position.Slice(childAt).IndexOf((byte)'>') is var open and >= 0
+                        && position.Slice(childAt + open + 1).IndexOf((byte)'<') is var length and >= 0)
+                        layout.Append(' ').Append(attribute + suffix).Append("=\"").Append(Encoding.UTF8.GetString(position.Slice(childAt + open + 1, length).ToArray()).Trim().Replace("\"", "&quot;")).Append('"');
             }
         }
         if (IndexOfOpenTag(drawing, frame, "a:blip") is var blip and >= 0) Copy("embed", OpenTagAt(drawing, blip), "r:embed");

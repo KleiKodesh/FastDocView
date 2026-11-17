@@ -628,6 +628,11 @@ internal sealed class RtfParser
                 {
                     // \shpbxpage: \shpleft counts from the page edge (LibreOffice rtfdispatchflag.cxx:1229-1232); other shape keywords (\shpz, \shplid, ...) not drawn
                     if (name.SequenceEqual("shpbxpage"u8)) _shapes[_shapes.Count - 1].IsPageRelative = true;
+                    // \shpbymargin / \shpbypage / \shpbypara: what \shptop counts from (LibreOffice reads only \shpbypage, rtfdispatchflag.cxx:1234-1238, else the paragraph; RelOrientation
+                    // PAGE_PRINT_AREA / PAGE_FRAME / FRAME); a posrelv property read later wins
+                    else if (name.SequenceEqual("shpbymargin"u8)) _shapes[_shapes.Count - 1].VerticalRelation = 0;
+                    else if (name.SequenceEqual("shpbypage"u8)) _shapes[_shapes.Count - 1].VerticalRelation = 1;
+                    else if (name.SequenceEqual("shpbypara"u8)) _shapes[_shapes.Count - 1].VerticalRelation = 2;
                     return;
                 }
                 if (_sink.WantsUnhandledWords) _sink.UnhandledWord(name);

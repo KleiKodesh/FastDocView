@@ -2,7 +2,7 @@
 // test-data/word-shapes/floating-v1.doc / .rtf or floating-group-v1.* and check each marker's outer frame sits where Word
 // puts it in the page's own layout (left / right / centred in its block, or at its offset from the column), the text it
 // floats beside goes around it, each marker shows once, no console errors. DOM only, no screenshots.
-//   node playwright/floatingCheck.mjs <file> <marker>=<left|right|center|offset:N:W> [...]   (offset N pt for a frame W pt wide: zoom-free)
+//   node playwright/floatingCheck.mjs <file> <marker>=<left|right|center|offset:N:W|down:N:H> [...]   (offset N pt for a frame W pt wide, or N pt below its block's top for a frame H pt high: zoom-free)
 import { chromium } from 'playwright'
 
 const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? `http://localhost:${process.env.FASTDOCVIEW_DEMO_PORT ?? 5189}/`
@@ -35,7 +35,7 @@ for (const [marker, expected] of markers) {
       if (!frame) return null
       const block = frame.parentElement.closest('p, div, li') ?? frame.parentElement
       const f = frame.getBoundingClientRect(), b = block.getBoundingClientRect()
-      return { width: f.width, left: f.left - b.left, right: b.right - f.right, float: getComputedStyle(frame).float, display: getComputedStyle(frame).display }
+      return { width: f.width, height: f.height, top: f.top - b.top, left: f.left - b.left, right: b.right - f.right, float: getComputedStyle(frame).float, display: getComputedStyle(frame).display }
     }
     return null
   }, marker)
@@ -44,8 +44,9 @@ for (const [marker, expected] of markers) {
   const ok = expected === 'left' ? near(placed.left, 0)
     : expected === 'right' ? near(placed.right, 0)
     : expected === 'center' ? near(placed.left, placed.right)
+    : expected.startsWith('down') ? near(placed.top, Number(expected.split(':')[1]) * placed.height / Number(expected.split(':')[2]))
     : near(placed.left, Number(expected.split(':')[1]) * placed.width / Number(expected.split(':')[2]))
-  check(ok, `${marker}: ${expected} (frame ${Math.round(placed.left)} px from the block's left, ${Math.round(placed.right)} px from its right, float ${placed.float})`)
+  check(ok, `${marker}: ${expected} (frame ${Math.round(placed.left)} px from the block's left, ${Math.round(placed.right)} px from its right, ${Math.round(placed.top)} px below its top, float ${placed.float})`)
   const body = await page.evaluate(() => document.querySelector('.windowed-scroller-viewport')?.textContent ?? '')
   check(body.split(marker).length - 1 === 1, `"${marker}" shows once`)
 }

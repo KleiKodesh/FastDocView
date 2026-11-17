@@ -215,9 +215,11 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 | Floating pictures: square, tight, top-and-bottom wrap, offsets | yes | yes | yes | yes | n.a. | n.a. |
 | Contour wrap from the wrap polygon | yes | yes | yes | yes | n.a. | n.a. |
 | Two-sided wrap (floats flush to its nearer edge; contour as shape-outside) | yes (18) | yes (18) | yes (18) | yes (18) | n.a. | n.a. |
+| Vertical offset from the anchor's paragraph or line, alignment to the anchor's line (top / centre / bottom) | yes (18a) | yes (18a) | yes (18a) | no | n.a. | n.a. |
 | Cropping, negative crop (padding) included (19) | yes | yes | yes | yes | n.a. | n.a. |
 
 18. CSS cannot put text on both sides of one float, so the object floats flush to the nearer edge of its section's text width (page / right-margin offsets converted first) and wraps one side, as a contour where it has one.
+18a. The object moves down (or up) from where it is anchored by its top margin and the text wraps around it where it lands (DrawingML positionV paragraph / line, VML margin-top; .doc FSPA yaTop with by / posrelv 2-3, posv; RTF \shptop with \shpbypara / posrelv, posv). Aligned to a line: .docx against the line's box, .doc / RTF against its top edge, as Word 16 prints them. Page- and margin-relative positions wait for the paged view.
 19. a:srcRect and VML croptop..., OfficeArt cropFrom* (and the PICF crop fields), \piccrop*, fo:clip: the box keeps the shown size and hides what overflows; the whole picture inside is scaled and offset, as Word 16 draws it in its PDF.
 
 ## Shapes, WordArt, text boxes

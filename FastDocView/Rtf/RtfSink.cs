@@ -106,6 +106,10 @@ internal sealed class RtfShapePlacement
     public bool IsCharacterRelative;
     /// <summary>posh (0 = not given: placed at \shpleft).</summary>
     public int HorizontalPosition;
+    /// <summary>posv (0 = not given: placed at \shptop; 1 top, 2 centre, 3 bottom, 4 inside, 5 outside).</summary>
+    public int VerticalPosition;
+    /// <summary>What \shptop counts from: \shpby* or posrelv (0 margin, 1 page, 2 paragraph - the default, 3 line).</summary>
+    public int VerticalRelation = 2;
     /// <summary>dxWrapDistLeft, dyWrapDistTop, dxWrapDistRight, dyWrapDistBottom in EMU; left / right not given = Word's 9 pt
     /// (Word 16 leaves the default out of its RTF and reports 9 pt through COM - <see cref="DocBinary.DocBinaryDrawnShapes.DefaultWrapDistance"/>;
     /// LibreOffice's RTF import sets no default, rtfsdrimport.cxx:640-675).</summary>
@@ -215,6 +219,8 @@ internal sealed class RtfShapePlacement
         {
             case "posh": HorizontalPosition = (int)Math.Max(0, Math.Min(5, number)); break;
             case "posrelh": IsPageRelative = number == 1; IsCharacterRelative = number == 3; break;
+            case "posv": VerticalPosition = (int)Math.Max(0, Math.Min(5, number)); break;
+            case "posrelv": VerticalRelation = (int)Math.Max(0, Math.Min(3, number)); break;
             case "dxWrapDistLeft": WrapLeft = number; break;
             case "dyWrapDistTop": WrapTop = number; break;
             case "dxWrapDistRight": WrapRight = number; break;

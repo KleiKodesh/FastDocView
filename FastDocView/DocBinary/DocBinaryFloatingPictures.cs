@@ -72,7 +72,7 @@ internal sealed class DocBinaryFloatingPictures
         if (_pibBySpid is null) ReadDrawing();
         if (!_containerBySpid!.TryGetValue(fspa.spid, out var container)) return null;
         DocBinaryDrawing drawing = DocBinaryDrawnShapes.Read(_tableStream, container.start, container.end, container.isGroup, LayoutOf(fspa), _stories, this);
-        return drawing with { Layout = WithContour(drawing.Layout, fspa.flags, container, () => WordShapeHtml.Outlines(drawing.Shapes)) };
+        return drawing with { Layout = WithContour(drawing.Layout, fspa.flags, fspa.yaTop, container, () => WordShapeHtml.Outlines(drawing.Shapes)) };
     }
 
     /// <summary>The CPs that anchor a shape (main text or header story CPs, as this table was made for).</summary>
@@ -123,7 +123,7 @@ internal sealed class DocBinaryFloatingPictures
     /// (<see cref="DocBinaryDrawnShapes.WrapPolygon"/>, ww8graf.cxx:2067-2128 scales it by the 21600 space), else
     /// <paramref name="outline"/> (a drawing's own shapes; a picture: its box, the layout as it is).
     /// </summary>
-    private WordPictureLayout WithContour(WordPictureLayout layout, int flags, (long start, long end, bool isGroup) container, Func<IReadOnlyList<IReadOnlyList<(double X, double Y)>>?>? outline)
+    private WordPictureLayout WithContour(WordPictureLayout layout, int flags, int yaTop, (long start, long end, bool isGroup) container, Func<IReadOnlyList<IReadOnlyList<(double X, double Y)>>?>? outline)
     {
         DocBinaryShapePlacement placement = DocBinaryDrawnShapes.Placement(_tableStream, container.start, container.end, container.isGroup);
         // the gap to the text (ww8graf.cxx:2050-2062 LR / UL space) and what the offset counts from: posrelh over the FSPA's bx
@@ -139,6 +139,14 @@ internal sealed class DocBinaryFloatingPictures
                 _ => layout.OffsetOrigin,
             },
         };
+        // vertical: posrelv over the FSPA's by (bits 3-4: 0 margin, 1 page, 2 text = paragraph; ww8graf.cxx:2322-2324); from the
+        // paragraph or line the FSPA's yaTop (twips) moves it down from its anchor, posv 1 / 2 / 3 against the line aligns it there
+        // (ww8graf.cxx:2393-2401 aToLineVertOriTab); page / margin positions wait for the paged view
+        int verticalRelation = placement.VerticalRelation ?? ((flags >> 3) & 3);
+        if (verticalRelation == 3 && placement.VerticalAlignment is 1 or 2 or 3)
+            layout = layout with { AlignsToLineTop = true, LineAlignment = placement.VerticalAlignment switch { 2 => WordPictureLineAlignment.Center, 3 => WordPictureLineAlignment.Bottom, _ => WordPictureLineAlignment.Top } };
+        else if (verticalRelation is 2 or 3 && placement.VerticalAlignment == 0)
+            layout = layout with { VerticalOffsetPt = yaTop / 20.0 };
         if ((layout.Wrap != WordPictureWrap.Square || layout.TextSides == WordPictureTextSides.Both)
             && placement.HorizontalAlignment is var align and > 0)
             // placed by alignment (posh 1 left, 2 centre, 3 right, 4 inside, 5 outside - odd page taken): the side it floats to
@@ -158,7 +166,7 @@ internal sealed class DocBinaryFloatingPictures
         if (located && container.isGroup) return null;                                                        // a group is a drawing
         if (_textBoxSpids!.Contains(fspa.spid)) return null;                                                  // a picture with a text box too
         WordPictureLayout layout = LayoutOf(fspa) with { Crop = _cropBySpid!.TryGetValue(fspa.spid, out WordPictureCrop crop) ? crop : default };
-        return (located ? WithContour(layout, fspa.flags, container, null) : layout, IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return (located ? WithContour(layout, fspa.flags, fspa.yaTop, container, null) : layout, IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     /// <summary>The id prefix of a fill picture: the BStore index (1-based) of a shape's fillBlip.</summary>

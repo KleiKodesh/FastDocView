@@ -1182,8 +1182,24 @@ public sealed class DocxBlockHtmlRenderer
                                      WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs((string?)picture.Attribute("wrapPolygon")), width, height),
                                      ColumnWidthPt, OriginOfDrawing((string?)picture.Attribute("relativeFrom")), ColumnLeftPt,
                                      new WordPictureCrop(Emu("cropl") * EmuPerPoint / SourceRectangleWhole, Emu("cropt") * EmuPerPoint / SourceRectangleWhole,
-                                                         Emu("cropr") * EmuPerPoint / SourceRectangleWhole, Emu("cropb") * EmuPerPoint / SourceRectangleWhole));
+                                                         Emu("cropr") * EmuPerPoint / SourceRectangleWhole, Emu("cropb") * EmuPerPoint / SourceRectangleWhole))
+               with { VerticalOffsetPt = Vertical((string?)picture.Attribute("relativeFromV"), (string?)picture.Attribute("alignV"), Emu("posOffsetV")).offset,
+                      LineAlignment = Vertical((string?)picture.Attribute("relativeFromV"), (string?)picture.Attribute("alignV"), 0).alignment };
     }
+
+    /// <summary>
+    /// wp:positionV (ECMA-376 Part 1 20.4.2.11; ST_RelFromV 20.4.3.5, ST_AlignV 20.4.3.2): a posOffset from the paragraph or line
+    /// moves the object down from its anchor; align top / center / bottom against the line aligns it to that line (inside /
+    /// outside are page-only). Anything relative to the page or a margin waits for the paged view (0, as before).
+    /// LibreOffice reads the same pairs (sw/source/writerfilter/dmapper/GraphicImport.cxx: positionV relativeFrom / posOffset).
+    /// </summary>
+    internal static (double offset, WordPictureLineAlignment alignment) Vertical(string? relativeFrom, string? align, double offsetPt)
+        => relativeFrom switch
+        {
+            "line" when align is not null => (0, align switch { "center" => WordPictureLineAlignment.Center, "bottom" => WordPictureLineAlignment.Bottom, _ => WordPictureLineAlignment.Top }),
+            "paragraph" or "line" when align is null => (offsetPt, WordPictureLineAlignment.None),
+            _ => (0, WordPictureLineAlignment.None),
+        };
 
     /// <summary>a:srcRect's whole side: 100000 (1000ths of a percent; LibreOffice fillproperties.cxx:108-117 divides by MAX_PERCENT).</summary>
     private const double SourceRectangleWhole = 100000;
@@ -1279,7 +1295,13 @@ public sealed class DocxBlockHtmlRenderer
                                      WordPictureContour.FromWordUnits(WordPictureContour.ParsePairs(coords), width, height),
                                      ColumnWidthPt, OriginOfVml(style.TryGetValue("mso-position-horizontal-relative", out string? relative) ? relative : null), ColumnLeftPt,
                                      new WordPictureCrop(VmlCropFraction((string?)picture.Attribute("vmlcropleft")), VmlCropFraction((string?)picture.Attribute("vmlcroptop")),
-                                                         VmlCropFraction((string?)picture.Attribute("vmlcropright")), VmlCropFraction((string?)picture.Attribute("vmlcropbottom"))));
+                                                         VmlCropFraction((string?)picture.Attribute("vmlcropright")), VmlCropFraction((string?)picture.Attribute("vmlcropbottom"))))
+               with
+               {
+                   // mso-position-vertical-relative: text (the default) = the paragraph, line; margin-top the offset (vmlshapecontext.cxx setStyle)
+                   VerticalOffsetPt = isAnchored && (style.TryGetValue("mso-position-vertical-relative", out string? vertical) ? vertical : "text") is "text" or "line"
+                                      && !style.ContainsKey("mso-position-vertical") ? Length("margin-top") : 0,
+               };
     }
 
     /// <summary>

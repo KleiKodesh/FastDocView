@@ -1416,9 +1416,19 @@ others hold the files, as Word retries a save.
   ww8par.cxx:1002-1009; none for RTF, rtfsdrimport.cxx:640-675). Fixture: test-data/word-shapes/make-floating-fixtures.ps1
   (Word 16 COM; `--floating`, also in `--fidelity`). Word's PDF of those files prints the wrap-none box at margin + offset as
   read, but every wrapped object (square, top and bottom - also in a one-shape .docx Word wrote itself) centred on the page
-  whatever the file says: a quirk of this Word install, so wrapped objects are checked against the values Word reports through
-  COM. Word 16 refuses Group() through COM on Word 2013 shapes (E_ACCESSDENIED), so the group fixture is made in Word 2003
-  mode. Vertical offsets stay with the paged view (no vertical position in the flow view, as for .docx).
+  whatever the file says - found later the same day: this Word opens documents in web layout (ActiveWindow.View.Type 6, also
+  w:view web in its settings), which prints that way; the fixture script sets print layout (3) before saving and printing, and
+  the checks now follow Word's PDF. Word 16 refuses Group() through COM on Word 2013 shapes (E_ACCESSDENIED), so the group fixture is made in Word 2003
+  mode.
+- **Vertical position from the paragraph or line** (2026-11-17, all three Word formats): WordPictureLayout.VerticalOffsetPt /
+  LineAlignment become the float's margin-top, so it lands that far below where the browser anchors it and the text wraps around
+  it there (a negative offset moves it up). .docx: wp:positionV (kept by DocxDrawingStripper as relativeFromV / alignV /
+  posOffsetV; paragraph / line offsets, line top / center / bottom) and VML margin-top with mso-position-vertical-relative text /
+  line. .doc: FSPA yaTop with by (bits 3-4) or posrelv 0x0392 = 2 / 3, posv 0x0391 1-3 against the line (msdffimp.cxx:5220-5223,
+  ww8graf.cxx:2393-2420). RTF: \shptop with \shpbypara (default) or posrelv 2 / 3, posv. Word 16's PDFs (fixture tbdown,
+  tbline*): the offset counts from the paragraph's top; a .docx line alignment uses the line's box (CSS 1lh), a .doc / RTF one the
+  line's top edge (top below it, centre across it, bottom above it). Limit: the browser anchors the float where its anchor
+  character is, so an anchor later in a paragraph counts the offset from that line, not the paragraph's top.
 - **VML** (w:pict / w:object): v:imagedata r:id (o:relid), shape style width / height / position /
   mso-position-horizontal / margin-left / mso-wrap-distance-*, w10:wrap type / side, read as oox vmlshapecontext.cxx and
   vmlshape.cxx lcl_setSurround / lcl_SetAnchorType (static = inline; no wrap = through).

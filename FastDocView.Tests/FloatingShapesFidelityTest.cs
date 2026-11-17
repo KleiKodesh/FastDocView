@@ -14,19 +14,24 @@ public static class FloatingShapesFidelityTest
     private static readonly Regex FrameOpen = new("<span class=\"(word-shape|text-box)[^\"]*\" style=\"([^\"]*)\"", RegexOptions.CultureInvariant);
 
     /// <summary>
-    /// Each marker's outer frame placement, as the file says (Word 16's COM read-back when the fixture was made: Left,
-    /// RelativeHorizontalPosition, WrapFormat). Word's PDF of the same files (2026-11-17): tbcolumn (wrap none) prints at x 290 =
-    /// the 90 pt margin + 200, rotbox centred; this Word prints every wrapped object (square, top and bottom, also in a one-shape
-    /// .docx Word wrote itself) centred on the page whatever its position, so those are checked against the file's own values.
+    /// Each marker's outer frame placement against Word 16's PDF of the same file (print layout; measured 2026-11-17, x from the
+    /// 90 pt left margin, y from the anchor line's top): tbcolumn x 200; tbrtl and the group flush right (right edge 414-415 of
+    /// 415); rotbox centred (bounding box centre 206.9); tbsquare x 300 (text both sides: floats to its nearer edge by design);
+    /// tbdown 36 pt below its paragraph's top; line-aligned boxes: .docx top / centre / bottom on the line's box, .doc / RTF top
+    /// below, centre across, bottom above the line's top edge. tbnote (page, x -50) and tbchar (character) stay at the column's edge.
     /// </summary>
     private static readonly (string File, string Marker, string Css)[] Expected =
     [
         ("floating-v1", "tbcolumn", "display:block;margin:0pt auto 0pt 200pt;"),   // wrap none, 200 pt from the column
         ("floating-v1", "tbnote", "display:block;margin:0pt auto 0pt 0pt;"),       // top and bottom, 40 pt from the page edge: left of the column
-        ("floating-v1", "rotbox", "display:block;margin:0pt auto 0pt auto;"),      // centred, rotated 30 degrees
+        ("floating-v1", "rotbox", "display:block;margin:0pt auto 0pt 146.9pt;"),   // centred (Word saved it as 146.9 pt = the centre), rotated 30 degrees
         ("floating-v1", "tbrtl", "display:block;margin:0pt 0 0pt auto;"),          // aligned right of the margin, right-to-left paragraph
         ("floating-v1", "tbsquare", "float:right;margin:0pt 0pt 0pt 18pt;"),       // square, 300 pt from the column (nearer right), 18 pt gap
         ("floating-v1", "tbchar", "float:left;margin:0pt 9pt 0pt 0pt;"),           // square, from the character: its own side, Word's 9 pt gap
+        ("floating-v1", "tbdown", "float:left;margin:0pt 9pt 0pt 0pt;margin-top:36pt;"),   // square, 36 pt down from its paragraph
+        ("floating-v1", "tblinetop", "display:block;margin:0pt auto 0pt 315pt;"),          // in front, top on the line: no shift
+        ("floating-v1", "tblinecenter", "margin-top:calc(0pt + (LINE - 40pt) / 2);"),      // centred on the line
+        ("floating-v1", "tblinebottom", "margin-top:calc(0pt + LINE - 40pt);"),            // bottom on the line
         ("floating-group-v1", "grpone", "display:block;margin:0pt 0 0pt auto;"),   // a group aligned right, top and bottom
         ("floating-group-v1", "grptwo", "display:block;margin:0pt 0 0pt auto;"),
     ];
@@ -34,7 +39,7 @@ public static class FloatingShapesFidelityTest
     public static void Run()
     {
         string folder = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-shapes");
-        foreach (string extension in new[] { ".doc", ".rtf" })
+        foreach (string extension in new[] { ".docx", ".doc", ".rtf" })
             foreach (var file in Expected.GroupBy(e => e.File))
             {
                 string path = Path.Combine(folder, file.Key + extension);
@@ -45,7 +50,9 @@ public static class FloatingShapesFidelityTest
                 foreach (var (_, marker, css) in file)
                 {
                     string? style = FrameStyle(html, marker);
-                    TestReport.Check(style is not null && style.Contains(css), $"{file.Key}{extension} '{marker}': frame {style ?? "(none)"}, expected {css}");
+                    // the line a line-aligned object is aligned to: a .docx line's box (1lh), a .doc / RTF line's top edge (0pt)
+                    string wanted = css.Replace("LINE", extension == ".docx" ? "1lh" : "0pt");
+                    TestReport.Check(style is not null && style.Contains(wanted) && (wanted.Contains("margin-top") || !style.Contains("margin-top")), $"{file.Key}{extension} '{marker}': frame {style ?? "(none)"}, expected {wanted}");
                     int shown = Occurrences(text, marker), found = SearchCount(path, marker);
                     TestReport.Check(shown == 1 && found == 1, $"{file.Key}{extension} '{marker}': shown {shown}, found {found}, expected 1 / 1");
                 }

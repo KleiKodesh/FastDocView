@@ -637,7 +637,15 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         IReadOnlyList<IReadOnlyList<(double X, double Y)>>? contour = shape.Wrap is 4 or 5 ? WordPictureContour.FromWordUnits(shape.WrapPolygon, widthPt, heightPt) : null;
         return new WordPictureLayout(widthPt, heightPt, wrap, side, shape.WrapTop / EmuPerPoint, shape.WrapRight / EmuPerPoint,
                                      shape.WrapBottom / EmuPerPoint, shape.WrapLeft / EmuPerPoint, offset, sides, contour,
-                                     ColumnWidthPt, shape.IsPageRelative ? WordPictureOffsetOrigin.Page : shape.IsCharacterRelative ? WordPictureOffsetOrigin.Other : WordPictureOffsetOrigin.Column, ColumnLeftPt);
+                                     ColumnWidthPt, shape.IsPageRelative ? WordPictureOffsetOrigin.Page : shape.IsCharacterRelative ? WordPictureOffsetOrigin.Other : WordPictureOffsetOrigin.Column, ColumnLeftPt)
+        {
+            // from the paragraph / line: \shptop moves it down from its anchor; posv 1 / 2 / 3 against the line aligns it there
+            // (posrelv 3 = TEXT_LINE, rtfsdrimport.cxx posrelv; the same tables as .doc, ww8graf.cxx:2393-2420); page / margin: paged view
+            AlignsToLineTop = true,
+            VerticalOffsetPt = shape.VerticalRelation is 2 or 3 && shape.VerticalPosition == 0 ? shape.Top / 20.0 : 0,
+            LineAlignment = shape.VerticalRelation == 3 ? shape.VerticalPosition switch { 1 => WordPictureLineAlignment.Top, 2 => WordPictureLineAlignment.Center, 3 => WordPictureLineAlignment.Bottom, _ => WordPictureLineAlignment.None }
+                                                        : WordPictureLineAlignment.None,
+        };
     }
 
     /// <summary>WordArt text centred in its font and size (msdffdef.hxx:121-125 gtextUNICODE / gtextSize / gtextFont), known once the shape closed.</summary>

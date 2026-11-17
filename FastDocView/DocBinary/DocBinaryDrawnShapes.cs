@@ -3,7 +3,8 @@ using FastDocView.Html;
 namespace FastDocView.DocBinary;
 
 /// <summary>A .doc drawing object's placement properties (<see cref="DocBinaryDrawnShapes.Placement"/>): posh, posrelh (null = the FSPA's bx), wrap distances in points.</summary>
-internal readonly record struct DocBinaryShapePlacement(int HorizontalAlignment, int? HorizontalRelation, double WrapLeftPt, double WrapTopPt, double WrapRightPt, double WrapBottomPt)
+internal readonly record struct DocBinaryShapePlacement(int HorizontalAlignment, int? HorizontalRelation, double WrapLeftPt, double WrapTopPt, double WrapRightPt, double WrapBottomPt,
+                                                       int VerticalAlignment = 0, int? VerticalRelation = null)
 {
     public static DocBinaryShapePlacement Default => new(0, null, DocBinaryDrawnShapes.DefaultWrapDistance / 12700, 0, DocBinaryDrawnShapes.DefaultWrapDistance / 12700, 0);
 }
@@ -106,6 +107,8 @@ internal static class DocBinaryDrawnShapes
     /// - posrelh 0x0390 (msdffimp.cxx:5217-5219 nXRelTo; ww8graf.cxx:2330 / 2404-2410: 0 page text area, 1 page, 2 column,
     ///   3 character; LibreOffice reads values past 3 as 1, ww8graf.cxx:2352-2353), null when not given (the FSPA's bx counts,
     ///   ww8graf.cxx:2318-2320);
+    /// - posv 0x0391 / posrelv 0x0392, the same for the vertical (msdffimp.cxx:5220-5223; ww8graf.cxx:2328 / 2331 / 2414-2420: posv
+    ///   abs. position, top, centred, bottom, inside, outside; posrelv 0 page text area, 1 page, 2 paragraph, 3 line), over the FSPA's by;
     /// - the wrap distances dxWrapDistLeft / dyWrapDistTop / dxWrapDistRight / dyWrapDistBottom (900..903, msdffdef.hxx:261-264)
     ///   in EMU; not given = 114300 / 0 / 114300 / 0: Word 16 reports 9 pt left / right (WrapFormat.DistanceLeft / Right through
     ///   COM, test-data/word-shapes/make-floating-fixtures.ps1) for shapes whose file leaves them out (LibreOffice reads 114935,
@@ -141,7 +144,9 @@ internal static class DocBinaryDrawnShapes
         return new DocBinaryShapePlacement(
             values.TryGetValue(0x038F, out uint posh) ? (int)Math.Min(5, posh) : 0,
             values.TryGetValue(0x0390, out uint posrelh) ? (int)(posrelh > 3 ? 1 : posrelh) : null,
-            Emu(PropertyWrapDistLeft, DefaultWrapDistance), Emu(PropertyWrapDistTop, 0), Emu(PropertyWrapDistRight, DefaultWrapDistance), Emu(PropertyWrapDistBottom, 0));
+            Emu(PropertyWrapDistLeft, DefaultWrapDistance), Emu(PropertyWrapDistTop, 0), Emu(PropertyWrapDistRight, DefaultWrapDistance), Emu(PropertyWrapDistBottom, 0),
+            values.TryGetValue(0x0391, out uint posv) ? (int)Math.Min(5, posv) : 0,
+            values.TryGetValue(0x0392, out uint posrelv) ? (int)(posrelv > 3 ? 1 : posrelv) : null);
     }
 
     /// <summary>Word's left / right gap to the text when the file gives none: 114300 EMU = 9 pt (see <see cref="Placement"/>).</summary>

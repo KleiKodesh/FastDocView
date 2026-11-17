@@ -40,7 +40,18 @@ public readonly record struct WordPictureLayout(double WidthPt, double HeightPt,
                                                 WordPictureTextSides TextSides = WordPictureTextSides.Both,
                                                 IReadOnlyList<IReadOnlyList<(double X, double Y)>>? Contour = null, double ColumnWidthPt = 0,
                                                 WordPictureOffsetOrigin OffsetOrigin = WordPictureOffsetOrigin.Column, double ColumnLeftPt = -1,
-                                                WordPictureCrop Crop = default);
+                                                WordPictureCrop Crop = default, double VerticalOffsetPt = 0,
+                                                WordPictureLineAlignment LineAlignment = WordPictureLineAlignment.None, bool AlignsToLineTop = false);
+
+/// <summary>
+/// A floating object aligned to its anchor's line (DrawingML positionV relativeFrom="line" with align, OfficeArt / RTF posv with
+/// posrelv 3): top, centre or bottom against the line the object is anchored in. None = placed by
+/// <see cref="WordPictureLayout.VerticalOffsetPt"/> (the offset down from the anchor's paragraph or line; page- and
+/// margin-relative positions are the paged view's and give 0 here). Word 16's PDFs (test-data/word-shapes, 2026-11-17): in a .docx
+/// the line is its box (top on its top, centre on its middle, bottom on its bottom); in a .doc / RTF it is the line's top edge
+/// (top below it, centre across it, bottom above it) - <see cref="WordPictureLayout.AlignsToLineTop"/>.
+/// </summary>
+public enum WordPictureLineAlignment : byte { None, Top, Center, Bottom }
 
 /// <summary>
 /// The part of a picture that shows, as fractions of the picture's own width / height cut from each side (DrawingML a:srcRect,
@@ -166,6 +177,26 @@ public static class WordPictureHtml
                    .Append(side == WordPictureSide.Left ? Points(DrawnOffset(layout)) + "pt" : "auto").Append(';');
                 break;
         }
+        if (layout.Wrap != WordPictureWrap.Inline) AppendVerticalPosition(css, layout);
+    }
+
+    /// <summary>
+    /// A floating object's vertical place in the flow: the browser puts it at its anchor, so the offset from the anchor's
+    /// paragraph / line moves it down (negative: up) by its top margin, and the text keeps wrapping around it where it lands.
+    /// Aligned to the line: top = its top on the line's top, centre / bottom = against one line height (CSS lh).
+    /// </summary>
+    private static void AppendVerticalPosition(StringBuilder css, WordPictureLayout layout)
+    {
+        double gap = layout.Wrap == WordPictureWrap.None ? 0 : layout.TopPt;
+        string? top = layout.LineAlignment switch
+        {
+            WordPictureLineAlignment.Center => "calc(" + Points(gap) + "pt + (" + (layout.AlignsToLineTop ? "0pt" : "1lh") + " - " + Points(layout.HeightPt) + "pt) / 2)",
+            WordPictureLineAlignment.Bottom => "calc(" + Points(gap) + "pt + " + (layout.AlignsToLineTop ? "0pt" : "1lh") + " - " + Points(layout.HeightPt) + "pt)",
+            WordPictureLineAlignment.Top => null,
+            _ => layout.VerticalOffsetPt != 0 && !double.IsNaN(layout.VerticalOffsetPt)
+                 ? (gap + layout.VerticalOffsetPt).ToString("0.##", CultureInfo.InvariantCulture) + "pt" : null,
+        };
+        if (top is not null) css.Append("margin-top:").Append(top).Append(';');
     }
 
     /// <summary>Whether a <see cref="WordPictureWrap.Square"/> object floats right: a one-sided wrap opposite its text, else its own side (centre = left).</summary>

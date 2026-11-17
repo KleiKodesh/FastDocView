@@ -17,6 +17,7 @@ $filler = ("filler words wrap around the floating object here " * 8).Trim()
 
 function NewDocument([int]$mode) {
     $doc = $w.Documents.Add()
+    $doc.ActiveWindow.View.Type = 3                                # wdPrintView: this Word opens documents in web layout, which prints every wrapped object centred
     if ($mode -gt 0) { $doc.SetCompatibilityMode($mode) }
     $doc.Content.LanguageID = 1033
     $doc.Sections.Item(1).PageSetup.SectionDirection = 1          # wdSectionDirectionLtr
@@ -32,24 +33,28 @@ function Para([string]$text) {
 }
 # relative: wdRelativeHorizontalPosition margin 0 / page 1 / column 2 / character 3; left: points or wdShapeLeft -999998,
 # wdShapeCenter -999995, wdShapeRight -999996; wrap: wdWrapSquare 0, wdWrapNone 3 (in front of text), wdWrapTopBottom 4
-function Place($shape, [string]$text, [single]$left, [int]$relative, [int]$wrap) {
+# top: points down from the paragraph (or wdShapeTop -999999 / wdShapeCenter -999995 / wdShapeBottom -999997 against the line);
+# vertical: wdRelativeVerticalPositionParagraph 2 / Line 3
+function Place($shape, [string]$text, [single]$left, [int]$relative, [int]$wrap, [single]$top = 0, [int]$vertical = 2) {
     $shape.TextFrame.TextRange.Text = $text
     $shape.TextFrame.TextRange.ParagraphFormat.ReadingOrder = 1
     $shape.RelativeHorizontalPosition = $relative
-    $shape.RelativeVerticalPosition = 2                            # wdRelativeVerticalPositionParagraph
+    $shape.RelativeVerticalPosition = $vertical
     $shape.Left = $left
-    $shape.Top = 0
+    $shape.Top = $top
     $shape.WrapFormat.Type = $wrap
     $shape.Left = $left                                            # again: a new wrap can move it
-    $shape.Top = 0
+    $shape.Top = $top
 }
 function Save([string]$name) {
     foreach ($shape in $script:d.Shapes) { Write-Output ("  {0}: wrap={1} rel={2} left={3} distL={4} rot={5}" -f $(if ($shape.Type -eq 6) { "group" } else { $shape.TextFrame.TextRange.Text.Trim() }), $shape.WrapFormat.Type, $shape.RelativeHorizontalPosition, $shape.Left, $shape.WrapFormat.DistanceLeft, $shape.Rotation) }
+    $script:d.SaveAs2("$dir\$name.docx", 16)
     $script:d.SaveAs2("$dir\$name.rtf", 6)
     $script:d.SaveAs2("$dir\$name.doc", 0)
     $script:d.Close(0); $script:d = $null
-    foreach ($file in "$name.doc", "$name.rtf") {                 # Word's own print of what each file holds
+    foreach ($file in "$name.docx", "$name.doc", "$name.rtf") {                 # Word's own print of what each file holds
         $script:d = $w.Documents.Open("$dir\$file", $false, $true)
+        $script:d.ActiveWindow.View.Type = 3                       # wdPrintView (see NewDocument)
         $script:d.SaveAs2("$dir\" + $file.Replace(".", "-") + "-word.pdf", 17)
         $script:d.Close(0); $script:d = $null
     }
@@ -83,6 +88,14 @@ try {
     # 6: 20 pt from the anchor character, square
     $p = Para "charanchor $filler"
     Place ($d.Shapes.AddTextbox(1, 0, 0, 100, 30, $p)) "tbchar" 20 3 0
+    # 7: square, 36 pt down from its paragraph (left, from the column 0)
+    $p = Para "downanchor $filler"
+    Place ($d.Shapes.AddTextbox(1, 0, 0, 100, 30, $p)) "tbdown" 0 2 0 36 2
+    # 8-10: in front of the text (so the lines stay put), aligned to the anchor's line: top, centre, bottom (on the right, 315 pt from the column)
+    foreach ($case in @(("linetop", -999999), ("linecenter", -999995), ("linebottom", -999997))) {
+        $p = Para ("anchor" + $case[0] + " $filler")
+        Place ($d.Shapes.AddTextbox(1, 0, 0, 100, 40, $p)) ("tb" + $case[0]) 315 2 3 $case[1] 3
+    }
     Para "end" | Out-Null
     Write-Output "floating-v1"
     Save "floating-v1"
