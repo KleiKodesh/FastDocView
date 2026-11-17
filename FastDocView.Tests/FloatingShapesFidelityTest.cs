@@ -58,6 +58,10 @@ public static class FloatingShapesFidelityTest
                 }
                 if (file.Key == "floating-v1")
                 {
+                    // anchored late in its paragraph: from the paragraph's top (Word's PDF: 24 pt below the top line), so lifted to
+                    // the paragraph's start; from its line: left where it is
+                    TestReport.Check(StartsParagraph(html, "tblate"), $"{file.Key}{extension}: the paragraph-relative float anchored late is lifted to its paragraph's start");
+                    TestReport.Check(!StartsParagraph(html, "tblateline"), $"{file.Key}{extension}: the line-relative float anchored late stays on its line");
                     TestReport.Check(Occurrences(text, "notebody") == 0 && html.Contains("note"), $"{file.Key}{extension}: the footnote in the text box's anchor paragraph stays a mark");
                     TestReport.Check(html.Contains("rotate(30"), $"{file.Key}{extension}: the rotated shape is drawn turned 30 degrees");
                 }
@@ -65,6 +69,18 @@ public static class FloatingShapesFidelityTest
     }
 
     private static readonly Regex Tags = new("<[^>]+>", RegexOptions.CultureInvariant);
+
+    /// <summary>Whether <paramref name="marker"/>'s outer frame is the first thing in its paragraph.</summary>
+    private static bool StartsParagraph(string html, string marker)
+    {
+        int at = html.IndexOf(marker, StringComparison.Ordinal);
+        if (at < 0) return false;
+        int frame = -1;
+        foreach (Match match in FrameOpen.Matches(html.Substring(0, at)))
+            if (!match.Groups[2].Value.Contains("position:absolute")) frame = match.Index;
+        int paragraph = frame < 0 ? -1 : html.LastIndexOf("<p", frame, StringComparison.Ordinal);
+        return paragraph >= 0 && html.IndexOf('>', paragraph) + 1 == frame;
+    }
 
     /// <summary>The style of the outermost frame (shape or text box) holding <paramref name="marker"/>'s first occurrence.</summary>
     private static string? FrameStyle(string html, string marker)

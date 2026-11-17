@@ -1184,7 +1184,8 @@ public sealed class DocxBlockHtmlRenderer
                                      new WordPictureCrop(Emu("cropl") * EmuPerPoint / SourceRectangleWhole, Emu("cropt") * EmuPerPoint / SourceRectangleWhole,
                                                          Emu("cropr") * EmuPerPoint / SourceRectangleWhole, Emu("cropb") * EmuPerPoint / SourceRectangleWhole))
                with { VerticalOffsetPt = Vertical((string?)picture.Attribute("relativeFromV"), (string?)picture.Attribute("alignV"), Emu("posOffsetV")).offset,
-                      LineAlignment = Vertical((string?)picture.Attribute("relativeFromV"), (string?)picture.Attribute("alignV"), 0).alignment };
+                      LineAlignment = Vertical((string?)picture.Attribute("relativeFromV"), (string?)picture.Attribute("alignV"), 0).alignment,
+                      FromParagraphTop = (string?)picture.Attribute("relativeFromV") == "paragraph" };
     }
 
     /// <summary>
@@ -1301,6 +1302,7 @@ public sealed class DocxBlockHtmlRenderer
                    // mso-position-vertical-relative: text (the default) = the paragraph, line; margin-top the offset (vmlshapecontext.cxx setStyle)
                    VerticalOffsetPt = isAnchored && (style.TryGetValue("mso-position-vertical-relative", out string? vertical) ? vertical : "text") is "text" or "line"
                                       && !style.ContainsKey("mso-position-vertical") ? Length("margin-top") : 0,
+                   FromParagraphTop = isAnchored && (style.TryGetValue("mso-position-vertical-relative", out string? relativeTo) ? relativeTo : "text") == "text",
                };
     }
 

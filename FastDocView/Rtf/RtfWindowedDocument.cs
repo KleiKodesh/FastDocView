@@ -494,7 +494,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
             // the last row known while the index builds: whether the next row continues its cells (no bottom line there) is noted
             // when that row is indexed, so it is drawn again once the index is complete
             bool isRowAwaitingNext = kind == WordDocumentBlockKind.TableRow && _builder is not null && blockIndex == _index.BlockCount - 1;
-            result.Add(new WordDocumentBlockHtml(blockIndex, kind, html, notes, _fieldContext.UsedIncompleteIndex || isRowAwaitingNext));
+            result.Add(new WordDocumentBlockHtml(blockIndex, kind, Html.WordParagraphFloats.Hoist(html), notes, _fieldContext.UsedIncompleteIndex || isRowAwaitingNext));
         }
         return result;
     }

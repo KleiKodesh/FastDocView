@@ -146,7 +146,7 @@ internal sealed class DocBinaryFloatingPictures
         if (verticalRelation == 3 && placement.VerticalAlignment is 1 or 2 or 3)
             layout = layout with { AlignsToLineTop = true, LineAlignment = placement.VerticalAlignment switch { 2 => WordPictureLineAlignment.Center, 3 => WordPictureLineAlignment.Bottom, _ => WordPictureLineAlignment.Top } };
         else if (verticalRelation is 2 or 3 && placement.VerticalAlignment == 0)
-            layout = layout with { VerticalOffsetPt = yaTop / 20.0 };
+            layout = layout with { VerticalOffsetPt = yaTop / 20.0, FromParagraphTop = verticalRelation == 2 };
         if ((layout.Wrap != WordPictureWrap.Square || layout.TextSides == WordPictureTextSides.Both)
             && placement.HorizontalAlignment is var align and > 0)
             // placed by alignment (posh 1 left, 2 centre, 3 right, 4 inside, 5 outside - odd page taken): the side it floats to

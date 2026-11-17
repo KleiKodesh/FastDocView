@@ -1427,8 +1427,11 @@ others hold the files, as Word retries a save.
   line. .doc: FSPA yaTop with by (bits 3-4) or posrelv 0x0392 = 2 / 3, posv 0x0391 1-3 against the line (msdffimp.cxx:5220-5223,
   ww8graf.cxx:2393-2420). RTF: \shptop with \shpbypara (default) or posrelv 2 / 3, posv. Word 16's PDFs (fixture tbdown,
   tbline*): the offset counts from the paragraph's top; a .docx line alignment uses the line's box (CSS 1lh), a .doc / RTF one the
-  line's top edge (top below it, centre across it, bottom above it). Limit: the browser anchors the float where its anchor
-  character is, so an anchor later in a paragraph counts the offset from that line, not the paragraph's top.
+  line's top edge (top below it, centre across it, bottom above it). A paragraph-relative float is marked (style
+  `--word-float:paragraph`) and WordParagraphFloats.Hoist, run on each rendered .docx / .doc / RTF block, moves it to just
+  after its <p> / <h1-6> tag, so its offset counts from the paragraph's top line as Word's does (fixture tblate: anchored at the
+  60th word, Word's PDF 24 pt below the top line); line-relative floats stay on their line (tblateline); floats inside a text
+  box or shape are not moved out of it.
 - **VML** (w:pict / w:object): v:imagedata r:id (o:relid), shape style width / height / position /
   mso-position-horizontal / margin-left / mso-wrap-distance-*, w10:wrap type / side, read as oox vmlshapecontext.cxx and
   vmlshape.cxx lcl_setSurround / lcl_SetAnchorType (static = inline; no wrap = through).

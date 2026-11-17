@@ -96,6 +96,13 @@ try {
         $p = Para ("anchor" + $case[0] + " $filler")
         Place ($d.Shapes.AddTextbox(1, 0, 0, 100, 40, $p)) ("tb" + $case[0]) 315 2 3 $case[1] 3
     }
+    # 11: anchored late in its paragraph (its 60th word), square, 24 pt below the paragraph's top: Word counts from the top line
+    $p = Para "lateanchor $filler"
+    $p.ParagraphFormat.PageBreakBefore = -1                        # its own page: the top line is the page's first
+    Place ($d.Shapes.AddTextbox(1, 0, 0, 100, 30, $p.Words.Item(60))) "tblate" 0 2 0 24 2
+    # 12: anchored late too, 6 pt below its own line (wdRelativeVerticalPositionLine): stays on that line
+    $p = Para "latelineanchor $filler"
+    Place ($d.Shapes.AddTextbox(1, 0, 0, 100, 30, $p.Words.Item(60))) "tblateline" 0 2 0 6 3
     Para "end" | Out-Null
     Write-Output "floating-v1"
     Save "floating-v1"

@@ -481,7 +481,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                 html = _renderer.Render(start, end, PreviousStyleKey(blockIndex), listLabel: _table.ListLabelOf(blockIndex), dropCapParagraph: dropCap);
                 notes = dropCap is { } initial ? [.. RenderNotesIn(initial.start, initial.end), .. RenderNotesIn(start, end)] : RenderNotesIn(start, end);
             }
-            result.Add(new WordDocumentBlockHtml(blockIndex, kind, html, notes));
+            result.Add(new WordDocumentBlockHtml(blockIndex, kind, Html.WordParagraphFloats.Hoist(html), notes));
         }
         return result;
     }

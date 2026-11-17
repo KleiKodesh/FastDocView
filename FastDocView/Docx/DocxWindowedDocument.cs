@@ -328,7 +328,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
             _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             string html = _renderer.Render(element, _blocks.ListLabelOf(blockIndex), previousStyleKey, neighbours with { OpenFields = _blocks.OpenFieldsAt(groupStart) });
             IReadOnlyList<WordDocumentNoteHtml> notes = RenderNotesOf(blockIndex);
-            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), html, notes, _renderer.FieldContext?.UsedIncompleteIndex == true || _usedUnknownNoteSection));
+            result.Add(new WordDocumentBlockHtml(blockIndex, _blocks.BlockKindOf(blockIndex), Html.WordParagraphFloats.Hoist(html), notes, _renderer.FieldContext?.UsedIncompleteIndex == true || _usedUnknownNoteSection));
         }
         return result;
     }

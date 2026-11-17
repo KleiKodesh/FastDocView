@@ -41,7 +41,8 @@ public readonly record struct WordPictureLayout(double WidthPt, double HeightPt,
                                                 IReadOnlyList<IReadOnlyList<(double X, double Y)>>? Contour = null, double ColumnWidthPt = 0,
                                                 WordPictureOffsetOrigin OffsetOrigin = WordPictureOffsetOrigin.Column, double ColumnLeftPt = -1,
                                                 WordPictureCrop Crop = default, double VerticalOffsetPt = 0,
-                                                WordPictureLineAlignment LineAlignment = WordPictureLineAlignment.None, bool AlignsToLineTop = false);
+                                                WordPictureLineAlignment LineAlignment = WordPictureLineAlignment.None, bool AlignsToLineTop = false,
+                                                bool FromParagraphTop = false);
 
 /// <summary>
 /// A floating object aligned to its anchor's line (DrawingML positionV relativeFrom="line" with align, OfficeArt / RTF posv with
@@ -178,6 +179,7 @@ public static class WordPictureHtml
                 break;
         }
         if (layout.Wrap != WordPictureWrap.Inline) AppendVerticalPosition(css, layout);
+        if (layout.Wrap != WordPictureWrap.Inline && layout.FromParagraphTop) css.Append(WordParagraphFloats.Marker);   // lifted to its paragraph's start
     }
 
     /// <summary>

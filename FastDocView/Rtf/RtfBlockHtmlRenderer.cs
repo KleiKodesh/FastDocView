@@ -642,6 +642,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             // from the paragraph / line: \shptop moves it down from its anchor; posv 1 / 2 / 3 against the line aligns it there
             // (posrelv 3 = TEXT_LINE, rtfsdrimport.cxx posrelv; the same tables as .doc, ww8graf.cxx:2393-2420); page / margin: paged view
             AlignsToLineTop = true,
+            FromParagraphTop = shape.VerticalRelation == 2,
             VerticalOffsetPt = shape.VerticalRelation is 2 or 3 && shape.VerticalPosition == 0 ? shape.Top / 20.0 : 0,
             LineAlignment = shape.VerticalRelation == 3 ? shape.VerticalPosition switch { 1 => WordPictureLineAlignment.Top, 2 => WordPictureLineAlignment.Center, 3 => WordPictureLineAlignment.Bottom, _ => WordPictureLineAlignment.None }
                                                         : WordPictureLineAlignment.None,
