@@ -21,12 +21,24 @@ for (const path of process.argv.slice(2)) {
     check(wingdings, `${path}: the font-face bullet draws in Wingdings`)
     continue
   }
+  if (/ruby-edges-v1\.docx$/.test(path)) {
+    // Word's PDF: ")" dropped with the text after it kept, tab / note mark / bookmark kept, a comma guide's rest before the base
+    await page.waitForFunction(() => document.querySelectorAll('ruby').length >= 7, null, { timeout: 60_000 })
+    const got = await page.evaluate(() => [...document.querySelectorAll('ruby')].map(r => {
+      const base = [...r.childNodes].filter(n => n.nodeName !== 'RT').map(n => n.textContent).join('').replace(/\s+/g, ' ').trim()
+      return r.querySelector('rt').textContent + '|' + base
+    }))
+    const expected = ['g0|abc d', 'g1|abc1', 'g2|abcy', 'g|3,base2', 'g|4,basew', 'g5|end of linex', 'g;6|b;6']
+    expected.forEach((e, n) => check(got[n] === e, `${path}: ruby edge ${n}: ${e} (got ${got[n]})`))
+    check(await page.evaluate(() => !!document.querySelector('[id*="EdgeTwo"]') && !!document.querySelector('[id*="EdgeFour"]')), `${path}: bookmarks inside the rubies kept`)
+    continue
+  }
   if (/ruby-escapes/.test(path)) {
     // guide / base as Word's PDF draws them (the guide ends at the first comma, every ")" dropped)
     const expected = /probe/.test(path) ? ['g(0|base(0', 'g|1,base,1', String.raw`a\|b,c\,d`, String.raw`e\f|g\h`, String.raw`i\(j|k\\l`, 'g 5 x|base 5']
                                        : ['g(0|base(0', 'g|1,base,1', 'g;2|base;2', String.raw`g\3|base\3`, 'g4(|base4(', 'g 5 x|base 5']
     await page.waitForFunction(() => document.querySelectorAll('ruby').length >= 6, null, { timeout: 60_000 })
-    const got = await page.evaluate(() => [...document.querySelectorAll('ruby')].map(r => r.querySelector('rt').textContent + '|' + r.firstChild.textContent))
+    const got = await page.evaluate(() => [...document.querySelectorAll('ruby')].map(r => r.querySelector('rt').textContent + '|' + [...r.childNodes].filter(n => n.nodeName !== 'RT').map(n => n.textContent).join('')))
     expected.forEach((e, n) => check(got[n] === e, `${path}: ruby escape ${n}: ${e} (got ${got[n]})`))
     continue
   }

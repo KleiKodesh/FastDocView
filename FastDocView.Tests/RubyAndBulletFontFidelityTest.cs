@@ -21,6 +21,7 @@ public static class RubyAndBulletFontFidelityTest
             Ruby(path, extension);
         }
         Escapes(root);
+        Edges(root);
         foreach (string extension in new[] { ".fodt", ".odt" })
         {
             string path = Path.Combine(root, "odt-bullet-fonts", "bullet-font-name-v1" + extension);
@@ -124,6 +125,60 @@ public static class RubyAndBulletFontFidelityTest
         TestReport.Check(Fields.WordFieldRuby.ToHtml(@" \* jc0 \o\ac(\s\up 11(a),b) \* MERGEFORMAT") == "<ruby>b<rt>a</rt></ruby>"
                          && Fields.WordFieldRuby.ToHtml(@" \* jc0 \o(x,\s\up 3(a),b)") is null && Fields.WordFieldRuby.ToHtml(@" \* jc0 \o(\s\up 11(a,b") is null,
                          "EQ ruby: text after \\o's last bracket is not base; \\s\\up must be \\o's first element; a code cut short stays an equation");
+    }
+
+    /// <summary>
+    /// test-data/word-ruby/ruby-edges-v1 (.docx hand-written by make-ruby-edges.py, .doc / .rtf saved from it by Word, a PDF of
+    /// each) and ruby-edges-semicolon-v1.rtf: a tab, a note mark and a bookmark after a ")" in the base; a note mark and a
+    /// bookmark in a base whose guide has a comma; a ruby with a ")" ending its paragraph; ";" in guide and base. Word's PDFs
+    /// (the same for all three formats): "abc d", "abc" + mark 1, "abcy", "g" over "3,base" + mark 2, "g" over "4,basew",
+    /// "end of linex", "g;6" over "b;6" (the semicolon probe: over ";b;6"). Search and GetText read what is drawn.
+    /// </summary>
+    private static void Edges(string root)
+    {
+        (int Case, string Guide, string Base)[] expected =
+        [
+            (0, "g0", "abc d"), (1, "g1", "abc1"), (2, "g2", "abcy"), (3, "g", "3,base2"), (4, "g", "4,basew"), (5, "g5", "end of linex"), (6, "g;6", "b;6"),
+        ];
+        foreach (string file in new[] { "ruby-edges-v1.docx", "ruby-edges-v1.doc", "ruby-edges-v1.rtf", "ruby-edges-semicolon-v1.rtf" })
+        {
+            List<string> blocks = RenderAll(root, file);
+            foreach (var c in expected)
+            {
+                string block = blocks.FirstOrDefault(html => html.Contains("ruby edge " + c.Case + ":")) ?? "";
+                int start = block.IndexOf("<ruby>", StringComparison.Ordinal), rt = start < 0 ? -1 : block.IndexOf("<rt", start, StringComparison.Ordinal),
+                    end = start < 0 ? -1 : block.IndexOf("</ruby>", start, StringComparison.Ordinal);
+                string baseHtml = start < 0 || rt < 0 ? "" : block.Substring(start + 6, rt - start - 6);
+                string baseText = System.Text.RegularExpressions.Regex.Replace(PlainText(baseHtml), @"\s+", " ").Trim();
+                string guideText = rt < 0 || end < 0 ? "" : PlainText(block.Substring(rt, end - rt));
+                string wantBase = file.Contains("semicolon") && c.Case == 6 ? ";b;6" : c.Base;
+                // .doc / RTF: a note mark inside the EQ code is not drawn yet (docs/UNSUPPORTED-FEATURES.md); the text around it is
+                if (!file.EndsWith(".docx", StringComparison.Ordinal) && c.Case is 1 or 3) wantBase = wantBase.Substring(0, wantBase.Length - 1);
+                bool extra = c.Case switch
+                {
+                    0 => baseHtml.Contains('\t') || file.EndsWith(".doc", StringComparison.Ordinal),   // .doc field code reads the tab as a space (still a gap)
+                    2 => block.Contains("EdgeTwo", StringComparison.Ordinal) || file != "ruby-edges-v1.docx",
+                    4 => block.Contains("EdgeFour", StringComparison.Ordinal) || file != "ruby-edges-v1.docx",
+                    5 => !System.Text.RegularExpressions.Regex.IsMatch(baseHtml, @"linex\s+<"),      // trailing spaces at the paragraph end are not drawn
+                    _ => true,
+                };
+                TestReport.Check(guideText == c.Guide && baseText == wantBase && extra,
+                                 $"{file}: ruby edge {c.Case}: \"{c.Guide}\" over \"{wantBase}\" as Word's PDF draws it (got \"{guideText}\" over \"{baseText}\")");
+            }
+        }
+        // search and GetText read the .docx base as drawn
+        string docx = Path.Combine(root, "word-ruby", "ruby-edges-v1.docx");
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-ruby-edges-search") };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(docx, policy);
+        foreach (string query in new[] { "abcy", "3,base", "4,basew", "end of linex" })
+        {
+            WordDocumentSearchBatch hits = document.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount);
+            TestReport.Check(hits.HitBlocks.Length == 1, $"ruby-edges-v1.docx: search finds \"{query}\" as drawn ({hits.HitBlocks.Length} block(s))");
+        }
+        TestReport.Check(document.Search("ab)c", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0,
+                         "ruby-edges-v1.docx: search does not find a \")\" Word does not draw");
+        string text = WordDocumentText.GetText(document);
+        TestReport.Check(text.Contains("3,base") && text.Contains("abcy") && !text.Contains("ab)c"), "ruby-edges-v1.docx: GetText reads the bases as drawn");
     }
 
     private static List<string> RenderAll(string root, string file)

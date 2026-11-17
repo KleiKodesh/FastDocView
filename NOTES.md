@@ -2277,6 +2277,14 @@ both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Ch
   base line in place of the base, the rests in the guide's runs and the comma in the base's (`DocxRubyText`, a per-ruby copy of
   the two small elements; Word 16 PDFs of ruby-escapes-v1.docx and ruby-docx-commas-v1.docx). LibreOffice keeps the text as
   written (DomainMapper.cxx:4587). Check: `RubyAndBulletFontFidelityTest` (54 ruby cases).
+- Ruby edges (2026-11-17, hand-written test-data/word-ruby/ruby-edges-v1.docx + Word's .doc / .rtf / PDFs; Word's UI keeps only the
+  EQ result, so these forms come only from other writers): Word drops every ")" and keeps the text after it, tabs, note marks and
+  bookmarks ("ab)c" tab "d" prints "abc d"), in .docx as in .doc. The earlier "cut at the first )" and "rest,rest" readings came
+  from Word's UI having already stored the cut text. A comma guide's rest + "," come before the base itself (its marks and
+  bookmarks kept). Search and GetText feed the base the same way in both readers (DocxRubyText.SearchRest, then the base without
+  ")"). Copied w:t map back to their originals for paragraph-end trimming. ";" separates nothing in Word
+  (ruby-edges-semicolon-v1.rtf: "(g;6);b;6)" prints "g;6" over ";b;6"); LibreOffice's ";" fallback is not followed. Left: a
+  note mark inside a .doc / RTF ruby's EQ code is not drawn.
 - .doc (render time, no index change): sprmCPbiGrf 0x4888 bit 0 + sprmCPbiIBullet 0x6887 (4 bytes) in the LVL grpprlChpx (ww8par3.cxx:808-819,
   :839-845; writer wrtw8num.cxx:355-358) name picture N of the paragraph holding the "_PictureBullets" bookmark, counted from the bookmark start
   (ww8par.cxx:5302-5348); that paragraph's runs are read once per renderer, the id is the PICF offset as for any inline picture. Hidden (vanish)

@@ -12,7 +12,7 @@ namespace FastDocView.Fields;
 /// ruby, the same markup as .docx's w:ruby. Anything else stays a general EQ (MathML).
 /// Word writes the guide and base unescaped, so brackets, commas and backslashes in them land in the code as they are. Word's
 /// own EQ parser (test-data/word-ruby/ruby-escapes-v1 and ruby-escapes-probe-v1, Word 16 PDFs) then ends the guide at the
-/// first comma (";" only when there is none, LibreOffice's fallback), takes everything after it as the base, drops every ")"
+/// first comma (with none, at its first ")" - ";" separates nothing), takes everything after it as the base, drops every ")"
 /// and keeps "(" and "\" as text: a backslash escapes nothing here ("a\,b" still splits, "k\\l" draws both backslashes).
 /// LibreOffice instead cuts the guide at the first ")" and the base at the last one. A font name Word writes quoted; an
 /// unquoted one runs to the next switch, so Font:Times New Roman is one name (LibreOffice keeps only the first word).
@@ -69,9 +69,19 @@ public static class WordFieldRuby
         int open = part.IndexOf('(');
         if (open < 0) return null;
         int comma = part.IndexOf(',', open + 1);
-        if (comma < 0) comma = part.IndexOf(';', open + 1);
         int last = part.LastIndexOf(')');      // \o's closing bracket: nothing after it is base text
-        if (comma < 0 || last <= comma) return null;
+        if (comma < 0)
+        {
+            // no comma: ";" is not a separator for Word (ruby-edges-semicolon-v1.pdf: "(g;6);b;6)" prints "g;6" over ";b;6",
+            // LibreOffice would split at the ";"): the guide ends at its ")", the rest up to the last ")" is the base
+            int close = part.IndexOf(')', open + 1);
+            if (close < 0 || last <= close) return null;
+            string onlyGuide = part.Substring(open + 1, close - open - 1);
+            string onlyBase = part.Substring(close + 1, last - close - 1).Replace(")", "");
+            if (onlyGuide.Length == 0 || onlyBase.Length == 0) return null;
+            comma = close;   // the rest below reads guide [open+1, comma) and base (comma, last) alike
+        }
+        if (last <= comma) return null;
         // Word drops every ")" from the guide and the base (they close its groups) and keeps everything else as text
         string guide = part.Substring(open + 1, comma - open - 1).Replace(")", "");
         string baseText = part.Substring(comma + 1, last - comma - 1).Replace(")", "");

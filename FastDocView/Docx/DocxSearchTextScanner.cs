@@ -107,6 +107,9 @@ internal sealed class DocxSearchTextScanner
         string? formParent = null;
         List<(int depth, bool separated)>? simpleFields = null;   // open w:fldSimple elements
         DocxSearchFields? fields = Fields;
+        int rubyGuideStart = -1;       // where the open (skipped) w:rt's content starts
+        string? rubyRest = null;       // the last guide's rest after a comma, fed at the start of its base
+        int rubyBaseDepth = -1;        // depth of the open w:rubyBase (its ")" are not drawn)
         stoppedAt = 0;
         while (position < end)
         {
@@ -117,8 +120,8 @@ internal sealed class DocxSearchTextScanner
                 if (instructionDepth >= 0) fields!.Instruction(Encoding.UTF8.GetString(xml.Slice(position, stop - position).ToArray()));
                 else if (textDepth >= 0)
                 {
-                    if (fields is null || fields.IsIdle) matcher.FeedUtf8(xml.Slice(position, stop - position));
-                    else if (fields.Shows(Encoding.UTF8.GetString(xml.Slice(position, stop - position).ToArray()))) matcher.FeedUtf8(xml.Slice(position, stop - position));
+                    if (fields is null || fields.IsIdle) FeedText(matcher, xml.Slice(position, stop - position), rubyBaseDepth >= 0);
+                    else if (fields.Shows(Encoding.UTF8.GetString(xml.Slice(position, stop - position).ToArray()))) FeedText(matcher, xml.Slice(position, stop - position), rubyBaseDepth >= 0);
                 }
             }
             if (next < 0) break;
@@ -128,7 +131,7 @@ internal sealed class DocxSearchTextScanner
                 int semicolon = xml.Slice(position).IndexOf((byte)';');
                 if (semicolon < 0 || !TryDecodeEntity(xml.Slice(position + 1, semicolon - 1), out int codePoint)) return Fail(block, out stoppedAt);
                 if (instructionDepth >= 0 && skipDepth < 0) fields!.Instruction(char.ConvertFromUtf32(codePoint));
-                else if (textDepth >= 0 && skipDepth < 0 && !(dropsAlignment && codePoint == '&') && (fields is null || fields.IsIdle || fields.Shows(char.ConvertFromUtf32(codePoint)))) matcher.FeedCodePoint(codePoint);
+                else if (textDepth >= 0 && skipDepth < 0 && !(dropsAlignment && codePoint == '&') && !(rubyBaseDepth >= 0 && codePoint == ')') && (fields is null || fields.IsIdle || fields.Shows(char.ConvertFromUtf32(codePoint)))) matcher.FeedCodePoint(codePoint);
                 position += semicolon + 1;
                 continue;
             }
@@ -152,7 +155,7 @@ internal sealed class DocxSearchTextScanner
                     if (instructionDepth >= 0 && skipDepth < 0) fields!.Instruction(Encoding.UTF8.GetString(rest.Slice(9, close).ToArray()));
                     else if (textDepth >= 0 && skipDepth < 0 && (fields is null || fields.IsIdle || fields.Shows(Encoding.UTF8.GetString(rest.Slice(9, close).ToArray()))))
                     {
-                        if (!dropsAlignment) matcher.FeedUtf8(rest.Slice(9, close));
+                        if (!dropsAlignment) FeedText(matcher, rest.Slice(9, close), rubyBaseDepth >= 0);
                         else foreach (char c in Encoding.UTF8.GetString(rest.Slice(9, close).ToArray())) if (c != '&') matcher.Feed(c);
                     }
                     position += 9 + close + 3;
@@ -191,9 +194,15 @@ internal sealed class DocxSearchTextScanner
                     }
                     fields.Closed(depth);
                 }
+                if (depth == rubyBaseDepth) rubyBaseDepth = -1;
                 if (skipDepth >= 0)
                 {
-                    if (depth == skipDepth) skipDepth = -1;
+                    if (depth == skipDepth)
+                    {
+                        skipDepth = -1;
+                        // a ruby's guide closed: its rest after a comma is drawn at the start of the base (DocxRubyText)
+                        if (rubyGuideStart >= 0) { rubyRest = DocxHtml.DocxRubyText.SearchRest(GuideText(xml.Slice(rubyGuideStart, nameStart - 2 - rubyGuideStart))); rubyGuideStart = -1; }
+                    }
                 }
                 else if (depth == textDepth) { textDepth = -1; dropsAlignment = false; }
                 else
@@ -201,7 +210,7 @@ internal sealed class DocxSearchTextScanner
                     int nameEnd = nameStart;
                     while (nameEnd < position - 1 && !IsSpace(xml[nameEnd])) nameEnd++;
                     ReadOnlySpan<byte> prefix = PrefixOf(xml.Slice(nameStart, nameEnd - nameStart), out ReadOnlySpan<byte> local);
-                    if (local.Length == 1 && local[0] == (byte)'p' && Resolve(prefix) == NamespaceKind.Wordprocessing) matcher.Separator();
+                    if (local.Length == 1 && local[0] == (byte)'p' && Resolve(prefix) == NamespaceKind.Wordprocessing) { matcher.Separator(); rubyRest = null; }   // a guide's rest never outlives its paragraph
                 }
                 if (_namespaces.HasBlockDeclarations) _namespaces.Pop(depth);
                 continue;
@@ -313,6 +322,13 @@ internal sealed class DocxSearchTextScanner
                         if (MathKindAt(elementDepth - 1) != MathKind.Run) matcher.Feed(' ');      // a tab in an equation's run is not drawn
                         break;
                     case 2 when Is(local, "rt") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:          // a ruby's guide text: shown above its base, not searched
+                        if (!isEmpty) { skipDepth = elementDepth; rubyGuideStart = position; }
+                        break;
+                    case 8 when Is(local, "rubyBase") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
+                        // the base as Word prints it (DocxRubyText): the guide's rest and a comma first, every ")" dropped
+                        if (!isEmpty) rubyBaseDepth = elementDepth;
+                        if (rubyRest is not null) { matcher.Feed((rubyRest + ",").AsSpan()); rubyRest = null; }
+                        break;
                     case 8 when Is(local, "moveFrom") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:    // a tracked move's source: hidden in Word's final view
                     case 3 when (Is(local, "pPr") || Is(local, "rPr")) && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
                         if (!isEmpty) skipDepth = elementDepth;
@@ -404,6 +420,29 @@ internal sealed class DocxSearchTextScanner
     }
 
     private static bool IsOn(string? value) => value is "1" or "true" or "on";
+
+    /// <summary>Run text; inside a ruby base without its ")" (Word does not draw them, DocxRubyText).</summary>
+    private static void FeedText(WordDocumentSearchMatcher matcher, ReadOnlySpan<byte> text, bool isRubyBase)
+    {
+        if (!isRubyBase) { matcher.FeedUtf8(text); return; }
+        int bracket;
+        while ((bracket = text.IndexOf((byte)')')) >= 0)
+        {
+            if (bracket > 0) matcher.FeedUtf8(text.Slice(0, bracket));
+            text = text.Slice(bracket + 1);
+        }
+        if (text.Length > 0) matcher.FeedUtf8(text);
+    }
+
+    /// <summary>The w:t text of a w:rt's content (a few bytes; the guide is not searched, only its rest after a comma is).</summary>
+    private static string GuideText(ReadOnlySpan<byte> content)
+    {
+        string xml = Encoding.UTF8.GetString(content.ToArray());
+        var text = new StringBuilder();
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(xml, @"<(?:[\w.-]+:)?t(?:\s[^>]*)?>([^<]*)</"))
+            text.Append(System.Net.WebUtility.HtmlDecode(match.Groups[1].Value));
+        return text.ToString();
+    }
 
     /// <summary>Local names the field reading looks at (cheap length filter first).</summary>
     private static bool IsFieldMarkup(ReadOnlySpan<byte> local) => local.Length switch

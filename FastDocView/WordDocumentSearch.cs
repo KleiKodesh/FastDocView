@@ -481,6 +481,8 @@ internal sealed class WordXmlSearchText
             int instructionDepth = -1;             // the open w:instrText
             var simpleFields = new List<(int depth, bool separated)>();   // open w:fldSimple elements
             bool skipped = false;                  // Skip() already moved to the next node
+            string? rubyRest = null;               // the last ruby guide's rest after a comma, fed at the start of its base
+            int rubyBaseDepth = -1;                // the open w:rubyBase (its ")" are not drawn)
             while (skipped ? !reader.EOF : reader.Read())
             {
                 skipped = false;
@@ -497,7 +499,21 @@ internal sealed class WordXmlSearchText
                         if (!IsWordprocessing(reader.NamespaceURI)) break;
                         // properties, the source of a tracked move (Word's final view hides it) and a ruby's guide text (shown above
                         // its base, not searched - as text:ruby-text in .odt) are not text
+                        if (reader.LocalName == "rt" && !reader.IsEmptyElement)
+                        {
+                            // only its rest after a comma is drawn - at the start of the base (DocxRubyText, as DocxSearchTextScanner)
+                            var guide = (XElement)XNode.ReadFrom(reader);
+                            rubyRest = DocxHtml.DocxRubyText.SearchRest(string.Concat(guide.Descendants().Where(e => e.Name.LocalName == "t").Select(e => e.Value)));
+                            skipped = true;
+                            continue;
+                        }
                         if (reader.LocalName is "pPr" or "rPr" or "moveFrom" or "rt") { reader.Skip(); skipped = true; continue; }
+                        if (reader.LocalName == "rubyBase")
+                        {
+                            // the base as Word prints it: the guide's rest and a comma first, every ")" dropped
+                            if (!reader.IsEmptyElement) rubyBaseDepth = reader.Depth;
+                            if (rubyRest is not null) { matcher.Feed((rubyRest + ",").AsSpan()); rubyRest = null; }
+                        }
                         if (fields is not null)
                         {
                             // a w:fldSimple's result starts at its first run-level child (the renderer separates before rendering any)
@@ -545,9 +561,10 @@ internal sealed class WordXmlSearchText
                         else if (reader.LocalName == "p" && reader.IsEmptyElement) matcher.Separator();
                         break;
                     case XmlNodeType.EndElement:
+                        if (reader.Depth == rubyBaseDepth) rubyBaseDepth = -1;
                         if (reader.Depth == textDepth) textDepth = -1;
                         else if (reader.Depth == instructionDepth) instructionDepth = -1;
-                        else if (reader.LocalName == "p" && IsWordprocessing(reader.NamespaceURI)) matcher.Separator();
+                        else if (reader.LocalName == "p" && IsWordprocessing(reader.NamespaceURI)) { matcher.Separator(); rubyRest = null; }   // a guide's rest never outlives its paragraph
                         else if (fields is not null && simpleFields.Count > 0 && reader.Depth == simpleFields[simpleFields.Count - 1].depth)
                         {
                             simpleFields.RemoveAt(simpleFields.Count - 1);
@@ -557,7 +574,8 @@ internal sealed class WordXmlSearchText
                         break;
                     case XmlNodeType.Text or XmlNodeType.CDATA or XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace:
                         if (instructionDepth >= 0) fields?.Instruction(reader.Value);
-                        else if (textDepth >= 0 && (fields is null || fields.IsIdle || fields.Shows(reader.Value))) matcher.Feed(reader.Value.AsSpan());
+                        else if (textDepth >= 0 && (fields is null || fields.IsIdle || fields.Shows(reader.Value)))
+                            matcher.Feed((rubyBaseDepth >= 0 ? reader.Value.Replace(")", "") : reader.Value).AsSpan());
                         break;
                 }
             }

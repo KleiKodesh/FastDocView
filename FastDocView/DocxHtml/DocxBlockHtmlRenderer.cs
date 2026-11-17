@@ -774,6 +774,7 @@ public sealed class DocxBlockHtmlRenderer
 
     private XElement? _paragraphEndOf;                              // the paragraph _paragraphEndTexts was computed for
     private readonly HashSet<XElement> _paragraphEndTexts = new();   // its w:t elements that nothing visible follows
+    private readonly Dictionary<XElement, XElement> _rubyTextOriginals = new();   // a ruby's copied w:t -> the w:t it stands for (DocxRubyText)
 
     /// <summary>
     /// Whether nothing visible follows <paramref name="textElement"/> in its paragraph (only spaces, properties, deletions).
@@ -781,6 +782,8 @@ public sealed class DocxBlockHtmlRenderer
     /// </summary>
     private bool IsInParagraphEnd(XElement textElement)
     {
+        // a ruby's copied text (DocxRubyText) sits where its original does
+        if (_rubyTextOriginals.TryGetValue(textElement, out XElement? original)) textElement = original;
         XElement? paragraph = textElement.Parent;
         while (paragraph is not null && paragraph.Name != W + "p") paragraph = paragraph.Parent;
         if (paragraph is null) return false;
@@ -882,11 +885,12 @@ public sealed class DocxBlockHtmlRenderer
                 case "ruby":
                 {
                     // w:ruby (phonetic guide): the base text with its guide above it - HTML ruby; the guide is shown, not searched
-                    // (search feeds the base only, as the reference reader and the byte scanner skip w:rt)
+                    // (search feeds the base as drawn: DocxRubyText.SearchRest, then the base without ")")
                     html.Append("<ruby>");
                     XElement? rubyBase = child.Element(W + "rubyBase"), rubyText = child.Element(W + "rt");
                     // brackets and commas change the text as Word prints it (DocxRubyText)
-                    if (rubyBase is not null && rubyText is not null) (rubyBase, rubyText) = DocxRubyText.AsWordPrints(rubyBase, rubyText);
+                    if (_rubyTextOriginals.Count > 256) _rubyTextOriginals.Clear();      // only the ruby being drawn is asked about: stay bounded
+                    if (rubyBase is not null && rubyText is not null) (rubyBase, rubyText) = DocxRubyText.AsWordPrints(rubyBase, rubyText, _rubyTextOriginals);
                     if (rubyBase is not null) yield return new(RenderInlineChildren(rubyBase, html, formatting));
                     if (rubyText is not null)
                     {
