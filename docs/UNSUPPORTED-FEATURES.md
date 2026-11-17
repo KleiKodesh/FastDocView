@@ -91,7 +91,8 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Through wrap (text over holes) | all | Holes cannot be laid out in CSS; drawn as tight | won't do |
 | Page / margin-relative vertical position | all | No page | planned (paged view) |
-| Picture effects (artistic effects, recolour, soft edges, 3-D rotation) | docx | Not read | deferred |
+| Picture effects: 3-D perspective cameras, preset camera rotations without a:rot, lighting; other a:blip children (alphaBiLevel, alphaCeiling / Floor, alphaRepl, blur, clrRepl, fillOverlay, hsl, tint) | docx | Drawn with an orthographic camera / not read; Word's UI does not write the other blip children | deferred |
+| Picture effects (grey, black and white, washout, VML gain / blacklevel) | doc, rtf | Not read | deferred |
 
 ## Shapes, WordArt, text boxes
 
@@ -100,7 +101,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | 3-D shapes (scene3d / sp3d, bevels, extrusion) | docx, doc, rtf | Not read (ODT extrusion is drawn) | deferred |
 | Connector routing (glue points) | docx, doc, rtf | Drawn as their saved geometry only | won't do |
 | Half-transparent picture fill in a darken / lighten path | docx | The darkening layer is scaled by the picture's opacity (exact only for an opaque picture) | won't do |
-| Shapes in web archives | mhtml | VML is not drawn | deferred |
+| Shapes in web archives: the VML drawing itself | mhtml | Shown as a browser shows the archive: Word's HTML fallback (table cells and pictures of the shapes); the fallback is what a browser prints | won't do |
 
 ## Charts, SmartArt, objects
 

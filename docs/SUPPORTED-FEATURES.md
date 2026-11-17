@@ -217,17 +217,21 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 | Two-sided wrap (floats flush to its nearer edge; contour as shape-outside) | yes (18) | yes (18) | yes (18) | yes (18) | n.a. | n.a. |
 | Vertical offset from the anchor's paragraph or line, alignment to the anchor's line (top / centre / bottom) | yes (18a) | yes (18a) | yes (18a) | no | n.a. | n.a. |
 | Cropping, negative crop (padding) included (19) | yes | yes | yes | yes | n.a. | n.a. |
+| Picture effects: grey, black and white, brightness / contrast (washout), duotone, colour change, transparency, soft edges, 3-D rotation, artistic effects (19a) | yes | no | no | n.a. | n.a. | yes (19b) |
 
 18. CSS cannot put text on both sides of one float, so the object floats flush to the nearer edge of its section's text width (page / right-margin offsets converted first) and wraps one side, as a contour where it has one.
 18a. The object moves down (or up) by its top margin from its paragraph's first line (lifted there wherever its anchor sits) or from its anchor's line and the text wraps around it where it lands (DrawingML positionV paragraph / line, VML margin-top; .doc FSPA yaTop with by / posrelv 2-3, posv; RTF \shptop with \shpbypara / posrelv, posv). Aligned to a line: .docx against the line's box, .doc / RTF against its top edge, as Word 16 prints them. Page- and margin-relative positions wait for the paged view.
 19. a:srcRect and VML croptop..., OfficeArt cropFrom* (and the PICF crop fields), \piccrop*, fo:clip: the box keeps the shown size and hides what overflows; the whole picture inside is scaled and offset, as Word 16 draws it in its PDF.
+19a. DrawingML a:blip a:grayscl, a:biLevel, a:lum, a:duotone, a:clrChange, a:alphaModFix in document order as one SVG filter (sRGB), pic:spPr a:softEdge as a mask and a:scene3d a:camera a:rot as a CSS rotation, matched on Word 16's PDF (test-data/word-picture-effects): grey = Rec. 709 luminance; black and white = that luminance against the threshold; brightness / contrast with half the brightness before the contrast and half after (washout = bright 70 % contrast -70 %); duotone mixes the luminance between its two colours; colour change takes the exact colour only (as Word does for a PNG); exact to 1-2 levels. Soft edges follow Word's fall-off over 1.73 radii (within about 30 levels); a duotone colour Word pushes past 255 (satMod) is clipped (about 15 levels). 3-D rotation uses an orthographic camera: the picture's size as Word prints it, without the camera's perspective or Word's lighting. Word 2010 artistic effects need nothing: Word saves the picture with the effect drawn in as the a:blip, and that is the picture shown (its a14:imgLayer original is for editing).
+19b. Word writes the effects into its web archive's pictures (the `<img>` a browser shows); VML copies are skipped.
+19c. As a browser and its print show a Word web archive: it has no VML, so the page shows what Word wrote for it in `<![if !vml]>`: the shapes laid out in a table (filled, bordered cells holding the shapes' text) and Word's pictures of the shapes it cannot write as HTML (ovals, lines). The VML itself is skipped.
 
 ## Shapes, WordArt, text boxes
 
 | Feature | docx | doc | rtf | odt/fodt | txt | mhtml |
 |---|---|---|---|---|---|---|
 | Preset / custom shapes as SVG (geometry, fills, lines, line ends) | yes | yes | yes | yes | n.a. | n.a. |
-| VML shapes | yes | n.a. | n.a. | n.a. | n.a. | no |
+| VML shapes | yes | n.a. | n.a. | n.a. | n.a. | yes (19c) |
 | Groups, drawing canvas | yes | yes (20) | yes (20) | yes | n.a. | n.a. |
 | Text boxes (linked chains shown in the first box) | yes | yes (21) | yes (21) | yes | n.a. | n.a. |
 | WordArt / Fontwork (text on outlines) | yes | yes | yes | yes | n.a. | n.a. |

@@ -1151,7 +1151,7 @@ public sealed class DocxBlockHtmlRenderer
     {
         string? embed = (string?)picture.Attribute("embed");
         string? pictureId = embed is { Length: > 0 } && _pictures is not null ? _pictures(_currentPicturePart, embed) : null;
-        WordPictureHtml.Append(html, DrawingLayout(picture), pictureId);
+        WordPictureHtml.Append(html, DrawingLayout(picture) with { Effects = DocxPictureEffects.Read(picture.Element("effects"), _styles.Theme) }, pictureId);
     }
 
     /// <summary>The placement of a drawing (picture or text box) from the layout element the stripper kept.</summary>

@@ -117,7 +117,9 @@ internal static class DocxDrawingStripper
             foreach (string side in new[] { "l", "t", "r", "b" }) Copy("crop" + side, OpenTagAt(drawing, sourceRectangle), side);
         WriteTextBoxShape(layout, drawing);
         string shapes = ShapeTree(drawing, frame);
-        if (shapes.Length == 0) layout.Append("/>");
+        string effects = shapes.Length == 0 ? PictureEffects(drawing, frame) : "";
+        if (effects.Length > 0) layout.Append('>').Append(effects).Append("</").Append(PictureLayoutElementName).Append('>');
+        else if (shapes.Length == 0) layout.Append("/>");
         else layout.Append('>').Append(shapes).Append("</").Append(PictureLayoutElementName).Append('>');
         WriteUtf8(output, layout.ToString());
     }
@@ -223,6 +225,88 @@ internal static class DocxDrawingStripper
         return tree.ToString();
     }
 
+    /// <summary>
+    /// A picture's effects (ECMA-376 Part 1 20.1.8.13 a:blip children: a:grayscl 20.1.8.34, a:biLevel 20.1.8.11, a:lum 20.1.8.42,
+    /// a:alphaModFix 20.1.8.4, a:duotone 20.1.8.23, a:clrChange 20.1.8.16 with their colours; pic:spPr a:effectLst a:softEdge
+    /// 20.1.8.53 and a:scene3d a:camera a:rot 20.1.5.5 / 20.1.5.11), as &lt;effects&gt;&lt;blip&gt;...&lt;/blip&gt;&lt;effectLst&gt;...
+    /// &lt;/effectLst&gt;&lt;scene3d&gt;...&lt;/scene3d&gt;&lt;/effects&gt; without prefixes; empty when the picture has none.
+    /// LibreOffice reads the same blip children (oox/source/drawingml/misccontexts.cxx BlipContext: biLevel thresh, grayscl,
+    /// clrChange, duotone, lum bright / contrast, alphaModFix amt). Word 2010's artistic effects (a14:imgProps in a:extLst) are
+    /// not copied: Word saves the picture with the effect drawn into it as the a:blip r:embed (the a14:imgLayer r:embed is the
+    /// original, kept for editing; LibreOffice keeps it the same way, misccontexts.cxx ArtisticEffectContext).
+    /// </summary>
+    private static string PictureEffects(ReadOnlySpan<byte> drawing, int frame)
+    {
+        var effects = new StringBuilder();
+        if (IndexOfOpenTag(drawing, frame, "a:blip") is var blip and >= 0 && ElementEnd(drawing, blip, "a:blip") is var blipEnd and > 0)
+            AppendKeptTree(effects, drawing.Slice(blip, blipEnd - blip), KeptPictureEffectElements);
+        if (IndexOfOpenTag(drawing, frame, "pic:spPr") is var properties and >= 0 && ElementEnd(drawing, properties, "pic:spPr") is var propertiesEnd and > 0)
+        {
+            ReadOnlySpan<byte> spPr = drawing.Slice(properties, propertiesEnd - properties);
+            foreach (string name in new[] { "a:effectLst", "a:scene3d" })
+                if (IndexOfOpenTag(spPr, 0, name) is var at and >= 0 && ElementEnd(spPr, at, name) is var end and > 0)
+                    AppendKeptTree(effects, spPr.Slice(at, end - at), KeptPictureEffectElements);
+        }
+        string copied = effects.ToString();
+        foreach (string effect in PictureEffectNames)
+            if (copied.IndexOf("<" + effect, StringComparison.Ordinal) >= 0) return "<effects>" + copied + "</effects>";
+        return "";                                  // a plain picture keeps its one-element layout
+    }
+
+    private static readonly string[] PictureEffectNames = ["grayscl", "biLevel", "lum ", "alphaModFix", "duotone", "clrChange", "softEdge", "rot "];
+
+    /// <summary>One element and its kept descendants (names in <paramref name="kept"/>), without prefixes; a dropped element goes with its subtree.</summary>
+    private static void AppendKeptTree(StringBuilder tree, ReadOnlySpan<byte> element, HashSet<string> kept)
+    {
+        int skipDepth = 0;
+        var open = new Stack<string>();
+        int position = 0;
+        while (position < element.Length)
+        {
+            int start = element.Slice(position).IndexOf((byte)'<');
+            if (start < 0) break;
+            int at = position + start;
+            int close = element.Slice(at).IndexOf((byte)'>');
+            if (close < 0) break;
+            ReadOnlySpan<byte> tag = element.Slice(at + 1, close - 1);
+            position = at + close + 1;
+            if (tag.Length == 0 || tag[0] is (byte)'?' or (byte)'!') continue;
+            if (tag[0] == (byte)'/')
+            {
+                if (skipDepth > 0) { skipDepth--; continue; }
+                if (open.Count == 0) break;
+                tree.Append("</").Append(open.Pop()).Append('>');
+                if (open.Count == 0) break;
+                continue;
+            }
+            bool selfClosing = tag[tag.Length - 1] == (byte)'/';
+            if (selfClosing) tag = tag.Slice(0, tag.Length - 1);
+            int nameEnd = 0;
+            while (nameEnd < tag.Length && tag[nameEnd] is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n')) nameEnd++;
+            string name = Encoding.ASCII.GetString(tag.Slice(0, nameEnd).ToArray());
+            if (skipDepth > 0 || !kept.Contains(name))
+            {
+                if (!selfClosing) skipDepth++;
+                continue;
+            }
+            tree.Append('<').Append(LocalName(name));
+            AppendUnprefixedAttributes(tree, tag.Slice(nameEnd));
+            if (selfClosing) { tree.Append("/>"); if (open.Count == 0) break; }
+            else { tree.Append('>'); open.Push(LocalName(name)); }
+        }
+        while (open.Count > 0) tree.Append("</").Append(open.Pop()).Append('>');
+    }
+
+    private static readonly HashSet<string> KeptPictureEffectElements = new(StringComparer.Ordinal)
+    {
+        "a:blip", "a:grayscl", "a:biLevel", "a:lum", "a:alphaModFix", "a:duotone", "a:clrChange", "a:clrFrom", "a:clrTo",
+        "a:effectLst", "a:softEdge", "a:scene3d", "a:camera", "a:rot",
+        "a:srgbClr", "a:schemeClr", "a:sysClr", "a:prstClr", "a:scrgbClr", "a:hslClr", "a:lumMod", "a:lumOff", "a:tint", "a:shade",
+        "a:alpha", "a:alphaMod", "a:alphaOff", "a:hue", "a:hueMod", "a:hueOff", "a:sat", "a:satMod", "a:satOff",
+        "a:red", "a:redMod", "a:redOff", "a:green", "a:greenMod", "a:greenOff", "a:blue", "a:blueMod", "a:blueOff",
+        "a:gray", "a:comp", "a:inv", "a:gamma", "a:invGamma",
+    };
+
     private static readonly HashSet<string> KeptShapeElements = new(StringComparer.Ordinal)
     {
         "wpg:wgp", "wpg:grpSp", "wpg:grpSpPr", "wps:wsp", "wps:spPr", "wps:style", "wps:bodyPr", "wps:txbx", "wps:linkedTxbx",
@@ -259,7 +343,7 @@ internal static class DocxDrawingStripper
             int length = attributes.Slice(valueAt + 1).IndexOf(quote);
             if (length < 0) return;
             if (name == "r:embed") name = "embed";
-            if (name.IndexOf(':') < 0 && name.Length > 0)
+            if (name.IndexOf(':') < 0 && name.Length > 0 && name != "xmlns")
             {
                 string value = Encoding.UTF8.GetString(attributes.Slice(valueAt + 1, length).ToArray());
                 tree.Append(' ').Append(name).Append("=\"").Append(quote == (byte)'"' ? value : value.Replace("\"", "&quot;")).Append('"');

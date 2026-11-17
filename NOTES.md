@@ -3086,3 +3086,27 @@ sender-*, text-input; page-number / page-count / references by page need pages (
   when a paragraph holding its own text:hidden-paragraph closes, ask the document whether it is hidden (the renderer's
   OdtFieldComputer.IsParagraphHidden per paragraph) and roll the matcher back - hits and captured text - so a hidden
   paragraph inside a table cell is neither found nor in WordDocumentText, while its cell's other paragraphs are.
+
+## Picture effects (.docx) and shapes in web archives (2026-11-17)
+
+- `DocxDrawingStripper.PictureEffects` copies a plain picture's a:blip effect children (grayscl, biLevel, lum, duotone,
+  clrChange, alphaModFix with their colours), pic:spPr a:effectLst a:softEdge and a:scene3d a:camera a:rot into the layout as
+  `<effects>`; a picture without effects keeps its one-element layout. `DocxPictureEffects` reads them into the format-neutral
+  `WordPictureEffects`, which `WordPictureHtml` draws as one SVG filter (sRGB, named by a hash of its primitives, written just
+  before the picture so every rendered block carries its own), opacity, a soft-edge mask and a CSS rotation. Per block, at
+  render time: nothing at index time.
+- Measured on Word 16's PDF of test-data/word-picture-effects/effects-xml-v1.docx (Word draws every effect into the PDF
+  image): grey = Rec. 709 luminance of the sRGB values; biLevel = that luminance against thresh; lum = half the brightness
+  before the contrast and half after (LibreOffice fillproperties.cxx:834-836 says the same), slope 1 + c below 0, 1 / (1 - c)
+  from 0 up; duotone = linear sRGB mix by the luminance; clrChange = the exact colour only (a PNG; 252,0,0 is not 255,0,0).
+  Browser vs Word on the swatch: 0-2 levels for all of these; soft edge within ~30 (Word's fall-off: half at ~0.9 rad,
+  gone at 1.73 rad); duotone with satMod 400 % ~15 (Word does not clip the colour before mixing).
+- Artistic effects (a14:imgProps) need nothing: the a:blip r:embed is Word's drawing of the effect; the a14:imgLayer r:embed
+  (an hdphoto .wdp) is the original for editing. LibreOffice does the same (misccontexts.cxx ArtisticEffectContext keeps the
+  layer only for round trips).
+- 3-D rotation: orthographic, as CSS rotateX / rotateY / rotateZ without perspective (rot lon 40: 138 pt shown vs Word's 139 pt).
+  Perspective cameras (perspectiveRelaxed lat 30: Word 191 x 111 pt, we 180 x 104) and lighting are not drawn.
+- Web archives: Word writes every VML shape twice: the VML in `<!--[if gte vml 1]>` and a browser fallback in
+  `<![if !vml]>` (a positioned table: filled / bordered cells holding the shape's text, `<img>` pictures of ovals, lines and
+  pictures with their effects drawn in). The scanner already drops the VML comment and keeps the fallback, which is what a
+  browser prints; `PictureEffectsFidelityTest` pins it (vml-shapes-v1.mht).

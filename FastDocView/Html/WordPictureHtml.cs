@@ -42,7 +42,7 @@ public readonly record struct WordPictureLayout(double WidthPt, double HeightPt,
                                                 WordPictureOffsetOrigin OffsetOrigin = WordPictureOffsetOrigin.Column, double ColumnLeftPt = -1,
                                                 WordPictureCrop Crop = default, double VerticalOffsetPt = 0,
                                                 WordPictureLineAlignment LineAlignment = WordPictureLineAlignment.None, bool AlignsToLineTop = false,
-                                                bool FromParagraphTop = false);
+                                                bool FromParagraphTop = false, WordPictureEffects? Effects = null);
 
 /// <summary>
 /// A floating object aligned to its anchor's line (DrawingML positionV relativeFrom="line" with align, OfficeArt / RTF posv with
@@ -111,6 +111,12 @@ public static class WordPictureHtml
             css.Append("aspect-ratio:").Append(Points(layout.WidthPt)).Append('/').Append(Points(layout.HeightPt)).Append(';');
         else if (layout.HeightPt > 0) css.Append("height:").Append(Points(layout.HeightPt)).Append("pt;");
         AppendPlacement(css, layout);
+        if (pictureId is not null && layout.Effects is { IsEmpty: false } effects)
+        {
+            (string Id, string Markup)? filter = effects.SvgFilter();
+            if (filter is { } svg) html.Append(svg.Markup);
+            css.Append(effects.Css(filter?.Id));
+        }
         if (pictureId is not null && layout.Crop.IsDrawable && layout.WidthPt > 0 && layout.HeightPt > 0)
         {
             AppendCropped(html, layout, pictureId, css);
