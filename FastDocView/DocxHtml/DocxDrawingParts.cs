@@ -46,15 +46,27 @@ internal static class DocxDrawingParts
            ? DocxChartEx.Read(DocxShapeGeometry.WithoutNamespaces(root), theme) : null;
 
     /// <summary>The text a SmartArt or chart drawing shows, for search: shape texts in drawing order / the chart's texts, one per line.</summary>
-    public static string? SearchText(RelatedPartReader related, string relationshipId, DocxTheme? theme, XElement? diagram = null)
+    public static string? SearchText(RelatedPartReader related, string relationshipId, DocxTheme? theme)
     {
+        // a SmartArt comes as "dm lo" (DocxSearchTextScanner / WordXmlSearchText): its data part and, if named, its layout part
+        string layoutId = "";
+        int space = relationshipId.IndexOf(' ');
+        if (space >= 0) (relationshipId, layoutId) = (relationshipId.Substring(0, space), relationshipId.Substring(space + 1));
         if (related(relationshipId) is not { } part) return null;
         if (part.Type.EndsWith("/chartEx", StringComparison.OrdinalIgnoreCase))
             return ChartEx(related, relationshipId, theme) is { CanDraw: true } chartEx ? string.Join("\n", chartEx.Texts()) : null;
         if (part.Type.EndsWith("/chart", StringComparison.OrdinalIgnoreCase))
             return Chart(related, relationshipId, theme) is { } chart ? string.Join("\n", chart.Texts()) : null;
-        if (DiagramDrawing(related, diagram ?? new XElement("diagram", new XAttribute("dm", relationshipId))) is { } drawing)
+        if (DiagramDrawing(related, new XElement("diagram", new XAttribute("dm", relationshipId))) is { } drawing)
             return string.Concat(drawing.Tree.Descendants("txBody").Select(DocxDrawingTextHtml.Text));
-        return null;
+        // no drawing part: drawn from the layout part when there is one (DiagramDrawing), showing the data points' own text;
+        // search reads it in data-model order
+        if (layoutId.Length == 0 || related(layoutId)?.Xml.Root is null || part.Xml.Root is not { } data) return null;
+        XElement model = DocxShapeGeometry.WithoutNamespaces(data);
+        string text = string.Concat(model.Element("ptLst")?.Elements("pt")
+                                         .Where(p => (string?)p.Attribute("type") is null or "node" or "asst")
+                                         .Select(p => p.Element("t")).OfType<XElement>()
+                                         .Select(t => DocxDrawingTextHtml.Text(new XElement("txBody", t.Elements("p")))) ?? []);
+        return text.Length > 0 ? text : null;
     }
 }

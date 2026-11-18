@@ -1721,8 +1721,15 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   pyra levels k/n wide. Checked against Word's own drawing part of test-data/smartart-layouts (--smartart; Word 16 files made
   by scripts/make-smartart-layouts.ps1, stripped by scripts/strip-smartart-drawing.py): block list 0.0 pt, chevron 0.1,
   process 0.4, pyramid 0.0, vertical list 2.2; cycle 18 pt, horizontal list 77, hierarchy / org chart / stacked list
-  87-190 (reported, not checked). The stripper keeps r:lo / r:qs / r:cs on the diagram element (no index change: the layout
-  XML is stripped per render). Search does not yet find the text of a diagram without a drawing part (the search scanner keeps only r:dm).
+  87-190 (reported, not checked).
+  2026-11-18 (second round): cycle and hierRoot / hierChild follow Word too. Cycle: node centres w + sibSp apart along the
+  chord (radius (w + sibSp) / (2 sin(step / 2))), the ring fitted and centred, connectors on the chord middles turned
+  along them (1.1 pt). Hierarchy: the whole tree from the outermost hierarchy node, a hierRoot = its box over its
+  hierChild rows (sp below), a row = hierRoots sibSp apart, scaled to fit and centred (hierarchy and org chart 0.0 pt).
+  Constraints resolve in one place (Resolve: in order, again until settled; "self" values such as sp / sibSp). Search:
+  the scanner and the reference reader report a SmartArt as "dm lo"; without a drawing part the data points' text is
+  read in data-model order when the layout part exists (what is drawn). The stripper keeps r:lo / r:qs / r:cs on the diagram element (no index change: the layout
+  XML is stripped per render). 
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
   pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns

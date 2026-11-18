@@ -408,6 +408,8 @@ internal static class DocxDiagramLayout
         public double FontSize = 18, MinimumFontSize = 5;
         public (string Type, double Factor)[] Margins = [];
         public bool Autofit;
+        public string AlgorithmType = "";      // the algorithm its layout node chose (hierRoot / hierChild rows of a tree)
+        public bool HierarchyPlaced;           // laid out with the whole tree by the outermost hierarchy algorithm
         public bool FillsParent;               // the pyramid's level shape: its composite group's whole box
         public double BeginPad, EndPad;        // a connector's padding along its space, as fractions of it (begPad / endPad over connDist)
         public List<Constraint> OwnConstraints = [];
@@ -643,6 +645,7 @@ internal static class DocxDiagramLayout
         {
             if (!_lookingForAlgorithm) return;
             _parent.AspectRatio = algorithm.AspectRatio;
+            _parent.AlgorithmType = algorithm.Type;
             _parent.VerticalShapesCount = VerticalShapesCount(algorithm, _parent);
         }
 
@@ -799,8 +802,8 @@ internal static class DocxDiagramLayout
             {
                 case "composite": Composite(algorithm, shape, constraints); break;
                 case "conn": Connector(algorithm, shape); break;
-                case "cycle": Cycle(algorithm, shape); break;
-                case "hierChild" or "hierRoot": Hierarchy(algorithm, shape); break;
+                case "cycle": Cycle(algorithm, shape, own); break;
+                case "hierChild" or "hierRoot": Hierarchy(algorithm, shape, own); break;
                 case "lin": Linear(algorithm, shape, own); break;
                 case "pyra": Pyramid(algorithm, shape); break;
                 case "snake": Snake(algorithm, shape, own); break;
@@ -915,88 +918,182 @@ internal static class DocxDiagramLayout
             // LibreOffice resizes by the direct constraints but then keeps the parent's own size (conn: rParent w / h), so the shape keeps its place
         }
 
-        /// <summary>The cycle algorithm: children around a circle from stAng over spanAng, a quarter of the shape each, connectors a twelfth.</summary>
-        private static void Cycle(AlgorithmAtom algorithm, DiagramShape shape)
-        {
-            if (shape.Children.Count == 0) return;
-            double startAngle = algorithm.Number("stAng", 0), spanAngle = algorithm.Number("spanAng", 360);
-            string rotationPath = algorithm.Parameter("rotPath", "none"), centreShape = algorithm.Parameter("ctrShpMap", "none");
-            double centreX = shape.Width / 2, centreY = shape.Height / 2;
-            double childWidth = shape.Width / 4, childHeight = shape.Height / 4, connectorWidth = shape.Width / 12, connectorHeight = shape.Height / 12;
-            double radius = Math.Min((shape.Width - childWidth) / 2, (shape.Height - childHeight) / 2);
-            var children = shape.Children.ToList();
-            if (centreShape == "fNode")
-            {
-                DiagramShape centre = children[0];
-                children.RemoveAt(0);
-                (centre.X, centre.Y, centre.Width, centre.Height) = (centreX - childWidth / 2, centreY - childHeight / 2, childWidth, childHeight);
-            }
-            int count = children.Count;
-            if (count == 0) return;
-            double connectorRadius = radius * Math.Cos(spanAngle / count * Math.PI / 180);
-            double connectorAngle = spanAngle > 0 ? 0 : 180;
-            for (int i = 0; i < count; i++)
-            {
-                DiagramShape child = children[i];
-                double angle = i * spanAngle / count + startAngle;
-                bool connector = child.Preset == "conn" || child.DataNodeType == "sibTrans" && child.Name.Contains("sibTrans");
-                double width = connector ? connectorWidth : childWidth, height = connector ? connectorHeight : childHeight;
-                double currentRadius = connector ? connectorRadius : radius;
-                child.X = centreX + currentRadius * Math.Sin(angle * Math.PI / 180) - width / 2;
-                child.Y = centreY - currentRadius * Math.Cos(angle * Math.PI / 180) - height / 2;
-                (child.Width, child.Height) = (width, height);
-                if (rotationPath == "alongPath") child.Rotation = angle;
-                if (connector) child.Rotation = connectorAngle + angle;
-            }
-        }
-
-        /// <summary>hierRoot (manager above the employees, top to bottom) and hierChild (the employees side by side).</summary>
-        private static void Hierarchy(AlgorithmAtom algorithm, DiagramShape shape)
+        /// <summary>
+        /// The cycle algorithm (ECMA-376 Part 1 21.4.2 "Cycle"; Word's drawing for the built-in cycles): the nodes on a circle
+        /// from stAng (0 = top, clockwise) over spanAng, their centres one node width plus sibSp apart along the chord, so the
+        /// radius is (w + sibSp) / (2 sin(step / 2)); the ring of nodes scaled to fit the shape and centred. A connector
+        /// (sibTrans) sits on the chord's middle between its node and the next, turned along it, sized by its constraints.
+        /// </summary>
+        private static void Cycle(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> own)
         {
             if (shape.Children.Count == 0 || shape.Width == 0 || shape.Height == 0) return;
-            string direction = algorithm.Type == "hierRoot" ? "fromT" : algorithm.Parameter("linDir", "fromL");
-            string secondary = algorithm.Parameter("secLinDir", "");
-            int count = shape.Children.Count;
-            if (algorithm.Type == "hierChild") count = shape.Children.Count(c => c.Preset != "conn");
-            const double spaceWidth = 0.1, spaceHeight = 0.3;
-            if (algorithm.Type == "hierRoot" && shape.Children.Count == 3 && !ContainsType(shape.Children[1], "asst") && ContainsType(shape.Children[2], "asst"))
-                (shape.Children[1], shape.Children[2]) = (shape.Children[2], shape.Children[1]);
-            int horizontal = secondary == "fromT" ? 2 : direction is "fromL" or "fromR" ? count : 1;
-            if (horizontal <= 0 || shape.VerticalShapesCount <= 0) return;
-            double childHeight = shape.Height / (shape.VerticalShapesCount + (shape.VerticalShapesCount - 1) * spaceHeight);
-            double childWidth = shape.Width / (horizontal + (horizontal - 1) * spaceWidth);
-            double x = 0, y = 0;
-            if (algorithm.Type == "hierChild" && horizontal == 1)
+            double startAngle = algorithm.Number("stAng", 0), spanAngle = algorithm.Number("spanAng", 360);
+            List<Dictionary<string, double>> sizes = ChildSizes(shape, own, out _);
+            Dictionary<string, Dictionary<string, double>> keyed = Resolve(own, shape.Width, shape.Height);
+            var nodes = new List<int>();
+            for (int i = 0; i < shape.Children.Count; i++)
+                if (!IsConnector(shape.Children[i])) nodes.Add(i);
+            int count = nodes.Count;
+            if (count == 0) return;
+            DiagramShape? centre = null;
+            if (algorithm.Parameter("ctrShpMap", "none") == "fNode" && count > 1)
             {
-                x = childWidth * 0.1;
-                childWidth *= 0.8;
+                // the first node in the centre, the others around it
+                centre = shape.Children[nodes[0]];
+                nodes.RemoveAt(0);
+                count--;
             }
-            int index = 0;
-            double rowHeight = 0;
-            foreach (DiagramShape child in shape.Children)
+            Dictionary<string, double> nodeSize = sizes[nodes[0]];
+            double width = nodeSize.TryGetValue("w", out double w) ? w : shape.Width / 4, height = nodeSize.TryGetValue("h", out double h) ? h : width;
+            double spacing = keyed["self"].TryGetValue("sibSp", out double sibSp) ? sibSp : width * 0.5;
+            double step = spanAngle / count * Math.PI / 180;
+            double half = Math.Abs(Math.Sin(step / 2));
+            double radius = count == 1 || half < 1e-9 ? 0 : (width + spacing) / (2 * half);
+            var centres = new (double X, double Y)[count];
+            double left = double.MaxValue, top = double.MaxValue, right = double.MinValue, bottom = double.MinValue;
+            for (int k = 0; k < count; k++)
             {
-                (child.X, child.Y) = (x, y);
-                if (algorithm.Type == "hierChild" && child.Preset == "conn")
-                {
-                    (child.Width, child.Height) = (1, childHeight);
-                    continue;
-                }
-                double height = childHeight * (child.VerticalShapesCount + (child.VerticalShapesCount - 1) * spaceHeight);
-                (child.Width, child.Height) = (childWidth, height);
-                if (direction is "fromT" or "fromB") y += height + childHeight * spaceHeight;
-                else x += childWidth + childWidth * spaceWidth;
-                rowHeight = Math.Max(rowHeight, height);
-                if (secondary == "fromT" && index % 2 == 1)
-                {
-                    x = 0;
-                    y += rowHeight + childHeight * spaceHeight;
-                    rowHeight = 0;
-                }
-                index++;
+                double angle = startAngle * Math.PI / 180 + k * step;
+                centres[k] = (radius * Math.Sin(angle), -radius * Math.Cos(angle));
+                left = Math.Min(left, centres[k].X - width / 2); right = Math.Max(right, centres[k].X + width / 2);
+                top = Math.Min(top, centres[k].Y - height / 2); bottom = Math.Max(bottom, centres[k].Y + height / 2);
+            }
+            double scale = right - left > 0 && bottom - top > 0 ? Math.Min(shape.Width / (right - left), shape.Height / (bottom - top)) : 1;
+            double offsetX = (shape.Width - (right - left) * scale) / 2 - left * scale, offsetY = (shape.Height - (bottom - top) * scale) / 2 - top * scale;
+            for (int k = 0; k < count; k++)
+            {
+                DiagramShape node = shape.Children[nodes[k]];
+                (node.Width, node.Height) = (width * scale, height * scale);
+                (node.X, node.Y) = (offsetX + centres[k].X * scale - node.Width / 2, offsetY + centres[k].Y * scale - node.Height / 2);
+            }
+            if (centre is not null)
+            {
+                (centre.Width, centre.Height) = (width * scale, height * scale);
+                (centre.X, centre.Y) = (offsetX - centre.Width / 2, offsetY - centre.Height / 2);
+            }
+            // each connector follows its node (hideLastTrans="0" keeps the one from the last node back to the first)
+            int nodeIndex = -1;
+            for (int i = 0; i < shape.Children.Count; i++)
+            {
+                DiagramShape child = shape.Children[i];
+                int found = nodes.IndexOf(i);
+                if (found >= 0) { nodeIndex = found; continue; }
+                if (!IsConnector(child) || nodeIndex < 0 || count < 2) continue;
+                var from = centres[nodeIndex];
+                var to = centres[(nodeIndex + 1) % count];
+                double connectorWidth = (sizes[i].TryGetValue("w", out double cw) ? cw : width * 0.25) * scale;
+                double connectorHeight = connectorWidth;
+                if (child.OwnConstraints.FirstOrDefault(c => c.Type == "h" && c.RefType == "w" && c.ForName.Length == 0 && c.For == "none") is { } derived) connectorHeight = connectorWidth * derived.Factor;
+                double middleX = offsetX + (from.X + to.X) / 2 * scale, middleY = offsetY + (from.Y + to.Y) / 2 * scale;
+                (child.Width, child.Height) = (connectorWidth, connectorHeight);
+                (child.X, child.Y) = (middleX - connectorWidth / 2, middleY - connectorHeight / 2);
+                child.Rotation = Math.Atan2(to.Y - from.Y, to.X - from.X) * 180 / Math.PI;
+                if (child.Rotation < 0) child.Rotation += 360;
             }
         }
 
-        private static bool ContainsType(DiagramShape shape, string type) => shape.DataNodeType == type || shape.Children.Any(c => ContainsType(c, type));
+        private static bool IsConnector(DiagramShape shape) => shape.Preset == "conn" || shape.DataNodeType is "sibTrans" or "parTrans";
+
+        /// <summary>
+        /// hierRoot / hierChild (ECMA-376 Part 1 21.4.2 "Hierarchy Root" / "Hierarchy Child"; Word's drawings of the built-in org
+        /// chart and hierarchies): the whole tree is laid out from the outermost hierarchy node at once. A hierRoot is its node's
+        /// box (the composite the constraints size) above the rows of its hierChild groups, centred over them, sp below it; a
+        /// hierChild is a row of hierRoots sibSp apart (linDir fromL / fromR). The tree is scaled to fit the shape and centred;
+        /// the connectors are not drawn (Word's elbow lines; LibreOffice hides them as well).
+        /// </summary>
+        private static void Hierarchy(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> own)
+        {
+            if (shape.HierarchyPlaced || shape.Children.Count == 0 || shape.Width == 0 || shape.Height == 0) return;
+            Dictionary<string, Dictionary<string, double>> keyed = Resolve(own, shape.Width, shape.Height);
+            (double Width, double Height)? anyBox = null;
+            foreach (var pair in keyed)
+                if (pair.Key.StartsWith("n:", StringComparison.Ordinal) && pair.Value.TryGetValue("w", out double bw) && pair.Value.TryGetValue("h", out double bh)) { anyBox = (bw, bh); break; }
+            (double boxWidth, double boxHeight) = anyBox ?? (shape.Width / 4, shape.Width / 8);
+            double siblingSpace = keyed["self"].TryGetValue("sibSp", out double sib) ? sib : boxWidth * 0.1;
+            double defaultGap = keyed["self"].TryGetValue("sp", out double sp0) ? sp0 : boxHeight * 0.25;
+            var measured = new Dictionary<DiagramShape, (double Width, double Height)>();
+
+            (double, double) Box(DiagramShape box)
+                => keyed.TryGetValue("n:" + box.Name, out var own2) && own2.TryGetValue("w", out double w) && own2.TryGetValue("h", out double h) ? (w, h) : (boxWidth, boxHeight);
+            double Gap(DiagramShape root) => keyed.TryGetValue("n:" + root.Name, out var own2) && own2.TryGetValue("sp", out double gap) ? gap : defaultGap;
+            bool IsRow(DiagramShape s) => s.AlgorithmType == "hierChild";
+            bool IsRoot(DiagramShape s) => s.AlgorithmType == "hierRoot";
+
+            (double Width, double Height) Measure(DiagramShape node, int depth)
+            {
+                if (depth > 64) return (0, 0);
+                (double Width, double Height) size;
+                if (IsRow(node))
+                {
+                    var items = node.Children.Where(IsRoot).Select(c => Measure(c, depth + 1)).ToList();
+                    size = items.Count == 0 ? (0, 0) : (items.Sum(i => i.Width) + siblingSpace * (items.Count - 1), items.Max(i => i.Height));
+                }
+                else
+                {
+                    DiagramShape? box = node.Children.FirstOrDefault(c => !IsRow(c) && !IsRoot(c) && !IsConnector(c));
+                    (double width, double height) = box is null ? (0.0, 0.0) : Box(box);
+                    double gap = Gap(node);
+                    foreach (DiagramShape row in node.Children.Where(IsRow))
+                    {
+                        var rowSize = Measure(row, depth + 1);
+                        if (rowSize.Width <= 0) continue;
+                        width = Math.Max(width, rowSize.Width);
+                        height += gap + rowSize.Height;
+                    }
+                    size = (width, height);
+                }
+                measured[node] = size;
+                return size;
+            }
+
+            void Place(DiagramShape node, double scale, int depth)
+            {
+                if (depth > 64) return;
+                node.HierarchyPlaced = true;
+                (double width, double _) = measured[node];
+                if (IsRow(node))
+                {
+                    bool fromRight = algorithm.Parameter("linDir", "fromL") == "fromR" && node == shape;
+                    double x = 0;
+                    foreach (DiagramShape item in node.Children.Where(IsRoot))
+                    {
+                        var itemSize = measured[item];
+                        (item.X, item.Y, item.Width, item.Height) = (fromRight ? width * scale - x - itemSize.Width * scale : x, 0, itemSize.Width * scale, itemSize.Height * scale);
+                        Place(item, scale, depth + 1);
+                        x += (itemSize.Width + siblingSpace) * scale;
+                    }
+                }
+                else
+                {
+                    double y = 0;
+                    if (node.Children.FirstOrDefault(c => !IsRow(c) && !IsRoot(c) && !IsConnector(c)) is { } box)
+                    {
+                        (double bw, double bh) = Box(box);
+                        (box.X, box.Y, box.Width, box.Height) = ((width - bw) / 2 * scale, 0, bw * scale, bh * scale);
+                        y = bh;
+                    }
+                    double gap = Gap(node);
+                    foreach (DiagramShape row in node.Children.Where(IsRow))
+                    {
+                        var rowSize = measured[row];
+                        if (rowSize.Width <= 0) { row.HierarchyPlaced = true; continue; }
+                        y += gap;
+                        (row.X, row.Y, row.Width, row.Height) = ((width - rowSize.Width) / 2 * scale, y * scale, rowSize.Width * scale, rowSize.Height * scale);
+                        Place(row, scale, depth + 1);
+                        y += rowSize.Height;
+                    }
+                }
+                foreach (DiagramShape connector in node.Children.Where(IsConnector)) { connector.HideGeometry = true; connector.Width = connector.Height = 0; }
+            }
+
+            (double totalWidth, double totalHeight) = Measure(shape, 0);
+            if (totalWidth <= 0 || totalHeight <= 0) return;
+            double fit = Math.Min(shape.Width / totalWidth, shape.Height / totalHeight);
+            Place(shape, fit, 0);
+            // the tree centred in the shape
+            double dx = (shape.Width - totalWidth * fit) / 2, dy = (shape.Height - totalHeight * fit) / 2;
+            foreach (DiagramShape child in shape.Children) { child.X += dx; child.Y += dy; }
+        }
 
         /// <summary>
         /// The children's sizes from the layout node's own constraints, in their order (ECMA-376 Part 1 21.4.4 / 21.4.7.10): a
@@ -1006,12 +1103,14 @@ internal static class DocxDiagramLayout
         /// Equalities without a value or reference only tie children together and set nothing. Then each child's own self
         /// constraints (h = 0.6 w and the like). Unset sizes stay null.
         /// </summary>
-        private static List<Dictionary<string, double>> ChildSizes(DiagramShape shape, List<Constraint> own, out double? spacing)
+        /// <summary>
+        /// A layout node's own constraints resolved in their order, again until settled (a reference stated later, as a height
+        /// from the font size given after it): values keyed "n:" + forName, "t:" + ptType, "all" (every child) or "self" (the
+        /// node itself: its w / h to start with, its sp / sibSp / secSibSp); a reference without refFor reads "self".
+        /// </summary>
+        private static Dictionary<string, Dictionary<string, double>> Resolve(List<Constraint> own, double width, double height)
         {
-            var keyed = new Dictionary<string, Dictionary<string, double>>();
-            var parent = new Dictionary<string, double> { ["w"] = shape.Width, ["h"] = shape.Height };
-            spacing = null;
-            // a constraint may name a reference a later one sets (a height from the font size stated after it): resolved again until settled
+            var keyed = new Dictionary<string, Dictionary<string, double>> { ["self"] = new() { ["w"] = width, ["h"] = height } };
             for (int pass = 0; pass < 3; pass++)
             foreach (Constraint constraint in own)
             {
@@ -1022,16 +1121,24 @@ internal static class DocxDiagramLayout
                 {
                     Dictionary<string, double>? reference = constraint.RefForName.Length > 0 ? Get(keyed, "n:" + constraint.RefForName)
                                                           : constraint.RefPointType() is { } refType ? Get(keyed, "t:" + refType)
-                                                          : constraint.RefFor is "none" or "self" ? parent : null;
+                                                          : constraint.RefFor is "none" or "self" ? keyed["self"] : null;
                     if (reference is not null && reference.TryGetValue(constraint.RefType, out double referenced))
                         value = referenced * constraint.Factor * (IsFontUnit(constraint.RefType) && !IsFontUnit(constraint.Type) ? EmuPerMillimetre : 1);
                 }
                 if (value is null) continue;
-                if (constraint.Type == "sp" && constraint.ForName.Length == 0) { spacing = value; continue; }
-                string key = constraint.ForName.Length > 0 ? "n:" + constraint.ForName : constraint.PointType != "none" ? "t:" + constraint.PointType : "all";
+                string key = constraint.ForName.Length > 0 ? "n:" + constraint.ForName : constraint.PointType != "none" ? "t:" + constraint.PointType
+                           : constraint.For is "ch" or "des" ? "all" : "self";
+                if (key == "self" && constraint.Type is "w" or "h") continue;     // the node's own size is its parent's to set
                 if (!keyed.TryGetValue(key, out Dictionary<string, double>? target)) keyed[key] = target = [];
                 target[constraint.Type] = value.Value;
             }
+            return keyed;
+        }
+
+        private static List<Dictionary<string, double>> ChildSizes(DiagramShape shape, List<Constraint> own, out double? spacing)
+        {
+            Dictionary<string, Dictionary<string, double>> keyed = Resolve(own, shape.Width, shape.Height);
+            spacing = keyed["self"].TryGetValue("sp", out double space) ? space : null;
             var sizes = new List<Dictionary<string, double>>();
             foreach (DiagramShape child in shape.Children)
             {

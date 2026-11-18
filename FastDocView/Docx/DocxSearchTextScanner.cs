@@ -338,7 +338,9 @@ internal sealed class DocxSearchTextScanner
                         if (UnprefixedAttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "string"u8) is { Length: > 0 } wordArt) { matcher.Separator(); matcher.Feed(wordArt.AsSpan()); matcher.Separator(); }
                         break;
                     case 6 when Is(local, "relIds") && Resolve(elementPrefix) == NamespaceKind.Diagram && hasAttributes:
-                        if (AttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "dm"u8) is { } diagram) DrawingRelationshipIds.Add(diagram);
+                        // "dm lo": the layout part's id rides along, it lays the diagram out when the data part has no drawing
+                        if (AttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "dm"u8) is { } diagram)
+                            DrawingRelationshipIds.Add(AttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "lo"u8) is { Length: > 0 } layout ? diagram + " " + layout : diagram);
                         break;
                     case 5 when Is(local, "chart") && Resolve(elementPrefix) == NamespaceKind.Chart && hasAttributes:
                         if (AttributeValue(xml.Slice(elementNameEnd, cursor - elementNameEnd), "id"u8) is { } chart) DrawingRelationshipIds.Add(chart);

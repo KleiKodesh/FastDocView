@@ -510,7 +510,8 @@ internal sealed class WordXmlSearchText
                         // VML WordArt: the v:textpath string is the text it shows
                         if (reader.LocalName == "textpath" && reader.NamespaceURI == VmlNamespace && reader.GetAttribute("string") is { Length: > 0 } wordArt) { matcher.Separator(); matcher.Feed(wordArt.AsSpan()); matcher.Separator(); }
                         // a SmartArt (dgm:relIds r:dm) or chart (c:chart r:id) drawing: its part's text is fed after the block
-                        if (drawingRelationshipIds is not null && reader.LocalName == "relIds" && reader.NamespaceURI == DiagramNamespace && reader.GetAttribute("dm", RelationshipsNamespace) is { } diagram) drawingRelationshipIds.Add(diagram);
+                        if (drawingRelationshipIds is not null && reader.LocalName == "relIds" && reader.NamespaceURI == DiagramNamespace && reader.GetAttribute("dm", RelationshipsNamespace) is { } diagram)
+                            drawingRelationshipIds.Add(reader.GetAttribute("lo", RelationshipsNamespace) is { Length: > 0 } layout ? diagram + " " + layout : diagram);
                         if (drawingRelationshipIds is not null && reader.LocalName == "chart" && reader.NamespaceURI is ChartNamespace or ChartExNamespace && reader.GetAttribute("id", RelationshipsNamespace) is { } chart) drawingRelationshipIds.Add(chart);
                         if (!IsWordprocessing(reader.NamespaceURI)) break;
                         // properties, the source of a tracked move (Word's final view hides it) and a ruby's guide text (shown above

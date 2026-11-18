@@ -18,7 +18,7 @@ namespace FastDocView.Tests;
 public static class SmartArtLayoutFidelityTest
 {
     /// <summary>The layouts the engine matches Word for (box edges within <see cref="TolerancePoints"/>); the others are reported, not checked.</summary>
-    private static readonly string[] Layouts = ["block-list", "process", "pyramid", "vertical-list", "chevron"];
+    private static readonly string[] Layouts = ["block-list", "process", "pyramid", "vertical-list", "chevron", "cycle", "hierarchy", "org-chart"];
     private const double TolerancePoints = 4;
     private const double EmuPerPoint = 12700;
 
@@ -87,6 +87,21 @@ public static class SmartArtLayoutFidelityTest
         string html = string.Concat(document.RenderBlocks(0, document.BlockCount).Select(block => block.Html));
         int shapes = Regex.Matches(html, "<path ").Count;
         TestReport.Check(shapes > 0, $"{name} without its drawing part: {shapes} shape paths drawn in the frame");
+        // search (the one text path, GetText too) finds the node texts once, as with a drawing part
+        using ZipArchive zip = ZipFile.OpenRead(path);
+        XElement data = DocxShapeGeometry.WithoutNamespaces(XDocument.Load(zip.GetEntry("word/diagrams/data1.xml")!.Open()).Root!);
+        foreach (string text in data.Element("ptLst")!.Elements("pt").Where(p => p.Attribute("type") is null).SelectMany(p => p.Descendants("t")).Select(t => t.Value).Where(t => t.Length > 0).Distinct().Take(3))
+        {
+            int hits = 0;
+            for (int from = 0; from < document.BlockCount;)
+            {
+                WordDocumentSearchBatch batch = document.Search(text, WordDocumentSearchOptions.Default, from, 4);
+                hits += batch.HitCounts.Sum();
+                if (batch.ReachedEnd) break;
+                from = batch.NextBlock;
+            }
+            TestReport.Check(hits == 1, $"{name} without its drawing part: search finds \"{text}\" once ({hits})");
+        }
     }
 
     private static string Box((double X, double Y, double W, double H) box) => $"({box.X:0.0},{box.Y:0.0} {box.W:0.0}x{box.H:0.0})";
