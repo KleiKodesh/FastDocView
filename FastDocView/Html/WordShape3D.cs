@@ -397,8 +397,8 @@ internal static class WordShape3D
     private static List<(double X, double Y)> Grown(List<(double X, double Y)> ring, double width)
     {
         var points = new List<(double X, double Y)>();
-        foreach (var p in ring) if (points.Count == 0 || Math.Abs(p.X - points[^1].X) + Math.Abs(p.Y - points[^1].Y) > 0.01) points.Add(p);
-        while (points.Count > 1 && Math.Abs(points[0].X - points[^1].X) + Math.Abs(points[0].Y - points[^1].Y) <= 0.01) points.RemoveAt(points.Count - 1);
+        foreach (var p in ring) if (points.Count == 0 || Math.Abs(p.X - points[points.Count - 1].X) + Math.Abs(p.Y - points[points.Count - 1].Y) > 0.01) points.Add(p);
+        while (points.Count > 1 && Math.Abs(points[0].X - points[points.Count - 1].X) + Math.Abs(points[0].Y - points[points.Count - 1].Y) <= 0.01) points.RemoveAt(points.Count - 1);
         int n = points.Count;
         if (n < 3) return ring;
         double area = 0;
