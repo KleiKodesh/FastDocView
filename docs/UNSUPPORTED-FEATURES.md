@@ -98,7 +98,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| 3-D shapes: bevel profiles other than circle / angle / slope; shading inside bevel bands; contours of outlines with holes or several parts | docx | Other presets use the nearest of those profiles; a contour is drawn only round a single closed outline; band colours on a curved outline can be up to 50 levels off at single points (centres and fronts match within 6) | deferred |
+| 3-D shapes: bevel bands on curved outlines | docx | Each band is flat (one shade); on an outline of many edges, profile steps of similar slope are merged into one band to keep the faces few, so a point at a band edge can be off by up to about 60 levels (medians 2-5 levels against Word) | deferred |
 | Connector routing (glue points) | docx, doc, rtf | Drawn as their saved geometry only | won't do |
 | Half-transparent picture fill in a darken / lighten path | docx | The darkening layer is scaled by the picture's opacity (exact only for an opaque picture) | won't do |
 | Shapes in web archives: the VML drawing itself | mhtml | Shown as a browser shows the archive: Word's HTML fallback (table cells and pictures of the shapes); the fallback is what a browser prints | won't do |

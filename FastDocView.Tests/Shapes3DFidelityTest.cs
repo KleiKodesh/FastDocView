@@ -79,6 +79,80 @@ public static class Shapes3DFidelityTest
         // Word's .doc / RTF save keeps the 3-D style with f3D off, and Word prints those flat: so do we
         var flat = Shapes(doc);
         TestReport.Check(flat.Count == 12 && flat.All(f => f.Count <= 2), ".doc with f3D off: flat shapes, as Word prints them");
+        BevelPresets();
+        Parts();
+    }
+
+    /// <summary>
+    /// Outlines with holes or several parts (shapes-3d-parts-v1.docx: donut, frame, no-symbol, divide sign with a 3 pt contour; bevels on a
+    /// donut, a frame, a divide sign; a donut with both): drawn extent against Word's print (4 px per pt), the contour round every
+    /// outline and hole, the bevel along every ring.
+    /// </summary>
+    private static void Parts()
+    {
+        string docx = Path.Combine(Folder, "shapes-3d-parts-v1.docx");
+        if (!File.Exists(docx)) { TestReport.Check(false, "shapes-3d-parts-v1 fixture present"); return; }
+        var shapes = Shapes(docx);
+        TestReport.Check(shapes.Count == 8, $"parts: 8 shapes ({shapes.Count})");
+        if (shapes.Count != 8) return;
+        (double X, double Y)[] boxes = [(50, 70), (230, 70), (410, 70), (50, 240), (230, 240), (410, 240), (50, 410), (230, 410)];
+        (double L, double T, double R, double B)[] word =
+        [
+            (48.2, 67.0, 202.0, 168.0), (228.2, 67.0, 382.0, 168.0), (407.5, 68.0, 551.0, 182.0), (67.8, 247.0, 182.0, 328.2),
+            (229.5, 239.5, 380.5, 350.5), (409.5, 239.5, 560.5, 350.5), (69.5, 422.5, 180.5, 507.5), (228.2, 408.2, 382.0, 521.8),
+        ];
+        string[] names = ["donut contour", "frame contour", "no-symbol contour", "divide contour", "donut bevel", "frame bevel", "divide bevel", "donut bevel + contour"];
+        for (int i = 0; i < 8; i++)
+        {
+            (double l, double t, double r, double b) = Extent(shapes[i], boxes[i]);
+            double off = new[] { Math.Abs(l - word[i].L), Math.Abs(t - word[i].T), Math.Abs(r - word[i].R), Math.Abs(b - word[i].B) }.Max();
+            // the contour is 202020 under the scene's light: every face no channel of which passes 0x60 (the shapes are light blue)
+            int contour = shapes[i].Count(f => Enumerable.Range(0, 3).All(c => int.Parse(f.Fill.Substring(c * 2, 2), NumberStyles.HexNumber) < 0x60));
+            TestReport.Check(off <= 1.5, $"parts {names[i]}: extent within 1.5 pt of Word's ({off:0.00} pt: {l:0.0} {t:0.0} {r:0.0} {b:0.0}; {shapes[i].Count} faces, {contour} contour)");
+            if (i is < 4 or 7) TestReport.Check(contour > 0, $"parts {names[i]}: contour drawn ({contour} faces)");
+            else if (i == 5)
+            {
+                // the frame's angle bevel: the cap (outline + hole) and a band per side of the outline and of the hole, each side's
+                // pair facing opposite ways, so at least 4 shades besides the cap's
+                int shades = shapes[i].Select(f => f.Fill).Distinct().Count();
+                TestReport.Check(shapes[i].Count == 10 && shades >= 5, $"parts {names[i]}: bevel along the outline and the hole ({shapes[i].Count} faces, {shades} shades)");
+            }
+            else TestReport.Check(shapes[i].Count > 20, $"parts {names[i]}: bevel along every ring ({shapes[i].Count} faces)");
+        }
+    }
+
+    /// <summary>
+    /// Every bevel preset (shapes-3d-bevels-v1.docx: 150 x 110 pt rectangles, bevel 24 x 24 pt, threePt rig) against Word's band colours
+    /// (shapes-3d-bevels-v1-word-samples.txt, sample_bevels.py: 48 steps across the left, right, top and bottom band, each the mean of 5
+    /// pixels at 8 px per pt). The first point of a band (Word's anti-aliased edge) and points at a profile's corner are not judged.
+    /// </summary>
+    private static void BevelPresets()
+    {
+        string docx = Path.Combine(Folder, "shapes-3d-bevels-v1.docx"), samples = Path.Combine(Folder, "shapes-3d-bevels-v1-word-samples.txt");
+        if (!File.Exists(docx) || !File.Exists(samples)) { TestReport.Check(false, "shapes-3d-bevels-v1 fixtures present"); return; }
+        var shapes = Shapes(docx);
+        string[] names = ["relaxedInset", "circle", "slope", "cross", "angle", "softRound", "convex", "coolSlant", "divot", "riblet", "hardEdge", "artDeco"];
+        TestReport.Check(shapes.Count == 12, $"bevel presets: 12 shapes ({shapes.Count})");
+        if (shapes.Count != 12) return;
+        var lines = File.ReadAllLines(samples).Select(l => l.Split(' ')).Where(p => p[1] != "centre").ToList();
+        for (int s = 0; s < 12; s++)
+        {
+            var rows = lines.Where(p => p[0] == names[s]).ToList();
+            var levels = new List<int>();
+            for (int k = 1; k < rows.Count; k++)
+            {
+                double d = (k + 0.5) / 2;
+                (double X, double Y)[] at = [(d, 55), (150 - d, 55), (75, d), (75, 110 - d)];
+                for (int b = 0; b < 4; b++)
+                {
+                    string? ours = ColourAt(shapes[s], at[b].X, at[b].Y);
+                    levels.Add(ours is null ? 999 : Levels(ours, rows[k][2 + b]));
+                }
+            }
+            levels.Sort();
+            int median = levels[levels.Count / 2], p90 = levels[levels.Count * 9 / 10];
+            TestReport.Check(median <= 6 && p90 <= 12, $"bevel {names[s]}: band colours against Word's, median {median} levels, 90th percentile {p90}, worst {levels[^1]}");
+        }
     }
 
     private static List<List<(List<(double X, double Y)> Ring, string Fill)>> Shapes(string path)

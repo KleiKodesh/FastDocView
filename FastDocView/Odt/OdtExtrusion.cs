@@ -287,11 +287,11 @@ internal sealed class OdtExtrusion
                                               DoubleSided = doubleSidedScene || !source.Filled, Textured = fillTextured && source.Filled };
                         double z = front ? depth - topSink : bottomSink - (source.Thicken > 0 ? source.Thicken + (BevelBottom?.Height ?? 0) : 0);
                         var bevel = source.Colour is not null ? null : front ? BevelTop : BevelBottom;
-                        if (bevel is not null && closed.Count == 1 && Bevel(outer, ccw, z, front, bevel, capColour, faces) is { } inner)
+                        if (bevel is not null && BevelRings(closed.Select(c => c.Points).ToList(), outer, z, front, bevel, capColour, faces) is { } inners)
                         {
-                            // the cap is the bevel's innermost ring, raised (front) or lowered (back) by the bevel's height
-                            face.Rings.Add(inner);
-                            var innerFacing = new List<(double X, double Y, double Z)>(inner);
+                            // the cap is the bevels' innermost rings (outlines and holes), at the profile's height
+                            face.Rings.AddRange(inners.Rings);
+                            var innerFacing = new List<(double X, double Y, double Z)>(inners.Outer);
                             if (ccw != front) innerFacing.Reverse();
                             face.Facing = innerFacing;
                             faces.Add(face);
@@ -443,13 +443,41 @@ internal sealed class OdtExtrusion
     }
 
     /// <summary>
-    /// A bevel along a cap's single outer ring (box points, y down; <paramref name="ccw"/> = its winding in object coordinates):
+    /// Bevels along every ring of a cap (outlines and holes; Word bevels each, into the material), or null - and no faces added - when
+    /// any ring cannot be bevelled. Returns the innermost rings (the cap) and the one that came from <paramref name="outer"/>.
+    /// </summary>
+    private static (List<List<(double X, double Y, double Z)>> Rings, List<(double X, double Y, double Z)> Outer)? BevelRings(
+        List<List<(double X, double Y)>> rings, List<(double X, double Y)> outer, double z, bool front, FastDocView.Html.WordShapeBevel bevel,
+        (double R, double G, double B) colour, List<Face> faces)
+    {
+        var added = new List<Face>();
+        var inners = new List<List<(double X, double Y, double Z)>>();
+        List<(double X, double Y, double Z)>? outerInner = null;
+        foreach (var ring in rings)
+        {
+            bool hole = IsHole(ring, rings);
+            if (Bevel(ring, (SignedArea(ring) > 0) != hole, hole, z, front, bevel, colour, added) is not { } inner) return null;
+            inners.Add(inner);
+            if (ReferenceEquals(ring, outer)) outerInner = inner;
+        }
+        // a wall narrower than two bevel widths: an inset ring would cross another's (each must keep the nesting of its source ring)
+        var flat = inners.Select(r => r.Select(q => (q.X, -q.Y)).ToList()).ToList();
+        for (int i = 0; i < rings.Count; i++)
+            for (int j = 0; j < rings.Count; j++)
+                if (i != j && flat[i].Any(q => Contains(flat[j], q) != Contains(rings[j], rings[i][0]))) return null;
+        faces.AddRange(added);
+        return (inners, outerInner ?? inners[0]);
+    }
+
+    /// <summary>
+    /// A bevel along one of a cap's rings (box points, y down; <paramref name="materialLeft"/>: the material lies left of each edge in
+    /// object coordinates; <paramref name="hole"/>: the ring is a hole):
     /// bands from the outline inward by the bevel's width, rising (front) or sinking (back) by its height along the preset's
     /// profile, one flat face per edge and profile step, added to <paramref name="faces"/>. Returns the innermost ring at the
     /// bevel's full height (the cap, object coordinates), or null when the ring cannot be bevelled. The width is kept to half the
     /// ring's smaller extent (the bands meet in the middle).
     /// </summary>
-    private static List<(double X, double Y, double Z)>? Bevel(List<(double X, double Y)> ring, bool ccw, double z, bool front, FastDocView.Html.WordShapeBevel bevel,
+    private static List<(double X, double Y, double Z)>? Bevel(List<(double X, double Y)> ring, bool materialLeft, bool hole, double z, bool front, FastDocView.Html.WordShapeBevel bevel,
                                                               (double R, double G, double B) colour, List<Face> faces)
     {
         // consecutive points closer than 0.01 pt (a closing point, rounding) would give an edge without a direction
@@ -462,13 +490,14 @@ internal sealed class OdtExtrusion
         double width = Math.Min(bevel.Width, Math.Min(maxX - minX, maxY - minY) / 2 * 0.999);
         if (width <= 0) return null;
         int n = points.Count;
-        // inward normal of edge i (points[i] -> points[i + 1]) in object coordinates (y up): left of the edge on a counter-clockwise ring
+        // inward normal of edge i (points[i] -> points[i + 1]) in object coordinates (y up): towards the material (left of the edge on a
+        // counter-clockwise outer ring, right of it on a counter-clockwise hole)
         var inward = new (double X, double Y)[n];
         for (int i = 0; i < n; i++)
         {
             var a = points[i]; var b = points[(i + 1) % n];
             double ex = b.X - a.X, ey = -(b.Y - a.Y), length = Math.Sqrt(ex * ex + ey * ey);
-            inward[i] = length == 0 ? (0, 0) : ccw ? (-ey / length, ex / length) : (ey / length, -ex / length);
+            inward[i] = length == 0 ? (0, 0) : materialLeft ? (-ey / length, ex / length) : (ey / length, -ex / length);
         }
         // vertex offsets: the miter of the two edges' inward normals, kept to 4 widths at sharp corners
         var miter = new (double X, double Y)[n];
@@ -484,32 +513,35 @@ internal sealed class OdtExtrusion
             double scale = Math.Min(4, 1 / Math.Max(cos, 0.25));
             miter[i] = (mx * scale, my * scale);
         }
-        int steps = bevel.Steps;
+        // Word's profile in full on straight outlines; a curved one (many edges) gets fewer, merged bands to keep the faces few
+        var bands = bevel.BandsAtMost(Math.Max(6, 1200 / n));
         double sign = front ? 1 : -1;
+        // one ring per band boundary, inset by the band's width and raised (front) or lowered (back) to the profile's height there
         var rings = new List<List<(double X, double Y, double Z)>>();
-        for (int k = 0; k <= steps; k++)
+        for (int k = 0; k <= bands.Count; k++)
         {
-            double t = (double)k / steps;
-            double inset = width * t, rise = bevel.Height * bevel.Profile(t);
+            double inset = width * (k == 0 ? 0 : bands[k - 1].To), rise = bevel.Height * (k == 0 ? bands[0].Start : bands[k - 1].End);
             rings.Add(points.Select((p, i) => (p.X + miter[i].X * inset, -p.Y + miter[i].Y * inset, z + sign * rise)).ToList());
         }
-        // an inset that turns the ring over or pushes a corner outside the outline (concave or thin shapes): no bevel
-        var innermost = rings[steps].Select(q => (q.X, -q.Y)).ToList();
-        if (Math.Sign(SignedArea(innermost)) != Math.Sign(SignedArea(points)) || innermost.Any(q => !Contains(points, q))) return null;
-        for (int k = 0; k < steps; k++)
+        // an inset that turns the ring over or pushes a corner out of the material (concave or thin shapes): no bevel
+        var innermost = rings[bands.Count].Select(q => (q.X, -q.Y)).ToList();
+        if (Math.Sign(SignedArea(innermost)) != Math.Sign(SignedArea(points)) || innermost.Any(q => Contains(points, q) == hole)) return null;
+        for (int k = 0; k < bands.Count; k++)
+        {
+            // shaded along the profile's own normal (Word's slope for the band, scaled to this bevel's height / width), not the chord's
+            double slope = Math.Tan(bands[k].Degrees * Math.PI / 180) * bevel.Height / width;
             for (int i = 0; i < n; i++)
             {
                 int j = (i + 1) % n;
                 var quad = new List<(double X, double Y, double Z)> { rings[k][i], rings[k][j], rings[k + 1][j], rings[k + 1][i] };
-                // the edge's outward direction and the profile's slope give the normal (away from the solid)
-                double slope = bevel.Height * (bevel.Profile((k + 1.0) / steps) - bevel.Profile((double)k / steps)) / (width / steps);
                 var normal = Normalized((-inward[i].X * slope, -inward[i].Y * slope, sign));
-                if (front != ccw) quad.Reverse();
+                if (front != materialLeft) quad.Reverse();
                 var face = new Face { Kind = "bevel", Normal = normal, Material = colour, Facing = quad };
                 face.Rings.Add(quad);
                 faces.Add(face);
             }
-        return rings[steps];
+        }
+        return rings[bands.Count];
     }
 
     /// <summary>The scene's lights (Create3DObject :822-1080) in the order createNewSdrLightingAttribute lists them (lights 1 - 8,
@@ -710,7 +742,7 @@ internal sealed class OdtExtrusion
     /// <summary>Box points (y down) as object coordinates (y up): positive = counter-clockwise there.</summary>
     private static double SignedArea(List<(double X, double Y)> boxPoints) => SignedArea(boxPoints, p => (p.X, -p.Y));
 
-    private static bool IsHole(List<(double X, double Y)> ring, List<List<(double X, double Y)>> all)
+    internal static bool IsHole(List<(double X, double Y)> ring, List<List<(double X, double Y)>> all)
     {
         if (ring.Count == 0) return false;
         var probe = ring[0];

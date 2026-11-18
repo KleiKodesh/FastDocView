@@ -5,30 +5,6 @@ using FastDocView.Odt;
 namespace FastDocView.Html;
 
 /// <summary>
-/// A bevel on a 3-D shape's front or back (DrawingML a:sp3d a:bevelT / a:bevelB, ECMA-376 20.1.5.1): its width (inset from the
-/// outline) and height in points and its preset profile (ST_BevelPresetType, default circle). Drawn as flat bands along the
-/// outline, one per profile step (<see cref="OdtExtrusion"/>).
-/// </summary>
-internal sealed record WordShapeBevel(double Width, double Height, string Preset)
-{
-    /// <summary>Straight profiles need one band; curved ones are cut into six.</summary>
-    public int Steps => Preset is "angle" or "slope" or "coolSlant" ? 1 : 6;
-
-    /// <summary>The bevel's height at <paramref name="t"/> (0 = the outline, 1 = the full width in), as a fraction of its height.</summary>
-    public double Profile(double t)
-    {
-        t = Math.Max(0, Math.Min(1, t));
-        return Preset switch
-        {
-            "angle" or "slope" or "coolSlant" => t,
-            "softRound" or "relaxedInset" => Math.Sin(t * Math.PI / 2),
-            "hardEdge" => Math.Min(1, 2 * t),
-            _ => Math.Sqrt(1 - (1 - t) * (1 - t)),   // circle, convex, cross, divot, riblet, artDeco: the quarter circle
-        };
-    }
-}
-
-/// <summary>
 /// 3-D shapes: a shape's DrawingML scene (a:scene3d camera and light rig, a:sp3d extrusion, bevels, material) or its OfficeArt 3-D
 /// properties (.doc / RTF c3D*) as the <see cref="OdtExtrusion"/> scene LibreOffice builds for them, drawn by the same projection
 /// as an ODF extrusion. Sources (LibreOffice master read 2026-11-17):
@@ -474,9 +450,14 @@ internal static class WordShape3D
         {
             var contour = new OdtExtrusionSource { Filled = true, Colour = OdtShapeStyle.ParseColor(extrusion.ContourColor) ?? (0, 0, 0),
                                                  Thicken = extrusion.ContourWidth };
-            foreach (var ring in sources.SelectMany(s => s.Rings).Where(r => r.Closed && r.Points.Count >= 3))
-                contour.Rings.Add((Grown(ring.Points, extrusion.ContourWidth / 2), true));
-            if (contour.Rings.Count == 1) sources.Insert(0, contour);   // one outline only: grown holes would shrink (not drawn for several)
+            // every outline and hole: an outline grows outward, a hole shrinks (the material grows into it); parts stay separate rings
+            foreach (var source in sources)
+            {
+                var closedRings = source.Rings.Where(r => r.Closed && r.Points.Count >= 3).Select(r => r.Points).ToList();
+                foreach (var ring in closedRings)
+                    contour.Rings.Add((Grown(ring, (OdtExtrusion.IsHole(ring, closedRings) ? -1 : 1) * extrusion.ContourWidth / 2), true));
+            }
+            if (contour.Rings.Count > 0) sources.Insert(0, contour);
         }
         var fallback = OdtShapeStyle.ParseColor("#ffffff")!.Value;
         var fill = OdtShapeStyle.ParseColor(shape.FillColor ?? shape.GradientStops?.FirstOrDefault().Color) ?? fallback;

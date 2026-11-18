@@ -3249,3 +3249,18 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
   defaults fc3DParallel 1, fc3DKeyHarsh 1, fc3DFillHarsh 0, fc3DRotationCenterAuto 0, f3D 0. LibreOffice reads the bits without
   the use bits (default 0 = perspective): with the spec's parallel default the shapes 5-11 of the RTF fixture went from 8 pt off to
   0.5 pt.
+
+## 3-D shapes: every bevel preset, band shading, shapes with holes or several parts (2026-11-18)
+
+- Profiles: ECMA-376 (20.1.10.9 ST_BevelPresetType) only names the 12 presets; LibreOffice draws no bevel (oox
+  shape3dproperties.cxx:287-369 passes bevelT / bevelB / contourW on as grab-bag attributes only). So every preset but angle is
+  Word's own, measured from Word 16's print (make-shapes-3d-bevels.ps1, sample_bevels.py): per 1/48 of the width a slope (band
+  colours of shapes-3d-bevels-v1 inverted through the threePt rig) and a height (edge-on silhouette of shapes-3d-bevels-edge-v1).
+  WordShapeBevel.Measured holds the tables; divot steps 40-41 refitted to 45 degrees against the left / top / right bands.
+- Shading: each band is shaded along the profile's own normal (the measured slope scaled by height / width), not the chord between
+  its ends. Straight outlines get the profile in full (48 steps, slopes within 3 degrees merged); outlines of many edges get at
+  most max(6, 1200 / edges) bands. All 12 presets: median 2-5 levels, 90th percentile 3-12 against Word (single anti-aliased edge
+  points up to ~100).
+- Holes and parts: every closed ring of a cap is bevelled into the material (an even-odd hole's bands grow outward) and the cap
+  keeps its holes; the contour grows every outline and shrinks every hole by half its width. shapes-3d-parts-v1 (donut, frame,
+  no-symbol, divide sign; contour and bevels): all 8 extents within 0.6 pt of Word's print.
