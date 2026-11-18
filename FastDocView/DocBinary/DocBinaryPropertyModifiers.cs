@@ -52,6 +52,10 @@ public static class DocBinaryPropertyModifiers
                     formatting.IsLineSpacingExact = !formatting.IsLineSpacingAuto && line < 0;   // LSPD: negative dyaLine = exactly, positive = at least (LibreOffice ww8par6.cxx Read_LineSpace)
                     break;
                 case 0x2416: formatting.IsInTable = grpprl[operandAt] != 0; break;
+                // sprmPNLvlAnm80 / sprmPAnld80: only a Word 6/95 file's numbering is read from them (DocBinaryWord6Numbering); Word 97+
+                // writes them beside its real lists for older readers, and the scanner ignores them there
+                case 0x240D: formatting.Word6NumberingLevel = grpprl[operandAt]; break;
+                case 0xC63E: formatting.Word6Numbering = grpprl.AsSpan(operandAt, operandLength).ToArray(); break;
                 case 0x260A: formatting.NumberingLevel = grpprl[operandAt]; break;
                 case 0x460B: formatting.NumberingId = BitConverter.ToUInt16(grpprl, operandAt); break;
                 case 0x2640: formatting.OutlineLevel = grpprl[operandAt] is var level && level <= 8 ? level : -1; break;

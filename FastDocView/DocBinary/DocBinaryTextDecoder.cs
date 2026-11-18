@@ -27,6 +27,26 @@ public static class DocBinaryTextDecoder
 
     private static readonly char[] HighCp1252 = UpperHalves[1252].ToCharArray();
 
+    /// <summary>cp1252's upper half (shared; never written).</summary>
+    internal static char[] Cp1252UpperHalf => HighCp1252;
+
+    /// <summary>The code page of a BCP 47 language tag's primary language (as <see cref="CodePageOfLanguage"/>).</summary>
+    public static int CodePageOfLanguageTag(string? tag)
+    {
+        if (string.IsNullOrEmpty(tag)) return -1;
+        string primary = tag!.Split('-')[0].ToLowerInvariant();
+        return primary switch
+        {
+            "he" or "yi" => 1255,
+            "ar" or "fa" or "ur" => 1256,
+            "ru" or "uk" or "be" or "bg" or "mk" => 1251,
+            "el" => 1253, "tr" => 1254, "vi" => 1258, "th" => 874,
+            "et" or "lv" or "lt" => 1257,
+            "cs" or "hu" or "pl" or "ro" or "sk" or "sl" or "sq" or "hr" => 1250,
+            _ => 1252,
+        };
+    }
+
     /// <summary>The upper half of a single-byte code page; null for cp1252 and for code pages without a table here (read as cp1252).</summary>
     public static char[]? UpperHalfOf(int codePage) => codePage != 1252 && UpperHalves.TryGetValue(codePage, out string? half) ? half.ToCharArray() : null;
 

@@ -38,6 +38,10 @@ public sealed class DocBinaryListCounter
         _appliedStartOverrides.UnionWith(overrides);
     }
 
+    /// <summary>Word 6/95: advances the ANLD / OLST counters (kept in the same state, under negative keys) and returns the label.</summary>
+    public string? NextWord6(int levelType, byte[]? anld, byte[]? olst, DocBinaryFontTable fonts)
+        => DocBinaryWord6Numbering.Next(_countersByListId, levelType, anld, olst, fonts);
+
     /// <summary>Advances the counters for a paragraph and returns its label; null when it is not a list item.</summary>
     /// <param name="rawListFormatOverride">sprmPIlfo as stored (unsigned 16-bit): 1..0x07FE an index, 0xF801 none, 0xF802.. a negated index.</param>
     public string? Next(int rawListFormatOverride, int level)

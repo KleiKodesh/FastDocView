@@ -89,7 +89,8 @@ for (int i = 0; i < args.Length; i++)
         case "--textbox-notes": TextBoxNotesTest.Run(); return TestReport.FailureCount == 0 ? 0 : 1;      // notes in text boxes / shapes only (seconds)
         case "--floating": FloatingShapesFidelityTest.Run(); skipSynthetic = true; break;   // only the .doc / RTF floating text boxes, groups and shapes (seconds)
         case "--shapes-3d": Shapes3DFidelityTest.Run(); skipSynthetic = true; break;   // only the 3-D shape checks (seconds)
-        case "--fidelity": fidelityOnly = true; break;                                  // only the small Word-fidelity checks (seconds)
+        case "--word6": Word6DocumentsTest.Run(); return TestReport.FailureCount == 0 ? 0 : 1;   // only the Word 6.0 / 95 checks
+        case "--fidelity": fidelityOnly = true; break;                               // only the small Word-fidelity checks (seconds)
         case "--page-width": pageWidthOnly = true; break;                               // only the page-text-width checks (+ --real files)                                  // only the small Word-fidelity checks (seconds)
         case "--incremental-open":                                                     // optional block count, default 1000000
             incrementalOpen = true;

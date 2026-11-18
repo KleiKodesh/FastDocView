@@ -308,11 +308,13 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 3. Detected by content (Tika's sample is named .doc). Styles, default fonts, lists (w:listDef / w:list), footnotes and
    endnotes (inline in the run), hyperlinks, bookmarks, tables, VML pictures (w:binData), sections; tracked insertions kept,
    deletions and comments dropped. Re-translated only when the file changes.
-4. Word 6.0 / 95: the shorter FIB, the WordDocument stream as table stream, 8-bit text in the code page of the fonts'
-   character set (Hebrew cp1255, Cyrillic, Central European, Greek, Turkish, Baltic, Arabic, Thai, Vietnamese) or UTF-16 when
+4. Word 6.0 / 95: the shorter FIB, the WordDocument stream as table stream, 8-bit text decoded run by run in the code
+   page of the run's font character set (else its paragraph style's font, else its language - LibreOffice's per-run rule) (Hebrew cp1255, Cyrillic, Central European, Greek, Turkish, Baltic, Arabic, Thai, Vietnamese) or UTF-16 when
    the FIB says so, the one-byte sprms (translated to their Word 97 form as LibreOffice's ww8scan.cxx / ww8par6.cxx Word 6
    tables read them: character, paragraph, section and table properties, the right-to-left paragraph sprm and the
    right-to-left bold / italic / font / size sprms 111-116), the Word 6 style sheet (8-bit names), font table, FKPs (2-byte bin
    table entries, incomplete bin tables rebuilt), fast-saved piece tables, footnotes, endnotes, fields and tables (10-byte
    Word 6 TCs and 2-byte borders). Text matches LibreOffice's text export word for word on the test-data files compared (Word95, 57843, Word6_sections2, Bug50955).
-   Not yet: Word 6 numbering, drawing objects and Asian double-byte text (UNSUPPORTED-FEATURES.md, Document level).
+   Word 6 numbering: numbered, bulleted and outline paragraphs (sprmPNLvlAnm, the ANLD, the section's OLST) counted at index
+   time, outline levels nested under a numbering. Not yet: drawing objects and Asian double-byte text
+   (UNSUPPORTED-FEATURES.md, Document level).

@@ -932,10 +932,16 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
   - FKPs: PAPX BX 7 bytes, PAPX length one byte (no Word 97 second length byte), 2-byte bin-table page numbers; a bin table
     shorter than cpnBte is rebuilt from consecutive FKPs (GeneratePLCF). STSH: 8-bit Pascal style names (cp1252, Read1Style).
     Font table: byte length then FFNs (cbFfnM1, flags, wWeight, chs, ibszAlt, 8-bit name in the font's code page).
+  - Code page per run (2026-11-17, second pass): `PieceTable.RunUpperHalf` decodes each CHPX run (cut at paragraph ends)
+    with its font's character set, else the paragraph style's font, else sprmCLid / the style's language, else the
+    document's code page - LibreOffice's GetCurrentCharSet order; the index scan, search and rendering all read through it.
+  - Numbering (second pass): `DocBinaryWord6Numbering` counts sprmPNLvlAnm / ANLD / section OLST in the index pass, inside
+    the list counter's state (negative keys) so anchors restore it. Outline levels nest under a running level-10
+    numbering (tdf150197: 1. 2. 2.1 .. 4.2; LibreOffice shows 4.1 there and its test says it should be 2.1).
   - Checked: `Word6DocumentsTest` (in --fidelity); text equals LibreOffice's text export on Word95, 57843, Word6_sections2,
     Bug50955 (Cyrillic, 74,814 words). Bug51944 (0xA699, fExtChar) needed the UTF-16 rule. The fuzz files crash-7 and
-    ofz21168-1 fail with the piece-table error. Open: numbering (ANLD / OLST), drawing objects, double-byte Asian text
-    (ooo17498-*, ooo8726-1 show cp1252), per-run code pages, a real right-to-left Word 6 file to check sprms 64 / 111-116.
+    ofz21168-1 fail with the piece-table error. Open: drawing objects, ANLD label spacing / fonts, double-byte Asian text
+    (ooo17498-*, ooo8726-1 show cp1252), a real right-to-left Word 6 file to check sprms 64 / 111-116.
 - **GAP - Word for Windows 1.x / 2.0** (10 files in test-data) stay rejected with a clear message. LibreOffice reads them
   (ww8par.cxx accepts 0xA59B / 0xA59C / 0xA5DB): FIB with 2-byte lcbs, GetWW2SprmSearcher, Word2CHPX character runs
   converted to sprms (ww8scan.cxx ChpxToSprms), PAPX with a 1-byte istd and a PHE. Word 2003 XML is read (translated).

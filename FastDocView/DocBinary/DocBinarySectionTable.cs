@@ -26,6 +26,27 @@ internal static class DocBinarySectionTable
             ? Enumerable.Range(0, count).Select(i => Math.Max(0, BitConverter.ToInt32(plc, i * 4))).ToArray()
             : [];
 
+    /// <summary>Word 6/95: each section's OLST (sprmSOlstAnm, translated to 0xD202), by the section's start CP; null where none.</summary>
+    public static Func<int, byte[]?> ReadWord6Outlines(Stream wordDocument, Stream tableStream, (uint offset, uint length) plcfSed, DocBinaryWord6Sprms word6Sprms)
+    {
+        if (!TryReadPlc(tableStream, plcfSed, out byte[] plc, out int count, out int sedsAt)) return _ => null;
+        var starts = new int[count];
+        var outlines = new byte[]?[count];
+        for (int i = 0; i < count; i++)
+        {
+            starts[i] = Math.Max(0, BitConverter.ToInt32(plc, i * 4));
+            if (ReadSepx(wordDocument, BitConverter.ToUInt32(plc, sedsAt + i * SedSize + 2), word6Sprms) is not { } grpprl) continue;
+            foreach ((ushort opcode, int at, int length) in DocBinaryPropertyModifiers.Sprms(grpprl, 0, grpprl.Length))
+                if (opcode == 0xD202 && length >= DocBinaryWord6Numbering.OlstLength) outlines[i] = grpprl.AsSpan(at, length).ToArray();
+        }
+        return cp =>
+        {
+            int section = -1;
+            for (int i = 0; i < starts.Length && starts[i] <= cp; i++) section = i;
+            return section >= 0 ? outlines[section] : null;
+        };
+    }
+
     /// <param name="firstBlocks">The block each section starts in, in the order of <see cref="ReadStartCps"/> (from the index).</param>
     /// <param name="documentProperties">The Dop, for iGutterPos (gutter at the top - <see cref="IsGutterAtTop"/>).</param>
     public static IReadOnlyList<WordDocumentSection> Read(Stream wordDocument, Stream tableStream, (uint offset, uint length) plcfSed,

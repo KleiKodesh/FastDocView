@@ -48,6 +48,10 @@ public sealed class DocBinaryParagraphHtmlRenderer
 
     /// <summary>The default tab stop interval (Dop dxaTab), twips.</summary>
     public int DefaultTabStopTwips { get; set; } = WordListLabelHtml.DefaultTabStopTwips;
+    /// <summary>A Word 6/95 file: its numbering comes from sprmPNLvlAnm / sprmPAnld (DocBinaryWord6Numbering).</summary>
+    public bool IsWord6 { get; set; }
+    /// <summary>Word 6/95: the OLST (sprmSOlstAnm) of the section holding a CP, null when that section has none.</summary>
+    public Func<int, byte[]?>? Word6OutlineAt { get; set; }
 
     /// <summary>Dop fAutoHyphen: the document hyphenates automatically (LibreOffice ww8scan.cxx WW8Dop byte 5 bit 0x10; ww8par2.cxx sets it on the base style).</summary>
     public bool IsAutoHyphenation { get; set; }

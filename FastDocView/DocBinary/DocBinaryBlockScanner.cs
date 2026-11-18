@@ -144,6 +144,8 @@ internal sealed class DocBinaryBlockScanner
         (WordParagraphFormatting formatting, int styleIndex) = _renderer.ResolveParagraph(start, end);
         // Every list paragraph advances its counter, cell paragraphs included — a list that runs through a table keeps counting.
         string? label = formatting.NumberingId > 0 ? _listCounter.Next(formatting.NumberingId, formatting.NumberingLevel) : null;
+        if (_renderer.IsWord6)
+            label = _listCounter.NextWord6(formatting.Word6NumberingLevel, formatting.Word6Numbering, _renderer.Word6OutlineAt?.Invoke(start), _styles.Fonts);
         string? context = label is { Length: > 0 } ? _listCounter.ContextOf(formatting.NumberingId, formatting.NumberingLevel) : null;
         if (table.IsInTable || mark == '\u0007')
         {

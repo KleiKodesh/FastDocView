@@ -42,6 +42,34 @@ public static class Word6DocumentsTest
         string tables = Html(@"libreoffice\sw\qa\extras\layout\data\forcepoint92.doc");
         TestReport.Check(tables.Split(new[] { "<table" }, StringSplitOptions.None).Length > 10, "forcepoint92.doc: Word 6 tables render");
 
+        // Word 6 numbering (sprmPNLvlAnm 10 then 2, ANLD / OLST): 1. 2. 2.1 2.2 2.3 3. 4. 4.1 4.2 - LibreOffice's test for this
+        // file (ww8export4.cxx testTdf150197_anlv2ListFormat) expects 2.1 for the third paragraph and notes it still shows 4.1
+        string numbered = WordFieldsFidelityTest.Strip(Html(@"libreoffice\sw\qa\extras\ww8export\data\tdf150197_anlv2ListFormat.doc"));
+        string[] expectedLabels = ["1.", "2.", "2.1", "2.2", "2.3", "3.", "4.", "4.1", "4.2"];
+        int found = 0, from = 0;
+        foreach (string label in expectedLabels)
+        {
+            int at = numbered.IndexOf(label, from, StringComparison.Ordinal);
+            if (at < 0) break;
+            found++; from = at + label.Length;
+        }
+        TestReport.Check(found == expectedLabels.Length && !numbered.Contains("3.1"), $"tdf150197_anlv2ListFormat.doc: Word 6 outline numbers nest under the numbering ({found} of {expectedLabels.Length} in order)");
+        // the same labels from a saved sidecar index (a reopen restores the Word 6 counter state from the anchors)
+        var sidecar = new WordIndexPolicy { ForcedMode = WordIndexMode.Sidecar, CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-word6-sidecar") };
+        string numberedPath = Path.Combine(testData, @"libreoffice\sw\qa\extras\ww8export\data\tdf150197_anlv2ListFormat.doc");
+        string[] opens = new string[2];
+        for (int open = 0; open < 2; open++)
+        {
+            try
+            {
+                using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(numberedPath, sidecar);
+                if (open == 0) document.ScanAhead(int.MaxValue);
+                opens[open] = string.Concat(document.RenderBlocks(0, document.BlockCount).Select(block => block.Html));
+            }
+            catch (Exception exception) { opens[open] = "error: " + exception.GetType().Name + " " + exception.Message; }
+        }
+        TestReport.Check(opens[0] == opens[1] && opens[1].Contains("2.1"), $"tdf150197: sidecar reopen renders the same labels ({(opens[1].StartsWith("error") ? opens[1] : "html " + opens[1].Length)})");
+
         // A font with character set 177 (cp1255): Word6.doc with its font's chs set to 177 and five letters 0xE0-0xE4 in place
         // of "quick" must show U+05D0..U+05D4 (the fixture is generated here from the test-data file; version suffix v1)
         string source = Path.Combine(testData, @"apache-poi\Word6.doc");

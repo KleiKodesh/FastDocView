@@ -128,11 +128,17 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
         // Word 6/95 keeps picture data in the WordDocument stream (no Data stream; ww8par.cxx: m_pDataStream = m_pStrm for bVer67)
         _dataStream = FileInformationBlock.IsWord6 ? _compoundFile.OpenRootStream("WordDocument") : _compoundFile.OpenRootStream("Data");
         FormattedDiskPages = new DocBinaryFormattedDiskPages(_wordDocument, _tableStream, FileInformationBlock, _dataStream);
+        if (FileInformationBlock.IsWord6 && !FileInformationBlock.HasExtendedCharacters) PieceTable.RunUpperHalf = Word6RunCodePages();
         _notes = new DocBinaryNoteReferences(_tableStream, FileInformationBlock);
         _notes.Numbering = DocBinarySectionTable.ReadNoteNumbering(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, word6Sprms);
         _renderer = new DocBinaryParagraphHtmlRenderer(PieceTable, FormattedDiskPages, _styles, _notes);
         ListDefinitions = DocBinaryListDefinitions.Read(_tableStream, FileInformationBlock.ListFormats, FileInformationBlock.ListFormatOverrides);
         _renderer.Lists = ListDefinitions;
+        if (word6Sprms is not null)
+        {
+            _renderer.IsWord6 = true;
+            _renderer.Word6OutlineAt = DocBinarySectionTable.ReadWord6Outlines(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, word6Sprms);
+        }
         _renderer.DefaultTabStopTwips = ReadDefaultTabStop(_tableStream, FileInformationBlock.DocumentProperties);
         _renderer.IsAutoHyphenation = ReadAutoHyphenation(_tableStream, FileInformationBlock.DocumentProperties);
         Bookmarks = DocBinaryBookmarks.Read(_tableStream, FileInformationBlock);
@@ -167,6 +173,49 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
         WordRunFormatting defaultRun = _styles.ResolveParagraphStyle(0).RunFormatting;
         if (IsRightToLeft && !defaultRun.IsRightToLeft) { defaultRun = defaultRun.Clone(); defaultRun.IsRightToLeft = true; }
         Stylesheet = WordDocumentHtmlStylesheet.Build(WordDocumentHtmlStylesheet.WithWordShaping(defaultRun), IsRightToLeft);
+    }
+
+    /// <summary>
+    /// Word 6/95: each character run's code page as LibreOffice picks it (ww8par.cxx GetCurrentCharSet for bVer67): the run's
+    /// font character set (sprmCFtc); an ANSI font (chs 0) is "don't know" (ww8par6.cxx GetFontParams #i52786#) and falls to
+    /// the paragraph style's font, then to the language (sprmCLid, else the style's; GetCharSetFromLanguage), else the
+    /// document's code page. A symbol font (chs 2) reads as cp1252. Cached per run and style.
+    /// </summary>
+    private Func<uint, (uint, char[]?)> Word6RunCodePages()
+    {
+        var cache = new Dictionary<(uint, int), char[]?>();
+        DocBinaryFontTable fonts = _styles.Fonts;
+        int CodePageOfFont(int fontIndex)
+            => fontIndex < 0 || fontIndex >= fonts.CharacterSets.Count ? -1
+             : fonts.CharacterSets[fontIndex] == 2 ? 1252
+             : DocBinaryTextDecoder.CodePageOfCharacterSet(fonts.CharacterSets[fontIndex]);
+        return fc =>
+        {
+            DocBinaryFormattedDiskPages.PropertyRun? run = FormattedDiskPages.CharacterRunAt(fc);
+            uint runEnd = run is { } r && r.FcStart <= fc && r.FcEnd > fc ? r.FcEnd : uint.MaxValue;   // no run: up to the paragraph end (the caller caps at its count)
+            DocBinaryFormattedDiskPages.PropertyRun? paragraph = FormattedDiskPages.ParagraphRunAt(fc);
+            int styleIndex = paragraph is { GrpprlLength: >= 2 } p && p.FcStart <= fc && p.FcEnd > fc ? BitConverter.ToUInt16(p.Page, p.GrpprlStart) : 0;
+            if (paragraph is { } paragraphRun && paragraphRun.FcEnd > fc) runEnd = Math.Min(runEnd, paragraphRun.FcEnd);
+            if (run is { } own && !(own.FcStart <= fc && own.FcEnd > fc)) run = null;
+            uint runStart = run?.FcStart ?? uint.MaxValue;
+            if (cache.TryGetValue((runStart, styleIndex), out char[]? cached)) return (runEnd, cached);
+            int font = -1, language = -1;
+            if (run is { GrpprlLength: > 0 } direct)
+                foreach ((ushort opcode, int at, int length) in DocBinaryPropertyModifiers.Sprms(direct.Page, direct.GrpprlStart, direct.GrpprlLength))
+                {
+                    if (opcode == 0x4A4F && length >= 2) font = BitConverter.ToUInt16(direct.Page, at);
+                    else if (opcode == 0x486D && length >= 2) language = BitConverter.ToUInt16(direct.Page, at);
+                }
+            int codePage = CodePageOfFont(font);
+            WordRunFormatting style = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
+            if (codePage < 0 && style.FontName is { } styleFont) codePage = CodePageOfFont(fonts.IndexOf(styleFont));
+            if (codePage < 0 && language > 0) codePage = DocBinaryTextDecoder.CodePageOfLanguage(language);
+            if (codePage < 0) codePage = DocBinaryTextDecoder.CodePageOfLanguageTag(style.Language);
+            char[]? upperHalf = codePage < 0 ? PieceTable.UpperHalf : codePage == 1252 ? DocBinaryTextDecoder.Cp1252UpperHalf : DocBinaryTextDecoder.UpperHalfOf(codePage);
+            if (cache.Count >= 4096) cache.Clear();
+            cache[(runStart, styleIndex)] = upperHalf;
+            return (runEnd, upperHalf);
+        };
     }
 
     /// <summary>

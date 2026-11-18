@@ -95,6 +95,25 @@ public sealed class DocBinaryPieceTable
     public char[]? UpperHalf { get; set; }
 
     /// <summary>
+    /// Word 6/95: the code page of the 8-bit character run holding a file offset - (the run's end FC, its upper half) - so each
+    /// run decodes in its own code page (LibreOffice ww8par.cxx ReadPlainChars per run); null = <see cref="UpperHalf"/> for all.
+    /// </summary>
+    public Func<uint, (uint runEnd, char[]? upperHalf)>? RunUpperHalf { get; set; }
+
+    /// <summary>Decodes 8-bit bytes read from <paramref name="fileOffset"/>, each character run in its own code page.</summary>
+    private void DecodeRuns(byte[] bytes, int count, long fileOffset, Action<int, int, char[]?> decode)
+    {
+        int at = 0;
+        while (at < count)
+        {
+            (uint runEnd, char[]? upperHalf) = RunUpperHalf!((uint)(fileOffset + at));
+            int length = runEnd > fileOffset + at ? (int)Math.Min(count - at, runEnd - (fileOffset + at)) : count - at;
+            decode(at, length, upperHalf ?? UpperHalf);
+            at += length;
+        }
+    }
+
+    /// <summary>
     /// A Word 6/95 Prm: a Prm1 as in Word 97; a Prm0 holds the one-byte sprm id itself and its one-byte operand (ww8scan.cxx
     /// WW8PLCFx_PCD::GetSprms, IsSevenMinus: aShortSprm = (prm &amp; 0xFE) >> 1, prm >> 8), translated to Word 97.
     /// </summary>
@@ -267,7 +286,12 @@ public sealed class DocBinaryPieceTable
             _wordDocument.Position = fileOffset;
             int read = 0;
             while (read < byteCount) { int n = _wordDocument.Read(bytes, read, byteCount - read); if (n <= 0) break; read += n; }
-            DocBinaryTextDecoder.Append(text, bytes, read, piece.IsCompressed, UpperHalf);
+            if (piece.IsCompressed && RunUpperHalf is not null)
+                DecodeRuns(bytes, read, fileOffset, (from, length, upperHalf) =>
+                {
+                    for (int i = from; i < from + length; i++) text.Append(bytes[i] < 0x80 ? (char)bytes[i] : (upperHalf ?? DocBinaryTextDecoder.Cp1252UpperHalf)[bytes[i] - 0x80]);
+                });
+            else DocBinaryTextDecoder.Append(text, bytes, read, piece.IsCompressed, UpperHalf);
         }
         return text.ToString();
     }
@@ -288,7 +312,13 @@ public sealed class DocBinaryPieceTable
                 int read = 0;
                 while (read < byteCount) { int n = _wordDocument.Read(bytes, read, byteCount - read); if (n <= 0) break; read += n; }
                 if (read == 0) break;                    // the rest of this piece lies past the stream's end (damaged piece table): no text there
-                int decoded = DocBinaryTextDecoder.Decode(bytes, read, piece.IsCompressed, characters, UpperHalf);
+                int decoded = read;
+                if (piece.IsCompressed && RunUpperHalf is not null)
+                    DecodeRuns(bytes, read, piece.FileOffset + (cp - piece.CpStart), (from, length, upperHalf) =>
+                    {
+                        for (int i = from; i < from + length; i++) characters[i] = bytes[i] < 0x80 ? (char)bytes[i] : (upperHalf ?? DocBinaryTextDecoder.Cp1252UpperHalf)[bytes[i] - 0x80];
+                    });
+                else decoded = DocBinaryTextDecoder.Decode(bytes, read, piece.IsCompressed, characters, UpperHalf);
                 onChunk(characters, decoded, (int)cp);
             }
         }

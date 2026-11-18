@@ -39,6 +39,9 @@ public sealed class WordParagraphFormatting
     /// line=240 is 13.8 pt apart, with 276 (1.15) 15.9 pt.
     /// </summary>
     public const double SingleLineHeightEm = 1.15;
+    /// <summary>Word 6/95 .doc only: sprmPNLvlAnm (1-9 outline, 10 numbering, 11 bullets, 12 pause; 0 none) and the sprmPAnld ANLD bytes - see DocBinaryWord6Numbering.</summary>
+    public int Word6NumberingLevel;
+    public byte[]? Word6Numbering;
     public int OutlineLevel = -1;           // 0-8 → heading 1-9
     public int NumberingId = -1;
     public int NumberingLevel;

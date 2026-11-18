@@ -24,6 +24,9 @@ public sealed class DocBinaryFontTable
 
     public int Count => _names.Length;
 
+    /// <summary>The first font index with this name; -1 when none.</summary>
+    public int IndexOf(string name) => Array.IndexOf(_names, name);
+
     public static DocBinaryFontTable Read(Stream tableStream, (uint offset, uint length) location, bool isWord6 = false)
     {
         if (location.length < 4 || DocBinaryStructureReader.TryRead(tableStream, location) is not { } bytes) return Empty;   // none, or outside the table stream
