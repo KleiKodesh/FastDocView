@@ -18,7 +18,7 @@ public readonly record struct RtfNoteReference(int BlockIndex, WordDocumentNoteK
 public sealed class RtfRandomAccessIndex
 {
     private const string Magic = "KHRTFIDX";
-    private const int FormatVersion = 25;    // 25: each open group's starting tab stops in the snapshot; 24: \deftab in the header tables, tab stops in the snapshot; 23: notes inside a field code (an EQ ruby's base) are indexed; 22: border groups (paragraphs joined to the next), cell text direction, border spacing / shadow / between (snapshot); 21: counted list labels stored beside {\listtext}; 20: list style links (\liststyleid), whole levels in list overrides; 19: note labels by section (\sftn* \saftn*), document restart words; 18: {\mmathPr} math settings in the header tables; 17: row height (\trrh) in the snapshot; 16: row definitions carry merges, vertical alignment, cell + row borders (snapshot), rows merged down; 15: list level character formatting, Word 6 levels; 14: list picture bullets; 13: list level fonts; 12: drop caps, hyphenation, language (group state + header); 11: gutter placement (rtlgutter, gutterprl) in section widths; 10: group state carries borders, shading, underline colour, emphasis; 9: section column lefts; 8: XE / TA entries;     // 7: anchor heads hold the open fields + field counters (RtfFieldTracker)
+    private const int FormatVersion = 26;    // 26: section top / bottom margins (+1, 0 = unknown); 25: each open group's starting tab stops in the snapshot; 24: \deftab in the header tables, tab stops in the snapshot; 23: notes inside a field code (an EQ ruby's base) are indexed; 22: border groups (paragraphs joined to the next), cell text direction, border spacing / shadow / between (snapshot); 21: counted list labels stored beside {\listtext}; 20: list style links (\liststyleid), whole levels in list overrides; 19: note labels by section (\sftn* \saftn*), document restart words; 18: {\mmathPr} math settings in the header tables; 17: row height (\trrh) in the snapshot; 16: row definitions carry merges, vertical alignment, cell + row borders (snapshot), rows merged down; 15: list level character formatting, Word 6 levels; 14: list picture bullets; 13: list level fonts; 12: drop caps, hyphenation, language (group state + header); 11: gutter placement (rtlgutter, gutterprl) in section widths; 10: group state carries borders, shading, underline colour, emphasis; 9: section column lefts; 8: XE / TA entries;     // 7: anchor heads hold the open fields + field counters (RtfFieldTracker)
      // 4: compact block tables; 5: no per-block tables - span anchors + parser snapshot + list state, Elias-Fano lists; 6: row indent + alignment in the snapshot
     /// <summary>File bytes between span anchors: a random block rescans at most this much.</summary>
     public const long AnchorSpanBytes = 256 << 10;
@@ -38,6 +38,9 @@ public sealed class RtfRandomAccessIndex
     public int[] SectionLastBlocks { get; init; } = [];
     public int[] SectionTextWidths { get; init; } = [];
     public int[] SectionColumnLefts { get; init; } = [];
+    /// <summary>Per section: the top / bottom margin + 1 (twips; 0 = not known).</summary>
+    public int[] SectionTopMargins { get; init; } = [];
+    public int[] SectionBottomMargins { get; init; } = [];
     /// <summary>Bookmarks ({\*\bkmkstart name}) and the block each marks.</summary>
     public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
 
@@ -175,6 +178,8 @@ public sealed class RtfRandomAccessIndex
         IndexBinaryArrays.WriteDeltaVarints(writer, SectionLastBlocks);
         IndexBinaryArrays.WriteVarints(writer, SectionTextWidths);
         IndexBinaryArrays.WriteVarints(writer, SectionColumnLefts);
+        IndexBinaryArrays.WriteVarints(writer, SectionTopMargins);
+        IndexBinaryArrays.WriteVarints(writer, SectionBottomMargins);
         Section($"sections ({SectionLastBlocks.Length})");
         IndexBinaryArrays.WriteCompressedStrings(writer, Bookmarks.Names);
         new EliasFanoSequence(Bookmarks.Blocks).Write(writer);
@@ -234,7 +239,10 @@ public sealed class RtfRandomAccessIndex
         int[] sectionLastBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
         int[] sectionTextWidths = IndexBinaryArrays.ReadVarints(reader);
         int[] sectionColumnLefts = IndexBinaryArrays.ReadVarints(reader);
-        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionColumnLefts.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)blockCount))
+        int[] sectionTopMargins = IndexBinaryArrays.ReadVarints(reader);
+        int[] sectionBottomMargins = IndexBinaryArrays.ReadVarints(reader);
+        if (sectionLastBlocks.Length != sectionTextWidths.Length || sectionColumnLefts.Length != sectionTextWidths.Length
+            || sectionTopMargins.Length != sectionTextWidths.Length || sectionBottomMargins.Length != sectionTextWidths.Length || sectionLastBlocks.Any(block => (uint)block >= (uint)blockCount))
             throw new InvalidDataException("RTF index: section table does not match the blocks.");
         string[] bookmarkNames = IndexBinaryArrays.ReadCompressedStrings(reader);
         int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
@@ -252,6 +260,8 @@ public sealed class RtfRandomAccessIndex
             SectionLastBlocks = sectionLastBlocks,
             SectionTextWidths = sectionTextWidths,
             SectionColumnLefts = sectionColumnLefts,
+            SectionTopMargins = sectionTopMargins,
+            SectionBottomMargins = sectionBottomMargins,
             Bookmarks = new WordDocumentBookmarkTable(bookmarkNames, bookmarkBlocks),
             IndexEntries = indexEntries,
             MergedRowBlocks = mergedRowBlocks,

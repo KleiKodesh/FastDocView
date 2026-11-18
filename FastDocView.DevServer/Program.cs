@@ -126,7 +126,7 @@ app.MapPost("/api/documents", (OpenRequest request) =>
 
 // Page text width per section (Word / LibreOffice margins), in block order - the app page sizes its column from it.
 app.MapGet("/api/documents/{id}/sections", (string id) => UseDocument(id, document =>
-    Results.Ok(document.Sections.Select(s => new SectionBody(s.FirstBlockIndex, s.TextWidthTwips)).ToList())));
+    Results.Ok(document.Sections.Select(s => new SectionBody(s.FirstBlockIndex, s.TextWidthTwips, s.TopMarginTwips, s.BottomMarginTwips)).ToList())));
 
 // In-document search, one batch: hit block indexes (+ per-block match counts) from fromBlock on (the app page loops, wraps and highlights).
 app.MapGet("/api/documents/{id}/search", (string id, string query, bool matchCase, int fromBlock, int maxBlocks) => UseDocument(id, document =>
@@ -214,7 +214,7 @@ record OpenRequest(string Path, bool? ForceSidecar, bool? RebuildIndex, string? 
 record ErrorBody(string Error);
 record FolderEntry(string Path, string FileName, long FileBytes, string Mode, bool HasCachedIndex, long BodyBytes, long EstimatedIndexBytes, string Reason);
 record HeadingBody(int BlockIndex, int Level, string Text);
-record SectionBody(int FirstBlockIndex, int TextWidthTwips);
+record SectionBody(int FirstBlockIndex, int TextWidthTwips, int TopMarginTwips, int BottomMarginTwips);
 record BookmarkBody(int? BlockIndex);
 record SearchBody(int[] HitBlocks, int[] HitCounts, int NextBlock, bool ReachedEnd);
 record DocumentSummary(string Id, string FileName, string Path, int BlockCount, bool IsRightToLeft, string Stylesheet,

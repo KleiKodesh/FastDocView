@@ -15,6 +15,11 @@ internal static class DocBinarySectionTable
     public const int DefaultMarginTwips = 1800;
     public static readonly int DefaultTextWidthTwips = WordDocumentPageSetup.TextWidth(DefaultPageWidthTwips, DefaultMarginTwips, DefaultMarginTwips, 0);
 
+    /// <summary>Sep dyaTop / dyaBottom default: 1 in (Apache POI SEPAbstractType constructor; RTF 1.5 \margt / \margb defaults).</summary>
+    public const int DefaultVerticalMarginTwips = 1440;
+    /// <summary>sprmSDyaTop / sprmSDyaBottom (LibreOffice sprmids.hxx SDyaTop 0x9023, SDyaBottom 0x9024; signed, a negative value
+    /// is an exact margin the header may not push - the distance is its absolute value, ww8par6.cxx:632 / 650 GetPageULData).</summary>
+    private const ushort SprmSDyaTop = 0x9023, SprmSDyaBottom = 0x9024;
     private const ushort SprmSXaPage = 0xB01F, SprmSDxaLeft = 0xB021, SprmSDxaRight = 0xB022, SprmSDzaGutter = 0xB025;
     /// <summary>sprmSFRTLGutter: the gutter is on the right (LibreOffice sprmids.hxx:589 SFRTLGutter 0x322A, one byte).</summary>
     private const ushort SprmSFRightToLeftGutter = 0x322A;
@@ -56,7 +61,7 @@ internal static class DocBinarySectionTable
                                                          DocBinaryWord6Sprms? word6Sprms = null)
     {
         bool isGutterAtTop = IsGutterAtTop(tableStream, documentProperties);
-        var fallback = new[] { new WordDocumentSection(0, DefaultTextWidthTwips) };
+        var fallback = new[] { new WordDocumentSection(0, DefaultTextWidthTwips, -1, DefaultVerticalMarginTwips, DefaultVerticalMarginTwips) };
         int sedSize = word6Sprms is { IsWord2: true } ? Word2SedSize : SedSize;
         if (!TryReadPlc(tableStream, plcfSed, sedSize, out byte[] plc, out int count, out int sedsAt)) return fallback;
         if (firstBlocks.Count != count) throw new InvalidDataException(".doc index: the section count does not match the document.");
@@ -65,8 +70,8 @@ internal static class DocBinarySectionTable
         for (int i = 0; i < count; i++)
         {
             uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * sedSize + 2);
-            (int width, int left) = PageSetupOf(wordDocument, fcSepx, isGutterAtTop, word6Sprms);
-            starts.Add(new WordDocumentSection(firstBlocks[i], width, left));
+            (int width, int left, int top, int bottom) = PageSetupOf(wordDocument, fcSepx, isGutterAtTop, word6Sprms);
+            starts.Add(new WordDocumentSection(firstBlocks[i], width, left, top, bottom));
         }
         return WordDocumentPageSetup.FromSectionStarts(starts);
     }
@@ -154,9 +159,10 @@ internal static class DocBinarySectionTable
     }
 
     /// <summary>The section's text width and where its column starts (left margin + a left gutter - <see cref="WordDocumentPageSetup.GutterPlacement"/>).</summary>
-    private static (int width, int columnLeft) PageSetupOf(Stream wordDocument, uint fcSepx, bool isGutterAtTop, DocBinaryWord6Sprms? word6Sprms)
+    internal static (int width, int columnLeft, int top, int bottom) PageSetupOf(Stream wordDocument, uint fcSepx, bool isGutterAtTop, DocBinaryWord6Sprms? word6Sprms)
     {
         int page = DefaultPageWidthTwips, left = DefaultMarginTwips, right = DefaultMarginTwips, gutter = 0;
+        int top = DefaultVerticalMarginTwips, bottom = DefaultVerticalMarginTwips;
         bool isRightToLeftGutter = false;
         {
             if (ReadSepx(wordDocument, fcSepx, word6Sprms) is { } grpprl)
@@ -172,11 +178,16 @@ internal static class DocBinarySectionTable
                         case SprmSDxaLeft: left = value; break;
                         case SprmSDxaRight: right = value; break;
                         case SprmSDzaGutter: gutter = value; break;
+                        case SprmSDyaTop: top = value; break;
+                        case SprmSDyaBottom: bottom = value; break;
                     }
                 }
             }
         }
         var placement = WordDocumentPageSetup.GutterPlacement(gutter, isRightToLeftGutter, isGutterAtTop);
-        return (WordDocumentPageSetup.TextWidth(page, left, right, placement.WidthGutter), WordDocumentPageSetup.ColumnLeft(left, placement.LeftGutter));
+        int topMargin = WordDocumentPageSetup.VerticalMargin(top);
+        if (topMargin >= 0) topMargin += WordDocumentPageSetup.TopGutter(gutter, isGutterAtTop);
+        return (WordDocumentPageSetup.TextWidth(page, left, right, placement.WidthGutter), WordDocumentPageSetup.ColumnLeft(left, placement.LeftGutter),
+                topMargin, WordDocumentPageSetup.VerticalMargin(bottom));
     }
 }

@@ -4,7 +4,7 @@
 import { reactive } from 'vue'
 import { FAST_DOC_VIEW_SOURCE_CHANGED, decodeFastDocViewWeights } from '@app-webview-host/fastDocViewApi'
 import type {
-  FastDocViewApi, FastDocViewBlock, FastDocViewHeading, FastDocViewScanState, FastDocViewSummary,
+  FastDocViewApi, FastDocViewBlock, FastDocViewHeading, FastDocViewScanState, FastDocViewSection, FastDocViewSummary,
 } from '@app-webview-host/fastDocViewApi'
 
 export * from '@app-webview-host/fastDocViewApi'
@@ -50,6 +50,8 @@ export const fastDocViewApi: FastDocViewApi = {
       isIndexComplete: summary.isIndexComplete, isRightToLeft: summary.isRightToLeft, stylesheet: summary.stylesheet,
       headingCount: summary.headingCount, footnoteCount: summary.footnoteCount, endnoteCount: summary.endnoteCount,
       title: summary.title,
+      // the app's service sends the known sections with the open; the dev server serves them on their own
+      sections: await readJson<FastDocViewSection[]>(await fetch(`/api/documents/${summary.id}/sections`)),
     }
     return result
   },
@@ -62,7 +64,7 @@ export const fastDocViewApi: FastDocViewApi = {
     return blocks.map(block => ({ index: block.index, kind: BLOCK_KIND_NAMES[block.kind] ?? 'other', html: block.html, notes: block.notes, ...(block.provisional ? { provisional: true } : {}) }))
   },
   async sections(documentId) {
-    return readJson<{ firstBlockIndex: number; textWidthTwips: number }[]>(await fetch(`/api/documents/${documentId}/sections`))
+    return readJson<FastDocViewSection[]>(await fetch(`/api/documents/${documentId}/sections`))
   },
   async search(documentId, query, matchCase, fromBlock, maxBlocks) {
     return readJson<{ hitBlocks: number[]; hitCounts: number[]; nextBlock: number; reachedEnd: boolean }>(await fetch(

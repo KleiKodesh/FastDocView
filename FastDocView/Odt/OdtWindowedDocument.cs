@@ -845,7 +845,8 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                 if (_builder is { } builder) return WordDocumentPageSetup.FromSectionStarts(builder.KnownSectionStarts);
                 OdtRandomAccessIndex index = _index!;
                 return _sections ??= WordDocumentPageSetup.FromSectionStarts(
-                    index.SectionFirstBlocks.Select((first, i) => new WordDocumentSection(first, index.SectionTextWidths[i], index.SectionColumnLefts[i] - 1)));
+                    index.SectionFirstBlocks.Select((first, i) => new WordDocumentSection(first, index.SectionTextWidths[i], index.SectionColumnLefts[i] - 1,
+                        index.SectionTopMargins[i] - 1, index.SectionBottomMargins[i] - 1)));
             }
         }
     }

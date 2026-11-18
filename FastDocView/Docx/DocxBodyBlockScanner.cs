@@ -77,7 +77,7 @@ internal sealed class DocxBodyBlockScanner
     private int _sectionDepth = -1;
     private int _openParagraphPropertiesDepth = -1;   // depth of the w:pPr open now (a paragraph's, at any depth)
     private int _openTables;                          // w:tbl elements open now: a cell paragraph's w:sectPr is not a section break
-    private int? _sectionPageWidth, _sectionLeftMargin, _sectionRightMargin, _sectionGutter;
+    private int? _sectionPageWidth, _sectionLeftMargin, _sectionRightMargin, _sectionGutter, _sectionTopMargin, _sectionBottomMargin;
     private bool _sectionRightToLeftGutter;
     // the w:sectPr's w:footnotePr / w:endnotePr: which one is open (0 / 1, -1 none) and the values read so far per kind
     private int _sectionNoteKind = -1;
@@ -89,6 +89,9 @@ internal sealed class DocxBodyBlockScanner
     public List<int> SectionTextWidths { get; } = new();
     /// <summary>Per section: where the text column starts on the page (left margin + gutter, twips).</summary>
     public List<int> SectionColumnLefts { get; } = new();
+    /// <summary>Per section: the top margin (a top gutter included) and the bottom margin (twips; see <see cref="WordDocumentSection"/>).</summary>
+    public List<int> SectionTopMargins { get; } = new();
+    public List<int> SectionBottomMargins { get; } = new();
     /// <summary>Per section: its footnote / endnote numbering (w:footnotePr / w:endnotePr in the w:sectPr; see <see cref="WordDocumentNoteNumberRule"/>).</summary>
     public List<WordDocumentNoteNumberRule> SectionFootnoteRules { get; } = new();
     public List<WordDocumentNoteNumberRule> SectionEndnoteRules { get; } = new();
@@ -460,7 +463,7 @@ internal sealed class DocxBodyBlockScanner
             && (_depth == _bodyDepth || (_openTables == 0 && _openParagraphPropertiesDepth >= 0 && _depth == _openParagraphPropertiesDepth + 1)))
         {
             _sectionDepth = _depth;
-            _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = null;
+            _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = _sectionTopMargin = _sectionBottomMargin = null;
             _sectionRightToLeftGutter = false;
             _sectionNoteKind = -1;
             _sectionNoteRules[0] = WordDocumentNoteNumberRule.FootnoteDefault;
@@ -643,6 +646,9 @@ internal sealed class DocxBodyBlockScanner
             _sectionLeftMargin = WordDocumentPageSetup.ParseTwips(AttributeValue(attributes, "w:left=") ?? AttributeValue(attributes, "w:start="));
             _sectionRightMargin = WordDocumentPageSetup.ParseTwips(AttributeValue(attributes, "w:right=") ?? AttributeValue(attributes, "w:end="));
             _sectionGutter = WordDocumentPageSetup.ParseTwips(AttributeValue(attributes, "w:gutter="));
+            // w:top / w:bottom are ST_SignedTwipsMeasure: negative = the header / footer may not push the text, same distance.
+            _sectionTopMargin = WordDocumentPageSetup.ParseTwips(AttributeValue(attributes, "w:top="));
+            _sectionBottomMargin = WordDocumentPageSetup.ParseTwips(AttributeValue(attributes, "w:bottom="));
             return;
         }
         if (_tag == KnownTag.RightToLeftGutter)
@@ -780,6 +786,9 @@ internal sealed class DocxBodyBlockScanner
             _sectionRightMargin ?? WordDocumentPageSetup.DefaultMarginTwips,
             gutter.WidthGutter);
         int columnLeft = WordDocumentPageSetup.ColumnLeft(_sectionLeftMargin ?? WordDocumentPageSetup.DefaultMarginTwips, gutter.LeftGutter);
+        int topMargin = WordDocumentPageSetup.VerticalMargin(_sectionTopMargin ?? WordDocumentPageSetup.DefaultMarginTwips);
+        if (topMargin >= 0) topMargin += WordDocumentPageSetup.TopGutter(_sectionGutter ?? 0, _isGutterAtTop);
+        int bottomMargin = WordDocumentPageSetup.VerticalMargin(_sectionBottomMargin ?? WordDocumentPageSetup.DefaultMarginTwips);
         // The body-level w:sectPr is itself a block (kind Other) at the end: it closes the last section.
         int lastBlock = BlockStartOffsets.Count - 1;
         if (SectionLastBlocks.Count > 0 && SectionLastBlocks[SectionLastBlocks.Count - 1] >= lastBlock)
@@ -787,6 +796,7 @@ internal sealed class DocxBodyBlockScanner
             if (!isBodyLevel)
             {
                 SectionTextWidths[SectionTextWidths.Count - 1] = width; SectionColumnLefts[SectionColumnLefts.Count - 1] = columnLeft;
+                SectionTopMargins[SectionTopMargins.Count - 1] = topMargin; SectionBottomMargins[SectionBottomMargins.Count - 1] = bottomMargin;
                 SectionFootnoteRules[SectionFootnoteRules.Count - 1] = _sectionNoteRules[0]; SectionEndnoteRules[SectionEndnoteRules.Count - 1] = _sectionNoteRules[1];
             }
             return;
@@ -794,6 +804,8 @@ internal sealed class DocxBodyBlockScanner
         SectionLastBlocks.Add(lastBlock);
         SectionTextWidths.Add(width);
         SectionColumnLefts.Add(columnLeft);
+        SectionTopMargins.Add(topMargin);
+        SectionBottomMargins.Add(bottomMargin);
         SectionFootnoteRules.Add(_sectionNoteRules[0]);
         SectionEndnoteRules.Add(_sectionNoteRules[1]);
     }

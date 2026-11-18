@@ -112,10 +112,12 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     // page setup (RTF 1.5 spec defaults: \paperw 12240, \margl / \margr 1800, \gutter 0); a \sectd
     // resets the section's values to the document's
-    private int _paperWidth = 12240, _leftMargin = 1800, _rightMargin = 1800, _gutter;
-    private int? _sectionPageWidth, _sectionLeftMargin, _sectionRightMargin, _sectionGutter;
+    // \margt / \margb 1440 (RTF 1.5 spec), \margtsxn / \margbsxn per section; negative = exact, the distance is the absolute value
+    private int _paperWidth = 12240, _leftMargin = 1800, _rightMargin = 1800, _gutter, _topMargin = 1440, _bottomMargin = 1440;
+    private int? _sectionPageWidth, _sectionLeftMargin, _sectionRightMargin, _sectionGutter, _sectionTopMargin, _sectionBottomMargin;
     private bool _sectionRightToLeftGutter, _isGutterAtTop;      // \rtlgutter (section), \gutterprl (document)
-    private readonly List<int> _sectionLastBlocks = new(), _sectionTextWidths = new(), _sectionColumnLefts = new();
+    private readonly List<int> _sectionLastBlocks = new(), _sectionTextWidths = new(), _sectionColumnLefts = new(),
+                               _sectionTopMargins = new(), _sectionBottomMargins = new();
     private bool _isSectionEndPending;                          // a \sect inside a table row: the section ends with the row
 
     // notes
@@ -313,6 +315,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             SectionLastBlocks = SectionsFor(isPartial, known, _sectionLastBlocks, known - 1),
             SectionTextWidths = SectionsFor(isPartial, known, _sectionTextWidths, CurrentSectionTextWidth()),
             SectionColumnLefts = SectionsFor(isPartial, known, _sectionColumnLefts, CurrentSectionColumnLeft()),
+            SectionTopMargins = SectionsFor(isPartial, known, _sectionTopMargins, CurrentSectionTopMargin()).Select(margin => margin + 1).ToArray(),
+            SectionBottomMargins = SectionsFor(isPartial, known, _sectionBottomMargins, CurrentSectionBottomMargin()).Select(margin => margin + 1).ToArray(),
             // a bookmark after the last block's end (nothing followed it) marks the last block
             Bookmarks = isPartial
                 ? new WordDocumentBookmarkTable(_bookmarkNames.Where((_, i) => _bookmarkBlocks[i] < known).ToArray(), _bookmarkBlocks.Where(block => block < known).ToArray())
@@ -328,6 +332,12 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
                                                                             _sectionRightMargin ?? _rightMargin, CurrentGutter().WidthGutter);
 
     private int CurrentSectionColumnLeft() => WordDocumentPageSetup.ColumnLeft(_sectionLeftMargin ?? _leftMargin, CurrentGutter().LeftGutter);
+
+    /// <summary>The top margin, plus the gutter when it sits at the top (\gutterprl; <see cref="WordDocumentPageSetup.TopGutter"/>); -1 = not known.</summary>
+    private int CurrentSectionTopMargin()
+        => WordDocumentPageSetup.VerticalMargin(_sectionTopMargin ?? _topMargin) is >= 0 and var top ? top + WordDocumentPageSetup.TopGutter(_sectionGutter ?? _gutter, _isGutterAtTop) : -1;
+
+    private int CurrentSectionBottomMargin() => WordDocumentPageSetup.VerticalMargin(_sectionBottomMargin ?? _bottomMargin);
 
     private (int WidthGutter, int LeftGutter) CurrentGutter() => WordDocumentPageSetup.GutterPlacement(_sectionGutter ?? _gutter, _sectionRightToLeftGutter, _isGutterAtTop);
 
@@ -552,8 +562,12 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             case RtfWord.LeftMargin: _leftMargin = value; break;
             case RtfWord.RightMargin: _rightMargin = value; break;
             case RtfWord.Gutter: _gutter = value; break;
+            case RtfWord.TopMargin: _topMargin = value; break;
+            case RtfWord.BottomMargin: _bottomMargin = value; break;
+            case RtfWord.SectionTopMargin: _sectionTopMargin = value; break;
+            case RtfWord.SectionBottomMargin: _sectionBottomMargin = value; break;
             case RtfWord.SectionDefault:
-                _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = null; _sectionRightToLeftGutter = false;
+                _sectionPageWidth = _sectionLeftMargin = _sectionRightMargin = _sectionGutter = _sectionTopMargin = _sectionBottomMargin = null; _sectionRightToLeftGutter = false;
                 _sectionFootnoteRule = _sectionEndnoteRule = null;
                 break;
             case RtfWord.RightToLeftGutter: _sectionRightToLeftGutter = value != 0; break;
@@ -614,6 +628,8 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
         _sectionLastBlocks.Add(lastBlock);
         _sectionTextWidths.Add(width);
         _sectionColumnLefts.Add(CurrentSectionColumnLeft());
+        _sectionTopMargins.Add(CurrentSectionTopMargin());
+        _sectionBottomMargins.Add(CurrentSectionBottomMargin());
     }
 
     public override void ParagraphEnd(in RtfGroupState state, bool isSectionEnd)

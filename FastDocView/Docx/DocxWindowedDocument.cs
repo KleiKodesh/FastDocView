@@ -657,11 +657,12 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
     {
         get
         {
-            if (_index is { } index) return _sections ??= WordDocumentPageSetup.FromSectionEnds(index.SectionLastBlocks, index.SectionTextWidths, index.SectionColumnLefts);
+            if (_index is { } index) return _sections ??= WordDocumentPageSetup.FromSectionEnds(index.SectionLastBlocks, index.SectionTextWidths, index.SectionColumnLefts, index.SectionTopMargins, index.SectionBottomMargins);
             lock (_readLock)
             {
-                if (_builder is not { } builder) return _sections ??= WordDocumentPageSetup.FromSectionEnds(_index!.SectionLastBlocks, _index.SectionTextWidths, _index.SectionColumnLefts);
-                return WordDocumentPageSetup.FromSectionEnds(builder.KnownSectionLastBlocks.ToArray(), builder.KnownSectionTextWidths.ToArray(), builder.KnownSectionColumnLefts.ToArray());
+                if (_builder is not { } builder) return _sections ??= WordDocumentPageSetup.FromSectionEnds(_index!.SectionLastBlocks, _index.SectionTextWidths, _index.SectionColumnLefts, _index.SectionTopMargins, _index.SectionBottomMargins);
+                return WordDocumentPageSetup.FromSectionEnds(builder.KnownSectionLastBlocks.ToArray(), builder.KnownSectionTextWidths.ToArray(), builder.KnownSectionColumnLefts.ToArray(),
+                    builder.KnownSectionTopMargins.ToArray(), builder.KnownSectionBottomMargins.ToArray());
             }
         }
     }

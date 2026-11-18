@@ -662,12 +662,15 @@ internal sealed class OdtBodyBlockScanner
     private void NoteSectionStart(string family, string? styleName)
     {
         int block = BlockStartOffsets.Count - 1;
-        if (SectionStarts.Count == 0) SectionStarts.Add(new WordDocumentSection(0, _styles.PageSetup.DefaultTextWidthTwips, _styles.PageSetup.DefaultColumnLeftTwips));
+        OdtPageSetup pageSetup = _styles.PageSetup;
+        if (SectionStarts.Count == 0)
+            SectionStarts.Add(new WordDocumentSection(0, pageSetup.DefaultTextWidthTwips, pageSetup.DefaultColumnLeftTwips, pageSetup.DefaultTopMarginTwips, pageSetup.DefaultBottomMarginTwips));
         if (_styles.MasterPageNameOf(family, styleName) is not { } master) return;
         int width = _styles.PageSetup.TextWidthOfMasterPage(master) ?? _styles.PageSetup.DefaultTextWidthTwips;
         int left = _styles.PageSetup.ColumnLeftOfMasterPage(master) ?? _styles.PageSetup.DefaultColumnLeftTwips;
-        if (block == 0) SectionStarts[0] = new WordDocumentSection(0, width, left);
-        else SectionStarts.Add(new WordDocumentSection(block, width, left));
+        (int top, int bottom) = pageSetup.VerticalMarginsOfMasterPage(master) ?? (pageSetup.DefaultTopMarginTwips, pageSetup.DefaultBottomMarginTwips);
+        if (block == 0) SectionStarts[0] = new WordDocumentSection(0, width, left, top, bottom);
+        else SectionStarts.Add(new WordDocumentSection(block, width, left, top, bottom));
     }
 
     // ── list labels in the paragraph's language ─────────────────────────────────────

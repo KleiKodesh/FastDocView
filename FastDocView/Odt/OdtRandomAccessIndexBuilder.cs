@@ -82,6 +82,8 @@ public static class OdtRandomAccessIndexBuilder
             SectionFirstBlocks = scanner.SectionStarts.Select(section => section.FirstBlockIndex).ToArray(),
             SectionTextWidths = scanner.SectionStarts.Select(section => section.TextWidthTwips).ToArray(),
             SectionColumnLefts = scanner.SectionStarts.Select(section => section.ColumnLeftTwips + 1).ToArray(),
+            SectionTopMargins = scanner.SectionStarts.Select(section => section.TopMarginTwips + 1).ToArray(),
+            SectionBottomMargins = scanner.SectionStarts.Select(section => section.BottomMarginTwips + 1).ToArray(),
             Bookmarks = new WordDocumentBookmarkTable(scanner.BookmarkNames.ToArray(), scanner.BookmarkBlocks.ToArray()),
             ConnectedShapeBlocks = scanner.ConnectedShapeBlocks.ToArray(),
             ConnectedShapes = scanner.ConnectedShapeBlocks.Count == 0 ? OdtConnectedShapeTable.Empty : null,

@@ -1068,6 +1068,7 @@ internal sealed class RtfParser
             case RtfWord.PaperWidth: case RtfWord.LeftMargin: case RtfWord.RightMargin: case RtfWord.Gutter:
             case RtfWord.SectionDefault: case RtfWord.SectionPageWidth: case RtfWord.SectionLeftMargin:
             case RtfWord.SectionRightMargin: case RtfWord.SectionGutter: case RtfWord.RightToLeftGutter: case RtfWord.GutterAtTop:
+            case RtfWord.TopMargin: case RtfWord.BottomMargin: case RtfWord.SectionTopMargin: case RtfWord.SectionBottomMargin:
                 if (state.Destination == RtfDestination.Body && !IsInFootnote && (hasParameter || word is RtfWord.SectionDefault or RtfWord.RightToLeftGutter or RtfWord.GutterAtTop))
                     _sink.PageSetup(word, hasParameter ? parameter : 1);
                 return;

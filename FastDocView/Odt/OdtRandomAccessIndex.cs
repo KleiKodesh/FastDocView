@@ -18,7 +18,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 23;    // 23: style sections keep style:tab-stops; 22: field states carry the heading (outline) counters, the outline style is kept with the list styles; 21: scan states carry the field values (OdtFieldState), bookmarks also list sequence ref-names and note ids, style sections keep date / time data styles; 20: list levels keep a bullet style:font-name resolved through the font-face declarations; 19: HasUnreadableRest (a body cut short or malformed); 18: style sections keep loext:writing-mode on cells; 17: style sections keep the Asian / complex languages and the script / rfc tags (list numbers in the paragraph language); 16: style sections keep table row heights (style:row-height / min-row-height); 15: list levels mark a recoded symbol bullet (Latin label script); 14: list levels keep picture bullets, symbol-font bullets and the label text style; 13: style sections keep fo:hyphenate, fo:language / fo:country and style:drop-cap; 12: loext:margin-gutter no longer added twice to section widths; 11: section column lefts (+1, 0 = unknown); 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
+    private const int FormatVersion = 26;    // 26: missing page-layout values take Word's defaults (Letter, 1 in margins); 25: a missing fo:margin-top / -bottom is LibreOffice's 2 cm; 24: section top / bottom margins (+1, 0 = unknown); 23: style sections keep style:tab-stops; 22: field states carry the heading (outline) counters, the outline style is kept with the list styles; 21: scan states carry the field values (OdtFieldState), bookmarks also list sequence ref-names and note ids, style sections keep date / time data styles; 20: list levels keep a bullet style:font-name resolved through the font-face declarations; 19: HasUnreadableRest (a body cut short or malformed); 18: style sections keep loext:writing-mode on cells; 17: style sections keep the Asian / complex languages and the script / rfc tags (list numbers in the paragraph language); 16: style sections keep table row heights (style:row-height / min-row-height); 15: list levels mark a recoded symbol bullet (Latin label script); 14: list levels keep picture bullets, symbol-font bullets and the label text style; 13: style sections keep fo:hyphenate, fo:language / fo:country and style:drop-cap; 12: loext:margin-gutter no longer added twice to section widths; 11: section column lefts (+1, 0 = unknown); 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
     /// <summary>Body bytes between span anchors: a random block rescans at most this much on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
 
@@ -43,6 +43,9 @@ public sealed class OdtRandomAccessIndex
     public int[] SectionTextWidths { get; init; } = [];
     /// <summary>Per section: the column start on the page + 1 (twips; 0 = not known).</summary>
     public int[] SectionColumnLefts { get; init; } = [];
+    /// <summary>Per section: the top / bottom margin + 1 (twips; 0 = not known).</summary>
+    public int[] SectionTopMargins { get; init; } = [];
+    public int[] SectionBottomMargins { get; init; } = [];
     /// <summary>Bookmarks and reference marks (name -> block), see OdtBodyBlockScanner.BookmarkNames.</summary>
     public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
     /// <summary>The body broke off after the last block (cut short, or a mismatched end tag): the reader shows one "could not be read" block after it.</summary>
@@ -180,6 +183,8 @@ public sealed class OdtRandomAccessIndex
         IndexBinaryArrays.WriteDeltaVarints(writer, SectionFirstBlocks);
         IndexBinaryArrays.WriteVarints(writer, SectionTextWidths);
         IndexBinaryArrays.WriteVarints(writer, SectionColumnLefts);
+        IndexBinaryArrays.WriteVarints(writer, SectionTopMargins);
+        IndexBinaryArrays.WriteVarints(writer, SectionBottomMargins);
         Section($"sections ({SectionFirstBlocks.Length})");
         IndexBinaryArrays.WriteCompressedStrings(writer, Bookmarks.Names);
         new EliasFanoSequence(Bookmarks.Blocks).Write(writer);
@@ -242,7 +247,10 @@ public sealed class OdtRandomAccessIndex
         int[] sectionFirstBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
         int[] sectionTextWidths = IndexBinaryArrays.ReadVarints(reader);
         int[] sectionColumnLefts = IndexBinaryArrays.ReadVarints(reader);
-        if (sectionFirstBlocks.Length != sectionTextWidths.Length || sectionColumnLefts.Length != sectionTextWidths.Length || sectionFirstBlocks.Any(block => (uint)block >= (uint)Math.Max(1, blockCount)))
+        int[] sectionTopMargins = IndexBinaryArrays.ReadVarints(reader);
+        int[] sectionBottomMargins = IndexBinaryArrays.ReadVarints(reader);
+        if (sectionFirstBlocks.Length != sectionTextWidths.Length || sectionColumnLefts.Length != sectionTextWidths.Length
+            || sectionTopMargins.Length != sectionTextWidths.Length || sectionBottomMargins.Length != sectionTextWidths.Length || sectionFirstBlocks.Any(block => (uint)block >= (uint)Math.Max(1, blockCount)))
             throw new InvalidDataException("OpenDocument index: section table does not match the blocks.");
         string[] bookmarkNames = IndexBinaryArrays.ReadCompressedStrings(reader);
         int[] bookmarkBlocks = EliasFanoSequence.Read(reader).ToArray();
@@ -256,6 +264,8 @@ public sealed class OdtRandomAccessIndex
             SectionFirstBlocks = sectionFirstBlocks,
             SectionTextWidths = sectionTextWidths,
             SectionColumnLefts = sectionColumnLefts,
+            SectionTopMargins = sectionTopMargins,
+            SectionBottomMargins = sectionBottomMargins,
             Bookmarks = new WordDocumentBookmarkTable(bookmarkNames, bookmarkBlocks),
             ConnectedShapes = connectedShapes,
             HasUnreadableRest = hasUnreadableRest,

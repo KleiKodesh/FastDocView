@@ -9,9 +9,19 @@ namespace FastDocView;
 /// </summary>
 /// <param name="ColumnLeftTwips">Where the text column starts from the page's left edge: left margin + gutter (twips); -1 = not
 /// known. Turns an object offset from the page edge into one from the column.</param>
-public readonly record struct WordDocumentSection(int FirstBlockIndex, int TextWidthTwips, int ColumnLeftTwips = -1);
+/// <param name="TopMarginTwips">The page's top margin (twips), a gutter at the top included (<see cref="WordDocumentPageSetup.TopGutter"/>); -1 = not known.</param>
+/// <param name="BottomMarginTwips">The page's bottom margin (twips); -1 = not known.</param>
+public readonly record struct WordDocumentSection(int FirstBlockIndex, int TextWidthTwips, int ColumnLeftTwips = -1, int TopMarginTwips = -1, int BottomMarginTwips = -1)
+{
+    /// <summary>Same page layout (everything but where the section starts) - adjacent sections like this merge.</summary>
+    public bool HasSameLayout(WordDocumentSection other)
+        => TextWidthTwips == other.TextWidthTwips && ColumnLeftTwips == other.ColumnLeftTwips && TopMarginTwips == other.TopMarginTwips && BottomMarginTwips == other.BottomMarginTwips;
+}
 
-/// <summary>Page setup defaults and the text-width rule shared by the formats.</summary>
+/// <summary>
+/// Page setup defaults and the text-width rule shared by the formats. Where Word and LibreOffice differ on a default, Word's
+/// is the rule (every format, .odt and plain text included); LibreOffice's source is cited for how values are parsed only.
+/// </summary>
 public static class WordDocumentPageSetup
 {
     /// <summary>
@@ -28,7 +38,31 @@ public static class WordDocumentPageSetup
     public const int MinimumTextWidthTwips = 720;
 
     /// <summary>One section covering the whole document at the default width.</summary>
-    public static IReadOnlyList<WordDocumentSection> DefaultSections { get; } = [new WordDocumentSection(0, DefaultTextWidthTwips)];
+    public static IReadOnlyList<WordDocumentSection> DefaultSections { get; } = [new WordDocumentSection(0, DefaultTextWidthTwips, -1, DefaultMarginTwips, DefaultMarginTwips)];
+
+    /// <summary>
+    /// A top or bottom margin as Word lays it out: OOXML w:pgMar w:top / w:bottom (ST_SignedTwipsMeasure) and RTF
+    /// \margtsxn may be negative - a negative value means the text may not push the margin down (header / footer
+    /// overlap), and the distance itself is the absolute value: LibreOffice writerfilter PropertyMap.cxx:1157 / 1178
+    /// (PrepareHeaderFooterProperties, std::abs of m_nTopMargin / m_nBottomMargin; RTF \margt goes through the same
+    /// pgMar path, rtfdispatchvalue.cxx:1337-1355) and ww8par6.cxx:632 / 650 (GetPageULData, std::abs of dyaTop /
+    /// dyaBottom). Implausible values give -1 (not known).
+    /// </summary>
+    public static int VerticalMargin(int? marginTwips) => marginTwips is { } margin && Math.Abs((long)margin) <= 31680 ? Math.Abs(margin) : -1;
+
+    /// <summary>
+    /// The gutter added to the top margin: with the document's gutter-at-top setting the gutter sits at the top of the
+    /// page: LibreOffice's layout adds the gutter to the page's top space when GUTTER_AT_TOP is set
+    /// (sw/source/core/layout/frmtool.cxx:2368-2374 SwBorderAttrs::CalcTop_), set from .docx w:gutterAtTop, RTF
+    /// \gutterprl and .doc Dop iGutterPos (ww8par.cxx:2116-2119); otherwise 0.
+    /// </summary>
+    public static int TopGutter(int gutterTwips, bool isAtTop) => isAtTop ? Math.Max(0, gutterTwips) : 0;
+
+    /// <summary>The top margin (points) of the document's first section; -1 = not known.</summary>
+    public static double TopMarginPoints(IReadOnlyList<WordDocumentSection> sections) => sections.Count > 0 && sections[0].TopMarginTwips >= 0 ? sections[0].TopMarginTwips / 20.0 : -1;
+
+    /// <summary>The bottom margin (points) of the document's last section; -1 = not known.</summary>
+    public static double BottomMarginPoints(IReadOnlyList<WordDocumentSection> sections) => sections.Count > 0 && sections[sections.Count - 1].BottomMarginTwips >= 0 ? sections[sections.Count - 1].BottomMarginTwips / 20.0 : -1;
 
     /// <summary>
     /// Page width minus left, right margins and gutter. The gutter always narrows the text: Word adds
@@ -73,7 +107,7 @@ public static class WordDocumentPageSetup
             int middle = (low + high) >> 1;
             if (sections[middle].FirstBlockIndex <= blockIndex) { found = middle; low = middle + 1; } else high = middle - 1;
         }
-        return found >= 0 ? sections[found] : new WordDocumentSection(0, DefaultTextWidthTwips);
+        return found >= 0 ? sections[found] : DefaultSections[0];
     }
 
     /// <summary>
@@ -81,7 +115,8 @@ public static class WordDocumentPageSetup
     /// (inclusive), <paramref name="widths"/>[i] its text width. Blocks after the last recorded end (a
     /// section whose page setup is not known yet, while the index builds) belong to the last section.
     /// </summary>
-    public static IReadOnlyList<WordDocumentSection> FromSectionEnds(IReadOnlyList<int> lastBlockIndexes, IReadOnlyList<int> widths, IReadOnlyList<int>? columnLefts = null)
+    public static IReadOnlyList<WordDocumentSection> FromSectionEnds(IReadOnlyList<int> lastBlockIndexes, IReadOnlyList<int> widths, IReadOnlyList<int>? columnLefts = null,
+        IReadOnlyList<int>? topMargins = null, IReadOnlyList<int>? bottomMargins = null)
     {
         if (lastBlockIndexes.Count == 0) return DefaultSections;
         var sections = new List<WordDocumentSection>(lastBlockIndexes.Count);
@@ -89,8 +124,10 @@ public static class WordDocumentPageSetup
         for (int i = 0; i < lastBlockIndexes.Count; i++)
         {
             int left = columnLefts is not null && i < columnLefts.Count ? columnLefts[i] : -1;
-            if (sections.Count == 0 || sections[sections.Count - 1].TextWidthTwips != widths[i] || sections[sections.Count - 1].ColumnLeftTwips != left)
-                sections.Add(new WordDocumentSection(first, widths[i], left));
+            int top = topMargins is not null && i < topMargins.Count ? topMargins[i] : -1;
+            int bottom = bottomMargins is not null && i < bottomMargins.Count ? bottomMargins[i] : -1;
+            var section = new WordDocumentSection(first, widths[i], left, top, bottom);
+            if (sections.Count == 0 || !sections[sections.Count - 1].HasSameLayout(section)) sections.Add(section);
             first = lastBlockIndexes[i] + 1;
         }
         return sections;
@@ -105,8 +142,8 @@ public static class WordDocumentPageSetup
         var sections = new List<WordDocumentSection>();
         foreach (WordDocumentSection section in starts)
         {
-            if (sections.Count > 0 && section.FirstBlockIndex <= sections[sections.Count - 1].FirstBlockIndex) { sections[sections.Count - 1] = sections[sections.Count - 1] with { TextWidthTwips = section.TextWidthTwips, ColumnLeftTwips = section.ColumnLeftTwips }; continue; }
-            if (sections.Count > 0 && sections[sections.Count - 1].TextWidthTwips == section.TextWidthTwips && sections[sections.Count - 1].ColumnLeftTwips == section.ColumnLeftTwips) continue;
+            if (sections.Count > 0 && section.FirstBlockIndex <= sections[sections.Count - 1].FirstBlockIndex) { sections[sections.Count - 1] = section with { FirstBlockIndex = sections[sections.Count - 1].FirstBlockIndex }; continue; }
+            if (sections.Count > 0 && sections[sections.Count - 1].HasSameLayout(section)) continue;
             sections.Add(sections.Count == 0 ? section with { FirstBlockIndex = 0 } : section);
         }
         return sections.Count == 0 ? DefaultSections : sections;

@@ -20,6 +20,22 @@ public sealed class OdtPageSetup
 
     private readonly Dictionary<string, int> _masterPageWidths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _masterPageColumnLefts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (int Top, int Bottom)> _masterPageVerticalMargins = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A master page's top and bottom margins (fo:margin-top / fo:margin-bottom, or fo:margin; a gutter at the top is
+    /// already inside fo:margin-top - xmloff PageMasterImportPropMapper.cxx); null = not known.
+    /// </summary>
+    public (int Top, int Bottom)? VerticalMarginsOfMasterPage(string? masterPageName)
+        => masterPageName is not null && _masterPageVerticalMargins.TryGetValue(masterPageName, out var margins) ? margins : null;
+
+    /// <summary>
+    /// What the file does not say takes Word's default (the rule when Word and LibreOffice differ): Letter (8.5 in) with
+    /// 1 in margins on every side (<see cref="WordDocumentPageSetup"/>). LibreOffice is cited only for how the attributes
+    /// are read; its own default page style (A4 / 2 cm in a metric locale, docdesc.cxx:68-113) is not followed.
+    /// </summary>
+    public int DefaultTopMarginTwips { get; private set; } = WordDocumentPageSetup.DefaultMarginTwips;
+    public int DefaultBottomMarginTwips { get; private set; } = WordDocumentPageSetup.DefaultMarginTwips;
 
     /// <summary>Where the text column of a master page's layout starts on the page (fo:margin-left, which holds a left gutter); null = not known.</summary>
     public int? ColumnLeftOfMasterPage(string? masterPageName)
@@ -61,6 +77,7 @@ public sealed class OdtPageSetup
     {
         private readonly Dictionary<string, int> _layoutWidths = new(StringComparer.Ordinal);
         private readonly Dictionary<string, int> _layoutColumnLefts = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, (int Top, int Bottom)> _layoutVerticalMargins = new(StringComparer.Ordinal);
         private readonly List<(string master, string layout)> _masterLayouts = new();
         private string? _currentLayout;
         private int _currentLayoutDepth = -1;
@@ -86,12 +103,13 @@ public sealed class OdtPageSetup
                     // fo:margin-top with GutterAtTop): LibreOffice writes the margin with the gutter and subtracts it on import
                     // (xmloff PageMasterImportPropMapper.cxx:412-452), so the text width and the column start are the
                     // margins as written, wherever the gutter is
-                    // ODF has no default page size; LibreOffice's own default page style is A4 with 2 cm margins,
-                    // but a layout without fo:page-width is rare - fall back to the Word default like other formats.
-                    _layoutWidths[_currentLayout] = page is { } width
-                        ? WordDocumentPageSetup.TextWidth(width, left ?? 0, right ?? 0, 0)
-                        : WordDocumentPageSetup.DefaultTextWidthTwips;
-                    if (page is not null) _layoutColumnLefts[_currentLayout] = WordDocumentPageSetup.ColumnLeft(left ?? 0, 0);
+                    // missing values take Word's defaults (the rule when Word and LibreOffice differ): Letter, 1 in margins
+                    const int WordMargin = WordDocumentPageSetup.DefaultMarginTwips;
+                    _layoutWidths[_currentLayout] = WordDocumentPageSetup.TextWidth(page ?? WordDocumentPageSetup.LetterPageWidthTwips, left ?? WordMargin, right ?? WordMargin, 0);
+                    _layoutColumnLefts[_currentLayout] = WordDocumentPageSetup.ColumnLeft(left ?? WordMargin, 0);
+                    _layoutVerticalMargins[_currentLayout] = (
+                        WordDocumentPageSetup.VerticalMargin(WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-top", FoNamespace)) ?? margin ?? WordMargin),
+                        WordDocumentPageSetup.VerticalMargin(WordDocumentPageSetup.ParseTwips(reader.GetAttribute("margin-bottom", FoNamespace)) ?? margin ?? WordMargin));
                     break;
                 }
                 case "master-page":
@@ -108,10 +126,12 @@ public sealed class OdtPageSetup
             {
                 if (_layoutWidths.TryGetValue(layout, out int width) && !setup._masterPageWidths.ContainsKey(master)) setup._masterPageWidths[master] = width;
                 if (_layoutColumnLefts.TryGetValue(layout, out int left) && !setup._masterPageColumnLefts.ContainsKey(master)) setup._masterPageColumnLefts[master] = left;
+                if (_layoutVerticalMargins.TryGetValue(layout, out var margins) && !setup._masterPageVerticalMargins.ContainsKey(master)) setup._masterPageVerticalMargins[master] = margins;
             }
             string? defaultMaster = setup.TextWidthOfMasterPage("Standard") is not null ? "Standard" : _masterLayouts.Count > 0 ? _masterLayouts[0].master : null;
             if (setup.TextWidthOfMasterPage(defaultMaster) is { } width0) setup.DefaultTextWidthTwips = width0;
             if (setup.ColumnLeftOfMasterPage(defaultMaster) is { } left0) setup.DefaultColumnLeftTwips = left0;
+            if (setup.VerticalMarginsOfMasterPage(defaultMaster) is { } margins0) (setup.DefaultTopMarginTwips, setup.DefaultBottomMarginTwips) = margins0;
             return setup;
         }
     }

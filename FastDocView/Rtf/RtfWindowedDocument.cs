@@ -94,7 +94,8 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
     private int? KnownBookmark(string name) { lock (_readLock) return _index.Bookmarks.BlockOf(name); }
 
     /// <summary>Page text width per section (\paperw / \margl / \margr / \gutter and their per-section forms), from the index.</summary>
-    public IReadOnlyList<WordDocumentSection> Sections { get { lock (_readLock) return _sections ??= WordDocumentPageSetup.FromSectionEnds(_index.SectionLastBlocks, _index.SectionTextWidths, _index.SectionColumnLefts); } }
+    public IReadOnlyList<WordDocumentSection> Sections { get { lock (_readLock) return _sections ??= WordDocumentPageSetup.FromSectionEnds(_index.SectionLastBlocks, _index.SectionTextWidths, _index.SectionColumnLefts,
+        _index.SectionTopMargins.Select(margin => margin - 1).ToArray(), _index.SectionBottomMargins.Select(margin => margin - 1).ToArray()); } }
     private IReadOnlyList<WordDocumentSection>? _sections;
     public bool IsIndexComplete { get { lock (_readLock) return _builder is null; } }
     public int KnownBlockCount { get { lock (_readLock) return _builder?.KnownBlockCount ?? _indexField.BlockCount; } }
