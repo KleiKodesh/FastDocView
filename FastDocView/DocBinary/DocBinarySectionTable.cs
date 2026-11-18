@@ -19,23 +19,25 @@ internal static class DocBinarySectionTable
     /// <summary>sprmSFRTLGutter: the gutter is on the right (LibreOffice sprmids.hxx:589 SFRTLGutter 0x322A, one byte).</summary>
     private const ushort SprmSFRightToLeftGutter = 0x322A;
     private const int SedSize = 12;
+    private const int Word2SedSize = 6;        // Word 1/2: fn + fcSepx (ww8scan.cxx WW8PLCFx_SEPX: nStruct 6 for eVersion <= eWW2)
 
     /// <summary>The start CP of every section (PlcfSed's sorted CPs, clamped to 0) - the index pass records each one's block.</summary>
-    public static int[] ReadStartCps(Stream tableStream, (uint offset, uint length) plcfSed)
-        => TryReadPlc(tableStream, plcfSed, out byte[] plc, out int count, out _)
+    public static int[] ReadStartCps(Stream tableStream, (uint offset, uint length) plcfSed, bool isWord2 = false)
+        => TryReadPlc(tableStream, plcfSed, isWord2 ? Word2SedSize : SedSize, out byte[] plc, out int count, out _)
             ? Enumerable.Range(0, count).Select(i => Math.Max(0, BitConverter.ToInt32(plc, i * 4))).ToArray()
             : [];
 
     /// <summary>Word 6/95: each section's OLST (sprmSOlstAnm, translated to 0xD202), by the section's start CP; null where none.</summary>
     public static Func<int, byte[]?> ReadWord6Outlines(Stream wordDocument, Stream tableStream, (uint offset, uint length) plcfSed, DocBinaryWord6Sprms word6Sprms)
     {
-        if (!TryReadPlc(tableStream, plcfSed, out byte[] plc, out int count, out int sedsAt)) return _ => null;
+        int sedSize = word6Sprms is { IsWord2: true } ? Word2SedSize : SedSize;
+        if (!TryReadPlc(tableStream, plcfSed, sedSize, out byte[] plc, out int count, out int sedsAt)) return _ => null;
         var starts = new int[count];
         var outlines = new byte[]?[count];
         for (int i = 0; i < count; i++)
         {
             starts[i] = Math.Max(0, BitConverter.ToInt32(plc, i * 4));
-            if (ReadSepx(wordDocument, BitConverter.ToUInt32(plc, sedsAt + i * SedSize + 2), word6Sprms) is not { } grpprl) continue;
+            if (ReadSepx(wordDocument, BitConverter.ToUInt32(plc, sedsAt + i * sedSize + 2), word6Sprms) is not { } grpprl) continue;
             foreach ((ushort opcode, int at, int length) in DocBinaryPropertyModifiers.Sprms(grpprl, 0, grpprl.Length))
                 if (opcode == 0xD202 && length >= DocBinaryWord6Numbering.OlstLength) outlines[i] = grpprl.AsSpan(at, length).ToArray();
         }
@@ -55,13 +57,14 @@ internal static class DocBinarySectionTable
     {
         bool isGutterAtTop = IsGutterAtTop(tableStream, documentProperties);
         var fallback = new[] { new WordDocumentSection(0, DefaultTextWidthTwips) };
-        if (!TryReadPlc(tableStream, plcfSed, out byte[] plc, out int count, out int sedsAt)) return fallback;
+        int sedSize = word6Sprms is { IsWord2: true } ? Word2SedSize : SedSize;
+        if (!TryReadPlc(tableStream, plcfSed, sedSize, out byte[] plc, out int count, out int sedsAt)) return fallback;
         if (firstBlocks.Count != count) throw new InvalidDataException(".doc index: the section count does not match the document.");
 
         var starts = new List<WordDocumentSection>(count);
         for (int i = 0; i < count; i++)
         {
-            uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * SedSize + 2);
+            uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * sedSize + 2);
             (int width, int left) = PageSetupOf(wordDocument, fcSepx, isGutterAtTop, word6Sprms);
             starts.Add(new WordDocumentSection(firstBlocks[i], width, left));
         }
@@ -79,7 +82,8 @@ internal static class DocBinarySectionTable
     public static WordDocumentNoteNumbering ReadNoteNumbering(Stream wordDocument, Stream tableStream, (uint offset, uint length) plcfSed,
                                                               DocBinaryWord6Sprms? word6Sprms = null)
     {
-        if (!TryReadPlc(tableStream, plcfSed, out byte[] plc, out int count, out int sedsAt)) return WordDocumentNoteNumbering.Defaults;
+        int sedSize = word6Sprms is { IsWord2: true } ? Word2SedSize : SedSize;
+        if (!TryReadPlc(tableStream, plcfSed, sedSize, out byte[] plc, out int count, out int sedsAt)) return WordDocumentNoteNumbering.Defaults;
         var starts = new int[count];
         var footnotes = new WordDocumentNoteNumberRule[count];
         var endnotes = new WordDocumentNoteNumberRule[count];
@@ -87,7 +91,7 @@ internal static class DocBinarySectionTable
         {
             starts[i] = i == 0 ? 0 : Math.Max(starts[i - 1], BitConverter.ToInt32(plc, i * 4));
             WordDocumentNoteNumberRule footnote = WordDocumentNoteNumberRule.FootnoteDefault, endnote = WordDocumentNoteNumberRule.EndnoteDefault;
-            uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * SedSize + 2);
+            uint fcSepx = BitConverter.ToUInt32(plc, sedsAt + i * sedSize + 2);
             if (ReadSepx(wordDocument, fcSepx, word6Sprms) is { } grpprl)
                 foreach ((ushort opcode, int at, int length) in DocBinaryPropertyModifiers.Sprms(grpprl, 0, grpprl.Length))
                 {
@@ -118,18 +122,20 @@ internal static class DocBinarySectionTable
     private static byte[]? ReadSepx(Stream wordDocument, uint fcSepx, DocBinaryWord6Sprms? word6Sprms)
     {
         if (fcSepx == 0xFFFFFFFF || DocBinaryStructureReader.TryRead(wordDocument, (fcSepx, 2)) is not { } sizeBytes) return null;
-        short cb = BitConverter.ToInt16(sizeBytes, 0);
-        byte[]? grpprl = cb > 0 ? DocBinaryStructureReader.TryRead(wordDocument, (fcSepx + 2, (uint)cb)) : null;
+        bool isWord2 = word6Sprms is { IsWord2: true };          // Word 1/2: a one-byte cb (WW8PLCFx_SEPX::GetSprms, eVersion <= eWW2)
+        int cb = isWord2 ? sizeBytes[0] : BitConverter.ToInt16(sizeBytes, 0);
+        uint grpprlAt = fcSepx + (isWord2 ? 1u : 2u);
+        byte[]? grpprl = cb > 0 ? DocBinaryStructureReader.TryRead(wordDocument, (grpprlAt, (uint)cb)) : null;
         return grpprl is not null && word6Sprms is not null ? word6Sprms.ToWord97(grpprl, 0, grpprl.Length) : grpprl;
     }
 
-    private static bool TryReadPlc(Stream tableStream, (uint offset, uint length) plcfSed, out byte[] plc, out int count, out int sedsAt)
+    private static bool TryReadPlc(Stream tableStream, (uint offset, uint length) plcfSed, int sedSize, out byte[] plc, out int count, out int sedsAt)
     {
         plc = []; count = 0; sedsAt = 0;
-        if (plcfSed.length < 4 + 4 + SedSize) return false;
+        if (plcfSed.length < 4 + 4 + sedSize) return false;
         if (DocBinaryStructureReader.TryRead(tableStream, plcfSed) is not { } bytes) return false;
         plc = bytes;
-        int entries = (int)((plcfSed.length - 4) / (4 + SedSize));
+        int entries = (int)((plcfSed.length - 4) / (4 + sedSize));
         sedsAt = (entries + 1) * 4;                        // the Seds follow ALL CPs, sorted or not
         // CPs out of order end the PLC (LibreOffice TruncToSortedRange, as for the other PLCs).
         count = DocBinaryStructureReader.SortedEntryCount(i => BitConverter.ToInt32(bytes, i * 4), entries);

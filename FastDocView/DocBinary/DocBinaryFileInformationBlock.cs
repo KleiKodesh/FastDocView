@@ -69,13 +69,17 @@ public sealed class DocBinaryFileInformationBlock
         int read = 0;
         while (read < fib.Length) { int n = wordDocumentStream.Read(fib, read, fib.Length - read); if (n <= 0) break; read += n; }
         ushort identifier = read >= 4 ? BitConverter.ToUInt16(fib, 0) : (ushort)0;
-        if (identifier is 0xA59B or 0xA59C or 0xA5DB)       // Word 1 / Word 2 FIBs (LibreOffice ww8scan.cxx GetFIBVersion)
-            throw new NotSupportedException($"Word for Windows {(identifier == 0xA5DB ? "2.0" : "1.x")} documents are not supported.");
+        // Word for Windows 1.x (wIdent 0xA59B, 0xA59C = OS/2 "PM Word") and 2.0 (0xA5DB): no compound file, the FIB at the
+        // file's start (LibreOffice ww8scan.cxx GetFIBVersion: eWW1 / eWW2). They take the Word 6 branches plus their own.
+        IsWord1 = identifier is 0xA59B or 0xA59C;
+        IsWord2 = IsWord1 || identifier == 0xA5DB;
         // Word 6.0 / 95 FIBs: wIdent 0xA5DC, or 0xA697-0xA699 (LibreOffice ww8par.cxx accepts them; GetWW6SprmSearcher treats
         // the 0xA697-0xA699 ones as the far-east variant, sprms 111-113 = font codes); nFib 101-105 (ww8scan.cxx WW8Fib ctor).
-        IsWord6 = identifier is 0xA5DC or >= 0xA697 and <= 0xA699;
+        IsWord6 = IsWord2 || identifier is 0xA5DC or >= 0xA697 and <= 0xA699;
         IsWord6FontCodeVariant = identifier is >= 0xA697 and <= 0xA699;
-        if (IsWord6 && read < 0x192 + 22 * 8)
+        if (IsWord2 && read < Word2FibLength)
+            throw new InvalidDataException($"Damaged Word for Windows {(IsWord1 ? "1.x" : "2.0")} document: the file ({read} bytes) is shorter than its FIB.");
+        if (IsWord6 && !IsWord2 && read < 0x192 + 22 * 8)
             throw new InvalidDataException($"Damaged Word 6/95 document: the WordDocument stream ({read} bytes) is shorter than its FIB.");
         if (!IsWord6 && (read < 0x1AA || identifier != WordIdentifier))
             throw new InvalidDataException($"Not a Word 97+ binary document: the WordDocument stream starts with 0x{identifier:X4}, not the FIB identifier 0xA5EC.");
@@ -85,7 +89,7 @@ public sealed class DocBinaryFileInformationBlock
         ushort flags = BitConverter.ToUInt16(fib, 0x0A);
         IsComplex = (flags & 0x0004) != 0;
         IsEncrypted = (flags & 0x0100) != 0;
-        HasExtendedCharacters = (flags & 0x1000) != 0;     // Word 6/95: every piece is UTF-16 when set, else 8-bit (ww8scan.cxx WW8Cp2Fc: m_fExtChar for nVersion < 8)
+        HasExtendedCharacters = !IsWord2 && (flags & 0x1000) != 0;     // Word 6/95: every piece is UTF-16 when set, else 8-bit (ww8scan.cxx WW8Cp2Fc: m_fExtChar for nVersion < 8)
         TextStartFileOffset = BitConverter.ToUInt32(fib, 0x18);
         TextEndFileOffset = BitConverter.ToUInt32(fib, 0x1C);
         if (IsEncrypted) throw new WordDocumentEncryptedException("Encrypted (password-protected) Word documents are not supported.");
@@ -105,11 +109,28 @@ public sealed class DocBinaryFileInformationBlock
             EndnoteCharacterCount = BitConverter.ToInt32(fib, 0x48);
             TextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x4C));
             HeaderTextBoxCharacterCount = Math.Max(0, BitConverter.ToInt32(fib, 0x50));
-            // after pair 37 (fcSttbfAtnbkmk): a short, pnChpFirst, pnPapFirst, cpnBteChp, cpnBtePap (0x188..0x191), then pairs 38.. at 0x192
-            CharacterFirstPage = BitConverter.ToInt16(fib, 0x18A);
-            ParagraphFirstPage = BitConverter.ToInt16(fib, 0x18C);
-            CharacterBinPageCount = BitConverter.ToInt16(fib, 0x18E);
-            ParagraphBinPageCount = BitConverter.ToInt16(fib, 0x190);
+            if (IsWord1)
+            {
+                // Word 1: 36 six-byte pairs end at 0x130; a long and a short skipped; cpnBteChp, cpnBtePap (no pnFirst: 0)
+                CharacterBinPageCount = BitConverter.ToInt16(fib, 0x136);
+                ParagraphBinPageCount = BitConverter.ToInt16(fib, 0x138);
+            }
+            else if (IsWord2)
+            {
+                // Word 2: 38 six-byte pairs end at 0x13C; a short, pnChpFirst, pnPapFirst, cpnBteChp, cpnBtePap
+                CharacterFirstPage = BitConverter.ToInt16(fib, 0x13E);
+                ParagraphFirstPage = BitConverter.ToInt16(fib, 0x140);
+                CharacterBinPageCount = BitConverter.ToInt16(fib, 0x142);
+                ParagraphBinPageCount = BitConverter.ToInt16(fib, 0x144);
+            }
+            else
+            {
+                // after pair 37 (fcSttbfAtnbkmk): a short, pnChpFirst, pnPapFirst, cpnBteChp, cpnBtePap (0x188..0x191), then pairs 38.. at 0x192
+                CharacterFirstPage = BitConverter.ToInt16(fib, 0x18A);
+                ParagraphFirstPage = BitConverter.ToInt16(fib, 0x18C);
+                CharacterBinPageCount = BitConverter.ToInt16(fib, 0x18E);
+                ParagraphBinPageCount = BitConverter.ToInt16(fib, 0x190);
+            }
         }
         else
         {
@@ -125,7 +146,7 @@ public sealed class DocBinaryFileInformationBlock
             throw new InvalidDataException("Damaged Word document: the FIB gives a negative character count.");
 
         _isWord6 = IsWord6;
-        _fcLcbCount = IsWord6 ? Word6FcLcbCount : BitConverter.ToUInt16(fib, 0x98);
+        _fcLcbCount = IsWord2 ? Word2FcLcbCount : IsWord6 ? Word6FcLcbCount : BitConverter.ToUInt16(fib, 0x98);
         StyleSheet = FcLcb(fib, 1);
         FootnoteReferences = FcLcb(fib, 2);
         FootnoteTexts = FcLcb(fib, 3);
@@ -159,9 +180,15 @@ public sealed class DocBinaryFileInformationBlock
 
     private readonly int _fcLcbCount;
     private readonly bool _isWord6;
+    private const int Word2FcLcbCount = 38;    // pairs 0..37 (through fcSttbfAtnbkmk); Word 1 stores 36 of them
+    private const int Word2FibLength = 0x146;  // through cpnBtePap (Word 1 ends at 0x13A)
     private const int Word6FcLcbCount = 62;    // pairs 0..61 (through fcSttbttmbd), ww8scan.cxx WW8Fib ctor read order for eWW6 / eWW7
 
-    /// <summary>A Word 6.0 / 95 file (wIdent 0xA5DC or 0xA697-0xA699): one-byte sprms, 8-bit text, no table stream.</summary>
+    /// <summary>A Word for Windows 1.x / 2.0 file (wIdent 0xA59B / 0xA59C / 0xA5DB): <see cref="IsWord6"/> is set too.</summary>
+    public bool IsWord2 { get; }
+    /// <summary>Word for Windows 1.x (wIdent 0xA59B, 0xA59C): a shorter FIB than Word 2's.</summary>
+    public bool IsWord1 { get; }
+    /// <summary>A Word 6.0 / 95 file (wIdent 0xA5DC or 0xA697-0xA699) or an older one (<see cref="IsWord2"/>): one-byte sprms, 8-bit text, no table stream.</summary>
     public bool IsWord6 { get; }
     /// <summary>wIdent 0xA697-0xA699: sprms 111-113 are font codes, not the right-to-left bold / italic / font (ww8scan.cxx patchCJKVariant).</summary>
     public bool IsWord6FontCodeVariant { get; }
@@ -176,6 +203,16 @@ public sealed class DocBinaryFileInformationBlock
     /// <summary>An (offset, length) pair of FibRgFcLcb; (0, 0) when this file's FIB is too short to have it.</summary>
     private (uint, uint) FcLcb(byte[] fib, int index)
     {
+        if (IsWord2)
+        {
+            // Word 1/2: a 4-byte fc and a 2-byte lcb (ww8scan.cxx Readcb, eVer <= eWW2) from 0x58, in the Word 97 order up to
+            // fcSttbfAtnbkmk; Word 1 has no fcPrDrvr / fcPrEnvLand (only fcPrEnvPort), so from fcPrEnvPort on it is two pairs behind.
+            if (index >= Word2FcLcbCount || IsWord1 && index is 27 or 29) return (0, 0);
+            int pair = IsWord1 && index > 27 ? index - (index > 29 ? 2 : 1) : index;
+            int word2At = 0x58 + pair * 6;
+            uint lcb = BitConverter.ToUInt16(fib, word2At + 4);
+            return lcb == 0 ? (0, 0) : (BitConverter.ToUInt32(fib, word2At), lcb);
+        }
         int at = !_isWord6 ? FibRgFcLcbStart + index * 8 : index < 38 ? 0x58 + index * 8 : 0x192 + (index - 38) * 8;
         if (index >= _fcLcbCount || at + 8 > fib.Length) return (0, 0);
         return (BitConverter.ToUInt32(fib, at), BitConverter.ToUInt32(fib, at + 4));

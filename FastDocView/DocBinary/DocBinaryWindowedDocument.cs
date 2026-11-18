@@ -10,7 +10,8 @@ namespace FastDocView.DocBinary;
 /// </summary>
 public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocumentSearchScan
 {
-    private readonly CompoundFileReader _compoundFile;
+    private readonly CompoundFileReader? _compoundFile;       // null for a Word 1.x / 2.0 file (no compound file)
+    private readonly Stream? _word2File;
     private readonly Stream _wordDocument;
     private readonly Stream _tableStream;
     private readonly Stream? _dataStream;
@@ -67,10 +68,18 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
 
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
     {
-        using var compoundFile = new CompoundFileReader(filePath);
-        ThrowWhenEncryptedPackage(compoundFile);
-        using Stream wordDocument = compoundFile.OpenRootStream("WordDocument") ?? throw new InvalidDataException("No WordDocument stream.");
-        var fib = new DocBinaryFileInformationBlock(wordDocument);
+        DocBinaryFileInformationBlock fib;
+        using (Stream file = WordDocumentFileStream.OpenShared(filePath))
+        {
+            if (DocBinaryWord2FileStream.StartsWithWord2Identifier(file)) fib = new DocBinaryFileInformationBlock(file);
+            else
+            {
+                using var compoundFile = new CompoundFileReader(file);
+                ThrowWhenEncryptedPackage(compoundFile);
+                using Stream wordDocument = compoundFile.OpenRootStream("WordDocument") ?? throw new InvalidDataException("No WordDocument stream.");
+                fib = new DocBinaryFileInformationBlock(wordDocument);
+            }
+        }
         bool hasCachedIndex = DocBinaryBlockIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
         return policy.Decide(filePath, (long)fib.MainTextCharacterCount * 2, hasCachedIndex);
     }
@@ -112,21 +121,29 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                                       IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
     {
         FilePath = displayPath;
-        _compoundFile = new CompoundFileReader(file);
-        ThrowWhenEncryptedPackage(_compoundFile);
-        _wordDocument = _compoundFile.OpenRootStream("WordDocument") ?? throw new InvalidDataException("No WordDocument stream — not a Word binary file.");
+        if (DocBinaryWord2FileStream.StartsWithWord2Identifier(file))
+        {
+            _word2File = file;                                  // Word 1.x / 2.0: the file itself is the WordDocument stream
+            _wordDocument = new DocBinaryWord2FileStream(file);
+        }
+        else
+        {
+            _compoundFile = new CompoundFileReader(file);
+            ThrowWhenEncryptedPackage(_compoundFile);
+            _wordDocument = _compoundFile.OpenRootStream("WordDocument") ?? throw new InvalidDataException("No WordDocument stream — not a Word binary file.");
+        }
         FileInformationBlock = new DocBinaryFileInformationBlock(_wordDocument);
-        _tableStream = _compoundFile.OpenRootStream(FileInformationBlock.TableStreamName)
+        _tableStream = OpenRootStream(FileInformationBlock.TableStreamName)
                        ?? throw new InvalidDataException($"Table stream {FileInformationBlock.TableStreamName} is missing.");
         PieceTable = new DocBinaryPieceTable(_wordDocument, _tableStream, FileInformationBlock);
-        DocBinaryWord6Sprms? word6Sprms = FileInformationBlock.IsWord6 ? new DocBinaryWord6Sprms(FileInformationBlock.IsWord6FontCodeVariant) : null;
+        DocBinaryWord6Sprms? word6Sprms = DocBinaryWord6Sprms.For(FileInformationBlock);
         _styles = new DocBinaryStyleSheet(_tableStream, FileInformationBlock.StyleSheet, word6Sprms)
         {
-            Fonts = DocBinaryFontTable.Read(_tableStream, FileInformationBlock.FontTable, FileInformationBlock.IsWord6),
+            Fonts = DocBinaryFontTable.Read(_tableStream, FileInformationBlock.FontTable, FileInformationBlock.IsWord6, FileInformationBlock.IsWord2),
         };
-        if (FileInformationBlock.IsWord6) PieceTable.UpperHalf = DocBinaryTextDecoder.UpperHalfOf(Word6CodePage(_styles.Fonts, FileInformationBlock.Language));
+        if (FileInformationBlock.IsWord6) PieceTable.UpperHalf = DocBinaryTextDecoder.UpperHalfOf(Word6CodePage(_styles.Fonts, FibLanguage(FileInformationBlock)));
         // Word 6/95 keeps picture data in the WordDocument stream (no Data stream; ww8par.cxx: m_pDataStream = m_pStrm for bVer67)
-        _dataStream = FileInformationBlock.IsWord6 ? _compoundFile.OpenRootStream("WordDocument") : _compoundFile.OpenRootStream("Data");
+        _dataStream = OpenRootStream(FileInformationBlock.IsWord6 ? "WordDocument" : "Data");
         FormattedDiskPages = new DocBinaryFormattedDiskPages(_wordDocument, _tableStream, FileInformationBlock, _dataStream);
         if (FileInformationBlock.IsWord6 && !FileInformationBlock.HasExtendedCharacters) PieceTable.RunUpperHalf = Word6RunCodePages();
         _notes = new DocBinaryNoteReferences(_tableStream, FileInformationBlock);
@@ -154,7 +171,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
         _renderer.FloatingPictures = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock);
         HeaderDrawings = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock, isHeader: true);
 
-        int[] sectionStartCps = DocBinarySectionTable.ReadStartCps(_tableStream, FileInformationBlock.SectionDescriptors);
+        int[] sectionStartCps = DocBinarySectionTable.ReadStartCps(_tableStream, FileInformationBlock.SectionDescriptors, FileInformationBlock.IsWord2);
         bool isCacheValid = cachedIndex is not null && cachedIndex.MatchesSource(sourceLength, sourceLastWriteTicksUtc)
                             && cachedIndex.NoteReferenceBlocks.Length == _notes.References.Length
                             && cachedIndex.SectionFirstBlocks.Length == sectionStartCps.Length;
@@ -225,6 +242,10 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
     /// a single-byte non-ANSI character set (Hebrew fonts are 177 = cp1255), else the code page of the FIB's language, else
     /// cp1252. A document mixing two non-Latin scripts in one 8-bit file shows only one of them right (docs/UNSUPPORTED-FEATURES).
     /// </summary>
+    /// <summary>The FIB's lid as a language: in files before Word 2.0 a value below 999 is a country code (nLocale), not a lid
+    /// (ww8scan.cxx GetFIBCharset), and names no code page.</summary>
+    private static int FibLanguage(DocBinaryFileInformationBlock fib) => fib.IsWord2 && fib.Language < 999 ? 0 : fib.Language;
+
     internal static int Word6CodePage(DocBinaryFontTable fonts, int fibLanguage)
     {
         foreach (byte characterSet in fonts.CharacterSets)
@@ -279,7 +300,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
 
     private byte[]? ReadPropertyStream(string name)
     {
-        using Stream? stream = _compoundFile.OpenRootStream(name);
+        using Stream? stream = _compoundFile?.OpenRootStream(name);
         if (stream is null) return null;
         var bytes = new MemoryStream();
         stream.CopyTo(bytes);
@@ -346,7 +367,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
     private DocxHtml.DocxChart? ReadChart(uint objectId)
     {
         if (_charts.TryGetValue(objectId, out DocxHtml.DocxChart? cached)) return cached;
-        DocxHtml.DocxChart? chart = DocxHtml.ExcelBinaryChart.FromObjectPool(_compoundFile, objectId);
+        DocxHtml.DocxChart? chart = _compoundFile is null ? null : DocxHtml.ExcelBinaryChart.FromObjectPool(_compoundFile, objectId);
         if (_charts.Count >= ChartCacheSize) _charts.Clear();
         _charts[objectId] = chart;
         return chart;
@@ -624,6 +645,12 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
         _dataStream?.Dispose();
         _tableStream.Dispose();
         _wordDocument.Dispose();
-        _compoundFile.Dispose();
+        _compoundFile?.Dispose();
+        _word2File?.Dispose();
     }
+
+    /// <summary>A root stream of the compound file; a Word 1.x / 2.0 file has one only, "WordDocument" = the file itself.</summary>
+    private Stream? OpenRootStream(string name)
+        => _compoundFile is not null ? _compoundFile.OpenRootStream(name)
+         : name == "WordDocument" && _word2File is not null ? new DocBinaryWord2FileStream(_word2File) : null;
 }

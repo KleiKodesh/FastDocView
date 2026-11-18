@@ -30,7 +30,7 @@ public sealed class DocBinaryPieceTable
     public DocBinaryPieceTable(Stream wordDocument, Stream tableStream, DocBinaryFileInformationBlock fib)
     {
         _wordDocument = wordDocument;
-        _word6Sprms = fib.IsWord6 ? new DocBinaryWord6Sprms(fib.IsWord6FontCodeVariant) : null;
+        _word6Sprms = DocBinaryWord6Sprms.For(fib);
         (uint offset, uint length) clx = fib.PieceTable;
         if (clx.length == 0)
         {
@@ -55,14 +55,16 @@ public sealed class DocBinaryPieceTable
             position += 3 + cb;
         }
         PrcGrpprls = prcGrpprls;
-        if (position >= bytes.Length || bytes[position] != 0x02 || !IsPlausiblePcdt(bytes, position))
+        // Word 1/2: the Pcdt's lcb is 2 bytes (ww8scan.cxx WW8ScannerBase::OpenPieceTable, eVersion <= eWW2)
+        int lengthSize = fib.IsWord2 ? 2 : 4;
+        if (position >= bytes.Length || bytes[position] != 0x02 || !IsPlausiblePcdt(bytes, position, lengthSize))
         {
-            position = ScanForPcdt(bytes);           // tolerate junk before the Pcdt, as LibreOffice does
+            position = ScanForPcdt(bytes, lengthSize);   // tolerate junk before the Pcdt, as LibreOffice does
             prcGrpprls.Clear();                      // whatever the Prc walk collected was junk too
         }
         if (position < 0) { _pieces = [ContiguousPiece(fib)]; return; }
-        int plcLength = BitConverter.ToInt32(bytes, position + 1);
-        int plcStart = position + 5;
+        int plcLength = PcdtLength(bytes, position, lengthSize);
+        int plcStart = position + 1 + lengthSize;
         int pcdStart = plcStart + 4 * ((plcLength - 4) / 12 + 1);
         // CPs out of order end the usable table (LibreOffice WW8PLCFpcd::TruncToSortedRange).
         int pieceCount = DocBinaryStructureReader.SortedEntryCount(i => BitConverter.ToInt32(bytes, plcStart + i * 4), (plcLength - 4) / 12);
@@ -222,17 +224,20 @@ public sealed class DocBinaryPieceTable
     public Piece PieceOf(int cp) => _pieces[PieceIndexOf(cp)];
 
     /// <summary>A 0x02 whose lcb fits the remaining bytes and describes a whole PlcPcd ((n + 1) CPs + n 8-byte PCDs).</summary>
-    private static bool IsPlausiblePcdt(byte[] bytes, int position)
+    private static int PcdtLength(byte[] bytes, int position, int lengthSize)
+        => lengthSize == 2 ? BitConverter.ToInt16(bytes, position + 1) : BitConverter.ToInt32(bytes, position + 1);
+
+    private static bool IsPlausiblePcdt(byte[] bytes, int position, int lengthSize)
     {
-        if (position + 5 > bytes.Length) return false;
-        int length = BitConverter.ToInt32(bytes, position + 1);
-        return length >= 16 && position + 5 + length <= bytes.Length && (length - 4) % 12 == 0;
+        if (position + 1 + lengthSize > bytes.Length) return false;
+        int length = PcdtLength(bytes, position, lengthSize);
+        return length >= 16 && position + 1 + lengthSize + length <= bytes.Length && (length - 4) % 12 == 0;
     }
 
-    private static int ScanForPcdt(byte[] bytes)
+    private static int ScanForPcdt(byte[] bytes, int lengthSize)
     {
-        for (int position = 0; position + 5 <= bytes.Length; position++)
-            if (bytes[position] == 0x02 && IsPlausiblePcdt(bytes, position)) return position;
+        for (int position = 0; position + 1 + lengthSize <= bytes.Length; position++)
+            if (bytes[position] == 0x02 && IsPlausiblePcdt(bytes, position, lengthSize)) return position;
         return -1;
     }
 

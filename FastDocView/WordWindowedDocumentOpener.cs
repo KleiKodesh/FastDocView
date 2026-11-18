@@ -41,6 +41,8 @@ public static class WordWindowedDocumentOpener
             }
         }
         if (header[0] == 0xD0 && header[1] == 0xCF && header[2] == 0x11 && header[3] == 0xE0) return WordFileFormat.DocBinary;
+        // Word for Windows 1.x / 2.0: no compound file, the FIB's wIdent first (0xA59B / 0xA59C / 0xA5DB, ww8scan.cxx GetFIBVersion)
+        if ((header[0] | header[1] << 8) is 0xA59B or 0xA59C or 0xA5DB) return WordFileFormat.DocBinary;
         if (header[0] == (byte)'M' && header[1] == (byte)'I' && header[2] == (byte)'M' && header[3] == (byte)'E') return WordFileFormat.WebArchive;
         if (header[0] == (byte)'{' && header[1] == (byte)'\\') return WordFileFormat.RichText;
         string extension = Path.GetExtension(filePath).ToLowerInvariant();
@@ -94,17 +96,13 @@ public static class WordWindowedDocumentOpener
         + $"{cause.Message} Make it available offline, or start the cloud app, then open it again.", cause);
 
     /// <summary>
-    /// The error for a file no reader takes, naming what it is when its first bytes tell: HTML, or a Word for Windows 1.x / 2.0 file (a FIB with no compound file around it; wIdent
-    /// 0xA59B/0xA59C = Word 1, 0xA5DB = Word 2 per LibreOffice ww8scan.cxx WW8Fib::GetFIBVersion).
+    /// The error for a file no reader takes, naming what it is when its first bytes tell: HTML.
     /// </summary>
     private static Exception DescribeUnknown(string filePath)
     {
         var head = new byte[4096];
         int count;
         using (FileStream file = WordDocumentFileStream.OpenShared(filePath)) count = file.Read(head, 0, head.Length);
-        ushort identifier = count >= 2 ? BitConverter.ToUInt16(head, 0) : (ushort)0;
-        if (identifier is 0xA59B or 0xA59C) return new NotSupportedException("Word for Windows 1.x documents are not supported.");
-        if (identifier == 0xA5DB) return new NotSupportedException("Word for Windows 2.0 documents are not supported.");
         string text = System.Text.Encoding.UTF8.GetString(head, 0, count);
         if (text.IndexOf("<html", StringComparison.OrdinalIgnoreCase) >= 0 || text.IndexOf("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) >= 0)
             return new NotSupportedException("HTML pages saved with a Word extension are not supported.");

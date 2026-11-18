@@ -26,6 +26,7 @@ public static class CorpusRegressionTest
         @"apache-poi\clusterfuzz-testcase-minimized-POIHWPFFuzzer-6610789829836800.doc",
         @"apache-poi\clusterfuzz-testcase-minimized-POIHWPFFuzzer-5440721166139392.doc",   // bin table outside the table stream: read without it
         @"apache-poi\52117.doc",                                              // Word 6.0 (nFib 101): read since 2026-11-17
+        @"apache-poi\word2.doc",                                              // Word for Windows 2.0: read since 2026-11-18
     ];
 
     private static readonly (string file, Type exception, string messagePart)[] MustFailClearly =
@@ -34,7 +35,6 @@ public static class CorpusRegressionTest
         (@"libreoffice\sw\qa\core\data\ww8\pass\crash-2.doc", typeof(InvalidDataException), "piece table"),
         (@"libreoffice\sw\qa\core\data\ww8\fail\hang-2.doc", typeof(InvalidDataException), "piece table"),
         (@"libreoffice\sw\qa\core\data\odt\fail\tdf102018.odt", typeof(InvalidDataException), "office:text body"),   // styles.xml is repaired (content before the first error); the body never closes
-        (@"apache-poi\word2.doc", typeof(NotSupportedException), "Word for Windows 2.0"),
         (@"libreoffice\sw\qa\extras\ooxmlexport\data\Encrypted_MSO2007_abc.docx", typeof(WordDocumentEncryptedException), "Encrypted"),
     ];
 
@@ -99,7 +99,6 @@ public static class CorpusRegressionTest
         (@"apache-poi\PasswordProtected.doc", WordDocumentOpenFailure.Encrypted),
         (@"apache-tika\testODTEncrypted.odt", WordDocumentOpenFailure.Encrypted),
         (@"libreoffice\sw\qa\core\data\ww8\pass\crash-2.doc", WordDocumentOpenFailure.Corrupt),
-        (@"apache-poi\word2.doc", WordDocumentOpenFailure.UnsupportedFormat),
         (@"apache-poi\no-such-file-exists.docx", WordDocumentOpenFailure.NotFound),
     ];
 
@@ -116,6 +115,14 @@ public static class CorpusRegressionTest
             WordDocumentOpenFailure? actual = caught is null ? null : WordDocumentOpenFailures.Classify(caught);
             TestReport.Check(actual == expected, $"classified {expected}: {relative}  — {(caught is null ? "opened" : actual + " / " + caught.GetType().Name + ": " + caught.Message)}");
         }
+        // an HTML page saved with a .doc extension (Word for Windows 2.0 files, the earlier sample here, are read since 2026-11-18)
+        string html = Path.Combine(TestReport.OutputDirectory, "html-page-saved-as-doc-v1.doc");
+        File.WriteAllText(html, "<!DOCTYPE html><html><body><p>page</p></body></html>");
+        Exception? htmlError = null;
+        try { using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(html, policy); }
+        catch (Exception exception) { htmlError = exception; }
+        TestReport.Check(htmlError is not null && WordDocumentOpenFailures.Classify(htmlError) == WordDocumentOpenFailure.UnsupportedFormat,
+                         $"classified UnsupportedFormat: an HTML page named .doc - {htmlError?.GetType().Name}: {htmlError?.Message}");
     }
 
     /// <summary>

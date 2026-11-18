@@ -96,6 +96,50 @@ public static class Word6DocumentsTest
         else TestReport.Check(false, "test-data/apache-poi/Word6.doc present");
     }
 
+    /// <summary>
+    /// Word for Windows 1.x / 2.0 files (no compound file; LibreOffice's eWW1 / eWW2 branches): text compared with LibreOffice's
+    /// text export (2026-11-18: word2.doc, ooo2535-1-WW2.doc, ooo40683-1-WW1.doc word-for-word equal; bold and italic runs as in
+    /// its .fodt export), plus the damaged ww5 files LibreOffice keeps as import tests: each opens or fails with a clear error.
+    /// </summary>
+    public static void RunWord2()
+    {
+        TestReport.Step("Word for Windows 1.x / 2.0 .doc: FIB with 2-byte lcbs, CHPX runs, old style sheet, Word 2 sprms");
+        string testData = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data"));
+        var policy = new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory, CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-word2") };
+        string Html(string relative)
+        {
+            string path = Path.Combine(testData, relative);
+            if (!File.Exists(path)) return "";
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+            return string.Concat(document.RenderBlocks(0, document.BlockCount).Select(block => block.Html));
+        }
+
+        // Word 2.0 (wIdent 0xA5DB): bold from the CHPX toggle bits, the Normal style's size from the old-format style sheet
+        string word2 = Html(@"apache-poi\word2.doc");
+        TestReport.Check(word2.Contains("font-weight:bold;\">Member of 3GPP (ARIB)</span>"), "word2.doc: bold run from a Word 2 CHPX");
+        TestReport.Check(word2.Contains("Mr. Benni Alexander\tNokia Japan Co, Ltd") && word2.Contains("font-size:10pt;font-family:'Times New Roman'"),
+                         "word2.doc: text and the Normal style (10 pt) from the Word 2 style sheet");
+        // a complex Word 2 file (fComplex, 2-byte Pcdt lcb) with sizes and italics from CHPX fsHps / toggles
+        string complex = Html(@"libreoffice\sw\qa\core\data\ww5\pass\ooo2535-1-WW2.doc");
+        string complexText = WordFieldsFidelityTest.Strip(complex);
+        TestReport.Check(complexText.Contains("Orden de Pago al Proveedor") && complexText.Contains("N" + (char)0x00FA + "mero:"), "ooo2535-1-WW2.doc: text and cp1252 letters");
+        TestReport.Check(complex.Contains("font-size:12pt") && complex.Contains("font-style:italic"), "ooo2535-1-WW2.doc: run sizes and italics");
+        // Word 1.x (wIdent 0xA59B): the shorter FIB (no fcPrDrvr / fcPrEnvLand), a complex file, justified paragraphs
+        string word1 = Html(@"libreoffice\sw\qa\core\data\ww5\pass\ooo40683-1-WW1.doc");
+        string word1Text = WordFieldsFidelityTest.Strip(word1);
+        TestReport.Check(word1Text.Contains("Sonderaktion Winter 1990/1991") && word1Text.Contains("g" + (char)0x00FC + "nstiger"), "ooo40683-1-WW1.doc: Word 1 text");
+        TestReport.Check(word1.Contains("text-align:justify"), "ooo40683-1-WW1.doc: paragraph alignment from a Word 1 PAPX");
+
+        foreach (string damaged in (string[])["crash-1.doc", "crash-3.doc", "hang-1.doc", "hang-2.doc", "hang-3.doc"])
+        {
+            string? error = null;
+            try { _ = Html(@"libreoffice\sw\qa\core\data\ww5\pass\" + damaged); }
+            catch (InvalidDataException exception) when (exception.Message.StartsWith("Damaged", StringComparison.Ordinal)) { }
+            catch (Exception exception) { error = exception.GetType().Name + ": " + exception.Message; }
+            TestReport.Check(error is null, $"ww5/pass/{damaged}: opens or fails as damaged{(error is null ? "" : " - " + error)}");
+        }
+    }
+
     private static int IndexOf(byte[] haystack, byte[] needle, int from = 0)
     {
         for (int i = Math.Max(0, from); i + needle.Length <= haystack.Length; i++)

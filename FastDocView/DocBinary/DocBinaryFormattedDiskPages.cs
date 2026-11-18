@@ -12,6 +12,7 @@ public sealed class DocBinaryFormattedDiskPages
     private const int CachedPageLimit = 512;
     private const int ParagraphBxSize = 13;     // BxPap: bOffset + 12-byte PHE
     private const int Word6ParagraphBxSize = 7; // Word 6/95: bOffset + 6-byte PHE (ww8scan.cxx WW8PLCFx_Fc_FKP::NewFkp: nItemSize 7 for bVer67)
+    private const int Word2ParagraphBxSize = 1; // Word 1/2: the offset byte only, the PHE is in the PAPX (NewFkp: WW8FkpSizeTabVer2 = 1, 1)
     private const int CharacterBxSize = 1;      // ChpxFkp rgb: one offset byte
 
     public readonly record struct PropertyRun(uint FcStart, uint FcEnd, byte[] Page, int GrpprlStart, int GrpprlLength);
@@ -37,8 +38,8 @@ public sealed class DocBinaryFormattedDiskPages
         _dataStream = dataStream;
         if (fib.IsWord6)
         {
-            _word6Sprms = new DocBinaryWord6Sprms(fib.IsWord6FontCodeVariant);
-            _paragraphBxSize = Word6ParagraphBxSize;
+            _word6Sprms = DocBinaryWord6Sprms.For(fib);
+            _paragraphBxSize = fib.IsWord2 ? Word2ParagraphBxSize : Word6ParagraphBxSize;
             (_paragraphBinFcs, _paragraphBinPages) = ReadWord6BinTable(tableStream, fib.ParagraphBinTable, fib.ParagraphFirstPage, fib.ParagraphBinPageCount);
             (_characterBinFcs, _characterBinPages) = ReadWord6BinTable(tableStream, fib.CharacterBinTable, fib.CharacterFirstPage, fib.CharacterBinPageCount);
             return;
@@ -118,6 +119,29 @@ public sealed class DocBinaryFormattedDiskPages
         return new PropertyRun(fcStart, fcEnd, translated, 0, translated.Length);
     }
 
+    /// <summary>
+    /// A Word 1/2 PAPX (<paramref name="styleCodeAt"/> &gt;= 0: its stc becomes the 2-byte istd) or CHPX (-1) as a Word 97 one,
+    /// cached with the page like <see cref="Translated"/>.
+    /// </summary>
+    private PropertyRun Word2Translated(uint fcStart, uint fcEnd, byte[] page, int styleCodeAt, int dataStart, int length)
+    {
+        if (!_translated.TryGetValue(page, out Dictionary<(int, int), byte[]>? ofPage)) _translated[page] = ofPage = new();
+        if (!ofPage.TryGetValue((styleCodeAt, dataStart), out byte[]? translated))
+        {
+            length = Math.Max(0, Math.Min(length, PageSize - 1 - dataStart));
+            if (styleCodeAt < 0) translated = _word6Sprms!.CharacterPropertiesToWord97(page, dataStart, length);
+            else
+            {
+                byte[] word97 = _word6Sprms!.ToWord97(page, dataStart, length);
+                translated = new byte[2 + word97.Length];
+                translated[0] = page[styleCodeAt];
+                Buffer.BlockCopy(word97, 0, translated, 2, word97.Length);
+            }
+            ofPage[(styleCodeAt, dataStart)] = translated;
+        }
+        return new PropertyRun(fcStart, fcEnd, translated, 0, translated.Length);
+    }
+
     /// <summary>The PAPX run containing <paramref name="fc"/> (a paragraph's mark); grpprl starts with istd.</summary>
     public PropertyRun? ParagraphRunAt(uint fc)
     {
@@ -134,6 +158,13 @@ public sealed class DocBinaryFormattedDiskPages
             // Word 6/95 PAPX: one length byte (in words; never the Word 97 second length byte), the istd, the grpprl
             // (ww8scan.cxx WW8Fkp ctor, case PAP: the extra length byte only IsEightPlus)
             int papxLength = Math.Min(page[offset] * 2, PageSize - 1 - (offset + 1));
+            if (_word6Sprms.IsWord2)
+            {
+                // Word 1/2 PAPX: the length in words, a one-byte style code (stc), a 6-byte PHE, the grpprl (WW8Fkp ctor, case
+                // PAP, eVersion <= eWW2: mnLen - 1 - 6 at nOfs + 8); the stc is kept as a 2-byte istd
+                if (papxLength < 1) return new PropertyRun(fcStart, fcEnd, page, 0, 0);
+                return Word2Translated(fcStart, fcEnd, page, offset + 1, offset + 8, Math.Max(0, papxLength - 7));
+            }
             if (papxLength < 2) return new PropertyRun(fcStart, fcEnd, page, 0, 0);
             return Translated(fcStart, fcEnd, page, offset + 1, 2, offset + 3, papxLength - 2);
         }
@@ -155,6 +186,7 @@ public sealed class DocBinaryFormattedDiskPages
         uint fcStart = BitConverter.ToUInt32(page, run * 4), fcEnd = BitConverter.ToUInt32(page, (run + 1) * 4);
         if (offset == 0 || offset >= PageSize - 1) return new PropertyRun(fcStart, fcEnd, page, 0, 0);
         int length = Math.Min((int)page[offset], PageSize - 1 - (offset + 1));
+        if (_word6Sprms is { IsWord2: true }) return Word2Translated(fcStart, fcEnd, page, -1, offset + 1, length);
         if (_word6Sprms is not null) return Translated(fcStart, fcEnd, page, offset + 1, 0, offset + 1, length);
         return new PropertyRun(fcStart, fcEnd, page, offset + 1, length);
     }

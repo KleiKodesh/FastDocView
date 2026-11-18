@@ -909,8 +909,8 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
 
 ## Format support limits (corpus pass 2026-10-28)
 
-- Not supported, precise NotSupportedException: Word for Windows 1.x/2.0 (Word 6.0/95 is read since
-  2026-11-17, below), Word 2003 XML, HTML saved as .doc, encrypted .doc/.docx/.odt.
+- Not supported, precise NotSupportedException: HTML saved as .doc, encrypted .doc/.docx/.odt (Word 6.0/95 is read
+  since 2026-11-17, Word for Windows 1.x/2.0 since 2026-11-18, Word 2003 XML is translated - below).
 - **Live demo check of every format (2026-10-28):** .odt (121,650 blocks), .fodt, .rtf, .txt (ToratEmet),
   .mhtml and .docx all pass liveCheck.mjs. **Speed gap:** a cold .odt open shows text only after the
   whole index is built (2.6 s on the 121k-block sample) — .odt has no on-demand index like .docx yet.
@@ -942,9 +942,28 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
     Bug50955 (Cyrillic, 74,814 words). Bug51944 (0xA699, fExtChar) needed the UTF-16 rule. The fuzz files crash-7 and
     ofz21168-1 fail with the piece-table error. Open: drawing objects, ANLD label spacing / fonts, double-byte Asian text
     (ooo17498-*, ooo8726-1 show cp1252), a real right-to-left Word 6 file to check sprms 64 / 111-116.
-- **GAP - Word for Windows 1.x / 2.0** (10 files in test-data) stay rejected with a clear message. LibreOffice reads them
-  (ww8par.cxx accepts 0xA59B / 0xA59C / 0xA5DB): FIB with 2-byte lcbs, GetWW2SprmSearcher, Word2CHPX character runs
-  converted to sprms (ww8scan.cxx ChpxToSprms), PAPX with a 1-byte istd and a PHE. Word 2003 XML is read (translated).
+- **Word for Windows 1.x / 2.0 .doc (read since 2026-11-18).** A further version branch, all from LibreOffice master
+  (ww8scan.cxx / ww8par2.cxx / ww8par6.cxx / styles.cxx, eWW1 / eWW2):
+  - No compound file: wIdent 0xA59B / 0xA59C (Word 1) or 0xA5DB (Word 2) at offset 0 (GetFIBVersion); the opener sends
+    them to the .doc reader and the whole file is the WordDocument stream (`DocBinaryWord2FileStream`, a view per reader).
+  - FIB (WW8Fib ctor): the Word 6 rglw (ccpText at 0x34), then 6-byte fc/lcb pairs (Readcb: 2-byte lcb) from 0x58 in the
+    Word 97 order; Word 1 has fcPrEnvPort only (no fcPrDrvr / fcPrEnvLand), so its pairs from there are two behind.
+    Word 2: pnChpFirst / pnPapFirst / cpnBteChp / cpnBtePap at 0x13E..0x144; Word 1: the counts at 0x136 / 0x138.
+    Never UTF-16. A FIB lid below 999 is a country code (GetFIBCharset), not a language.
+  - Clx: the Pcdt length is 2 bytes (OpenPieceTable). Sed 6 bytes, Sepx length 1 byte (WW8PLCFx_SEPX).
+  - FKPs (NewFkp, WW8FkpSizeTabVer2 = 1, 1): PAPX = length in words, stc (1 byte), PHE (6), grpprl; CHPX = a Word2CHPX
+    (ReadWord2Chpx) turned into sprms as ChpxToSprms does: the bold .. vanish bits as 128 + bit toggles, ftc / kul / lid /
+    ico / hps / hpsPos only when their fs flag is set (plus fSpec and fcPic, which ChpxToSprms drops).
+  - Sprms: GetWW2SprmSearcher sizes; `DocBinaryWord2Properties` rewrites them as Word 6 ones (paragraph ids kept, PIstd
+    widened, character 60-77 +25, section 115-145 +25, table 146-164 +36 = ww8par2.cxx:1706-1730), then the Word 6 path
+    makes them Word 97. Dropped as LibreOffice drops them: 12 / 13 / 18, the right-to-left 80-87, the picture 94-99, and
+    20 (line spacing: Read_LineSpace needs 3 bytes for eWW2 and the sprm has 2, so LibreOffice never applies it).
+  - Style sheet (ImportOldFormatStyles): cstcStd, then names / CHPXs / PAPXs by slot, then iMac (next, base) pairs; slot n
+    is style code (n - cstcStd) & 255 and a paragraph's istd is that code; base 222 = none; built-in ids from
+    GetCanonicalStiFromStc (254 .. 246 = Heading 1 .. 9). Fonts (WW8Fonts, eVersion <= eWW2): cbFfnM1, weight, chs, name.
+  - Checked: `Word6DocumentsTest.RunWord2` (in --fidelity and --word6): text equals LibreOffice's text export on word2.doc,
+    ooo2535-1-WW2.doc, ooo40683-1-WW1.doc; bold / italic runs as in its .fodt (ooo2535: 43 bold spans here, 41 there - the
+    same text split differently); the damaged ww5/pass files open or fail as damaged.
 - Malformed XML in any part → InvalidDataException naming the part (LibreOffice opens some of these,
   e.g. math-malformed_xml.docx, with a recovering parser — not done here).
 - Malformed XML: see "Malformed XML (repair mode)" below — .docx keeps the content before the

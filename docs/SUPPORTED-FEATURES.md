@@ -298,6 +298,7 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 | Word XML Document (Flat OPC, `pkg:package`): read by the .docx reader through its parts, windowed (2) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
 | Word 2003 XML Document (`w:wordDocument`): translated once into a .docx package beside the sidecar (3) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
 | Word 6.0 / 95 .doc (nFib 101-105): read by the .doc reader's version branches, windowed (4) | n.a. | partial | n.a. | n.a. | n.a. | n.a. |
+| Word for Windows 1.x / 2.0 .doc (wIdent 0xA59B / 0xA59C / 0xA5DB, no compound file): the same reader, windowed (5) | n.a. | partial | n.a. | n.a. | n.a. | n.a. |
 
 1. ODT / FODT: a body cut short or broken by a mismatched end tag (the first fatal XML error) keeps every block complete
    before it, followed by one "[this part of the document could not be read]" block; a malformed styles.xml keeps the styles
@@ -318,3 +319,11 @@ not indexed yet shows nothing and the block is fetched again once the index is c
    Word 6 numbering: numbered, bulleted and outline paragraphs (sprmPNLvlAnm, the ANLD, the section's OLST) counted at index
    time, outline levels nested under a numbering. Not yet: drawing objects and Asian double-byte text
    (UNSUPPORTED-FEATURES.md, Document level).
+5. Word for Windows 1.x / 2.0, as LibreOffice's eWW1 / eWW2 branches read them: the file itself is the WordDocument stream;
+   the FIB's 2-byte lcbs (Word 1 without fcPrDrvr / fcPrEnvLand), the 2-byte Pcdt length, one-byte-offset PAPX entries
+   (style code + PHE in the PAPX), CHPX runs that are a CHP prefix (Word2CHPX: bold .. vanish as toggles, font, size,
+   underline, colour, position, language), the Word 2 sprm ids (paragraph, section and table properties), the old-format
+   style sheet (names, CHPXs and PAPXs by style code; 254 .. 246 = Heading 1 .. 9), the short font entries, 6-byte section
+   descriptors with a one-byte Sepx length. Text matches LibreOffice's text export word for word on word2.doc,
+   ooo2535-1-WW2.doc and ooo40683-1-WW1.doc; their bold and italic runs match its .fodt. Not yet: right-to-left runs, line
+   spacing, pictures (UNSUPPORTED-FEATURES.md).

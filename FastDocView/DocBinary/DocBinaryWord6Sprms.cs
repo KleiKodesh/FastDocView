@@ -22,10 +22,28 @@ public sealed class DocBinaryWord6Sprms
 
     /// <param name="isFontCodeVariant">wIdent 0xA697-0xA699: sprms 111-113 are 2-byte font codes (ww8scan.cxx patchCJKVariant,
     /// ww8par6.cxx Read_AmbiguousSPRM); otherwise 111-116 are the right-to-left bold, italic, font, language, colour and size.</param>
-    public DocBinaryWord6Sprms(bool isFontCodeVariant)
+    /// <param name="isWord2">A Word for Windows 1.x / 2.0 file: its grpprls are first rewritten as Word 6 ones
+    /// (<see cref="DocBinaryWord2Properties"/>), and its character runs are CHPXs, not grpprls.</param>
+    public DocBinaryWord6Sprms(bool isFontCodeVariant, bool isWord2 = false)
     {
         _isFontCodeVariant = isFontCodeVariant;
         _sizes = isFontCodeVariant ? FontCodeVariantSizes : Sizes;
+        IsWord2 = isWord2;
+    }
+
+    /// <summary>The translator for this file's version; null for Word 97 and later.</summary>
+    public static DocBinaryWord6Sprms? For(DocBinaryFileInformationBlock fib)
+        => fib.IsWord6 ? new DocBinaryWord6Sprms(fib.IsWord6FontCodeVariant, fib.IsWord2) : null;
+
+    /// <summary>Word for Windows 1.x / 2.0 (LibreOffice eWW1 / eWW2).</summary>
+    public bool IsWord2 { get; }
+
+    /// <summary>A character run's properties (a Word 1/2 CHPX, else a grpprl) as a Word 97 grpprl.</summary>
+    public byte[] CharacterPropertiesToWord97(byte[] bytes, int start, int length)
+    {
+        if (!IsWord2) return ToWord97(bytes, start, length);
+        byte[] word6 = DocBinaryWord2Properties.CharacterPropertiesToWord6(bytes, start, length);
+        return Word6ToWord97(word6, 0, word6.Length);
     }
 
     private static (byte, byte)[] BuildSizes(bool isFontCodeVariant)
@@ -110,8 +128,15 @@ public sealed class DocBinaryWord6Sprms
         return map;
     }
 
-    /// <summary>The Word 97 grpprl for a Word 6 one; empty when nothing in it has a Word 97 meaning here.</summary>
+    /// <summary>The Word 97 grpprl for a Word 6 one (a Word 1/2 one when <see cref="IsWord2"/>); empty when nothing in it has a Word 97 meaning here.</summary>
     public byte[] ToWord97(byte[] grpprl, int start, int length)
+    {
+        if (!IsWord2) return Word6ToWord97(grpprl, start, length);
+        byte[] word6 = DocBinaryWord2Properties.SprmsToWord6(grpprl, start, length);
+        return Word6ToWord97(word6, 0, word6.Length);
+    }
+
+    private byte[] Word6ToWord97(byte[] grpprl, int start, int length)
     {
         var output = new List<byte>(length + length / 2 + 4);
         int position = start, end = Math.Min(grpprl.Length, start + length);

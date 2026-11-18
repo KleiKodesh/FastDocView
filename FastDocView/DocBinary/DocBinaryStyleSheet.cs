@@ -54,6 +54,7 @@ public sealed class DocBinaryStyleSheet
     {
         byte[]? bytes = location.length < 6 ? null : DocBinaryStructureReader.TryRead(tableStream, location);
         if (bytes is null) { _styles = []; return; }       // no style sheet, or one outside the table stream: document defaults only
+        if (word6Sprms is { IsWord2: true }) { _styles = ReadWord2Styles(bytes, word6Sprms); return; }
 
         int stshiLength = BitConverter.ToUInt16(bytes, 0);
         // Stshif ([MS-DOC] 2.9.271): rgftcStandardChpStsh = ftcAsci, ftcFE, ftcOther at 12..17, then the STSHI's ftcBi at 18
@@ -136,6 +137,108 @@ public sealed class DocBinaryStyleSheet
             if ((position - start) % 2 != 0) position++;
         }
         return style;
+    }
+
+    /// <summary>
+    /// A Word 1/2 style sheet, as LibreOffice's ww8par2.cxx WW8RStyle::ImportOldFormatStyles reads it: cstcStd, then three
+    /// length-prefixed lists in style-slot order (names: a length byte, 0xFF = undefined, 0 = the built-in name; CHPXs: a
+    /// length byte, 0xFF = none, then a Word2CHPX; PAPXs: a length byte, 0xFF = none, then stc, a 6-byte PHE and the grpprl),
+    /// then iMac pairs of (stcNext, stcBase). Slot n is style code (n - cstcStd) &amp; 255 - a paragraph's istd is that code;
+    /// a base of 222 (or the style itself) is none. The built-in id comes from the style code (styles.cxx GetCanonicalStiFromStc:
+    /// 0 Normal, 254 .. 246 Heading 1 .. 9).
+    /// </summary>
+    private static StyleDefinition?[] ReadWord2Styles(byte[] bytes, DocBinaryWord6Sprms word2Sprms)
+    {
+        var styles = new StyleDefinition?[256];
+        int standardCount = BitConverter.ToUInt16(bytes, 0);
+        int position = 2;
+        var names = new List<string?>();
+        int listEnd = Math.Min(bytes.Length, position + ReadLength(bytes, position));
+        for (int at = position + 2; at < listEnd;)
+        {
+            int count = bytes[at++];
+            string? name = null;
+            if (count != 0xFF && count != 0)
+            {
+                var builder = new StringBuilder(count);
+                for (int i = 0; i < count && at + i < bytes.Length; i++) builder.Append(DocBinaryTextDecoder.DecodeCompressed(bytes[at + i]));
+                name = builder.ToString();
+                at += count;
+            }
+            names.Add(count == 0xFF ? null : name ?? "");
+        }
+        position = listEnd;
+
+        var characterProperties = new List<byte[]>();
+        listEnd = position + 2 <= bytes.Length ? Math.Min(bytes.Length, position + ReadLength(bytes, position)) : position;
+        for (int at = position + 2; at < listEnd && characterProperties.Count < names.Count;)
+        {
+            int cb = bytes[at++];
+            if (cb == 0xFF) { characterProperties.Add([]); continue; }
+            int available = Math.Max(0, Math.Min(cb, bytes.Length - at));
+            characterProperties.Add(word2Sprms.CharacterPropertiesToWord97(bytes, at, available));
+            at += cb;
+        }
+        position = Math.Max(position, listEnd);
+
+        var paragraphProperties = new List<byte[]?>();
+        listEnd = position + 2 <= bytes.Length ? Math.Min(bytes.Length, position + ReadLength(bytes, position)) : position;
+        for (int at = position + 2; at < listEnd && paragraphProperties.Count < characterProperties.Count;)
+        {
+            int cb = bytes[at++];
+            if (cb == 0xFF) { paragraphProperties.Add(null); continue; }
+            paragraphProperties.Add(cb < 7 ? [] : word2Sprms.ToWord97(bytes, at + 7, Math.Max(0, Math.Min(cb - 7, bytes.Length - at - 7))));
+            at += cb;
+        }
+        position = Math.Max(position, listEnd);
+
+        int definedCount = position + 2 <= bytes.Length ? Math.Min(BitConverter.ToUInt16(bytes, position), names.Count) : 0;
+        position += 2;
+        for (int slot = 0; slot < definedCount && position + 2 <= bytes.Length; slot++, position += 2)
+        {
+            int code = (slot - standardCount) & 255;
+            int baseCode = bytes[position + 1];
+            int builtInId = BuiltInIdOfStyleCode(code);
+            if (builtInId < 0 || slot >= paragraphProperties.Count) continue;     // stiNil, or no PAPX slot: LibreOffice skips it
+            byte[] papx = paragraphProperties[slot] ?? [];
+            var grpprl = new byte[2 + papx.Length];
+            grpprl[0] = (byte)code;
+            Buffer.BlockCopy(papx, 0, grpprl, 2, papx.Length);
+            bool isCharacterStyle = builtInId is CharacterStyleFootnoteReference or CharacterStyleCommentReference or CharacterStyleLineNumber
+                                    && papx.Length == 0;   // ww8::StandardStiIsCharStyle with no PAPX
+            styles[code] = new StyleDefinition
+            {
+                Index = code,
+                Name = names[slot] is { Length: > 0 } own ? own : $"Style {code}",
+                BuiltInId = builtInId,
+                BaseStyleIndex = baseCode == 222 || baseCode == code ? -1 : baseCode,
+                IsParagraphStyle = !isCharacterStyle,
+                ParagraphGrpprl = grpprl,
+                CharacterGrpprl = slot < characterProperties.Count ? characterProperties[slot] : [],
+            };
+        }
+        return styles;
+    }
+
+    private static int ReadLength(byte[] bytes, int at) => at + 2 <= bytes.Length ? BitConverter.ToUInt16(bytes, at) : 0;
+
+    // sti values (LibreOffice sw/source/filter/inc/wwstyles.hxx:74-76) of the Word 2 built-in character styles (StandardStiIsCharStyle)
+    private const int CharacterStyleFootnoteReference = 38, CharacterStyleCommentReference = 39, CharacterStyleLineNumber = 40, UserStyle = 0xFFE;
+
+    /// <summary>styles.cxx GetCanonicalStiFromStc: 0 Normal, 1-221 user styles, 222 none (-1), 223.. the built-ins in its table order.</summary>
+    private static int BuiltInIdOfStyleCode(int code)
+    {
+        if (code == 0) return 0;
+        if (code < 222) return UserStyle;
+        return code switch
+        {
+            222 => -1,
+            223 => CharacterStyleCommentReference,
+            240 => CharacterStyleLineNumber,
+            244 => CharacterStyleFootnoteReference,
+            >= 246 and <= 254 => 255 - code,                   // stiLev9 .. stiLev1
+            _ => UserStyle - 1,                                 // another built-in (TOC, index, header, footer, notes): no heading
+        };
     }
 
     public StyleDefinition? this[int index] => index >= 0 && index < _styles.Length ? _styles[index] : null;
