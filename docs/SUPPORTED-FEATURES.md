@@ -310,8 +310,9 @@ not indexed yet shows nothing and the block is fetched again once the index is c
    endnotes (inline in the run), hyperlinks, bookmarks, tables, VML pictures (w:binData), sections; tracked insertions kept,
    deletions and comments dropped. Re-translated only when the file changes.
 4. Word 6.0 / 95: the shorter FIB, the WordDocument stream as table stream, 8-bit text decoded run by run in the code
-   page of the run's font character set (else its paragraph style's font, else its language - LibreOffice's per-run rule) (Hebrew cp1255, Cyrillic, Central European, Greek, Turkish, Baltic, Arabic, Thai, Vietnamese) or UTF-16 when
-   the FIB says so, the one-byte sprms (translated to their Word 97 form as LibreOffice's ww8scan.cxx / ww8par6.cxx Word 6
+   page of the run's font character set (else its paragraph style's font, else its language - LibreOffice's per-run rule) (Hebrew cp1255, Cyrillic, Central European, Greek, Turkish, Baltic, Arabic, Thai, Vietnamese; an Asian font's 8-bit text as double-byte cp932 / 936 / 949 / 950, each character on its lead byte) or, when
+   the FIB says so (Far East builds), 16-bit units - one at or above 0x3000 a double-byte Japanese / Korean / Chinese
+   character, any other its low byte in the run's code page (LibreOffice ww8par.cxx ReadPlainChars), the one-byte sprms (translated to their Word 97 form as LibreOffice's ww8scan.cxx / ww8par6.cxx Word 6
    tables read them: character, paragraph, section and table properties, the right-to-left paragraph sprm and the
    right-to-left bold / italic / font / size sprms 111-116), the Word 6 style sheet (8-bit names), font table, FKPs (2-byte bin
    table entries, incomplete bin tables rebuilt), fast-saved piece tables, footnotes, endnotes, fields and tables (10-byte

@@ -140,6 +140,61 @@ public static class Word6DocumentsTest
         }
     }
 
+    /// <summary>
+    /// Word 6.0 / 95 files saved by the Far East builds (fExtChar: 16-bit units, a unit at or above 0x3000 = a double-byte
+    /// character, high byte lead; LibreOffice ww8par.cxx ReadPlainChars): Japanese, Korean, simplified and traditional Chinese
+    /// from LibreOffice's sw/qa ww6 data. Each file's text equals LibreOffice's text export (2026-11-18) with white space removed;
+    /// the expected text is kept as its first characters and its length.
+    /// </summary>
+    public static void RunAsian()
+    {
+        TestReport.Step("Word 6.0 / 95 .doc: Asian double-byte text (Far East builds)");
+        string testData = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data"));
+        var policy = new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory, CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-word6-asian") };
+        foreach ((string file, string start, int length) in AsianExpectations)
+        {
+            string path = Path.Combine(testData, @"libreoffice\sw\qa\core\data\ww6\pass\" + file);
+            if (!File.Exists(path)) { TestReport.Check(false, $"test-data {file} present"); continue; }
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+            string text = WordFieldsFidelityTest.Strip(string.Concat(document.RenderBlocks(0, document.BlockCount).Select(block => block.Html)));
+            text = new string(text.Where(c => !char.IsWhiteSpace(c)).ToArray());
+            File.WriteAllText(Path.Combine(TestReport.OutputDirectory, "word6-asian-" + file + ".txt"), text);
+            TestReport.Check(text.StartsWith(start, StringComparison.Ordinal) && text.Length == length && !text.Contains('�'),
+                             $"{file}: double-byte text as LibreOffice reads it ({text.Length} characters, expected {length})");
+        }
+        // 8-bit text in a font with character set 128 (Shift-JIS): Word6.doc with "quic" replaced by two cp932 pairs (0x82A0,
+        // 0x82A2) - each character on its lead byte's CP, the trail's CP shows nothing (fixture generated here, version suffix v1)
+        string source = Path.Combine(testData, @"apache-poi\Word6.doc");
+        if (File.Exists(source))
+        {
+            byte[] bytes = File.ReadAllBytes(source);
+            byte[] quick = "quick"u8.ToArray();
+            int text = IndexOf(bytes, quick);
+            for (int at = text; at > 0; at = IndexOf(bytes, quick, at + 1))
+            {
+                bytes[at] = 0x82; bytes[at + 1] = 0xA0; bytes[at + 2] = 0x82; bytes[at + 3] = 0xA2;
+            }
+            int font = IndexOf(bytes, "Times New Roman\0"u8.ToArray());
+            if (font > 6) bytes[font - 2] = 128;                                   // FFN chs (ww8struc.hxx WW8_FFN_BASE)
+            string copy = Path.Combine(TestReport.OutputDirectory, "word6-codepage-932-v1.doc");
+            File.WriteAllBytes(copy, bytes);
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(copy, policy);
+            string html = string.Concat(document.RenderBlocks(0, document.BlockCount).Select(block => block.Html));
+            TestReport.Check(text > 0 && font > 6 && html.Contains("The あいk brown"), "Word 6 font with character set 128: 8-bit double-byte text decoded as cp932");
+            WordDocumentSearchBatch found = document.Search("あいk brown", WordDocumentSearchOptions.Default, 0, document.BlockCount);
+            TestReport.Check(found.HitBlocks.Length > 0, "Word 6 cp932 text: search finds a phrase across double-byte characters");
+        }
+    }
+
+    private static readonly (string file, string start, int length)[] AsianExpectations =
+    [
+        ("ooo17498-1.doc", "\u7BA1\u7406\u7D44\u5408\u5F79\u54E1\u5404\u4F4D", 178),
+        ("ooo17498-2.doc", "\uC0C8\uBB38\uC11C\uB97C\uB9CC\uB4E4\uB824\uBA74", 113),
+        ("ooo17498-3.doc", "\u521B\u5EFA\u65B0\u6587\u6863\u5728\u201C\u6587", 87),
+        ("ooo17498-4.doc", "\u5EFA\u7ACB\u65B0\u6587\u4EF6\u5728[\u6A94", 98),
+        ("ooo8726-1.doc", "\u4E4E\u5C11\u6A01\u7A7F\u5C2C\u6A01\u7A7F\u5C2C", 12),
+    ];
+
     private static int IndexOf(byte[] haystack, byte[] needle, int from = 0)
     {
         for (int i = Math.Max(0, from); i + needle.Length <= haystack.Length; i++)

@@ -97,22 +97,70 @@ public sealed class DocBinaryPieceTable
     public char[]? UpperHalf { get; set; }
 
     /// <summary>
-    /// Word 6/95: the code page of the 8-bit character run holding a file offset - (the run's end FC, its upper half) - so each
-    /// run decodes in its own code page (LibreOffice ww8par.cxx ReadPlainChars per run); null = <see cref="UpperHalf"/> for all.
+    /// Word 6/95: the code pages of the character run holding a file offset - (the run's end FC, its 8-bit upper half, its
+    /// double-byte code page or 0) - so each run decodes as LibreOffice ww8par.cxx ReadPlainChars does: 8-bit text in the
+    /// run's code page (GetCurrentCharSet; a double-byte one when the run's font is Asian), a 16-bit unit of an extended-character (Far East build) file at or above 0x3000 as
+    /// a double-byte character (high byte lead, low byte trail) in the run's CJK code page (GetCurrentCJKCharSet), any other
+    /// unit as its low byte in the 8-bit code page. Null = <see cref="UpperHalf"/> for all.
     /// </summary>
-    public Func<uint, (uint runEnd, char[]? upperHalf)>? RunUpperHalf { get; set; }
+    public Func<uint, (uint runEnd, char[]? upperHalf, int doubleByteCodePage, int cjkCodePage)>? Word6Runs { get; set; }
 
-    /// <summary>Decodes 8-bit bytes read from <paramref name="fileOffset"/>, each character run in its own code page.</summary>
-    private void DecodeRuns(byte[] bytes, int count, long fileOffset, Action<int, int, char[]?> decode)
+    /// <summary>
+    /// Decodes the bytes of one piece read from <paramref name="fileOffset"/> into one character per CP, run by run. 8-bit
+    /// text in a double-byte code page keeps the character on its lead byte's CP and a NUL (dropped by rendering and search,
+    /// like every unhandled control character) on the trail byte's; a lead byte at the end reads its trail from the stream.
+    /// <paramref name="isTrailFirst"/>: the first byte is the trail of a pair the previous chunk decoded.
+    /// </summary>
+    private int DecodeWord6(byte[] bytes, int count, long fileOffset, long pieceEnd, bool isCompressed, char[] destination, ref bool isTrailFirst)
     {
-        int at = 0;
+        int at = 0, written = 0;
+        if (!isCompressed) count &= ~1;
         while (at < count)
         {
-            (uint runEnd, char[]? upperHalf) = RunUpperHalf!((uint)(fileOffset + at));
-            int length = runEnd > fileOffset + at ? (int)Math.Min(count - at, runEnd - (fileOffset + at)) : count - at;
-            decode(at, length, upperHalf ?? UpperHalf);
-            at += length;
+            (uint runEnd, char[]? runHalf, int doubleByte, int cjk) = Word6Runs!((uint)(fileOffset + at));
+            char[] half = runHalf ?? UpperHalf ?? DocBinaryTextDecoder.Cp1252UpperHalf;
+            int end = runEnd > fileOffset + at ? (int)Math.Min(count, runEnd - fileOffset) : count;
+            if (!isCompressed) end = Math.Max(at + 2, end & ~1);
+            for (; at < end; )
+            {
+                if (!isCompressed)
+                {
+                    int unit = bytes[at] | bytes[at + 1] << 8;
+                    destination[written++] = unit >= 0x3000 ? DocBinaryTextDecoder.DecodeDoubleByte(cjk, (byte)(unit >> 8), (byte)unit)
+                                           : (unit & 0xFF) < 0x80 ? (char)(unit & 0xFF)
+                                           : doubleByte > 0 ? DocBinaryTextDecoder.DecodeDoubleByte(doubleByte, 0, (byte)unit)
+                                           : half[(unit & 0xFF) - 0x80];
+                    at += 2;
+                    continue;
+                }
+                byte value = bytes[at];
+                if (isTrailFirst) { isTrailFirst = false; destination[written++] = '\0'; at++; continue; }
+                if (doubleByte > 0 && DocBinaryTextDecoder.IsLeadByte(doubleByte, value))
+                {
+                    int trail = at + 1 < count ? bytes[at + 1] : fileOffset + at + 1 < pieceEnd ? PeekByte(fileOffset + at + 1) : -1;   // never past the piece
+                    if (trail >= 0x40)
+                    {
+                        destination[written++] = DocBinaryTextDecoder.DecodeDoubleByte(doubleByte, value, (byte)trail);
+                        if (at + 1 < count) { destination[written++] = '\0'; at += 2; }
+                        else { isTrailFirst = true; at++; }
+                        continue;
+                    }
+                }
+                destination[written++] = value < 0x80 ? (char)value : doubleByte > 0 ? DocBinaryTextDecoder.DecodeDoubleByte(doubleByte, 0, value) : half[value - 0x80];
+                at++;
+            }
         }
+        return written;
+    }
+
+    private int PeekByte(long fileOffset)
+    {
+        if (fileOffset >= _wordDocument.Length) return -1;
+        long position = _wordDocument.Position;
+        _wordDocument.Position = fileOffset;
+        int value = _wordDocument.ReadByte();
+        _wordDocument.Position = position;
+        return value;
     }
 
     /// <summary>
@@ -291,11 +339,12 @@ public sealed class DocBinaryPieceTable
             _wordDocument.Position = fileOffset;
             int read = 0;
             while (read < byteCount) { int n = _wordDocument.Read(bytes, read, byteCount - read); if (n <= 0) break; read += n; }
-            if (piece.IsCompressed && RunUpperHalf is not null)
-                DecodeRuns(bytes, read, fileOffset, (from, length, upperHalf) =>
-                {
-                    for (int i = from; i < from + length; i++) text.Append(bytes[i] < 0x80 ? (char)bytes[i] : (upperHalf ?? DocBinaryTextDecoder.Cp1252UpperHalf)[bytes[i] - 0x80]);
-                });
+            if (Word6Runs is not null)
+            {
+                bool isTrailFirst = false;
+                var characters = new char[read];
+                text.Append(characters, 0, DecodeWord6(bytes, read, fileOffset, piece.FileOffset + (long)piece.Length * piece.BytesPerCharacter, piece.IsCompressed, characters, ref isTrailFirst));
+            }
             else DocBinaryTextDecoder.Append(text, bytes, read, piece.IsCompressed, UpperHalf);
         }
         return text.ToString();
@@ -309,6 +358,7 @@ public sealed class DocBinaryPieceTable
         var bytes = new byte[chunkCharacters * 2];
         foreach ((Piece piece, int start, int end) in SegmentsOf(cpStart, cpEnd))
         {
+            bool isTrailFirst = false;                   // 8-bit double-byte text: a pair split between two chunks of this piece
             for (long cp = start; cp < end; cp += chunkCharacters)
             {
                 int count = (int)Math.Min(chunkCharacters, end - cp);
@@ -318,11 +368,7 @@ public sealed class DocBinaryPieceTable
                 while (read < byteCount) { int n = _wordDocument.Read(bytes, read, byteCount - read); if (n <= 0) break; read += n; }
                 if (read == 0) break;                    // the rest of this piece lies past the stream's end (damaged piece table): no text there
                 int decoded = read;
-                if (piece.IsCompressed && RunUpperHalf is not null)
-                    DecodeRuns(bytes, read, piece.FileOffset + (cp - piece.CpStart), (from, length, upperHalf) =>
-                    {
-                        for (int i = from; i < from + length; i++) characters[i] = bytes[i] < 0x80 ? (char)bytes[i] : (upperHalf ?? DocBinaryTextDecoder.Cp1252UpperHalf)[bytes[i] - 0x80];
-                    });
+                if (Word6Runs is not null) decoded = DecodeWord6(bytes, read, piece.FileOffset + (cp - piece.CpStart) * piece.BytesPerCharacter, piece.FileOffset + (long)piece.Length * piece.BytesPerCharacter, piece.IsCompressed, characters, ref isTrailFirst);
                 else decoded = DocBinaryTextDecoder.Decode(bytes, read, piece.IsCompressed, characters, UpperHalf);
                 onChunk(characters, decoded, (int)cp);
             }

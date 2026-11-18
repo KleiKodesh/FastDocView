@@ -78,6 +78,75 @@ public static class DocBinaryTextDecoder
         _ => 1252,
     };
 
+    /// <summary>
+    /// The double-byte code page of a font character set: SHIFTJIS 128 = cp932, HANGEUL 129 = cp949, GB2312 134 = cp936,
+    /// CHINESEBIG5 136 = cp950 (the Windows LOGFONT charsets; LibreOffice rtl_getTextEncodingFromWindowsCharset); 0 otherwise.
+    /// </summary>
+    public static int DoubleByteCodePageOfCharacterSet(int characterSet) => characterSet switch
+    {
+        128 => 932, 129 => 949, 134 => 936, 136 => 950,
+        _ => 0,
+    };
+
+    /// <summary>The double-byte code page of a Windows language id: Japanese, Korean, Chinese (PRC and Singapore: cp936, else cp950); 0 otherwise.</summary>
+    public static int DoubleByteCodePageOfLanguage(int languageId) => (languageId & 0x3FF) switch
+    {
+        0x11 => 932,
+        0x12 => 949,
+        0x04 => languageId is 0x0804 or 0x1004 ? 936 : 950,
+        _ => 0,
+    };
+
+    /// <summary>A lead byte of a double-byte code page (Windows: cp932 0x81-0x9F and 0xE0-0xFC; cp936 / 949 / 950 0x81-0xFE).</summary>
+    public static bool IsLeadByte(int codePage, byte value)
+        => codePage == 932 ? value is >= 0x81 and <= 0x9F or >= 0xE0 and <= 0xFC : value is >= 0x81 and <= 0xFE;
+
+    private static readonly Dictionary<int, char[]> DoubleByteTables = new();
+
+    /// <summary>
+    /// A lead + trail byte pair in a double-byte code page (cp932 when none is named), from a table built once per code page;
+    /// lead 0 = a single byte (cp932's half-width katakana; a lone lead byte or one the code page leaves undefined reads as cp1252). A pair the code page does not define (or a code page the platform
+    /// lacks) is U+FFFD.
+    /// </summary>
+    public static char DecodeDoubleByte(int codePage, byte lead, byte trail)
+    {
+        if (codePage <= 0) codePage = 932;
+        char[] table;
+        lock (DoubleByteTables)
+            if (!DoubleByteTables.TryGetValue(codePage, out table!)) DoubleByteTables[codePage] = table = BuildDoubleByteTable(codePage);
+        return table[lead << 8 | trail];
+    }
+
+    private static char[] BuildDoubleByteTable(int codePage)
+    {
+        var table = new char[0x10000];
+        for (int i = 0; i < table.Length; i++) table[i] = '\uFFFD';
+        Encoding? encoding = Rtf.RtfCodePages.EncodingOf(codePage);
+        if (encoding is null) return table;
+        var decoder = (Encoding)encoding.Clone();
+        decoder.DecoderFallback = new DecoderReplacementFallback("\uFFFD");
+        var pair = new byte[2];
+        var one = new char[2];
+        for (int single = 0x80; single <= 0xFF; single++)
+        {
+            table[single] = HighCp1252[single - 0x80];   // undefined or a lone lead byte: cp1252, as LibreOffice ww8par.cxx Custom8BitToUnicode falls back
+            if (IsLeadByte(codePage, (byte)single)) continue;
+            pair[0] = (byte)single;
+            if (decoder.GetChars(pair, 0, 1, one, 0) == 1 && one[0] != '\uFFFD') table[single] = one[0];
+        }
+        for (int lead = 0x81; lead <= 0xFE; lead++)
+        {
+            if (!IsLeadByte(codePage, (byte)lead)) continue;
+            pair[0] = (byte)lead;
+            for (int trail = 0x40; trail <= 0xFE; trail++)
+            {
+                pair[1] = (byte)trail;
+                if (decoder.GetChars(pair, 0, 2, one, 0) == 1) table[lead << 8 | trail] = one[0];
+            }
+        }
+        return table;
+    }
+
     public static char DecodeCompressed(byte value) => value < 0x80 ? (char)value : HighCp1252[value - 0x80];
 
     public static int Decode(byte[] bytes, int byteCount, bool isCompressed, char[] destination, char[]? upperHalf = null)

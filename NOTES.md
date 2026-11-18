@@ -940,8 +940,16 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
     numbering (tdf150197: 1. 2. 2.1 .. 4.2; LibreOffice shows 4.1 there and its test says it should be 2.1).
   - Checked: `Word6DocumentsTest` (in --fidelity); text equals LibreOffice's text export on Word95, 57843, Word6_sections2,
     Bug50955 (Cyrillic, 74,814 words). Bug51944 (0xA699, fExtChar) needed the UTF-16 rule. The fuzz files crash-7 and
-    ofz21168-1 fail with the piece-table error. Open: drawing objects, ANLD label spacing / fonts, double-byte Asian text
-    (ooo17498-*, ooo8726-1 show cp1252), a real right-to-left Word 6 file to check sprms 64 / 111-116.
+    ofz21168-1 fail with the piece-table error. Open: drawing objects, ANLD label spacing / fonts, a real right-to-left Word 6 file to check sprms 64 / 111-116.
+- **Word 6.0 / 95 Asian double-byte text (2026-11-18).** LibreOffice ww8par.cxx ReadPlainChars (bVer67): a Far East
+  build's file sets fExtChar and stores 16-bit units; a unit >= 0x3000 is a double-byte character (high byte lead, low byte
+  trail) in the run's CJK code page (GetCurrentCJKCharSet: run / style font, else language), any other unit its low byte in
+  the 8-bit code page; 8-bit bytes go through Custom8BitToUnicode, which falls back to cp1252 for undefined bytes. Here the
+  CP model stays one character per CP: 16-bit units map 1:1; 8-bit double-byte text (a run whose font charset is 128 / 129 /
+  134 / 136) puts the character on the lead byte's CP and a NUL on the trail's (render and search drop unhandled control
+  characters; a trail byte is >= 0x40, never a mark). Tables: per code page a 64K char table built once from
+  CodePagesEncodingProvider (net10) / the framework (net48). Checked: ooo17498-1..4, ooo8726-1 equal LibreOffice's text
+  export with white space removed; a cp932 8-bit fixture built from Word6.doc renders and is found by search.
 - **Word for Windows 1.x / 2.0 .doc (read since 2026-11-18).** A further version branch, all from LibreOffice master
   (ww8scan.cxx / ww8par2.cxx / ww8par6.cxx / styles.cxx, eWW1 / eWW2):
   - No compound file: wIdent 0xA59B / 0xA59C (Word 1) or 0xA5DB (Word 2) at offset 0 (GetFIBVersion); the opener sends
