@@ -1342,15 +1342,15 @@ public sealed class DocxBlockHtmlRenderer
         foreach (XElement shapes in choice.Descendants().Where(e => e.Name.LocalName == "shapes" && e.Parent?.Name.LocalName == Docx.DocxDrawingStripper.PictureLayoutElementName))
         {
             if (shapes.Element("chartex") is { } chartEx && (RelatedPart is null || DocxDrawingParts.ChartEx(id => RelatedPart(_currentPicturePart, id), (string?)chartEx.Attribute("id") ?? "", _styles.Theme) is not { CanDraw: true })) return false;
-            if (shapes.Element("diagram") is { } diagram && (RelatedPart is null || DocxDrawingParts.DiagramDrawing(id => RelatedPart(_currentPicturePart, id), (string?)diagram.Attribute("dm") ?? "") is null)) return false;
+            if (shapes.Element("diagram") is { } diagram && (RelatedPart is null || DocxDrawingParts.DiagramDrawing(id => RelatedPart(_currentPicturePart, id), diagram) is null)) return false;
         }
         return true;
     }
 
-    /// <summary>A SmartArt's shapes from its drawing part (empty when it has none: the drawing keeps its size, nothing drawn).</summary>
+    /// <summary>A SmartArt's shapes from its drawing part, else laid out from its data and layout parts (empty when neither: the drawing keeps its size, nothing drawn).</summary>
     private List<WordShape>? DiagramShapes(XElement diagram, double width, double height)
     {
-        if (RelatedPart is null || DocxDrawingParts.DiagramDrawing(id => RelatedPart(_currentPicturePart, id), (string?)diagram.Attribute("dm") ?? "") is not { } drawing) return null;
+        if (RelatedPart is null || DocxDrawingParts.DiagramDrawing(id => RelatedPart(_currentPicturePart, id), diagram, width * 12700, height * 12700) is not { } drawing) return null;
         return DocxShapeReader.Read(new XElement("shapes", drawing.Tree), width, height, _styles.Theme,
                                     embed => PartPictureId?.Invoke(drawing.PartName, embed), null);
     }

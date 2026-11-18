@@ -12,10 +12,14 @@ internal static class DocxDrawingParts
 {
     public delegate (string Type, string PartName, XDocument Xml)? RelatedPartReader(string relationshipId);
 
-    /// <summary>The namespace-free dsp:spTree of a SmartArt's drawing and the drawing part's name; null when it has none.</summary>
-    public static (XElement Tree, string PartName)? DiagramDrawing(RelatedPartReader related, string dataRelationshipId)
+    /// <summary>
+    /// The namespace-free dsp:spTree of a SmartArt's drawing and the drawing part's name. Without a drawing part the diagram is
+    /// laid out from its data model and the layout definition (r:lo), with the colors (r:cs) and quickStyle (r:qs) parts, in a
+    /// frame of the given EMU size (DocxDiagramLayout; the part name is then the data part's). Null when neither works.
+    /// </summary>
+    public static (XElement Tree, string PartName)? DiagramDrawing(RelatedPartReader related, XElement diagram, double widthEmu = DefaultDiagramWidthEmu, double heightEmu = DefaultDiagramHeightEmu)
     {
-        if (related(dataRelationshipId) is not { } data) return null;
+        if (related((string?)diagram.Attribute("dm") ?? "") is not { } data) return null;
         foreach (XElement extension in data.Xml.Descendants().Where(e => e.Name.LocalName == "dataModelExt"))
         {
             if ((string?)extension.Attribute("relId") is not { Length: > 0 } relId || related(relId) is not { } drawing) continue;
@@ -23,8 +27,15 @@ internal static class DocxDrawingParts
             if (tree is null || !tree.Elements().Any(e => e.Name.LocalName is "sp" or "grpSp")) continue;
             return (DocxShapeGeometry.WithoutNamespaces(tree), drawing.PartName);
         }
-        return null;
+        if ((string?)diagram.Attribute("lo") is not { Length: > 0 } layoutId || related(layoutId) is not { } layout || layout.Xml.Root is null || data.Xml.Root is null) return null;
+        XElement? Part(string attribute) => (string?)diagram.Attribute(attribute) is { Length: > 0 } id && related(id)?.Xml.Root is { } root ? DocxShapeGeometry.WithoutNamespaces(root) : null;
+        XElement? laidOut = DocxDiagramLayout.Lay(DocxShapeGeometry.WithoutNamespaces(data.Xml.Root), DocxShapeGeometry.WithoutNamespaces(layout.Xml.Root),
+                                                  Part("cs"), Part("qs"), widthEmu, heightEmu);
+        return laidOut is null ? null : (laidOut, data.PartName);
     }
+
+    /// <summary>Word's default SmartArt size (5486400 x 3200400 EMU), for search, where the frame size doesn't matter.</summary>
+    public const double DefaultDiagramWidthEmu = 5486400, DefaultDiagramHeightEmu = 3200400;
 
     public static DocxChart? Chart(RelatedPartReader related, string chartRelationshipId, DocxTheme? theme)
         => related(chartRelationshipId) is { } chart && chart.Type.EndsWith("/chart", StringComparison.OrdinalIgnoreCase) && chart.Xml.Root is { } root
@@ -35,14 +46,15 @@ internal static class DocxDrawingParts
            ? DocxChartEx.Read(DocxShapeGeometry.WithoutNamespaces(root), theme) : null;
 
     /// <summary>The text a SmartArt or chart drawing shows, for search: shape texts in drawing order / the chart's texts, one per line.</summary>
-    public static string? SearchText(RelatedPartReader related, string relationshipId, DocxTheme? theme)
+    public static string? SearchText(RelatedPartReader related, string relationshipId, DocxTheme? theme, XElement? diagram = null)
     {
         if (related(relationshipId) is not { } part) return null;
         if (part.Type.EndsWith("/chartEx", StringComparison.OrdinalIgnoreCase))
             return ChartEx(related, relationshipId, theme) is { CanDraw: true } chartEx ? string.Join("\n", chartEx.Texts()) : null;
         if (part.Type.EndsWith("/chart", StringComparison.OrdinalIgnoreCase))
             return Chart(related, relationshipId, theme) is { } chart ? string.Join("\n", chart.Texts()) : null;
-        if (DiagramDrawing(related, relationshipId) is not { } drawing) return null;
-        return string.Concat(drawing.Tree.Descendants("txBody").Select(DocxDrawingTextHtml.Text));
+        if (DiagramDrawing(related, diagram ?? new XElement("diagram", new XAttribute("dm", relationshipId))) is { } drawing)
+            return string.Concat(drawing.Tree.Descendants("txBody").Select(DocxDrawingTextHtml.Text));
+        return null;
     }
 }

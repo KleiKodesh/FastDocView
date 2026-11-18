@@ -1701,6 +1701,20 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   drawing's own part as LibreOffice does) as shapes with their DrawingML text (DocxDrawingTextHtml, txXfrm box, bodyPr
   anchor); without a drawing part, an mc:AlternateContent shows its mc:Fallback picture. Pictures of the drawing part get
   "x:part#rId" ids.
+- SmartArt without a drawing part (2026-11-18, DocxDiagramLayout): laid out from the data model (dgm:ptLst / cxnLst with its
+  presentation points) and the layout definition (r:lo), styled from the quickStyle (r:qs) and colors (r:cs) parts, then drawn
+  as a dsp:spTree by DocxShapeReader. Port of LibreOffice oox/source/drawingml/diagram (libreoffice-24-8:
+  layoutnodecontext.cxx, layoutatomvisitors.cxx ShapeCreationVisitor / ShapeLayoutingVisitor, diagramlayoutatoms.cxx
+  AlgAtom::layoutShape composite / conn / cycle / hierRoot / hierChild / sp / tx, LayoutNode::setupShape colours by style
+  label); loops walk the data along their axis as LibreOffice master does (stepOfAxis, pointsAlongAxis, presentationForPass).
+  LibreOffice's lin / snake / pyra place shapes far from Word (process nodes the full height, pyramid levels 3 pt wide), so
+  those follow ECMA-376 21.4.2 instead: children sized by the node's own constraints (resolved until settled, a font size
+  giving millimetres), lin scaled along the flow and centred, snake choosing the column count that gives the largest nodes,
+  pyra levels k/n wide. Checked against Word's own drawing part of test-data/smartart-layouts (--smartart; Word 16 files made
+  by scripts/make-smartart-layouts.ps1, stripped by scripts/strip-smartart-drawing.py): block list 0.0 pt, chevron 0.1,
+  process 0.4, pyramid 0.0, vertical list 2.2; cycle 18 pt, horizontal list 77, hierarchy / org chart / stacked list
+  87-190 (reported, not checked). The stripper keeps r:lo / r:qs / r:cs on the diagram element (no index change: the layout
+  XML is stripped per render). Search does not yet find the text of a diagram without a drawing part (the search scanner keeps only r:dm).
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
   pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns

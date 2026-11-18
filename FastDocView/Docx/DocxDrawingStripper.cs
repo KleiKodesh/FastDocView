@@ -170,8 +170,13 @@ internal static class DocxDrawingStripper
         if (dataEnd < 0) return "";
         ReadOnlySpan<byte> graphic = drawing.Slice(data, dataEnd - data);
         // SmartArt (dgm:relIds r:dm), a chart (c:chart r:id) or a chartex chart (cx:chart r:id, DocxChartEx): the part is read when the block is rendered
+        // (with the layout, quickStyle and colors parts r:lo / r:qs / r:cs, which lay the diagram out when it has no drawing part)
         if (IndexOfOpenTag(graphic, 0, "dgm:relIds") is var relIds and >= 0 && AttributeValue(OpenTagAt(graphic, relIds), "r:dm") is { } dm)
-            return "<shapes><diagram dm=\"" + dm + "\"/></shapes>";
+        {
+            var relIdsTag = OpenTagAt(graphic, relIds);
+            return "<shapes><diagram dm=\"" + dm + "\" lo=\"" + AttributeValue(relIdsTag, "r:lo") + "\" qs=\"" + AttributeValue(relIdsTag, "r:qs")
+                   + "\" cs=\"" + AttributeValue(relIdsTag, "r:cs") + "\"/></shapes>";
+        }
         if (IndexOfOpenTag(graphic, 0, "c:chart") is var chart and >= 0 && AttributeValue(OpenTagAt(graphic, chart), "r:id") is { } chartId)
             return "<shapes><chart id=\"" + chartId + "\"/></shapes>";
         if (IndexOfOpenTag(graphic, 0, "cx:chart") is var chartEx and >= 0)
