@@ -88,7 +88,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
     {
         FileStream shared = WordDocumentFileStream.OpenShared(filePath);
         Stream file;
-        try { file = form == DocxPackageForm.FlatXml ? new DocxFlatPackageStream(shared) : shared; }
+        try { file = form == DocxPackageForm.FlatXml ? new DocxFlatPackageStream(shared, filePath) : shared; }
         catch { shared.Dispose(); throw; }
         using Stream disposed = file;
         long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(file);       // body + footnotes + endnotes
@@ -117,7 +117,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
         Stream package = file;
         try
         {
-            if (form == DocxPackageForm.FlatXml) package = new DocxFlatPackageStream(file);
+            if (form == DocxPackageForm.FlatXml) package = new DocxFlatPackageStream(file, packagePath);
             long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(package);
             WordIndexDecision decision = policy.Decide(filePath, textBytes, cached is not null);
             DocxWindowedDocument document;

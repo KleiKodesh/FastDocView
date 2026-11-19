@@ -54,12 +54,38 @@ internal sealed class DocxFlatPackageStream : Stream
         catch (DecoderFallbackException) { return null; }
     }
 
-    /// <summary>Scans the file's parts (one pass) and lays out the virtual zip. The stream owns <paramref name="file"/>.</summary>
-    public DocxFlatPackageStream(Stream file)
+    // The last file's scanned parts, keyed by its path, length and write time: a host asks Decide and then Open for the same
+    // file, and the second needs no second pass over it. One entry (bounded); the parts are immutable.
+    private static readonly object LastScanGate = new();
+    private static (string Key, List<Part> Parts)? _lastScan;
+    private static int _scanCount;
+
+    /// <summary>Passes made over Flat OPC files so far (the harness checks that Decide + Open make one).</summary>
+    internal static int ScanCount => Volatile.Read(ref _scanCount);
+
+    /// <summary>
+    /// Scans the file's parts (one pass) and lays out the virtual zip. The stream owns <paramref name="file"/>. With
+    /// <paramref name="filePath"/> (the file <paramref name="file"/> reads), the scan of an unchanged file is reused by the next open.
+    /// </summary>
+    public DocxFlatPackageStream(Stream file, string? filePath = null)
     {
         _file = file;
-        string prefix = PackagePrefix(file);
-        List<Part> parts = DocxFlatPackageScanner.Scan(file, prefix);
+        string? key = null;
+        if (filePath is not null)
+        {
+            var info = new FileInfo(filePath);
+            key = Path.GetFullPath(filePath) + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks;
+        }
+        List<Part>? scanned = null;
+        lock (LastScanGate) if (key is not null && _lastScan is { } last && last.Key == key) scanned = last.Parts;
+        if (scanned is null)
+        {
+            string prefix = PackagePrefix(file);
+            scanned = DocxFlatPackageScanner.Scan(file, prefix);
+            Interlocked.Increment(ref _scanCount);
+            if (key is not null) lock (LastScanGate) _lastScan = (key, scanned);
+        }
+        var parts = new List<Part>(scanned);
         if (!parts.Any(part => part.Name.Equals("[Content_Types].xml", StringComparison.OrdinalIgnoreCase)))
         {
             byte[] types = ContentTypes(parts);
@@ -192,30 +218,60 @@ internal sealed class DocxFlatPackageStream : Stream
         return low;
     }
 
-    /// <summary>A binary part's bytes: its base64 text read and decoded when first reached (the last one kept).</summary>
+    /// <summary>
+    /// A binary part's bytes: its base64 text decoded when first reached (the last one kept), streamed through one 64 KB
+    /// buffer straight into the part's bytes: memory is the decoded part, not its text as well.
+    /// </summary>
     private byte[] Decoded(int index, Segment segment)
     {
         if (_decodedPart == index) return _decoded!;
-        var text = new byte[segment.Base64End - segment.FileOffset];
+        _decoded = null;
+        _decodedPart = -1;
+        var decoded = new byte[segment.Length];
+        var chunk = new byte[1 << 16];
+        long remaining = segment.Base64End - segment.FileOffset;
         _file.Position = segment.FileOffset;
-        int filled = 0;
-        while (filled < text.Length)
+        int written = 0, quantum = 0, bits = 0, padding = 0;
+        while (remaining > 0)
         {
-            int read = _file.Read(text, filled, text.Length - filled);
+            int read = _file.Read(chunk, 0, (int)Math.Min(chunk.Length, remaining));
             if (read <= 0) throw new EndOfStreamException("The Flat XML file ended inside a binary part.");
-            filled += read;
+            remaining -= read;
+            for (int i = 0; i < read; i++)
+            {
+                byte b = chunk[i];
+                if (b <= (byte)' ') continue;                       // line breaks and indentation between the base64 lines
+                int value = Base64Value(b);
+                if (b == '=') { padding++; value = 0; }
+                else if (value < 0 || padding > 0) throw new InvalidDataException("A Flat XML binary part is not valid base64.");
+                bits = bits << 6 | value;
+                if (++quantum < 4) continue;
+                int bytes = 3 - padding;
+                if (bytes < 1 || written + bytes > decoded.Length) throw new InvalidDataException("A Flat XML binary part's decoded length is not what its base64 promised.");
+                decoded[written++] = (byte)(bits >> 16);
+                if (bytes > 1) decoded[written++] = (byte)(bits >> 8);
+                if (bytes > 2) decoded[written++] = (byte)bits;
+                quantum = 0;
+                bits = 0;
+            }
         }
-        var characters = new char[text.Length];
-        int length = 0;
-        foreach (byte b in text) if (b > (byte)' ') characters[length++] = (char)b;
-        byte[] decoded;
-        try { decoded = Convert.FromBase64CharArray(characters, 0, length); }
-        catch (FormatException exception) { throw new InvalidDataException("A Flat XML binary part is not valid base64.", exception); }
-        if (decoded.Length != segment.Length) throw new InvalidDataException("A Flat XML binary part's decoded length is not what its base64 promised.");
+        if (quantum != 0) throw new InvalidDataException("A Flat XML binary part is not valid base64.");
+        if (written != decoded.Length) throw new InvalidDataException("A Flat XML binary part's decoded length is not what its base64 promised.");
         _decodedPart = index;
         _decoded = decoded;
         return decoded;
     }
+
+    /// <summary>The 6-bit value of a base64 character (RFC 4648 table 1), or -1.</summary>
+    private static int Base64Value(byte b) => b switch
+    {
+        >= (byte)'A' and <= (byte)'Z' => b - 'A',
+        >= (byte)'a' and <= (byte)'z' => b - 'a' + 26,
+        >= (byte)'0' and <= (byte)'9' => b - '0' + 52,
+        (byte)'+' => 62,
+        (byte)'/' => 63,
+        _ => -1,
+    };
 
     public override long Seek(long offset, SeekOrigin origin)
     {

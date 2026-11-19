@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text.RegularExpressions;
 using FastDocView;
 
@@ -52,6 +53,26 @@ public static class WordXmlFormatsTest
                                  "Flat OPC: the picture decoded from its base64 part (150 pt wide)");
             }
 
+            // a host's Decide then Open of a Flat OPC file: one pass over the file, not two
+            string flatCopy = Path.Combine(Output, "word-xml-v1-scan-once-" + Guid.NewGuid().ToString("N") + ".xml");
+            File.Copy(flat, flatCopy);
+            try
+            {
+                int scansBefore = FastDocView.Docx.DocxFlatPackageStream.ScanCount;
+                WordWindowedDocumentOpener.Decide(flatCopy, onDemand);
+                using (IWordWindowedDocument opened = WordWindowedDocumentOpener.Open(flatCopy, onDemand)) opened.RenderBlocks(0, 1);
+                int scans = FastDocView.Docx.DocxFlatPackageStream.ScanCount - scansBefore;
+                TestReport.Check(scans == 1, $"Flat OPC: Decide + Open scan the file once ({scans})");
+                File.AppendAllText(flatCopy, "\n");                       // changed: scanned again
+                File.SetLastWriteTimeUtc(flatCopy, DateTime.UtcNow.AddMinutes(1));
+                scansBefore = FastDocView.Docx.DocxFlatPackageStream.ScanCount;
+                WordWindowedDocumentOpener.Decide(flatCopy, onDemand);
+                int rescans = FastDocView.Docx.DocxFlatPackageStream.ScanCount - scansBefore;
+                TestReport.Check(rescans == 1, $"Flat OPC: a changed file is scanned again ({rescans})");
+            }
+            finally { File.Delete(flatCopy); }
+            CheckStreamingBase64(docx);
+
             foreach ((string name, WordIndexPolicy policy) in new[] { ("in memory", inMemory), ("sidecar", sidecar), ("sidecar reopen", sidecar), ("on demand", onDemand) })
             {
                 if (name == "on demand") Directory.Delete(cache, recursive: true);
@@ -104,6 +125,58 @@ public static class WordXmlFormatsTest
         {
             try { if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true); } catch (IOException) { }
         }
+    }
+
+    /// <summary>
+    /// A Flat OPC file with a 12 MB binary part (base64 in 76-character lines, as Word writes it): the part reads back
+    /// exactly, and decoding it allocates about the part itself, not its base64 text as well (once ~5x the part).
+    /// </summary>
+    private static void CheckStreamingBase64(string docx)
+    {
+        string path = Path.Combine(Output, "flat-big-binary-v1-" + Guid.NewGuid().ToString("N") + ".xml");
+        var big = new byte[12 << 20];
+        new Random(7).NextBytes(big);
+        try
+        {
+            using (var writer = new StreamWriter(path, false, new System.Text.UTF8Encoding(false)))
+            {
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<pkg:package xmlns:pkg=\"http://schemas.microsoft.com/office/2006/xmlPackage\">");
+                void Part(string name, string type, byte[] bytes)
+                {
+                    writer.Write($"<pkg:part pkg:name=\"/{name}\" pkg:contentType=\"{type}\" pkg:compression=\"store\"><pkg:binaryData>");
+                    string text = Convert.ToBase64String(bytes);
+                    for (int at = 0; at < text.Length; at += 76) { writer.Write(text.AsSpan(at, Math.Min(76, text.Length - at))); writer.Write("\r\n"); }
+                    writer.Write("</pkg:binaryData></pkg:part>");
+                }
+                using (ZipArchive zip = ZipFile.OpenRead(docx))
+                    foreach (ZipArchiveEntry entry in zip.Entries)
+                    {
+                        using var data = new MemoryStream();
+                        using (Stream stream = entry.Open()) stream.CopyTo(data);
+                        Part(entry.FullName, "application/octet-stream", data.ToArray());
+                    }
+                Part("word/media/big.bin", "application/octet-stream", big);
+                writer.Write("</pkg:package>");
+            }
+            using var package = new FastDocView.Docx.DocxFlatPackageStream(WordDocumentFileStream.OpenShared(path));
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            var entryLocation = SeekableDeflate.ZipEntryLocator.Locate(package, "word/media/big.bin");
+            TestReport.Check(entryLocation is not null, "Flat OPC big binary: the part is in the package");
+            if (entryLocation is null) return;
+            package.Position = entryLocation.DataOffset;
+            var first = new byte[1];
+            package.Read(first, 0, 1);                                   // the part is decoded by the first read that reaches it (here or in Locate)
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            var back = new byte[big.Length];
+            back[0] = first[0];
+            int filled = 1;
+            while (filled < back.Length) { int read = package.Read(back, filled, back.Length - filled); if (read <= 0) break; filled += read; }
+            TestReport.Check(back.AsSpan().SequenceEqual(big), "Flat OPC big binary: decoded exactly");
+            TestReport.Check(allocated >= big.Length && allocated < big.Length * 1.2, $"Flat OPC big binary: decoding allocated {allocated >> 20} MB for a {big.Length >> 20} MB part (streamed, < 1.2x)");
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory });
+            TestReport.Check(document.BlockCount > 0, $"Flat OPC with every part in base64: opens ({document.BlockCount} blocks)");
+        }
+        finally { File.Delete(path); }
     }
 
     private static (string html, string notes, int blocks) Render(string path, WordIndexPolicy policy)
