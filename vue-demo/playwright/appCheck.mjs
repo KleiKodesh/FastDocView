@@ -71,12 +71,14 @@ for (const target of [Math.floor(complete.blockCount / 2), complete.blockCount -
 if (complete.footnoteCount + complete.endnoteCount > 0) {
   step('footnote links both ways')
   await scrollToBlock(0)
-  // find a block with a reference: scan forward window by window through the hook (windowed)
+  // straight to the first note reference: the index lists every reference's block (no window-by-window scan, which took
+  // ~90 s on the 87 MB sample whose first reference sits deep in the text)
+  const references = await page.evaluate(async id => (await fetch(`/api/documents/${id}/note-references`)).json(), complete.documentId)
+  console.log(`  ${references.length} note references; first in block ${references[0]?.blockIndex}`)
   let found = false
-  for (let block = 0; block < complete.blockCount && !found; block += 40) {
-    await scrollToBlock(block)
-    await page.waitForTimeout(150)
-    found = await page.$('.windowed-scroller-viewport .note-reference[data-note-kind]').then(Boolean)
+  if (references.length > 0) {
+    await scrollToBlock(references[0].blockIndex)
+    found = await page.waitForSelector('.windowed-scroller-viewport .note-reference[data-note-kind]', { timeout: 30_000 }).then(Boolean, () => false)
   }
   check(found, 'a note reference is rendered in the text')
   if (found) {
