@@ -260,13 +260,7 @@ public static class MarkupBlockRenderer
     }
 
     /// <summary>A link into a library app (Otzaria, Zayit, KitveiHakodesh's own) - the schemes the Word readers mark as app links.</summary>
-    private static bool IsAppLink(string value)
-    {
-        string href = System.Net.WebUtility.HtmlDecode(value).Trim();
-        int colon = href.IndexOf(':');
-        if (colon <= 0) return false;
-        return href.Substring(0, colon).ToLowerInvariant() is "otzaria" or "zayit" or "kitveihakodeshapp" or "seforimapp";
-    }
+    private static bool IsAppLink(string value) => WordLibraryAppLink.IsLibraryAppLink(System.Net.WebUtility.HtmlDecode(value));
 
     /// <summary>True when the tag's href stays in the document (#anchor) or has no scheme.</summary>
     private static bool IsInternalHref(string tag)

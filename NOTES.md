@@ -1309,7 +1309,10 @@ matcher's one sentinel character. .odt chart text joins its block's entry (`Resu
 `href="#bookmark-<Uri.EscapeDataString(name)>"` (one helper: `DocxBlockHtmlRenderer.LinkTag` /
 `BookmarkElementId`; field instructions parsed by `DocxBlockHtmlRenderer.HyperlinkFieldTag` for
 .docx, .rtf and .doc alike). Same safety rule everywhere: only http(s), mailto, in-document anchors
-and the app schemes (otzaria, zayit, kitveihakodeshapp, seforimapp) become links.
+and the library-app schemes become links. The app schemes are listed once, in `WordLibraryAppLink`
+(otzaria, zayit, kitveihakodeshapp, seforimapp, plus Otzaria's book://<title>#heading and Zayit's
+seforim://line/<id>), checked by scheme only: a Hebrew title in the host part is not a valid URI host.
+Every reader (and the .txt/MHTML sanitizer) marks them `data-app-link`; `LibraryAppLinksTest` covers each format.
 
 | Format | Bookmarks (source) | Index | Links |
 |---|---|---|---|

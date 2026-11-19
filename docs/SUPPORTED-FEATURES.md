@@ -212,6 +212,7 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 |---|---|---|---|---|---|---|
 | External hyperlinks | yes | yes | yes | yes | n.a. | yes |
 | Bookmarks and internal links (jump to the block) | yes | yes | yes | yes | n.a. | yes |
+| Library-app links (Otzaria, Zayit, KitveiHakodesh: otzaria://, book://, zayit://, seforim://, kitveihakodeshapp://, seforimapp://) marked for the host to open inside the app | yes | yes | yes | yes | yes (a tags in the text) | yes |
 | TOC (field or index body) | yes | yes | yes | yes | n.a. | yes |
 
 ## Pictures

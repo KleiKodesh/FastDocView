@@ -633,7 +633,8 @@ public sealed class DocxBlockHtmlRenderer
     /// <summary>
     /// An &lt;a&gt; tag for a link target, or null when the target is not safe to follow. Only http, https and mailto URLs and
     /// in-document anchors (#bookmark → the bookmark's element id) become links; anything else (javascript:, file:, data:,
-    /// relative paths) renders as plain text.
+    /// relative paths) renders as plain text. Links into a library app (WordLibraryAppLink: otzaria://, zayit://, book://...)
+    /// are kept as written and marked data-app-link: the host opens them inside itself, never in a browser.
     /// </summary>
     internal static string? LinkTag(string? target, string? tooltip)
     {
@@ -642,13 +643,13 @@ public sealed class DocxBlockHtmlRenderer
         string href;
         bool isAppLink = false;
         if (target.StartsWith("#", StringComparison.Ordinal)) href = "#" + BookmarkElementId(target.Substring(1));
-        else if (Uri.TryCreate(target, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https" or "mailto") href = uri.AbsoluteUri;
         // links into a library app (Otzaria, Zayit, KitveiHakodesh's own): the host routes them itself, in place
-        else if (Uri.TryCreate(target, UriKind.Absolute, out Uri? appUri) && appUri.Scheme is "otzaria" or "zayit" or "kitveihakodeshapp" or "seforimapp")
+        else if (WordLibraryAppLink.IsLibraryAppLink(target))
         {
             href = target;
             isAppLink = true;
         }
+        else if (Uri.TryCreate(target, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https" or "mailto") href = uri.AbsoluteUri;
         else return null;
         var tag = new StringBuilder(isAppLink ? "<a class=\"link app-link\" data-app-link=\"1\" href=\"" : "<a class=\"link\" href=\"").Append(WordHtmlText.Encode(href)).Append('"');
         if (!string.IsNullOrEmpty(tooltip)) tag.Append(" title=\"").Append(WordHtmlText.Encode(tooltip!)).Append('"');
