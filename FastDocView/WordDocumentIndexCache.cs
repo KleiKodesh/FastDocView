@@ -45,11 +45,9 @@ public static class WordDocumentIndexCache
     public const string SidecarExtension = ".wordindex";
     public const string RecordExtension = ".wordindex.source";
     private const string TempExtension = ".tmp";
-    /// <summary>A Word 2003 XML file's translated .docx package, beside its sidecar (deleted with it; an orphan goes like an abandoned temp file).</summary>
+    /// <summary>A Word 2003 XML file's translated .docx package, which older versions wrote beside its sidecar: no longer made (the file is translated block by block), so any left is deleted.</summary>
     public const string TranslatedPackageExtension = ".wordindex.package";
 
-    /// <summary>Where the translated package of the document whose sidecar is <paramref name="indexPath"/> lives.</summary>
-    public static string TranslatedPackagePathFor(string indexPath) => indexPath + TranslatedPackageExtension.Substring(SidecarExtension.Length);
     private static readonly TimeSpan TrimAfterSaveInterval = TimeSpan.FromMinutes(10);
 
     /// <summary>The caps and the automatic trim; the host sets them (before opening documents).</summary>
@@ -257,8 +255,7 @@ public static class WordDocumentIndexCache
 
         foreach (FileInfo package in packages)
         {
-            string sidecarPath = package.FullName.Substring(0, package.FullName.Length - TranslatedPackageExtension.Length) + SidecarExtension;
-            if (!entries.ContainsKey(sidecarPath) && now - package.LastWriteTimeUtc >= limits.AbandonedTempAge) Count(TryDelete(package, null), ref orphans, ref inUse);
+            if (now - package.LastWriteTimeUtc >= limits.AbandonedTempAge) Count(TryDelete(package, null), ref orphans, ref inUse);
         }
 
         var kept = new List<Entry>();

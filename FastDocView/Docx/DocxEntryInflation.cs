@@ -29,7 +29,9 @@ internal static class DocxEntryInflation
 
     /// <summary>A seekable view of the entry's uncompressed bytes over the package (which the view does not own).</summary>
     public static Stream OpenView(Stream package, ZipEntryLocation entry, IReadOnlyList<DeflateCheckpoint> checkpoints)
-        => entry.IsDeflate
+        => entry.CompressionMethod == DocxVirtualPackageStream.DerivedPartMethod && package is IDocxDerivedPartSource derived
+            ? derived.OpenView(entry, checkpoints)
+            : entry.IsDeflate
             ? new DeflateRandomAccessStream(package, entry.DataOffset, entry.CompressedSize, entry.UncompressedSize, checkpoints)
             : new ZipStoredEntryStream(package, entry.DataOffset, entry.CompressedSize);
 }

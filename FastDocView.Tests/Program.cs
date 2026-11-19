@@ -68,7 +68,13 @@ for (int i = 0; i < args.Length; i++)
         case "--index-cache": WordDocumentIndexCacheTest.Run(); skipSynthetic = true; break;   // sidecar cache LRU: eviction, caps, stale / orphan cleanup, concurrency (seconds)
         case "--connector-route": OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); skipSynthetic = true; break;   // only the connector routing checks (seconds)
         case "--mhtml-pictures": WebArchivePicturesTest.Run(); skipSynthetic = true; break;   // web archive pictures (seconds)
-        case "--word-xml": WordXmlFormatsTest.Run(); skipSynthetic = true; break;
+        case "--word-xml": WordXmlFormatsTest.Run(); Word2003WindowedTest.Run([]); skipSynthetic = true; break;
+        case "--word2003-big":                                                         // timed first paint of big Word 2003 XML (and .docx) files
+        {
+            var big = new List<string>();
+            while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) big.Add(args[++i]);
+            Word2003WindowedTest.Run(big); skipSynthetic = true; break;
+        }
         case "--odt-malformed": OdtMalformedRecoveryTest.Run(); skipSynthetic = true; break;   // only the malformed .odt / .fodt checks (seconds)   // only the Flat OPC / Word 2003 XML checks (seconds)
         case "--tables": WordTablesFidelityTest.Run(); skipSynthetic = true; break;   // only the table checks (seconds)
         case "--note-numbering": NoteNumberingFidelityTest.Run(); skipSynthetic = true; break;   // only the note numbering checks (seconds)

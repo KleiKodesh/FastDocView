@@ -81,14 +81,22 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
 
     public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy) => Decide(filePath, policy, DocxPackageForm.Zip);
 
-    /// <summary>How a .docx-model file is stored: a zip package, or a Flat OPC XML file read through <see cref="DocxFlatPackageStream"/>.</summary>
-    internal enum DocxPackageForm { Zip, FlatXml }
+    /// <summary>How a .docx-model file is stored: a zip package, a Flat OPC XML file read through <see cref="DocxFlatPackageStream"/>, or a Word 2003 XML file read through <see cref="Word2003PackageStream"/>.</summary>
+    internal enum DocxPackageForm { Zip, FlatXml, Word2003Xml }
+
+    /// <summary>The package the .docx reader reads: the zip itself, or a one-file XML format presented as one.</summary>
+    private static Stream PackageOver(Stream file, DocxPackageForm form, string filePath) => form switch
+    {
+        DocxPackageForm.FlatXml => new DocxFlatPackageStream(file, filePath),
+        DocxPackageForm.Word2003Xml => new Word2003PackageStream(file, filePath),
+        _ => file,
+    };
 
     internal static WordIndexDecision Decide(string filePath, WordIndexPolicy policy, DocxPackageForm form)
     {
         FileStream shared = WordDocumentFileStream.OpenShared(filePath);
         Stream file;
-        try { file = form == DocxPackageForm.FlatXml ? new DocxFlatPackageStream(shared, filePath) : shared; }
+        try { file = PackageOver(shared, form, filePath); }
         catch { shared.Dispose(); throw; }
         using Stream disposed = file;
         long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(file);       // body + footnotes + endnotes
@@ -102,8 +110,8 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
         => Open(filePath, DocxPackageForm.Zip, packagePath: filePath, policy, progress, cancellation);
 
     /// <summary>
-    /// The file-system open for every .docx-model file. <paramref name="packagePath"/> is the file read (a Word 2003 XML
-    /// file's translated package; else <paramref name="filePath"/> itself); the index is keyed by, and checked against,
+    /// The file-system open for every .docx-model file. <paramref name="packagePath"/> is the file read (today always
+    /// <paramref name="filePath"/> itself); the index is keyed by, and checked against,
     /// <paramref name="filePath"/>, the document the reader opened, and a change to it is what <see cref="HasSourceChanged"/> reports.
     /// </summary>
     internal static DocxWindowedDocument Open(string filePath, DocxPackageForm form, string packagePath, WordIndexPolicy? policy,
@@ -117,7 +125,9 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
         Stream package = file;
         try
         {
-            if (form == DocxPackageForm.FlatXml) package = new DocxFlatPackageStream(file, packagePath);
+            package = PackageOver(file, form, packagePath);
+            // a sidecar made over another reading of this file (an older version's translated package) does not fit this one
+            if (form == DocxPackageForm.Word2003Xml && cached is not null && cached.DocumentEntry.CompressionMethod != DocxVirtualPackageStream.DerivedPartMethod) cached = null;
             long textBytes = DocxRandomAccessIndexBuilder.TextPartsBytes(package);
             WordIndexDecision decision = policy.Decide(filePath, textBytes, cached is not null);
             DocxWindowedDocument document;

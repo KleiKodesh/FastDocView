@@ -15,26 +15,9 @@ namespace FastDocView.Docx;
 /// LibreOffice has no Flat OPC import for Writer (its OOXML detection, oox/source/core/filterdetect.cxx, only looks
 /// inside zip packages), so Word is the reference.
 /// </summary>
-internal sealed class DocxFlatPackageStream : Stream
+internal sealed class DocxFlatPackageStream : DocxVirtualPackageStream
 {
     public const string PackageNamespace = "http://schemas.microsoft.com/office/2006/xmlPackage";
-
-    private readonly Stream _file;
-    private readonly byte[]? _contentTypes;          // synthesized when the package has none
-    private readonly Segment[] _segments;
-    private readonly long _length;
-    private long _position;
-    private int _decodedPart = -1;
-    private byte[]? _decoded;
-
-    private sealed class Segment
-    {
-        public long Start;                  // virtual offset
-        public long Length;
-        public byte[]? Bytes;               // synthesized (headers, directory, content types)
-        public long FileOffset;             // an XML part: its bytes in the file
-        public long Base64End = -1;         // a binary part: the base64 text runs FileOffset..Base64End in the file
-    }
 
     private sealed record Part(string Name, string ContentType, long ContentStart, long ContentEnd, bool IsBinary, long DecodedLength);
 
@@ -67,9 +50,8 @@ internal sealed class DocxFlatPackageStream : Stream
     /// Scans the file's parts (one pass) and lays out the virtual zip. The stream owns <paramref name="file"/>. With
     /// <paramref name="filePath"/> (the file <paramref name="file"/> reads), the scan of an unchanged file is reused by the next open.
     /// </summary>
-    public DocxFlatPackageStream(Stream file, string? filePath = null)
+    public DocxFlatPackageStream(Stream file, string? filePath = null) : base(file)
     {
-        _file = file;
         string? key = null;
         if (filePath is not null)
         {
@@ -85,60 +67,15 @@ internal sealed class DocxFlatPackageStream : Stream
             Interlocked.Increment(ref _scanCount);
             if (key is not null) lock (LastScanGate) _lastScan = (key, scanned);
         }
-        var parts = new List<Part>(scanned);
-        if (!parts.Any(part => part.Name.Equals("[Content_Types].xml", StringComparison.OrdinalIgnoreCase)))
-        {
-            byte[] types = ContentTypes(parts);
-            parts.Insert(0, new Part("[Content_Types].xml", "", -1, types.Length, false, types.Length));
-            _contentTypes = types;
-        }
-        var segments = new List<Segment>();
-        var directory = new MemoryStream();
-        var directoryWriter = new BinaryWriter(directory);
-        long offset = 0;
-        foreach (Part part in parts)
-        {
-            byte[] name = Encoding.UTF8.GetBytes(part.Name);
-            long size = part.IsBinary ? part.DecodedLength : part.ContentEnd - part.ContentStart;
-            if (part.ContentStart < 0) size = part.ContentEnd;
-            if (size > uint.MaxValue - 1 || offset > uint.MaxValue - 1) throw new NotSupportedException("Flat XML packages over 4 GB are not supported.");
-            var header = new MemoryStream();
-            var headerWriter = new BinaryWriter(header);
-            headerWriter.Write(0x04034b50u); headerWriter.Write((ushort)20); headerWriter.Write((ushort)0x0800); headerWriter.Write((ushort)0);
-            headerWriter.Write(0u);                      // time, date
-            headerWriter.Write(0u);                      // CRC: no reader checks it for stored entries
-            headerWriter.Write((uint)size); headerWriter.Write((uint)size);
-            headerWriter.Write((ushort)name.Length); headerWriter.Write((ushort)0); headerWriter.Write(name);
-            Add(segments, ref offset, new Segment { Bytes = header.ToArray() });
-            long localHeaderOffset = offset - header.Length;
-            if (part.ContentStart < 0) Add(segments, ref offset, new Segment { Bytes = _contentTypes! });
-            else if (part.IsBinary) Add(segments, ref offset, new Segment { FileOffset = part.ContentStart, Base64End = part.ContentEnd, Length = size });
-            else Add(segments, ref offset, new Segment { FileOffset = part.ContentStart, Length = size });
-
-            directoryWriter.Write(0x02014b50u); directoryWriter.Write((ushort)20); directoryWriter.Write((ushort)20); directoryWriter.Write((ushort)0x0800);
-            directoryWriter.Write((ushort)0); directoryWriter.Write(0u); directoryWriter.Write(0u);
-            directoryWriter.Write((uint)size); directoryWriter.Write((uint)size);
-            directoryWriter.Write((ushort)name.Length); directoryWriter.Write((ushort)0); directoryWriter.Write((ushort)0);
-            directoryWriter.Write((ushort)0); directoryWriter.Write((ushort)0); directoryWriter.Write(0u);
-            directoryWriter.Write((uint)localHeaderOffset); directoryWriter.Write(name);
-        }
-        if (parts.Count > ushort.MaxValue) throw new NotSupportedException("Flat XML packages with over 65535 parts are not supported.");
-        long directoryOffset = offset;
-        directoryWriter.Write(0x06054b50u); directoryWriter.Write((ushort)0); directoryWriter.Write((ushort)0);
-        directoryWriter.Write((ushort)parts.Count); directoryWriter.Write((ushort)parts.Count);
-        directoryWriter.Write((uint)(directory.Length - 4 - 2 - 2 - 2 - 2)); directoryWriter.Write((uint)directoryOffset); directoryWriter.Write((ushort)0);
-        Add(segments, ref offset, new Segment { Bytes = directory.ToArray() });
-        _segments = segments.ToArray();
-        _length = offset;
+        var parts = new List<VirtualPart>(scanned.Count + 1);
+        if (!scanned.Any(part => part.Name.Equals("[Content_Types].xml", StringComparison.OrdinalIgnoreCase)))
+            parts.Add(VirtualPart.Synthesized("[Content_Types].xml", ContentTypes(scanned)));
+        foreach (Part part in scanned)
+            parts.Add(part.IsBinary ? VirtualPart.Base64(part.Name, part.ContentStart, part.ContentEnd, part.DecodedLength)
+                                    : VirtualPart.FileRange(part.Name, part.ContentStart, part.ContentEnd));
+        Layout(parts);
     }
 
-    private static void Add(List<Segment> segments, ref long offset, Segment segment)
-    {
-        segment.Start = offset;
-        if (segment.Bytes is not null) segment.Length = segment.Bytes.Length;
-        offset += segment.Length;
-        segments.Add(segment);
-    }
 
     /// <summary>The prefix the root binds to the package namespace ("" for a default namespace); only UTF-8 files are read.</summary>
     private static string PackagePrefix(Stream file)
@@ -152,13 +89,13 @@ internal sealed class DocxFlatPackageStream : Stream
     }
 
     /// <summary>Throws for a file not in UTF-8 (a UTF-16 byte order mark, or an XML declaration naming another encoding): part bytes are handed on as they are.</summary>
-    private static void RequireUtf8(Stream file)
+    internal static void RequireUtf8(Stream file, string formatName = "Flat XML packages")
     {
         file.Position = 0;
         var head = new byte[256];
         int count = file.Read(head, 0, head.Length);
         if (count >= 2 && ((head[0] == 0xFF && head[1] == 0xFE) || (head[0] == 0xFE && head[1] == 0xFF)))
-            throw new NotSupportedException("UTF-16 Flat XML packages are not supported (Word writes them in UTF-8).");
+            throw new NotSupportedException($"UTF-16 {formatName} are not supported (Word writes them in UTF-8).");
         int skip = count >= 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF ? 3 : 0;   // UTF-8 byte order mark
         string text = Encoding.ASCII.GetString(head, skip, count - skip);
         int declarationEnd = text.StartsWith("<?xml", StringComparison.Ordinal) ? text.IndexOf("?>", StringComparison.Ordinal) : -1;
@@ -170,7 +107,7 @@ internal sealed class DocxFlatPackageStream : Stream
         int close = text.IndexOf(text[quote], quote + 1);
         string encoding = close < 0 ? "" : text.Substring(quote + 1, close - quote - 1);
         if (!encoding.Equals("UTF-8", StringComparison.OrdinalIgnoreCase) && !encoding.Equals("UTF8", StringComparison.OrdinalIgnoreCase))
-            throw new NotSupportedException($"Flat XML packages in {encoding} are not supported (Word writes them in UTF-8).");
+            throw new NotSupportedException($"{formatName} in {encoding} are not supported (Word writes them in UTF-8).");
     }
 
     /// <summary>A [Content_Types].xml listing each part's pkg:contentType (ECMA-376 Part 2 10.1.2.3 Override elements).</summary>
@@ -184,115 +121,6 @@ internal sealed class DocxFlatPackageStream : Stream
         return Encoding.UTF8.GetBytes(text.ToString());
     }
 
-    public override int Read(byte[] buffer, int offset, int count)
-    {
-        if (count <= 0 || _position >= _length) return 0;
-        int index = SegmentAt(_position);
-        Segment segment = _segments[index];
-        long within = _position - segment.Start;
-        int take = (int)Math.Min(count, segment.Length - within);
-        if (segment.Bytes is not null) Buffer.BlockCopy(segment.Bytes, (int)within, buffer, offset, take);
-        else if (segment.Base64End >= 0)
-        {
-            byte[] decoded = Decoded(index, segment);
-            Buffer.BlockCopy(decoded, (int)within, buffer, offset, take);
-        }
-        else
-        {
-            _file.Position = segment.FileOffset + within;
-            take = _file.Read(buffer, offset, take);
-            if (take <= 0) throw new EndOfStreamException("The Flat XML file ended inside a part.");
-        }
-        _position += take;
-        return take;
-    }
-
-    private int SegmentAt(long position)
-    {
-        int low = 0, high = _segments.Length - 1;
-        while (low < high)
-        {
-            int middle = (low + high + 1) / 2;
-            if (_segments[middle].Start <= position) low = middle; else high = middle - 1;
-        }
-        return low;
-    }
-
-    /// <summary>
-    /// A binary part's bytes: its base64 text decoded when first reached (the last one kept), streamed through one 64 KB
-    /// buffer straight into the part's bytes: memory is the decoded part, not its text as well.
-    /// </summary>
-    private byte[] Decoded(int index, Segment segment)
-    {
-        if (_decodedPart == index) return _decoded!;
-        _decoded = null;
-        _decodedPart = -1;
-        var decoded = new byte[segment.Length];
-        var chunk = new byte[1 << 16];
-        long remaining = segment.Base64End - segment.FileOffset;
-        _file.Position = segment.FileOffset;
-        int written = 0, quantum = 0, bits = 0, padding = 0;
-        while (remaining > 0)
-        {
-            int read = _file.Read(chunk, 0, (int)Math.Min(chunk.Length, remaining));
-            if (read <= 0) throw new EndOfStreamException("The Flat XML file ended inside a binary part.");
-            remaining -= read;
-            for (int i = 0; i < read; i++)
-            {
-                byte b = chunk[i];
-                if (b <= (byte)' ') continue;                       // line breaks and indentation between the base64 lines
-                int value = Base64Value(b);
-                if (b == '=') { padding++; value = 0; }
-                else if (value < 0 || padding > 0) throw new InvalidDataException("A Flat XML binary part is not valid base64.");
-                bits = bits << 6 | value;
-                if (++quantum < 4) continue;
-                int bytes = 3 - padding;
-                if (bytes < 1 || written + bytes > decoded.Length) throw new InvalidDataException("A Flat XML binary part's decoded length is not what its base64 promised.");
-                decoded[written++] = (byte)(bits >> 16);
-                if (bytes > 1) decoded[written++] = (byte)(bits >> 8);
-                if (bytes > 2) decoded[written++] = (byte)bits;
-                quantum = 0;
-                bits = 0;
-            }
-        }
-        if (quantum != 0) throw new InvalidDataException("A Flat XML binary part is not valid base64.");
-        if (written != decoded.Length) throw new InvalidDataException("A Flat XML binary part's decoded length is not what its base64 promised.");
-        _decodedPart = index;
-        _decoded = decoded;
-        return decoded;
-    }
-
-    /// <summary>The 6-bit value of a base64 character (RFC 4648 table 1), or -1.</summary>
-    private static int Base64Value(byte b) => b switch
-    {
-        >= (byte)'A' and <= (byte)'Z' => b - 'A',
-        >= (byte)'a' and <= (byte)'z' => b - 'a' + 26,
-        >= (byte)'0' and <= (byte)'9' => b - '0' + 52,
-        (byte)'+' => 62,
-        (byte)'/' => 63,
-        _ => -1,
-    };
-
-    public override long Seek(long offset, SeekOrigin origin)
-    {
-        _position = origin switch { SeekOrigin.Begin => offset, SeekOrigin.Current => _position + offset, _ => _length + offset };
-        return _position;
-    }
-
-    public override bool CanRead => true;
-    public override bool CanSeek => true;
-    public override bool CanWrite => false;
-    public override long Length => _length;
-    public override long Position { get => _position; set => _position = value; }
-    public override void Flush() { }
-    public override void SetLength(long value) => throw new NotSupportedException();
-    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing) _file.Dispose();
-        base.Dispose(disposing);
-    }
 
     /// <summary>
     /// The one pass over a Flat OPC file: a byte scanner (no DOM, bounded memory) that finds each pkg:part, its

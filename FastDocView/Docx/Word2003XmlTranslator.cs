@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
@@ -8,21 +7,20 @@ using SeekableDeflate;
 namespace FastDocView.Docx;
 
 /// <summary>
-/// Word 2003 XML ("Word 2003 XML Document", wdFormatXML: one XML file rooted in the 2003 w:wordDocument) read by
-/// translating it into a .docx package once, beside the document's sidecar index, then opening that package with the
-/// .docx reader — no second renderer. The translation streams (XmlReader to XmlWriter, a few passes over the file,
-/// bounded memory: only the small header parts w:styles / w:lists / w:docPr are held as trees), and its output is
-/// deterministic, so an index built over one translation fits the next. The vocabulary is WordprocessingML's
-/// predecessor, so most elements map one to one; the differences handled here follow LibreOffice's own import of the
-/// format (the XSLT filter filter/source/xslt/import/wordml/): wordml2ooo.xsl:244-250 (wx:sect / wx:sub-section only
-/// wrap the body), wordml2ooo_list.xsl:20-25 and :339-347 (w:listPr w:ilfo -> w:lists/w:list[@w:ilfo]/w:ilst ->
-/// w:listDef[@w:listDefId]; w:nfc is the MS-DOC number format code, :489-547), wordml2ooo_text.xsl:937-958
-/// (aml:annotation bookmarks), :959-986 (w:hlink w:dest / w:bookmark / w:target), :1044-1065 (w:footnote / w:endnote
-/// inline in the run, the note's body in place). Further renames (hyphenated names to camel case: w:b-cs -> w:bCs,
-/// w:first-line -> w:firstLine; w:fareast -> w:eastAsia; w:vmerge -> w:vMerge; pictures as w:binData base64 named
-/// "wordml://...", referenced by v:imagedata src) are Word's own 2003 -> 2007 mapping, checked against Word's save of
-/// the same document as .docx (test-data/word-xml). Tracked insertions are kept and deletions dropped (the printed
-/// result); comments, which do not print, are dropped.
+/// The Word 2003 XML vocabulary ("Word 2003 XML Document", wdFormatXML: one XML file rooted in the 2003 w:wordDocument)
+/// mapped onto the .docx vocabulary, element by element, so the .docx reader renders it: <see cref="Word2003PackageStream"/>
+/// presents the file as a package whose header parts (styles, numbering, settings, relationships) are translated at open
+/// and whose body and notes parts are translated block by block as the reader reaches them (windowed, never whole).
+/// The vocabulary is WordprocessingML's predecessor, so most elements map one to one; the differences handled here follow
+/// LibreOffice's own import of the format (the XSLT filter filter/source/xslt/import/wordml/): wordml2ooo.xsl:244-250
+/// (wx:sect / wx:sub-section only wrap the body), wordml2ooo_list.xsl:20-25 and :339-347 (w:listPr w:ilfo -&gt;
+/// w:lists/w:list[@w:ilfo]/w:ilst -&gt; w:listDef[@w:listDefId]; w:nfc is the MS-DOC number format code, :489-547),
+/// wordml2ooo_text.xsl:937-958 (aml:annotation bookmarks), :959-986 (w:hlink w:dest / w:bookmark / w:target), :1044-1065
+/// (w:footnote / w:endnote inline in the run, the note's body in place). Further renames (hyphenated names to camel case:
+/// w:b-cs -&gt; w:bCs, w:first-line -&gt; w:firstLine; w:fareast -&gt; w:eastAsia; w:vmerge -&gt; w:vMerge; pictures as
+/// w:binData base64 named "wordml://...", referenced by v:imagedata src) are Word's own 2003 -&gt; 2007 mapping, checked
+/// against Word's save of the same document as .docx (test-data/word-xml). Tracked insertions are kept and deletions
+/// dropped (the printed result); comments, which do not print, are dropped.
 /// </summary>
 internal static class Word2003XmlTranslator
 {
@@ -30,6 +28,7 @@ internal static class Word2003XmlTranslator
     private const string AuxiliaryNamespace = "http://schemas.microsoft.com/office/word/2003/auxHint";
     private const string AnnotationNamespace = "http://schemas.microsoft.com/aml/2001/core";
     private const string MainNamespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    internal const string DocxMainNamespace = MainNamespace;
     private const string RelationshipNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private const string PackageRelationshipNamespace = "http://schemas.openxmlformats.org/package/2006/relationships";
     private const string VmlNamespace = "urn:schemas-microsoft-com:vml";
@@ -38,86 +37,15 @@ internal static class Word2003XmlTranslator
     private const string XmlnsNamespace = "http://www.w3.org/2000/xmlns/";
     private const string XmlNamespace = "http://www.w3.org/XML/1998/namespace";
     private const string ImageNamePrefix = "wordml://";
-    private const string SourceStampEntry = "fastdocview/source";
-    private static readonly DateTimeOffset FixedEntryTime = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);   // deterministic output
 
-    /// <summary>Opens a Word 2003 XML file: translates it when its package is missing or older than the file, then opens the package.</summary>
-    public static DocxWindowedDocument Open(string filePath, WordIndexPolicy? policy, IProgress<WordDocumentIndexProgress>? progress,
-                                            CancellationToken cancellation)
+    /// <summary>
+    /// The package parts made at open: content types, relationships and the translated header parts (each left out when
+    /// the file has none). The relationships list every hyperlink target and picture of the whole file, which the open
+    /// pass collected into <paramref name="state"/>, so a block translated later finds its ids there.
+    /// </summary>
+    internal static List<(string Name, byte[] Bytes)> SynthesizedParts(Header header, TranslationState state, bool hasFootnotes, bool hasEndnotes)
     {
-        policy ??= WordIndexPolicy.Default;
-        string packagePath = WordDocumentIndexCache.TranslatedPackagePathFor(policy.IndexPathFor(filePath));
-        if (!IsCurrent(packagePath, filePath))
-        {
-            // a sidecar built over an older package must not read the new one at its offsets
-            string indexPath = policy.IndexPathFor(filePath);
-            try { if (File.Exists(indexPath)) File.Delete(indexPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-            Translate(filePath, packagePath, cancellation);
-        }
-        return DocxWindowedDocument.Open(filePath, DocxWindowedDocument.DocxPackageForm.Zip, packagePath, policy, progress, cancellation);
-    }
-
-    /// <summary>The policy's answer without translating: the file's size stands for its text (it is all markup and text).</summary>
-    public static WordIndexDecision Decide(string filePath, WordIndexPolicy policy)
-    {
-        bool hasCachedIndex = DocxRandomAccessIndex.TryLoad(policy.IndexPathFor(filePath), filePath) is not null;
-        return policy.Decide(filePath, new FileInfo(filePath).Length, hasCachedIndex);
-    }
-
-    private static string SourceStamp(string filePath)
-    {
-        var info = new FileInfo(filePath);
-        return info.Length + " " + info.LastWriteTimeUtc.Ticks;
-    }
-
-    /// <summary>True when the translated package exists and was made from this version of the file.</summary>
-    private static bool IsCurrent(string packagePath, string filePath)
-    {
-        if (!File.Exists(packagePath)) return false;
-        try
-        {
-            using FileStream package = WordDocumentFileStream.OpenShared(packagePath);
-            if (ZipEntryLocator.Locate(package, SourceStampEntry) is not { IsStored: true } entry) return false;
-            var bytes = new byte[entry.CompressedSize];
-            package.Position = entry.DataOffset;
-            int filled = 0;
-            while (filled < bytes.Length) { int read = package.Read(bytes, filled, bytes.Length - filled); if (read <= 0) return false; filled += read; }
-            return Encoding.UTF8.GetString(bytes) == SourceStamp(filePath);
-        }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException) { return false; }
-    }
-
-    /// <summary>Writes the package next to its final path and moves it into place.</summary>
-    internal static void Translate(string filePath, string packagePath, CancellationToken cancellation)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
-        string temporaryPath = packagePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            string stamp = SourceStamp(filePath);
-            using (var output = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                Translate(() => WordDocumentFileStream.OpenShared(filePath), output, stamp, cancellation);
-            try
-            {
-                if (File.Exists(packagePath)) File.Delete(packagePath);
-                File.Move(temporaryPath, packagePath);
-            }
-            catch (IOException) when (IsCurrent(packagePath, filePath)) { }   // another open made the same package first
-        }
-        finally
-        {
-            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-        }
-    }
-
-    /// <summary>The translation itself: <paramref name="openSource"/> is called once per pass.</summary>
-    internal static void Translate(Func<Stream> openSource, Stream output, string sourceStamp, CancellationToken cancellation)
-    {
-        Header header = ReadHeader(openSource);
-        var state = new TranslationState();
-        using var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
-
-        WriteEntry(zip, "word/document.xml", writer => TranslateBody(openSource, writer, state, NotePass.None, cancellation));
+        var parts = new List<(string Name, byte[] Bytes)>();
         if (header.Styles is null && header.DefaultFonts is not null) header.Styles = new XElement(XName.Get("styles", WordNamespace));
         if (header.Styles is not null)
         {
@@ -125,41 +53,38 @@ internal static class Word2003XmlTranslator
             if (header.DefaultFonts is { } fonts)
                 header.Styles.AddFirst(new XElement(XName.Get("docDefaults", WordNamespace), new XElement(XName.Get("rPrDefault", WordNamespace),
                     new XElement(XName.Get("rPr", WordNamespace), new XElement(XName.Get("rFonts", WordNamespace), fonts.Attributes())))));
-            WriteEntry(zip, "word/styles.xml", writer => TranslateTree(header.Styles, writer, state, "styles"));
+            XElement styles = header.Styles;
+            parts.Add(("word/styles.xml", XmlPart(writer => TranslateTree(styles, writer, state, "styles"))));
         }
-        if (header.Lists is not null) WriteEntry(zip, "word/numbering.xml", writer => TranslateTree(header.Lists, writer, state, "numbering"));
-        if (header.DocumentProperties is not null) WriteEntry(zip, "word/settings.xml", writer => TranslateTree(header.DocumentProperties, writer, state, "settings"));
-        if (state.FootnoteCount > 0) WriteEntry(zip, "word/footnotes.xml", writer => TranslateBody(openSource, writer, new TranslationState(state), NotePass.Footnotes, cancellation));
-        if (state.EndnoteCount > 0) WriteEntry(zip, "word/endnotes.xml", writer => TranslateBody(openSource, writer, new TranslationState(state), NotePass.Endnotes, cancellation));
-        if (state.ImageRelationships.Count > 0) WriteImages(openSource, zip, state, cancellation);
+        if (header.Lists is { } lists) parts.Add(("word/numbering.xml", XmlPart(writer => TranslateTree(lists, writer, state, "numbering"))));
+        if (header.DocumentProperties is { } settings) parts.Add(("word/settings.xml", XmlPart(writer => TranslateTree(settings, writer, state, "settings"))));
 
-        WriteText(zip, "[Content_Types].xml", ContentTypes(state, header));
-        WriteText(zip, "_rels/.rels",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">"
-            + "<Relationship Id=\"rId1\" Type=\"" + RelationshipNamespace + "/officeDocument\" Target=\"word/document.xml\"/></Relationships>");
+        parts.Add(("[Content_Types].xml", Utf8(ContentTypes(state, header, hasFootnotes, hasEndnotes))));
+        parts.Add(("_rels/.rels", Utf8("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">"
+            + "<Relationship Id=\"rId1\" Type=\"" + RelationshipNamespace + "/officeDocument\" Target=\"word/document.xml\"/></Relationships>")));
         string imageRelationships = ImageRelationships(state);
         var document = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">");
         if (header.Styles is not null) document.Append(Relationship("rIdStyles", "styles", "styles.xml"));
         if (header.Lists is not null) document.Append(Relationship("rIdNumbering", "numbering", "numbering.xml"));
         if (header.DocumentProperties is not null) document.Append(Relationship("rIdSettings", "settings", "settings.xml"));
-        if (state.FootnoteCount > 0) document.Append(Relationship("rIdFootnotes", "footnotes", "footnotes.xml"));
-        if (state.EndnoteCount > 0) document.Append(Relationship("rIdEndnotes", "endnotes", "endnotes.xml"));
-        foreach ((string id, string target) in state.Hyperlinks)
-            document.Append("<Relationship Id=\"").Append(Escape(id)).Append("\" Type=\"").Append(RelationshipNamespace).Append("/hyperlink\" Target=\"")
-                    .Append(Escape(target)).Append("\" TargetMode=\"External\"/>");
-        document.Append(imageRelationships).Append("</Relationships>");
-        WriteText(zip, "word/_rels/document.xml.rels", document.ToString());
+        if (hasFootnotes) document.Append(Relationship("rIdFootnotes", "footnotes", "footnotes.xml"));
+        if (hasEndnotes) document.Append(Relationship("rIdEndnotes", "endnotes", "endnotes.xml"));
+        document.Append(HyperlinkRelationships(state)).Append(imageRelationships).Append("</Relationships>");
+        parts.Add(("word/_rels/document.xml.rels", Utf8(document.ToString())));
         if (header.Lists is not null)      // picture bullets (w:listPicBullet) name their pictures through numbering.xml's own relationships
-            WriteText(zip, "word/_rels/numbering.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">"
-                                                         + imageRelationships + "</Relationships>");
-        foreach (string notes in new[] { state.FootnoteCount > 0 ? "footnotes" : null, state.EndnoteCount > 0 ? "endnotes" : null })
+            parts.Add(("word/_rels/numbering.xml.rels", Utf8("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">"
+                                                         + imageRelationships + "</Relationships>")));
+        foreach (string? notes in new[] { hasFootnotes ? "footnotes" : null, hasEndnotes ? "endnotes" : null })
             if (notes is not null)
-                WriteText(zip, "word/_rels/" + notes + ".xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">"
-                                                                   + HyperlinkRelationships(state) + imageRelationships + "</Relationships>");
-        ZipArchiveEntry stampEntry = zip.CreateEntry(SourceStampEntry, CompressionLevel.NoCompression);
-        stampEntry.LastWriteTime = FixedEntryTime;
-        using (Stream stamp = stampEntry.Open()) { byte[] bytes = Encoding.UTF8.GetBytes(sourceStamp); stamp.Write(bytes, 0, bytes.Length); }
+                parts.Add(("word/_rels/" + notes + ".xml.rels", Utf8("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">"
+                                                                   + HyperlinkRelationships(state) + imageRelationships + "</Relationships>")));
+        return parts;
     }
+
+    /// <summary>The package name of a picture (a w:binData name) the open pass found.</summary>
+    internal static string MediaPartPath(TranslationState state, string imageName) => "word/media/" + MediaPartName(state, imageName);
+
+    private static byte[] Utf8(string text) => new UTF8Encoding(false).GetBytes(text);
 
     private static string Relationship(string id, string type, string target)
         => "<Relationship Id=\"" + id + "\" Type=\"" + RelationshipNamespace + "/" + type + "\" Target=\"" + target + "\"/>";
@@ -195,7 +120,7 @@ internal static class Word2003XmlTranslator
     /// <summary>The picture's part name: its relationship id first, so two names that clean to the same text stay two parts.</summary>
     private static string MediaPartName(TranslationState state, string imageName) => state.ImageRelationships[imageName] + "-" + MediaFileName(imageName);
 
-    private static string ContentTypes(TranslationState state, Header header)
+    private static string ContentTypes(TranslationState state, Header header, bool hasFootnotes, bool hasEndnotes)
     {
         const string Wordprocessing = "application/vnd.openxmlformats-officedocument.wordprocessingml.";
         var text = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
@@ -211,8 +136,8 @@ internal static class Word2003XmlTranslator
         if (header.Styles is not null) text.Append("<Override PartName=\"/word/styles.xml\" ContentType=\"").Append(Wordprocessing).Append("styles+xml\"/>");
         if (header.Lists is not null) text.Append("<Override PartName=\"/word/numbering.xml\" ContentType=\"").Append(Wordprocessing).Append("numbering+xml\"/>");
         if (header.DocumentProperties is not null) text.Append("<Override PartName=\"/word/settings.xml\" ContentType=\"").Append(Wordprocessing).Append("settings+xml\"/>");
-        if (state.FootnoteCount > 0) text.Append("<Override PartName=\"/word/footnotes.xml\" ContentType=\"").Append(Wordprocessing).Append("footnotes+xml\"/>");
-        if (state.EndnoteCount > 0) text.Append("<Override PartName=\"/word/endnotes.xml\" ContentType=\"").Append(Wordprocessing).Append("endnotes+xml\"/>");
+        if (hasFootnotes) text.Append("<Override PartName=\"/word/footnotes.xml\" ContentType=\"").Append(Wordprocessing).Append("footnotes+xml\"/>");
+        if (hasEndnotes) text.Append("<Override PartName=\"/word/endnotes.xml\" ContentType=\"").Append(Wordprocessing).Append("endnotes+xml\"/>");
         return text.Append("</Types>").ToString();
     }
 
@@ -222,41 +147,34 @@ internal static class Word2003XmlTranslator
         "emf" => "image/x-emf", "wmf" => "image/x-wmf", "tif" or "tiff" => "image/tiff", _ => "application/octet-stream",
     };
 
-    private static void WriteText(ZipArchive zip, string name, string text)
+    private static byte[] XmlPart(Action<XmlWriter> write)
     {
-        ZipArchiveEntry entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
-        entry.LastWriteTime = FixedEntryTime;
-        using Stream stream = entry.Open();
-        byte[] bytes = new UTF8Encoding(false).GetBytes(text);
-        stream.Write(bytes, 0, bytes.Length);
+        using var stream = new MemoryStream();
+        using (XmlWriter writer = XmlWriter.Create(stream, new XmlWriterSettings { Encoding = new UTF8Encoding(false), CloseOutput = false }))
+        {
+            writer.WriteStartDocument(standalone: true);
+            write(writer);
+            writer.WriteEndDocument();
+        }
+        return stream.ToArray();
     }
 
-    private static void WriteEntry(ZipArchive zip, string name, Action<XmlWriter> write)
-    {
-        ZipArchiveEntry entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
-        entry.LastWriteTime = FixedEntryTime;
-        using Stream stream = entry.Open();
-        using XmlWriter writer = XmlWriter.Create(stream, new XmlWriterSettings { Encoding = new UTF8Encoding(false), CloseOutput = false });
-        writer.WriteStartDocument(standalone: true);
-        write(writer);
-        writer.WriteEndDocument();
-    }
-
-    private static XmlReader CreateReader(Stream source)
+    internal static XmlReader CreateReader(Stream source)
         => XmlReader.Create(source, new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore, CloseInput = false, IgnoreComments = true, IgnoreProcessingInstructions = true });
 
     // ── header: w:styles, w:lists, w:docPr (small; read as trees) ─────────────────────────────
 
-    private sealed class Header
+    internal sealed class Header
     {
         public XElement? Styles, Lists, DocumentProperties;
         public XElement? DefaultFonts;           // w:fonts/w:defaultFonts: Word 2007's docDefaults run fonts
     }
 
-    private static Header ReadHeader(Func<Stream> openSource)
+    /// <summary>The header parts before w:body, read from the file's start (the stream is not disposed).</summary>
+    internal static Header ReadHeader(Stream source)
     {
         var header = new Header();
-        using Stream source = openSource();
+        source.Position = 0;
         using XmlReader reader = CreateReader(source);
         try
         {
@@ -289,21 +207,28 @@ internal static class Word2003XmlTranslator
 
     // ── the streaming translation ─────────────────────────────────────────────────────────────
 
-    private enum NotePass { None, Footnotes, Endnotes }
+    internal enum NotePass { None, Footnotes, Endnotes }
 
-    private sealed class TranslationState
+    /// <summary>
+    /// The ids a translation gives: relationships for every hyperlink target and picture, assigned in file order by the
+    /// open pass and then frozen (a block translated at any time, in any order, finds the same id); note ids made from
+    /// the byte offset of the block that holds the note, so a block's ids never depend on the blocks before it.
+    /// </summary>
+    internal sealed class TranslationState
     {
-        public int FootnoteCount, EndnoteCount;                   // notes met so far (the ids: 1, 2, ... in document order)
-        public readonly Dictionary<string, string> ImageRelationships;   // "wordml://..." -> relationship id
-        public readonly List<(string id, string target)> Hyperlinks;
-        private readonly Dictionary<string, string> _hyperlinkIds;
-        public TranslationState() { ImageRelationships = new(StringComparer.Ordinal); Hyperlinks = new(); _hyperlinkIds = new(StringComparer.Ordinal); }
-        /// <summary>A notes pass: the body pass's relationships (one id per link target, per picture), note counts from 0.</summary>
-        public TranslationState(TranslationState body) { ImageRelationships = body.ImageRelationships; Hyperlinks = body.Hyperlinks; _hyperlinkIds = body._hyperlinkIds; }
+        public readonly Dictionary<string, string> ImageRelationships = new(StringComparer.Ordinal);   // "wordml://..." -> relationship id
+        public readonly List<(string id, string target)> Hyperlinks = new();
+        private readonly Dictionary<string, string> _hyperlinkIds = new(StringComparer.Ordinal);
+        private bool _isFrozen;
+        private int _noteIdBase, _notesInBlock;
+
+        /// <summary>Ends the open pass: later lookups never add a relationship (the relationship parts are already made).</summary>
+        public void Freeze() => _isFrozen = true;
 
         public string HyperlinkId(string target)
         {
             if (_hyperlinkIds.TryGetValue(target, out string? id)) return id;
+            if (_isFrozen) return "rIdLinkUnknown";
             _hyperlinkIds[target] = id = "rIdLink" + (Hyperlinks.Count + 1);
             Hyperlinks.Add((id, target));
             return id;
@@ -311,80 +236,35 @@ internal static class Word2003XmlTranslator
 
         public string ImageId(string name)
         {
-            if (!ImageRelationships.TryGetValue(name, out string? id)) ImageRelationships[name] = id = "rIdImage" + (ImageRelationships.Count + 1);
+            if (ImageRelationships.TryGetValue(name, out string? id)) return id;
+            if (_isFrozen) return "rIdImageUnknown";
+            ImageRelationships[name] = id = "rIdImage" + (ImageRelationships.Count + 1);
             return id;
         }
+
+        /// <summary>
+        /// Starts a body block at <paramref name="blockOffset"/> in the file: its notes get the ids offset + 1, offset + 2, ...
+        /// (unique: a note takes more than one byte of its block, so they stay below the next block's offset).
+        /// </summary>
+        public void BeginBlock(long blockOffset)
+        {
+            if (blockOffset >= int.MaxValue / 2) throw new NotSupportedException("Word 2003 XML files over 1 GB are not supported.");
+            _noteIdBase = (int)blockOffset;
+            _notesInBlock = 0;
+        }
+
+        public int NextNoteId() => _noteIdBase + ++_notesInBlock;
     }
 
-    private static void TranslateTree(XElement element, XmlWriter writer, TranslationState state, string rootName)
+    internal static void TranslateTree(XElement element, XmlWriter writer, TranslationState state, string rootName)
     {
         using XmlReader reader = element.CreateReader();
         reader.MoveToContent();
         new Translation(writer, state, NotePass.None).Root(reader, rootName);
     }
 
-    /// <summary>One pass over w:body: the document part, or (a notes pass) only the notes' bodies.</summary>
-    private static void TranslateBody(Func<Stream> openSource, XmlWriter writer, TranslationState state, NotePass pass, CancellationToken cancellation)
-    {
-        using Stream source = openSource();
-        using XmlReader reader = CreateReader(source);
-        var translation = new Translation(writer, state, pass) { Cancellation = cancellation };
-        string rootName = pass switch { NotePass.Footnotes => "footnotes", NotePass.Endnotes => "endnotes", _ => "document" };
-        translation.StartRoot(rootName);
-        try
-        {
-            reader.MoveToContent();
-            if (!reader.IsEmptyElement)
-            {
-                reader.Read();
-                while (!reader.EOF && reader.NodeType != XmlNodeType.EndElement)
-                {
-                    if (reader.NodeType == XmlNodeType.Element && reader.NamespaceURI == WordNamespace && reader.LocalName == "body")
-                    {
-                        translation.Element(reader);      // w:body (translated as itself in the document pass)
-                        break;
-                    }
-                    if (reader.NodeType == XmlNodeType.Element) reader.Skip(); else reader.Read();
-                }
-            }
-        }
-        catch (XmlException)
-        {
-            // Malformed: keep what precedes the first error, as for a .docx part (WordDocumentXml.LoadUntilFirstError):
-            // the elements still open are closed below, the rest of the file is not read.
-        }
-        translation.CloseAll();
-        writer.WriteEndElement();         // the root
-    }
-
-    /// <summary>Every w:binData a v:imagedata names, decoded into word/media.</summary>
-    private static void WriteImages(Func<Stream> openSource, ZipArchive zip, TranslationState state, CancellationToken cancellation)
-    {
-        var written = new HashSet<string>(StringComparer.Ordinal);
-        using Stream source = openSource();
-        using XmlReader reader = CreateReader(source);
-        var buffer = new byte[1 << 16];
-        try
-        {
-            while (!reader.EOF)
-            {
-                if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "binData" || reader.NamespaceURI != WordNamespace) { reader.Read(); continue; }
-                string? name = reader.GetAttribute("name", WordNamespace);
-                if (name is null || !state.ImageRelationships.ContainsKey(name) || !written.Add(name) || reader.IsEmptyElement) { reader.Skip(); continue; }
-                cancellation.ThrowIfCancellationRequested();
-                ZipArchiveEntry entry = zip.CreateEntry("word/media/" + MediaPartName(state, name), CompressionLevel.NoCompression);
-                entry.LastWriteTime = FixedEntryTime;
-                using Stream media = entry.Open();
-                int read;
-                while ((read = reader.ReadElementContentAsBase64(buffer, 0, buffer.Length)) > 0) media.Write(buffer, 0, read);
-            }
-        }
-        catch (XmlException) { }          // malformed: the pictures before the error are kept
-        catch (FormatException) { }       // bad base64: that picture is cut where it breaks
-    }
-
     /// <summary>The element-by-element translation (an explicit stack: no recursion, any nesting depth).</summary>
-    private sealed class Translation(XmlWriter writer, TranslationState state, NotePass pass)
+    internal sealed class Translation(XmlWriter writer, TranslationState state, NotePass pass)
     {
         private enum Frame { Written, Picture, Unwrapped, Note }
 
@@ -473,7 +353,7 @@ internal static class Word2003XmlTranslator
             if (ns == WordNamespace && local is "footnote" or "endnote")
             {
                 bool isFootnote = local == "footnote";
-                int id = isFootnote ? ++state.FootnoteCount : ++state.EndnoteCount;
+                int id = state.NextNoteId();
                 if (pass == NotePass.None)
                 {
                     writer.WriteStartElement("w", isFootnote ? "footnoteReference" : "endnoteReference", MainNamespace);

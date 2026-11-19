@@ -135,7 +135,8 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Word 6.0 / 95 numbering: label indents and fonts from the ANLD (dxaIndent, dxaSpace, fHang, the number's bold / italic / size) | doc | The labels are counted and shown with a tab after them; the ANLD's own spacing and character formatting are not applied yet | planned |
 | Word 6.0 / 95 drawing objects (DO records, PlcfdoaMom) and Word 6 metafile / bitmap pictures | doc | No OfficeArt in a Word 6 file; pictures that are not PNG / JPEG are not shown in any .doc. No public Word 6 file with pictures or drawing objects to check against (2026-11-18: LibreOffice's and Apache POI's test data hold only the fuzz file ofz21385-1 with drawing objects and none with pictures; neither Word 16 nor LibreOffice can save Word 6/95) | deferred |
 | Word 2003 XML: embedded fonts, w:docPr note separators | docx | Not translated; separators do not change the flow view | deferred |
-| Flat OPC in UTF-16 or a legacy code page | docx | Rejected with a clear message: Word writes it in UTF-8 and its parts are read in place as UTF-8 (Word 2003 XML is translated, so any encoding works) | won't do |
+| Flat OPC or Word 2003 XML in UTF-16 or a legacy code page | docx | Rejected with a clear message: Word writes both in UTF-8, and their blocks are read in place by byte offsets as UTF-8 | won't do |
+| Word 2003 XML files over 1 GB | docx | Rejected with a clear message: note ids are made from the note's block offset (an int); Word itself opens documents up to 512 MB | won't do |
 | HTML files and HTML saved as .doc | html | Deliberately out of scope (FastDocView has no HTML support) | won't do |
 | Malformed XML recovery before office:text in a .fodt | fodt | The file's first fatal error comes before the body, so nothing is left to keep: a clear "not well-formed" error, as LibreOffice's parser stops there too | won't do |
 | Exact Word layout metrics | all | Flow view on purpose | won't do |

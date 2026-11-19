@@ -68,7 +68,7 @@ public static class WordWindowedDocumentOpener
         {
             WordFileFormat.Docx => DocxWindowedDocument.Open(filePath, policy, progress, cancellation),
             WordFileFormat.FlatXmlPackage => DocxWindowedDocument.Open(filePath, DocxWindowedDocument.DocxPackageForm.FlatXml, filePath, policy, progress, cancellation),
-            WordFileFormat.Word2003Xml => Word2003XmlTranslator.Open(filePath, policy, progress, cancellation),
+            WordFileFormat.Word2003Xml => DocxWindowedDocument.Open(filePath, DocxWindowedDocument.DocxPackageForm.Word2003Xml, filePath, policy, progress, cancellation),
             WordFileFormat.DocBinary => DocBinaryWindowedDocument.Open(filePath, policy, progress, cancellation),
             WordFileFormat.OpenDocument => OdtWindowedDocument.Open(filePath, isFlat: false, policy, progress, cancellation),
             WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Open(filePath, isFlat: true, policy, progress, cancellation),
@@ -123,7 +123,7 @@ public static class WordWindowedDocumentOpener
         {
             WordFileFormat.Docx => DocxWindowedDocument.Decide(filePath, policy),
             WordFileFormat.FlatXmlPackage => DocxWindowedDocument.Decide(filePath, policy, DocxWindowedDocument.DocxPackageForm.FlatXml),
-            WordFileFormat.Word2003Xml => Word2003XmlTranslator.Decide(filePath, policy),
+            WordFileFormat.Word2003Xml => DocxWindowedDocument.Decide(filePath, policy, DocxWindowedDocument.DocxPackageForm.Word2003Xml),
             WordFileFormat.DocBinary => DocBinaryWindowedDocument.Decide(filePath, policy),
             WordFileFormat.OpenDocument => OdtWindowedDocument.Decide(filePath, policy, isFlat: false),
             WordFileFormat.FlatOpenDocument => OdtWindowedDocument.Decide(filePath, policy, isFlat: true),

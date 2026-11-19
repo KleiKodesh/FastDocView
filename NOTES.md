@@ -1046,17 +1046,36 @@ never the extension (Tika's Word 2003 sample is named .doc). LibreOffice reads W
   window onto the file itself (so the index's offsets are file offsets and every read is windowed as for a stored .docx
   part); a binary part is decoded from base64 only when a read reaches it (the last one cached). Local headers, the
   central directory and a [Content_Types].xml from the parts' content types are synthesized. UTF-8 only.
-- Word 2003 XML (`Docx/Word2003XmlTranslator`): a streaming XmlReader -> XmlWriter translation into a .docx package
-  written once beside the document's sidecar (`<hash>.wordindex.package`, deleted with the sidecar or as an orphan by
-  the cache trim, re-made when the file's size or time changes - a stamp entry inside records them). Passes: header
-  (w:styles, w:lists, w:docPr, w:fonts/w:defaultFonts as small trees), body -> document.xml, footnotes, endnotes,
-  pictures. Deterministic output (fixed entry times), so a saved index matches a re-made package. The document's
-  index is keyed by and checked against the .xml file itself (WordDocumentFileStream.WatchedPath).
+- Word 2003 XML (`Docx/Word2003PackageStream` + `Docx/Word2003XmlTranslator`), windowed since 2026-11-19 (until then the
+  whole file was translated into a .docx package beside the sidecar before the first paint):
+  - Open: one byte pass (`Word2003SourceScanner`: vectorized sequence search for six tags, no XML parse) finds the
+    body's byte range, every w:binData (name, base64 range, decoded length), every w:hlink w:dest, and whether the body
+    holds w:footnote / w:endnote. The header trees before w:body (w:styles, w:lists, w:docPr, w:fonts/w:defaultFonts:
+    small) are translated into styles / numbering / settings; [Content_Types], the relationships (one per link target
+    and picture, ids in file order, then frozen) and the media parts (base64 ranges decoded on read) are laid out as a
+    virtual stored zip (`DocxVirtualPackageStream`, shared with Flat OPC). Decide + Open make one pass (cached by path,
+    length, time).
+  - document.xml / footnotes.xml / endnotes.xml are derived entries (zip method 0xF003, no data): the .docx index pass
+    pulls them through `IDocxDerivedPartSource` (`DocxEntryInflationCursor`), and the readers' views come from it
+    (`DocxEntryInflation.OpenView`). `Word2003BodyBlockSplitter` cuts the body into its elements (looking through
+    wx:sect / wx:sub-section) by bytes; each block is translated on its own by an XmlReader fragment (the root's
+    namespaces as context) into one XmlWriter whose root start tag is the part's prefix, so a block's bytes are the same
+    whether translated in the index pass or later from a checkpoint. A checkpoint (block offset in the file, offset in
+    the translated part) is recorded every 64 KB of output and saved in the sidecar as a deflate checkpoint with no
+    window; a window translates from the nearest one (at most ~64 KB). Note ids = block offset + 1, 2, ... (no state
+    carried between blocks); a notes part translates only the blocks whose bytes hold that note tag.
+  - Measured (big-2003-v1.xml: the 87 MB-body sample saved by Word as wdFormatXML, 91 MB, 123,007 blocks; machine busy,
+    numbers vary 2x): open pass 93-230 ms, first paint with the pass cached 161-172 ms vs the .docx 139-144 ms; cold first
+    paint 0.4-0.7 s vs the .docx 0.3-0.7 s in the same runs; a window at 3/4 of the file 10-25 ms (the .docx 20 ms); the
+    rest of the index 7.6 s vs 3.1-3.6 s for the .docx (every block goes through XmlReader + XmlWriter). Before: the whole
+    translation ran before the first paint.
+  - Malformed: a block that fails to parse is closed where it broke and ends the part (as the whole-file translation
+    did). UTF-8 only; files over 1 GB are refused (note ids are ints).
   Mapping (LibreOffice wordml2ooo*.xsl and Word's own .docx save of the same document): wx:sect / wx:sub-section /
   wx:pBdrGroup unwrapped, other wx: dropped; w:listPr/w:ilfo -> w:numPr/w:numId; w:lists/w:listDef/w:list/w:ilst/w:lsid/
   w:plt/w:nfc -> w:numbering/w:abstractNum/w:num/w:abstractNumId/w:nsid/w:multiLevelType/w:numFmt (MS-DOC codes via
-  DocBinaryListDefinitions); w:footnote / w:endnote inline in the run -> a reference + the note in its own part (ids in
-  document order); w:hlink -> w:hyperlink (external relationship per target, w:bookmark -> w:anchor); aml:annotation
+  DocBinaryListDefinitions); w:footnote / w:endnote inline in the run -> a reference + the note in its own part (ids from
+  the block's offset); w:hlink -> w:hyperlink (external relationship per target, w:bookmark -> w:anchor); aml:annotation
   bookmarks -> w:bookmarkStart/End, insertions unwrapped, deletions / comments / formatting changes dropped; w:binData
   "wordml://..." -> word/media + v:imagedata r:id; hyphenated names to camel case (b-cs, first-line, line-rule, h-ansi),
   fareast -> eastAsia, vmerge -> vMerge, on/off -> 1/0; w:defaultFonts -> styles docDefaults; xml:space="preserve" on
@@ -1064,8 +1083,10 @@ never the extension (Tika's Word 2003 sample is named .doc). LibreOffice reads W
   w:listPicBulletId -> w:numPicBullet / w:numPicBulletId (w:lvlPicBulletId keeps its name), its w:pict's w:binData ->
   word/media with word/_rels/numbering.xml.rels naming the pictures (LibreOffice wordml2ooo_list.xsl:255-267 reads the
   same w:listPicBullet/w:pict/w:binData and v:shape style as a list-level-style-image).
-- Check (`--word-xml`): test-data/word-xml (made by Word: make-word-xml-fixtures.ps1, SaveAs2 19 / 11, PDF by
-  ExportAsFixedFormat). The Flat OPC file renders exactly as the .docx (in memory, sidecar, reopen, on demand); the 2003
+- Check (`--word-xml`; `--word2003-big file.xml [file.docx]` times a big file): test-data/word-xml (made by Word: make-word-xml-fixtures.ps1, SaveAs2 19 / 11, PDF by
+  ExportAsFixedFormat). `Word2003WindowedTest`: the 2003 fixture's body repeated 600 times (6,600 blocks, 1,200 notes):
+  shuffled windows and notes read on demand / from a built sidecar / reopened equal the in-memory read, search and
+  GetText find every copy. The Flat OPC file renders exactly as the .docx (in memory, sidecar, reopen, on demand); the 2003
   file has the .docx's text, formatting, list labels, notes, table, link and picture (Word's PDF text, pdftotext, has the
   same lines); the picture-bullet fixture (make-picture-bullet-fixture.ps1) draws the same two picture labels as its
   .docx. Remaining differences against the .docx come from what 2003 XML cannot hold: theme colours (a literal

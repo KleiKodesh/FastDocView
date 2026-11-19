@@ -297,7 +297,7 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 | Word coexistence: shared read while Word holds or saves the file; changed file reopens | yes | yes | yes | yes | yes | yes |
 | Variants: .docm / .dotx / .dotm, .ott, RTF saved as .doc | yes | n.a. | yes | yes | n.a. | n.a. |
 | Word XML Document (Flat OPC, `pkg:package`): read by the .docx reader through its parts, windowed (2) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
-| Word 2003 XML Document (`w:wordDocument`): translated once into a .docx package beside the sidecar (3) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
+| Word 2003 XML Document (`w:wordDocument`): read by the .docx reader, each block translated when it is read, windowed (3) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
 | Word 6.0 / 95 .doc (nFib 101-105): read by the .doc reader's version branches, windowed (4) | n.a. | partial | n.a. | n.a. | n.a. | n.a. |
 | Word for Windows 1.x / 2.0 .doc (wIdent 0xA59B / 0xA59C / 0xA5DB, no compound file): the same reader, windowed (5) | n.a. | partial | n.a. | n.a. | n.a. | n.a. |
 
@@ -309,7 +309,10 @@ not indexed yet shows nothing and the block is fetched again once the index is c
    place, base64 parts (pictures) decoded when first asked for. UTF-8 only (Word writes UTF-8).
 3. Detected by content (Tika's sample is named .doc). Styles, default fonts, lists (w:listDef / w:list), footnotes and
    endnotes (inline in the run), hyperlinks, bookmarks, tables, VML pictures (w:binData), sections; tracked insertions kept,
-   deletions and comments dropped. Re-translated only when the file changes.
+   deletions and comments dropped. Nothing is translated whole: one byte pass at open finds the body, the pictures,
+   the link targets and whether notes exist; the header parts (styles, lists, settings) are translated at open; body and
+   notes blocks are translated as the index pass and the windows reach them (checkpoints every 64 KB of translated text
+   in the sidecar). UTF-8 only (Word writes UTF-8).
 4. Word 6.0 / 95: the shorter FIB, the WordDocument stream as table stream, 8-bit text decoded run by run in the code
    page of the run's font character set (else its paragraph style's font, else its language - LibreOffice's per-run rule) (Hebrew cp1255, Cyrillic, Central European, Greek, Turkish, Baltic, Arabic, Thai, Vietnamese; an Asian font's 8-bit text as double-byte cp932 / 936 / 949 / 950, each character on its lead byte) or, when
    the FIB says so (Far East builds), 16-bit units - one at or above 0x3000 a double-byte Japanese / Korean / Chinese

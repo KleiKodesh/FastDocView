@@ -13,6 +13,7 @@ internal sealed class DocxEntryInflationCursor
 {
     private readonly DeflateCheckpointInflater? _inflater;
     private readonly ZipStoredEntryStream? _stored;
+    private readonly IDocxDerivedPartPass? _derived;          // a derived part (Word 2003 XML translated): its own pass and checkpoints
     private readonly DeflateCheckpointSelector? _selector;
     private long _nextCheckpointAt;
 
@@ -31,6 +32,11 @@ internal sealed class DocxEntryInflationCursor
     public DocxEntryInflationCursor(Stream package, ZipEntryLocation entry, long checkpointSpanBytes, bool snapToSparseBoundaries = false)
     {
         Checkpoints = new List<DeflateCheckpoint>();
+        if (entry.CompressionMethod == DocxVirtualPackageStream.DerivedPartMethod && package is IDocxDerivedPartSource derived)
+        {
+            _derived = derived.OpenPass(entry, Checkpoints, checkpointSpanBytes);
+            return;
+        }
         if (!entry.IsDeflate)
         {
             _stored = new ZipStoredEntryStream(package, entry.DataOffset, entry.CompressedSize);
@@ -57,7 +63,9 @@ internal sealed class DocxEntryInflationCursor
     public int ReadNextChunk()
     {
         if (IsFinished) return 0;
-        int read = _inflater is not null ? _inflater.Read(Chunk, 0, Chunk.Length) : _stored!.Read(Chunk, 0, Chunk.Length);
+        int read = _inflater is not null ? _inflater.Read(Chunk, 0, Chunk.Length)
+                 : _derived is not null ? _derived.Read(Chunk, 0, Chunk.Length)
+                 : _stored!.Read(Chunk, 0, Chunk.Length);
         if (read == 0) { IsFinished = true; _selector?.Finish(); }
         BytesInflated += read;
         return read;

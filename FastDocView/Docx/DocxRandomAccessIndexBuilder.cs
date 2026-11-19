@@ -56,7 +56,7 @@ public static class DocxRandomAccessIndexBuilder
     {
         if (name is null) return null;
         ZipEntryLocation? entry = ZipEntryLocator.Locate(package, name);
-        if (entry is not null && !entry.IsDeflate && !entry.IsStored)
+        if (entry is not null && !entry.IsDeflate && !entry.IsStored && entry.CompressionMethod != DocxVirtualPackageStream.DerivedPartMethod)
             throw new InvalidDataException($"Unsupported zip compression method {entry.CompressionMethod} for {name}.");
         return entry;
     }

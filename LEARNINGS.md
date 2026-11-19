@@ -499,3 +499,15 @@ window) and the p95 (a slow path hit by more than one window in twenty); the wor
 A Word 6/95 piece fc has no "compressed" bit. Whether the text is 8-bit or UTF-16 is one FIB flag for the whole file
 (fExtChar, 0x1000 at 0x0A; LibreOffice ww8scan.cxx WW8Cp2Fc for nVersion < 8). Reading Bug51944.doc (wIdent 0xA699, a
 far-east Word 95 save) as 8-bit showed every other byte as a NUL and cut words apart; the check is in Word6DocumentsTest.
+
+## 2026-11-19 - Word 2003 XML: translate per block, not per file
+
+A one-file XML format that needs translation can still be windowed: cut the body into its elements by bytes, translate
+each element alone (XmlReader fragment with the root's namespaces, one XmlWriter whose root start tag is the part's
+prefix) and checkpoint (file offset, translated offset) pairs like deflate. It only works when a block's output depends
+on nothing before it: ids counted in document order (notes 1, 2, ...; relationships as met) had to become ids from the
+block's offset and relationships fixed by the open pass. The open pass must not stop at every '<': a vectorized
+sequence search per wanted tag (keeping each tag's next hit) reads 91 MB in about 100 ms. Python edits on CRLF files
+read in text mode see '
+' only - match on '
+', then normalise the line ends.
