@@ -261,7 +261,12 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         fromBlock = Math.Max(0, fromBlock);
         lock (_readLock)
         {
-            CoverKnownBlocks(fromBlock + (long)Math.Max(1, maxBlocksToScan));
+            long wantedEnd = fromBlock + (long)Math.Max(1, maxBlocksToScan);
+            // the scan extends the index as far as asked (IWordWindowedDocument): without it a batch past the known blocks
+            // returns no progress and GetText loops forever on a document still indexing
+            if (_builder is { } builder && builder.KnownBlockCount < wantedEnd)
+                ScanAhead((int)Math.Min(int.MaxValue, wantedEnd - builder.KnownBlockCount));
+            CoverKnownBlocks(wantedEnd);
             if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
             try
             {

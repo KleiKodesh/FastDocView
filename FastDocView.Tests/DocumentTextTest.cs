@@ -48,6 +48,38 @@ public static class DocumentTextTest
         try { WordDocumentText.GetText(Path.Combine(root, SampleFiles[1]), cancelled.Token); }
         catch (OperationCanceledException) { stopped = true; }
         TestReport.Check(stopped, "a cancelled token stops GetText");
+        CheckWhileIndexing();
+    }
+
+    /// <summary>
+    /// GetText on a document opened on demand (index still building, no sidecar yet): the scan must extend the index as far
+    /// as each batch asks, or GetText never ends (RTF and plain text / web archives once returned no progress past the known blocks).
+    /// </summary>
+    private static void CheckWhileIndexing()
+    {
+        const int paragraphs = 5000;
+        string folder = Path.Combine(TestReport.OutputDirectory, "text-while-indexing-v1");
+        if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        Directory.CreateDirectory(folder);
+        var rtf = new System.Text.StringBuilder(@"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}").Append('\n');
+        var txt = new System.Text.StringBuilder();
+        for (int i = 0; i < paragraphs; i++) { rtf.Append(@"\pard line").Append(i).Append(@"\par").Append('\n'); txt.Append("line").Append(i).Append('\n'); }
+        rtf.Append('}');
+        string rtfPath = Path.Combine(folder, "many-paragraphs.rtf"), txtPath = Path.Combine(folder, "many-lines.txt");
+        File.WriteAllText(rtfPath, rtf.ToString());
+        File.WriteAllText(txtPath, txt.ToString());
+        foreach (string path in new[] { rtfPath, txtPath })
+        {
+            var policy = new WordIndexPolicy { ForcedMode = WordIndexMode.Sidecar, IndexesOnDemand = true, CacheDirectory = Path.Combine(folder, "index-" + Path.GetExtension(path).TrimStart('.')) };
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+            bool wasIndexing = !document.IsIndexComplete;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            string text = "";
+            try { text = WordDocumentText.GetText(document, timeout.Token); }
+            catch (OperationCanceledException) { }
+            int lines = text.Split('\n').Count(line => line.StartsWith("line", StringComparison.Ordinal));
+            TestReport.Check(wasIndexing && lines == paragraphs, $"{Path.GetFileName(path)}: GetText while the index builds reads all {paragraphs} paragraphs (opened indexing: {wasIndexing}, read {lines})");
+        }
     }
 
     /// <summary>Up to 6 words of the text (longest first): the search's count over the document equals the count in the text.</summary>
