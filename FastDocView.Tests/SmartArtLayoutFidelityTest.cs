@@ -38,6 +38,34 @@ public static class SmartArtLayoutFidelityTest
             string stripped = Path.Combine(folder, Path.GetFileNameWithoutExtension(path) + "-nodrawing.docx");
             if (required && File.Exists(stripped)) CheckDocument(stripped, name);
         }
+        RunDeepData();
+    }
+
+    /// <summary>
+    /// Hostile data: a 200,000-deep parOf chain (the old recursive calcMaxDepth overflowed the stack on it), a parOf cycle and a
+    /// diamond. maxDepth / depth walk the whole real structure, no cap.
+    /// </summary>
+    private static void RunDeepData()
+    {
+        TestReport.Step("SmartArt data: deep parOf chain, cycle and diamond (maxDepth / depth without recursion)");
+        const int deep = 200_000;
+        var points = new XElement("ptLst", new XElement("pt", new XAttribute("modelId", "p0"), new XAttribute("type", "doc")));
+        var connections = new XElement("cxnLst");
+        for (int i = 1; i <= deep; i++)
+        {
+            points.Add(new XElement("pt", new XAttribute("modelId", "p" + i)));
+            connections.Add(new XElement("cxn", new XAttribute("modelId", "c" + i), new XAttribute("srcId", "p" + (i - 1)), new XAttribute("destId", "p" + i),
+                                         new XAttribute("parTransId", "t" + i), new XAttribute("sibTransId", "s" + i)));
+        }
+        var chain = new DocxDiagramLayout.DataModel(new XElement("dataModel", points, connections));
+        TestReport.Check(chain.MaxDepth("p0") == deep, $"deep chain: maxDepth {chain.MaxDepth("p0")} (want {deep})");
+        TestReport.Check(chain.Depth("p" + deep) == deep, $"deep chain: depth of the last point {chain.Depth("p" + deep)} (want {deep})");
+
+        static XElement Cxn(string from, string to) => new("cxn", new XAttribute("srcId", from), new XAttribute("destId", to), new XAttribute("parTransId", "t"), new XAttribute("sibTransId", "s"));
+        var cycle = new DocxDiagramLayout.DataModel(new XElement("dataModel", new XElement("cxnLst", Cxn("a", "b"), Cxn("b", "c"), Cxn("c", "a"))));
+        TestReport.Check(cycle.MaxDepth("a") == 3 && cycle.Depth("a") == 2, $"cycle: maxDepth {cycle.MaxDepth("a")} (3), depth {cycle.Depth("a")} (2), no hang");
+        var diamond = new DocxDiagramLayout.DataModel(new XElement("dataModel", new XElement("cxnLst", Cxn("r", "x"), Cxn("r", "y"), Cxn("x", "z"), Cxn("y", "z"), Cxn("z", "w"))));
+        TestReport.Check(diamond.MaxDepth("r") == 3 && diamond.MaxDepth("w") == 0, $"diamond: maxDepth {diamond.MaxDepth("r")} (3), leaf {diamond.MaxDepth("w")} (0)");
     }
 
     /// <summary>The laid-out shapes against the drawing part's, by modelId: the largest difference of any box edge, in points.</summary>

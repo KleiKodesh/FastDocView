@@ -196,25 +196,73 @@ internal static class DocxDiagramLayout
             return standing;
         }
 
-        /// <summary>calcMaxDepth: the longest parOf path down from a point.</summary>
-        public int MaxDepth(string id) => MaxDepth(id, []);
-
-        private int MaxDepth(string id, HashSet<string> path)
+        /// <summary>
+        /// calcMaxDepth (oox diagramlayoutatoms.cxx calcMaxDepth): the longest parOf path down from a point. Walked with an
+        /// explicit stack (LibreOffice recurses; a hostile file's deep parOf chain must not overflow ours), each point's
+        /// depth computed once; a parOf back to a point still on the path (a cycle: malformed data) adds nothing.
+        /// </summary>
+        public int MaxDepth(string id)
         {
-            if (!path.Add(id)) return 0;     // a parOf cycle (malformed data) ends the path
-            int depth = Connections.Where(c => c.Type == "parOf" && c.Source == id).Select(c => MaxDepth(c.Destination, path) + 1).DefaultIfEmpty(0).Max();
-            path.Remove(id);
-            return depth;
+            Dictionary<string, List<string>> children = ParOfChildren();
+            var depths = new Dictionary<string, int>(StringComparer.Ordinal);
+            var onPath = new HashSet<string>(StringComparer.Ordinal);
+            var stack = new Stack<(string Id, int Next)>();
+            stack.Push((id, 0));
+            onPath.Add(id);
+            while (stack.Count > 0)
+            {
+                (string current, int next) = stack.Pop();
+                List<string>? below = children.TryGetValue(current, out var found) ? found : null;
+                if (below is not null && next < below.Count)
+                {
+                    stack.Push((current, next + 1));
+                    string child = below[next];
+                    if (!depths.ContainsKey(child) && onPath.Add(child)) stack.Push((child, 0));
+                    continue;
+                }
+                int depth = 0;
+                if (below is not null)
+                    foreach (string child in below)
+                        if (depths.TryGetValue(child, out int childDepth)) depth = Math.Max(depth, childDepth + 1);
+                        else if (onPath.Contains(child)) depth = Math.Max(depth, 1);   // the cycle's edge counts once, as the recursion's "ends the path" did
+                depths[current] = depth;
+                onPath.Remove(current);
+            }
+            return depths[id];
         }
 
-        /// <summary>calcDepth (svx datamodel.cxx): the parOf depth of a data point below the document.</summary>
+        private Dictionary<string, List<string>>? _parOfChildren;
+        private Dictionary<string, Connection>? _parOfParents;
+
+        /// <summary>Each point's parOf children (destinations) in connection order, built once.</summary>
+        private Dictionary<string, List<string>> ParOfChildren()
+        {
+            if (_parOfChildren is not null) return _parOfChildren;
+            var map = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            foreach (Connection connection in Connections)
+                if (connection.Type == "parOf")
+                {
+                    if (!map.TryGetValue(connection.Source, out var list)) map[connection.Source] = list = [];
+                    list.Add(connection.Destination);
+                }
+            return _parOfChildren = map;
+        }
+
+        /// <summary>calcDepth (svx datamodel.cxx): the parOf depth of a data point below the document; the walk up stops at a point met twice (a cycle: malformed data).</summary>
         public int Depth(string id)
         {
             int depth = 0;
-            for (int guard = 0; guard < 64; guard++)
+            var seen = new HashSet<string>(StringComparer.Ordinal) { id };
+            if (_parOfParents is null)
             {
-                Connection? up = Connections.FirstOrDefault(c => c.Type == "parOf" && c.Destination == id && c.ParentTransition.Length > 0 && c.SiblingTransition.Length > 0);
-                if (up is null) break;
+                _parOfParents = new Dictionary<string, Connection>(StringComparer.Ordinal);
+                foreach (Connection connection in Connections)      // the first such connection, as a FirstOrDefault would find
+                    if (connection.Type == "parOf" && connection.ParentTransition.Length > 0 && connection.SiblingTransition.Length > 0 && !_parOfParents.ContainsKey(connection.Destination))
+                        _parOfParents[connection.Destination] = connection;
+            }
+            while (true)
+            {
+                if (!_parOfParents.TryGetValue(id, out Connection? up) || !seen.Add(up.Source)) break;
                 depth++;
                 id = up.Source;
             }
