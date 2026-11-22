@@ -1766,6 +1766,24 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   oox/source/drawingml/diagram/diagramlayoutatoms.cxx:6118). forEach ch then self ptType="parTrans" (hierarchy1) walks to
   the transition into the node. --smartart: all ten layouts within 4 pt (hierarchy connectors 0.0, org chart 3.6,
   horizontal list 0.2, stacked list 0.0), and block list / horizontal list / stacked list at Word's font size. 
+  2026-11-22 (fourth round): every layout at Word's autofit size (--smartart checks the size of every text shape, all ten
+  layouts plus pyramid-4-levels-v1, a second pyramid fixture). What Word does, read from its drawing parts: (1) text fits
+  the geometry's text rectangle (preset a:rect, Word's dsp:txXfrm: the circle's inscribed square, inside the chevron's
+  points, inside a rounded rectangle's corners), not the box; (2) margins come from the tx node's chosen choose branch too
+  (the chevron's lMarg 0.315); (3) a primFontSz op="equ" constraint of an ancestor (for des / ch, its forName and
+  ptType) gives every shape it covers one size, the smallest that fits (hierarchy root and branches, org chart head and
+  staff, each layout's whole node set); (4) a lin row's font-driven size only sizes the boxes, the text then steps down
+  from it, and a child whose rule says h = INF grows to the height its text needs at that size (vertical bullet list: 39 pt
+  text in boxes 0.52 x 50 mm high, spacers 0.08 x 39 mm); (5) runs carry kern="1200", so Calibri's own kern pairs count
+  from 12 pt (DocxCalibriKerning, from calibri.ttf's kern table; "Branch A" 0.7 pt narrower decides 33 vs 32 pt); (6) a
+  pyramid level's text lies in its trapezoid: the apex in its whole box, every lower level in the middle 65 % of its width
+  (Word 16's txXfrm, 3 and 4 levels; written as dsp:txXfrm). The size searches (tx autofit, lin row, composite cap) are
+  binary searches over whole sizes (fitting only gets harder as the size grows), and the data model's parOf links are
+  indexed once (out of a point in source order, into a node, the parent of a node or transition) instead of scanned per
+  step. LibreOffice (libreoffice-24-8 oox/source/drawingml/diagram/diagramlayoutatoms.cxx) tracks the shapes of a
+  for="des" op="equ" primFontSz by forName in its lin algorithm (:1419-1430, getDiagramFontHeights) and turns on the
+  text frame's AUTOFIT for tx shapes (:1732-1734), each frame shrunk on its own at render time; it has no text
+  rectangle, kerning or grow-to-text step, so Word's drawings are the reference for (1) and (3)-(6).
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
   pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns

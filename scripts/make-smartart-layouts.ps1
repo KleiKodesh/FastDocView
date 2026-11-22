@@ -6,19 +6,20 @@ $folder = Join-Path $PSScriptRoot '..\test-data\smartart-layouts'
 New-Item -ItemType Directory -Force $folder | Out-Null
 $folder = (Resolve-Path $folder).Path
 # (Word refuses child nodes in hList1 / list1 through the object model, so those two are flat lists.)
-# layout id (urn:microsoft.com/office/officeart/2005/8/layout/<id>) -> file name, node texts (a leading '-' = a child of the previous top node)
-$layouts = [ordered]@{
-    'default'   = @('block-list',  @('Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'))
-    'process1'  = @('process',     @('Plan', 'Build', 'Test'))
-    'cycle2'    = @('cycle',       @('One', 'Two', 'Three', 'Four', 'Five'))
-    'orgChart1' = @('org-chart',   @('Head', '-Left', '-Middle', '-Right'))
-    'hierarchy1'= @('hierarchy',   @('Root', '-Branch A', '-Branch B'))
-    'pyramid1'  = @('pyramid',     @('Top', 'Middle', 'Base'))
-    'vList2'    = @('vertical-list', @('First', 'Second', 'Third'))
-    'hList1'    = @('horizontal-list', @('North', 'East', 'South', 'West', 'Centre'))
-    'chevron1'  = @('chevron',     @('Step A', 'Step B', 'Step C'))
-    'list1'     = @('stacked-list', @('Red', 'Green', 'Blue', 'White'))
-}
+# layout id (urn:microsoft.com/office/officeart/2005/8/layout/<id>), file name, node texts (a leading '-' = a child of the previous top node)
+$layouts = @(
+    @('default',    'block-list',  @('Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon')),
+    @('process1',   'process',     @('Plan', 'Build', 'Test')),
+    @('cycle2',     'cycle',       @('One', 'Two', 'Three', 'Four', 'Five')),
+    @('orgChart1',  'org-chart',   @('Head', '-Left', '-Middle', '-Right')),
+    @('hierarchy1', 'hierarchy',   @('Root', '-Branch A', '-Branch B')),
+    @('pyramid1',   'pyramid',     @('Top', 'Middle', 'Base')),
+    @('pyramid1',   'pyramid-4-levels', @('Apex', 'Second level', 'Third', 'Foundation')),
+    @('vList2',     'vertical-list', @('First', 'Second', 'Third')),
+    @('hList1',     'horizontal-list', @('North', 'East', 'South', 'West', 'Centre')),
+    @('chevron1',   'chevron',     @('Step A', 'Step B', 'Step C')),
+    @('list1',      'stacked-list', @('Red', 'Green', 'Blue', 'White'))
+)
 $before = @(Get-Process WINWORD -ErrorAction SilentlyContinue | ForEach-Object Id)
 $word = New-Object -ComObject Word.Application
 $mine = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id } | ForEach-Object Id)
@@ -29,9 +30,9 @@ try {
     $byId = @{}
     foreach ($l in $word.SmartArtLayouts) { $byId[($l.Id -replace '^.*/', '')] = $l }
     Write-Output ("layouts: " + $byId.Count)
-    foreach ($id in $layouts.Keys) {
+    foreach ($entry in $layouts) {
+        $id = $entry[0]; $name = $entry[1]; $texts = $entry[2]
         if (-not $byId.ContainsKey($id)) { Write-Output "missing layout $id"; continue }
-        $name = $layouts[$id][0]; $texts = $layouts[$id][1]
         $doc = $word.Documents.Add()
         try {
         $doc.ActiveWindow.View.Type = 3

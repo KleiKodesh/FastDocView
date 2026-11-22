@@ -11,16 +11,15 @@ namespace FastDocView.Tests;
 /// Word 16 .docx per built-in layout (scripts/make-smartart-layouts.ps1, with Word's PDF of each) and a copy without its drawing
 /// part (scripts/strip-smartart-drawing.py). Word's saved drawing part is what Word prints, so the shapes DocxDiagramLayout
 /// lays out from the original's data, layout, colors and quickStyle parts are matched to the drawing's shapes by presentation
-/// point (dsp:sp modelId): each layout listed in <see cref="Layouts"/> must place every shape within the tolerance; the rest
+/// point (dsp:sp modelId): each layout listed in <see cref="Layouts"/> must place every shape within the tolerance and give every
+/// text Word's autofit font size; the rest
 /// are reported only. The stripped copy must render shapes through the document path (no empty frame) and its text be found by
 /// search.
 /// </summary>
 public static class SmartArtLayoutFidelityTest
 {
     /// <summary>The layouts the engine matches Word for (box edges within <see cref="TolerancePoints"/>); the others are reported, not checked.</summary>
-    private static readonly string[] Layouts = ["block-list", "process", "pyramid", "vertical-list", "chevron", "cycle", "hierarchy", "org-chart", "horizontal-list", "stacked-list"];
-    /// <summary>The layouts whose autofit font size must equal Word's (font-metric fitting); the others report a different size only.</summary>
-    private static readonly string[] FontFittedLayouts = ["block-list", "horizontal-list", "stacked-list"];
+    private static readonly string[] Layouts = ["block-list", "process", "pyramid", "vertical-list", "chevron", "cycle", "hierarchy", "org-chart", "horizontal-list", "stacked-list", "pyramid-4-levels"];
     private const double TolerancePoints = 4;
     private const double EmuPerPoint = 12700;
 
@@ -33,7 +32,8 @@ public static class SmartArtLayoutFidelityTest
         {
             string name = Path.GetFileNameWithoutExtension(path).Replace("-v1", "");
             (double worst, int matched, int expected, string detail, string fonts) = Compare(path);
-            if (FontFittedLayouts.Contains(name)) TestReport.Check(fonts.Length == 0, $"{name}: font sizes as Word's{(fonts.Length == 0 ? "" : " " + fonts)}");
+            // the autofit font size of every text shape equals Word's (font metrics, kerning, text rectangles, op="equ" groups)
+            if (Layouts.Contains(name)) TestReport.Check(fonts.Length == 0, $"{name}: font sizes as Word's{(fonts.Length == 0 ? "" : " " + fonts)}");
             else if (fonts.Length > 0) Console.WriteLine($"   INFO  {name}: font sizes differ from Word's: {fonts}");
             bool required = Layouts.Contains(name);
             string summary = $"{name}: {matched} of {expected} shapes laid out, worst edge {worst.ToString("0.0", CultureInfo.InvariantCulture)} pt";
@@ -94,20 +94,25 @@ public static class SmartArtLayoutFidelityTest
             if (difference > TolerancePoints) detail.Add($"{Shorten(id)} ours {Box(mine)} word {Box(word)}");
             worst = Math.Max(worst, difference);
         }
-        // the autofit font size: each shape's first run at Word's size (whole points)
+        // the autofit font size: each shape's first run at Word's size (whole points); by text where Word writes a text shape's
+        // text into the geometry it lies over (the pyramid's levelTx in its level's trapezoid)
         var ourSizes = FontSizes(laidOut);
+        var ourSizesByText = ourSizes.Values.GroupBy(v => v.Text).ToDictionary(g => g.Key, g => g.First().Size);
         var fonts = new List<string>();
-        foreach ((string id, string size) in FontSizes(Part("word/diagrams/drawing1.xml").Element("spTree")))
-            if (!ourSizes.TryGetValue(id, out string? mine) || mine != size) fonts.Add($"{Shorten(id)} {mine ?? "none"} word {size}");
+        foreach ((string id, (string size, string text)) in FontSizes(Part("word/diagrams/drawing1.xml").Element("spTree")))
+        {
+            string? mine = ourSizes.TryGetValue(id, out var own) ? own.Size : ourSizesByText.TryGetValue(text, out string? byText) ? byText : null;
+            if (mine != size) fonts.Add($"{Shorten(id)} {mine ?? "none"} word {size}");
+        }
         return (worst, matched, words.Count, string.Join("; ", detail.Take(4)), string.Join("; ", fonts.Take(3)));
     }
 
-    private static Dictionary<string, string> FontSizes(XElement? tree)
+    private static Dictionary<string, (string Size, string Text)> FontSizes(XElement? tree)
     {
-        var sizes = new Dictionary<string, string>();
+        var sizes = new Dictionary<string, (string, string)>();
         foreach (XElement shape in tree?.Elements("sp") ?? [])
             if (shape.Descendants().FirstOrDefault(e => e.Name.LocalName == "rPr" && e.Attribute("sz") is not null) is { } run)
-                sizes[(string?)shape.Attribute("modelId") ?? ""] = (string)run.Attribute("sz")!;
+                sizes[(string?)shape.Attribute("modelId") ?? ""] = ((string)run.Attribute("sz")!, string.Concat(shape.Descendants().Where(e => e.Name.LocalName == "t").Select(e => e.Value)));
         return sizes;
     }
 

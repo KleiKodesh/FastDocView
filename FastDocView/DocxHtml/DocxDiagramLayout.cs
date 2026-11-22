@@ -102,21 +102,68 @@ internal static class DocxDiagramLayout
 
         public bool IsConnected(string from, string to) => Connections.Any(c => c.Source == from && c.Destination == to);
 
+        private Dictionary<string, List<Connection>>? _parOfOut, _parOfInto;
+        private Dictionary<string, Connection>? _parOfAbove;
+
+        /// <summary>The parOf connections out of a point, in source order (stable), indexed once.</summary>
+        public List<Connection> ParOfOut(string from)
+        {
+            if (_parOfOut is null)
+            {
+                _parOfOut = new Dictionary<string, List<Connection>>(StringComparer.Ordinal);
+                foreach (Connection connection in Connections)
+                    if (connection.Type == "parOf")
+                    {
+                        if (!_parOfOut.TryGetValue(connection.Source, out var list)) _parOfOut[connection.Source] = list = [];
+                        list.Add(connection);
+                    }
+                foreach (List<Connection> list in _parOfOut.Values)
+                {
+                    List<Connection> sorted = list.OrderBy(c => c.SourceOrder).ToList();
+                    list.Clear();
+                    list.AddRange(sorted);
+                }
+            }
+            return _parOfOut.TryGetValue(from, out var found) ? found : [];
+        }
+
+        /// <summary>The parOf connections into a node (by destination), in connection order, indexed once.</summary>
+        public List<Connection> ParOfInto(string node)
+        {
+            if (_parOfInto is null)
+            {
+                _parOfInto = new Dictionary<string, List<Connection>>(StringComparer.Ordinal);
+                foreach (Connection connection in Connections)
+                    if (connection.Type == "parOf")
+                    {
+                        if (!_parOfInto.TryGetValue(connection.Destination, out var list)) _parOfInto[connection.Destination] = list = [];
+                        list.Add(connection);
+                    }
+            }
+            return _parOfInto.TryGetValue(node, out var found) ? found : [];
+        }
+
         /// <summary>childrenOf: what a parOf from <paramref name="from"/> holds of the wanted kind (the child, its parTrans or its sibTrans), in source order.</summary>
         public List<string> ChildrenOf(string from, string wanted)
-            => Connections.Where(c => c.Type == "parOf" && c.Source == from).OrderBy(c => c.SourceOrder)
-                          .Select(c => wanted == "parTrans" ? c.ParentTransition : wanted == "sibTrans" ? c.SiblingTransition : c.Destination)
-                          .Where(id => id.Length > 0).ToList();
+            => ParOfOut(from).Select(c => wanted == "parTrans" ? c.ParentTransition : wanted == "sibTrans" ? c.SiblingTransition : c.Destination)
+                             .Where(id => id.Length > 0).ToList();
 
-        /// <summary>parentOf: the data parent of a node or of one of its transitions, with the child's source order.</summary>
+        /// <summary>parentOf: the data parent of a node or of one of its transitions, with the child's source order (the first such connection, indexed once).</summary>
         public string? ParentOf(string from, out int order)
         {
-            foreach (Connection connection in Connections)
-                if (connection.Type == "parOf" && (connection.Destination == from || connection.SiblingTransition == from || connection.ParentTransition == from))
-                {
-                    order = connection.SourceOrder;
-                    return connection.Source;
-                }
+            if (_parOfAbove is null)
+            {
+                _parOfAbove = new Dictionary<string, Connection>(StringComparer.Ordinal);
+                foreach (Connection connection in Connections)
+                    if (connection.Type == "parOf")
+                        foreach (string key in new[] { connection.Destination, connection.SiblingTransition, connection.ParentTransition })
+                            if (!_parOfAbove.ContainsKey(key)) _parOfAbove[key] = connection;
+            }
+            if (_parOfAbove.TryGetValue(from, out Connection? up))
+            {
+                order = up.SourceOrder;
+                return up.Source;
+            }
             order = 0;
             return null;
         }
@@ -149,10 +196,9 @@ internal static class DocxDiagramLayout
                     if (ParentOf(from, out int order) is not { } parent) return [];
                     bool transition = wanted is "parTrans" or "sibTrans";
                     bool following = axis is "followSib" or "follow";
-                    return Connections.Where(c => c.Type == "parOf" && c.Source == parent)
+                    return ParOfOut(parent)
                                       .Where(c => following ? (transition ? c.SourceOrder >= order : c.SourceOrder > order)
                                                             : (transition ? c.SourceOrder <= order : c.SourceOrder < order))
-                                      .OrderBy(c => c.SourceOrder)
                                       .Select(c => wanted == "parTrans" ? c.ParentTransition : wanted == "sibTrans" ? c.SiblingTransition : c.Destination)
                                       .Where(id => id.Length > 0).ToList();
                 }
@@ -424,7 +470,8 @@ internal static class DocxDiagramLayout
                         break;
                     case "ruleLst":
                         foreach (XElement rule in child.Elements("rule"))
-                            atom.Children.Add(new RuleAtom { Parent = atom, ForName = (string?)rule.Attribute("forName") ?? "", Type = (string?)rule.Attribute("type") ?? "", Value = Double(rule.Attribute("val"), 0) });
+                            atom.Children.Add(new RuleAtom { Parent = atom, ForName = (string?)rule.Attribute("forName") ?? "", Type = (string?)rule.Attribute("type") ?? "",
+                                                             Value = (string?)rule.Attribute("val") == "INF" ? double.PositiveInfinity : Double(rule.Attribute("val"), 0) });
                         break;
                 }
             }
@@ -464,9 +511,13 @@ internal static class DocxDiagramLayout
         public double BendDistance;            // bendDist (EMU): how far from the end (bendPt end) or the start (beg) the elbow turns
         public double? FixedFontSize;          // the font size a font-driven layout chose for the shapes below it (lin / composite)
         public bool HierarchyPlaced;           // laid out with the whole tree by the outermost hierarchy algorithm
-        public bool FillsParent;               // the pyramid's level shape: its composite group's whole box
+        public bool FillsParent;               // the pyramid's level shape and its text: their composite group's whole box
+        public DiagramShape? TextFrameOf;      // a text shape laid over a geometry (the pyramid's levelTx over its level): its text rectangle is that geometry's
         public double BeginPad, EndPad;        // a connector's padding along its space, as fractions of it (begPad / endPad over connDist)
         public List<Constraint> OwnConstraints = [];
+        public bool GrowsInHeight;             // its own rule h = INF: the height may grow past its constraint to hold its text (vertical bullet list)
+        public int PyramidLevel = -1;          // a pyramid level's text: its level from the top (0 = the apex)
+        public (object Owner, string ForName)? FontGroup;   // a primFontSz op="equ" constraint of an ancestor: every shape it covers takes one size
     }
 
     private sealed class Diagram(DataModel model, LayoutTree layout, XElement? colors, XElement? quickStyle)
@@ -606,14 +657,14 @@ internal static class DocxDiagramLayout
                 string held = PassNodeId;
                 string transition = "";
                 if (held.Length > 0)
-                    transition = model.Connections.FirstOrDefault(c => c.Type == "parOf" && c.Destination == held && c.SiblingTransition.Length > 0)?.SiblingTransition ?? "";
+                    transition = model.ParOfInto(held).FirstOrDefault(c => c.SiblingTransition.Length > 0)?.SiblingTransition ?? "";
                 PassNodeId = transition;
                 DefaultVisit(forEach);
                 PassNodeId = held;
                 return;
             }
             if (iterator.Axes.Count == 1 && iterator.Axes[0] == "self" && iterator.PointType == "parTrans"
-                && model.Connections.FirstOrDefault(c => c.Type == "parOf" && c.Destination == PassNodeId && c.ParentTransition.Length > 0) is { } parentLink)
+                && model.ParOfInto(PassNodeId).FirstOrDefault(c => c.ParentTransition.Length > 0) is { } parentLink)
             {
                 // forEach ch, then self ptType="parTrans" (hierarchy1's connectors): the transition into the node the pass stands on
                 string held = PassNodeId;
@@ -663,10 +714,10 @@ internal static class DocxDiagramLayout
             if (PassNodeId.Length > 0)
             {
                 if (under.FirstOrDefault(p => p.PresAssocId == PassNodeId) is { } own) return own;
-                Connection? mine = model.Connections.FirstOrDefault(c => c.Type == "parOf" && c.Destination == PassNodeId);
+                Connection? mine = model.ParOfInto(PassNodeId).FirstOrDefault();
                 if (mine is not null && mine.SourceOrder > 0)
                 {
-                    Connection? before = model.Connections.FirstOrDefault(c => c.Type == "parOf" && c.Source == mine.Source && c.SourceOrder == mine.SourceOrder - 1 && c.SiblingTransition.Length > 0);
+                    Connection? before = model.ParOfOut(mine.Source).FirstOrDefault(c => c.SourceOrder == mine.SourceOrder - 1 && c.SiblingTransition.Length > 0);
                     if (before is not null && under.FirstOrDefault(p => p.PresAssocId == before.SiblingTransition) is { } transition) return transition;
                 }
                 return null;
@@ -690,9 +741,11 @@ internal static class DocxDiagramLayout
     {
         public ShapeAtom? Template;
         public readonly List<Constraint> Constraints = [];
+        public readonly List<RuleAtom> Rules = [];
         public void VisitBody(LayoutNodeAtom node) => DefaultVisit(node);
         protected override void VisitShape(ShapeAtom shape) => Template ??= shape;
         protected override void VisitConstraint(ConstraintAtom constraint) => Constraints.Add(constraint.Constraint);
+        protected override void VisitRule(RuleAtom rule) => Rules.Add(rule);
     }
 
     /// <summary>ShapeCreationVisitor: one shape per layout node a presentation point is built for, nested as the layout nests.</summary>
@@ -735,6 +788,7 @@ internal static class DocxDiagramLayout
                         Rotation = atom.Rotation, ZOrderOffset = atom.ZOrderOffset, Adjustments = atom.Adjustments,
                     };
                     shape.OwnConstraints = template.Constraints;
+                    shape.GrowsInHeight = template.Rules.Any(r => r.Type == "h" && r.ForName.Length == 0 && double.IsPositiveInfinity(r.Value));
                     SetUpShape(shape, node, presentation);
                     _parent.Children.Add(shape);
                     shapeParent = shape;
@@ -789,12 +843,14 @@ internal static class DocxDiagramLayout
         private readonly List<RuleAtom> _rules = [];
         private int _ownFrom;
         private readonly List<Constraint> _allConstraints = [];      // every constraint, unfiltered: the sizes of lin / snake children read them all
+        private readonly List<(Constraint Constraint, Point Owner)> _equalFonts = [];   // primFontSz op="equ" for des / ch, with the node that states it
 
         protected override void VisitConstraint(ConstraintAtom constraint)
         {
             if (_looking != Looking.Constraint) return;
             ParseConstraint(constraint.Constraint, _constraints, requireForName: true);
             _allConstraints.Add(constraint.Constraint);
+            if (constraint.Constraint is { Type: "primFontSz", Operator: "equ", For: "des" or "ch" } equal) _equalFonts.Add((equal, Current));
         }
 
         protected override void VisitRule(RuleAtom rule)
@@ -805,15 +861,22 @@ internal static class DocxDiagramLayout
         protected override void VisitAlgorithm(AlgorithmAtom algorithm)
         {
             if (_looking == Looking.Algorithm && Diagram.ShapeOfPresentation.TryGetValue(Current, out DiagramShape? shape))
+            {
+                // the outermost ancestor's primFontSz op="equ" covering this shape (its name, its data point type) groups its size
+                if (shape.HasText)
+                    foreach ((Constraint equal, Point owner) in _equalFonts)
+                        if (owner != Current && (equal.ForName.Length == 0 || equal.ForName == shape.Name) && DataModel.IsOfKind(shape.DataNodeType, equal.PointType))
+                        { shape.FontGroup = (owner, equal.ForName); break; }
                 Algorithms.Lay(algorithm, shape, _constraints, _allConstraints.Skip(_ownFrom).ToList(),
                                _allConstraints.Take(_ownFrom).Where(c => c.For == "des").ToList(), _rules, Diagram);
+            }
         }
 
         protected override void VisitLayoutNode(LayoutNodeAtom node)
         {
             if (_looking != Looking.LayoutNode) return;
             if (PresentationFor(node) is not { } presentation) return;
-            int inherited = _constraints.Count, inheritedAll = _allConstraints.Count, heldOwnFrom = _ownFrom;
+            int inherited = _constraints.Count, inheritedAll = _allConstraints.Count, heldOwnFrom = _ownFrom, inheritedEqual = _equalFonts.Count;
             _ownFrom = inheritedAll;
             Descend(presentation, () =>
             {
@@ -825,6 +888,7 @@ internal static class DocxDiagramLayout
             });
             _constraints.RemoveRange(inherited, _constraints.Count - inherited);
             _allConstraints.RemoveRange(inheritedAll, _allConstraints.Count - inheritedAll);
+            _equalFonts.RemoveRange(inheritedEqual, _equalFonts.Count - inheritedEqual);
             _ownFrom = heldOwnFrom;
         }
     }
@@ -930,19 +994,19 @@ internal static class DocxDiagramLayout
             // cap's height (Word's drawings of the horizontal bullet list)
             double start = constraints.Where(c => c.Type == "primFontSz" && c.Value > 0).Select(c => c.Value).DefaultIfEmpty(65).Max();
             var capped = shape.Children.Where(c => c.HasText && c.OwnConstraints.Any(o => o.Type == "h" && o.RefType == "w" && o.Operator == "lte")).ToList();
-            double chosen = 5;
-            for (double size = Math.Floor(Math.Min(start, 400)); size >= 5; size--)
+            // fitting only gets harder as the size grows: a binary search over the whole sizes
+            bool AllFit(int size)
             {
-                bool fits = true;
                 foreach (DiagramShape child in capped)
                 {
                     double cap = child.Width * child.OwnConstraints.First(o => o.Type == "h" && o.RefType == "w" && o.Operator == "lte").Factor / EmuPerPoint;
                     double margin(string type) => child.OwnConstraints.Where(o => o.Type == type && o.RefType == "primFontSz").Select(o => o.Factor * size).FirstOrDefault();
                     double width = child.Width / EmuPerPoint - margin("lMarg") - margin("rMarg");
-                    if (TextHeight(child, size, width) is not { } text || text + margin("tMarg") + margin("bMarg") > cap + 0.01) { fits = false; break; }
+                    if (TextHeight(child, size, width) is not { } text || text + margin("tMarg") + margin("bMarg") > cap + 0.01) return false;
                 }
-                if (fits) { chosen = size; break; }
+                return true;
             }
+            double chosen = LargestFitting(5, (int)Math.Floor(Math.Min(start, 400)), AllFit);
             var fixedValues = new HashSet<(string, string)>();
             var heights = new Dictionary<string, double>();
             foreach (DiagramShape child in capped)
@@ -1322,6 +1386,45 @@ internal static class DocxDiagramLayout
 
         private static Dictionary<string, double>? Get(Dictionary<string, Dictionary<string, double>> keyed, string key) => keyed.TryGetValue(key, out var found) ? found : null;
 
+        /// <summary>The largest whole size in [low, high] for which <paramref name="fits"/> holds (it holds for every smaller size too); low when none does.</summary>
+        internal static int LargestFitting(int low, int high, Func<int, bool> fits)
+        {
+            if (high < low || !fits(low)) return low;
+            int top = high;
+            while (low < high)
+            {
+                int middle = low + (high - low + 1) / 2;
+                if (fits(middle)) low = middle;
+                else high = middle - 1;
+            }
+            // kerning starts at 12 pt and narrows the text, so 12 can fit where 11 does not: one size up is checked too
+            while (low < top && fits(low + 1)) low++;
+            return low;
+        }
+
+        /// <summary>
+        /// A column's text children whose rule lets their height grow (h = INF) take the height their text needs at a font size:
+        /// the text's lines, the top and bottom margins and what the geometry keeps outside its text rectangle (a rounded
+        /// rectangle's corners). False when a word is wider than its line at that size.
+        /// </summary>
+        private static bool GrowToText(DiagramShape shape, List<Dictionary<string, double>> sizes, double size)
+        {
+            for (int i = 0; i < shape.Children.Count; i++)
+            {
+                DiagramShape child = shape.Children[i];
+                if (!child.GrowsInHeight || !child.HasText || !sizes[i].TryGetValue("w", out double width) || !sizes[i].TryGetValue("h", out double height)) continue;
+                double widthPt = width / EmuPerPoint, heightPt = height / EmuPerPoint;
+                double Margin(string type) => child.OwnConstraints.Where(o => o.Type == type && o.ForName.Length == 0)
+                                                   .Select(o => o.RefType switch { "primFontSz" => o.Factor * size, "w" => o.Factor * widthPt, "h" => o.Factor * heightPt, _ => 0 }).FirstOrDefault();
+                (_, _, double rectWidth, double rectHeight) = TextRectangle(child, width, height);
+                double lineWidth = rectWidth - Margin("lMarg") - Margin("rMarg");
+                if (lineWidth <= 0 || TextHeight(child, size, lineWidth) is not { } text) return false;
+                double need = text + Margin("tMarg") + Margin("bMarg") + (heightPt - rectHeight);
+                if (need > heightPt) sizes[i]["h"] = need * EmuPerPoint;
+            }
+            return true;
+        }
+
         /// <summary>
         /// The lin algorithm (ECMA-376 Part 1 21.4.2 "Linear Flow"): the children one after another along linDir at the sizes
         /// their constraints give, then all of them scaled by one factor so the row fits the shape both ways, centred in it (the
@@ -1341,17 +1444,22 @@ internal static class DocxDiagramLayout
             if (font is null && own.Any(c => c.Type == (horizontal ? "w" : "h") && IsFontUnit(c.RefType) && below.Contains(c.ForName)))
             {
                 // sizes from the font size (h = 0.82 primFontSz and the like): the largest whole font size, from the stated one down
-                // to the rule's floor, at which the row fits without scaling (the tx algorithm's step-down; Word's drawings)
+                // to the rule's floor, at which the row fits without scaling (the tx algorithm's step-down; Word's drawings); a child
+                // whose rule lets its height grow (h = INF) takes the height its text needs at that size. The row only grows with
+                // the size, so a binary search over the whole sizes.
                 double start = own.Where(c => c.Type == "primFontSz" && c.Value > 0).Select(c => c.Value).DefaultIfEmpty(65).Max();
                 double alongRoom0 = horizontal ? shape.Width : shape.Height;
-                for (double size = Math.Floor(Math.Min(start, 400)); size >= 5; size--)
+                bool RowFits(int size, out List<Dictionary<string, double>> rowSizes, out double? rowSpacing)
                 {
-                    font = size;
-                    sizes = ChildSizes(shape, own, out spacing, size);
-                    double total = (spacing ?? 0) * Math.Max(shape.Children.Count - 1, 0);
-                    for (int i = 0; i < shape.Children.Count; i++) total += sizes[i].TryGetValue(horizontal ? "w" : "h", out double length) ? length : 0;
-                    if (total <= alongRoom0 + 1) break;
+                    rowSizes = ChildSizes(shape, own, out rowSpacing, size);
+                    if (!horizontal && !GrowToText(shape, rowSizes, size)) return false;
+                    double total = (rowSpacing ?? 0) * Math.Max(shape.Children.Count - 1, 0);
+                    for (int i = 0; i < shape.Children.Count; i++) total += rowSizes[i].TryGetValue(horizontal ? "w" : "h", out double length) ? length : 0;
+                    return total <= alongRoom0 + 1;
                 }
+                int chosen = LargestFitting(5, (int)Math.Floor(Math.Min(start, 400)), size => RowFits(size, out _, out _));
+                RowFits(chosen, out sizes, out spacing);
+                font = chosen;
                 shape.FixedFontSize = font;
                 foreach (DiagramShape inner in Descendants(shape)) inner.FixedFontSize = font;
             }
@@ -1461,7 +1569,17 @@ internal static class DocxDiagramLayout
                 DiagramShape child = shape.Children[i];
                 double width = shape.Width * (i + 1) / count;
                 (child.X, child.Y, child.Width, child.Height) = ((shape.Width - width) / 2, i * height, width, height);
-                foreach (DiagramShape level in child.Children.Where(c => c.Name == levelNode)) level.FillsParent = true;
+                DiagramShape? levelShape = child.Children.FirstOrDefault(c => c.Name == levelNode);
+                if (levelShape is not null) levelShape.FillsParent = true;
+                // the level's text (levelTx: ctrX / ctrY / w / h of the level) lies over it; Word writes it into the level's shape, in the
+                // geometry's text rectangle (dsp:txXfrm of the trapezoid)
+                string accountBackground = algorithm.Parameter("pyraAcctBkgdNode", "acctBkgd"), accountText = algorithm.Parameter("pyraAcctTxNode", "acctTx");
+                foreach (DiagramShape text in child.Children.Where(c => c != levelShape && c.Name != accountBackground && c.Name != accountText && (c.Preset is null || c.HideGeometry)))
+                {
+                    text.FillsParent = true;
+                    text.TextFrameOf = levelShape;
+                    text.PyramidLevel = i;
+                }
                 if (child.Name == levelNode) child.FillsParent = false;
             }
         }
@@ -1470,7 +1588,8 @@ internal static class DocxDiagramLayout
         private static void Text(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> constraints, List<RuleAtom> rules)
         {
             LayoutNodeAtom? node = algorithm.OwnerNode;
-            var own = node?.Children.OfType<ConstraintAtom>().Select(c => c.Constraint).ToList() ?? [];
+            // its own constraints, those of the choose branch that applies too (the chevron's margins)
+            var own = shape.OwnConstraints.Count > 0 ? shape.OwnConstraints : node?.Children.OfType<ConstraintAtom>().Select(c => c.Constraint).ToList() ?? [];
             shape.Margins = own.Where(c => c.Type is "lMarg" or "rMarg" or "tMarg" or "bMarg" && c.ForName.Length == 0 && c.RefType is "primFontSz" or "w" or "h")
                                .Select(c => (c.Type + ":" + c.RefType, c.Factor)).ToArray();
             double? font = null;
@@ -1501,7 +1620,8 @@ internal static class DocxDiagramLayout
         {
             var shapes = new List<DiagramShape>();
             Gather(frame, shapes);
-            foreach (IGrouping<string, DiagramShape> group in shapes.Where(s => s.HasText && s.Autofit).GroupBy(s => s.Name))
+            // one size per primFontSz op="equ" group (Word: hierarchy root and branches, org chart head and staff), else per layout node
+            foreach (IGrouping<(object, string), DiagramShape> group in shapes.Where(s => s.HasText && s.Autofit).GroupBy(s => s.FontGroup ?? ((object)s.Name, "")))
             {
                 double size = group.Min(Fit);
                 foreach (DiagramShape shape in group) shape.FontSize = size;
@@ -1514,19 +1634,31 @@ internal static class DocxDiagramLayout
             foreach (DiagramShape child in shape.Children) Gather(child, into);
         }
 
-        /// <summary>The largest size from the starting one down to the floor (whole points) at which the text fits the shape inside its margins.</summary>
+        /// <summary>
+        /// The largest whole size from the starting one down to above the floor at which the text fits the geometry's text rectangle
+        /// inside its margins (fitting only gets harder as the size grows, so a binary search over the whole sizes).
+        /// </summary>
         private static double Fit(DiagramShape shape)
         {
-            if (shape.FixedFontSize is { } fixedSize) return fixedSize;
-            for (double size = Math.Floor(shape.FontSize); size > shape.MinimumFontSize; size -= 1)
-                if (Fits(shape, size)) return size;
-            return Math.Min(shape.FontSize, shape.MinimumFontSize);
+            // a font-driven layout's size (lin / composite) sized the boxes; the text still steps down from it to fit (Word's vertical bullet list)
+            double start = shape.FixedFontSize ?? shape.FontSize;
+            (double Width, double Height) room = TextRoom(shape);
+            int low = (int)Math.Floor(shape.MinimumFontSize) + 1, high = (int)Math.Floor(start);
+            if (low > high || !Fits(shape, room, low)) return Math.Min(start, shape.MinimumFontSize);
+            return Algorithms.LargestFitting(low, high, size => Fits(shape, room, size));
         }
 
-        private static bool Fits(DiagramShape shape, double size)
+        /// <summary>The preset geometry's text rectangle (a:rect, what Word writes as dsp:txXfrm: inscribed in an ellipse, inside a chevron's points), else the box, in points.</summary>
+        private static (double Width, double Height) TextRoom(DiagramShape shape)
+        {
+            (_, _, double width, double height) = TextRectangle(shape);
+            return (width, height);
+        }
+
+        private static bool Fits(DiagramShape shape, (double Width, double Height) room, double size)
         {
             (double left, double top, double right, double bottom) = Insets(shape, size);
-            double width = shape.Width / EmuPerPoint - left - right, height = shape.Height / EmuPerPoint - top - bottom;
+            double width = room.Width - left - right, height = room.Height - top - bottom;
             return width > 0 && height > 0 && TextHeight(shape, size, width) is { } used && used <= height + 0.01;
         }
     }
@@ -1567,12 +1699,41 @@ internal static class DocxDiagramLayout
     private static readonly double[] MinorFontWidths = DocxChartFontWidths.Fonts.First(f => f.Name == "Calibri").Widths;
     private static readonly double MinorFontAverage = DocxChartFontWidths.Fonts.First(f => f.Name == "Calibri").Average;
 
-    /// <summary>A text's advance width in points in the minor font (Calibri metrics; outside ASCII the font's average width).</summary>
+    /// <summary>A text's advance width in points in the minor font (Calibri metrics and kerning pairs; outside ASCII the font's average width).</summary>
     internal static double TextWidth(string text, double size)
     {
         double em = 0;
-        foreach (char c in text) em += c >= ' ' && c <= '~' ? MinorFontWidths[c - ' '] : MinorFontAverage;
+        char previous = '\0';
+        foreach (char c in text)
+        {
+            em += c >= ' ' && c <= '~' ? MinorFontWidths[c - ' '] : MinorFontAverage;
+            // pair kerning: SmartArt text is kerned from 12 pt (Word writes kern="1200" on every run)
+            if (size >= 12) em += DocxCalibriKerning.Pair(previous, c);
+            previous = c;
+        }
         return em * size;
+    }
+
+    /// <summary>
+    /// The text rectangle in points from the shape's corner: the preset geometry's a:rect (Word's dsp:txXfrm: inscribed in an ellipse,
+    /// inside a chevron's points), that of the geometry a text shape lies over (<see cref="DiagramShape.TextFrameOf"/>), else the box.
+    /// </summary>
+    internal static (double X, double Y, double Width, double Height) TextRectangle(DiagramShape shape) => TextRectangle(shape, shape.Width, shape.Height);
+
+    /// <summary>As above for a box of the given EMU size.</summary>
+    internal static (double X, double Y, double Width, double Height) TextRectangle(DiagramShape shape, double widthEmu, double heightEmu)
+    {
+        double width = widthEmu / EmuPerPoint, height = heightEmu / EmuPerPoint;
+        // a pyramid level's text (Word 16's drawings, dsp:txXfrm of pyramid-v1): the apex its whole box, a lower level the middle
+        // 65 % of its width, its whole height
+        if (shape.PyramidLevel == 0) return (0, 0, width, height);
+        if (shape.PyramidLevel > 0) return (width * 0.175, 0, width * 0.65, height);
+        DiagramShape geometry = shape.TextFrameOf ?? shape;
+        if (geometry.Preset is { Length: > 0 } preset && preset != "conn" && !geometry.HideGeometry
+            && DocxShapeGeometry.Paths(new XElement("prstGeom", new XAttribute("prst", preset), Adjustments(geometry.Adjustments)), width, height, widthEmu, heightEmu, out var rectangle) is not null
+            && rectangle is { } text)
+            return text;
+        return (0, 0, width, height);
     }
 
     internal static (double Left, double Top, double Right, double Bottom) Insets(DiagramShape shape, double size)
@@ -1711,6 +1872,13 @@ internal static class DocxDiagramLayout
         }
         var sp = new XElement("sp", new XAttribute("modelId", shape.Presentation?.Id ?? ""), properties, Style(shape, diagram));
         if (shape.HasText) sp.Add(TextBody(shape));
+        if (shape.HasText && shape.TextFrameOf is not null)
+        {
+            // the text in the geometry's text rectangle, as Word writes dsp:txXfrm
+            (double textX, double textY, double textWidth, double textHeight) = TextRectangle(shape);
+            sp.Add(new XElement("txXfrm", new XElement("off", Attr("x", x + textX * EmuPerPoint), Attr("y", y + textY * EmuPerPoint)),
+                                new XElement("ext", Attr("cx", textWidth * EmuPerPoint), Attr("cy", textHeight * EmuPerPoint))));
+        }
         return sp;
     }
 
