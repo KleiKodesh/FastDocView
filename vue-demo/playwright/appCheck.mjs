@@ -2,8 +2,8 @@
 // demo's). DOM + console + the page's DEV test hook (window.__fastDocViewTest) - no screenshots.
 //   node playwright/appCheck.mjs <file> [--headed]
 // Cold first open (index rebuilt), count grows while the index builds, completes, exact jumps to the
-// middle and the last block, footnote links both ways (when the file has notes), reload restores the
-// position, no console errors.
+// middle and the last block, footnote links both ways (when the file has notes), reload shows the
+// same block at the same pixel, no console errors.
 import { chromium } from 'playwright'
 
 const DEMO_URL = process.env.FASTDOCVIEW_DEMO_URL ?? `http://localhost:${process.env.FASTDOCVIEW_DEMO_PORT ?? 5189}/`
@@ -25,6 +25,12 @@ const hookReady = () => page.waitForFunction(() => !!window.__fastDocViewTest, n
 const state = async () => { await hookReady(); return page.evaluate(() => window.__fastDocViewTest.state()) }
 const scrollToBlock = async index => { await hookReady(); await page.evaluate(i => window.__fastDocViewTest.scrollToBlock(i), index) }
 const waitFor = (predicate, argument, timeout = 60_000) => page.waitForFunction(predicate, argument, { timeout })
+// a text row's top relative to the text viewport's top, sub-pixel (getBoundingClientRect); null when the row is not mounted
+const rowTopInViewport = index => page.evaluate(i => {
+  const row = [...document.querySelectorAll(`.windowed-scroller-viewport [data-index="${i}"]`)].find(element => !element.closest('.fast-doc-view-notes-pane'))
+  const viewport = row?.closest('.windowed-scroller-viewport')
+  return row && viewport ? row.getBoundingClientRect().top - viewport.getBoundingClientRect().top : null
+}, index)
 
 step(`open ${DEMO_URL}`)
 await page.goto(`${DEMO_URL}`, { waitUntil: 'domcontentloaded' })
@@ -138,13 +144,17 @@ const middle = Math.floor(complete.blockCount / 3)
 await scrollToBlock(middle)
 await page.waitForTimeout(800)                        // the page saves its position debounced
 const before = await state()
+const beforeTop = await rowTopInViewport(before.firstVisible?.index)
 await page.reload({ waitUntil: 'domcontentloaded' })
 await waitFor(() => window.__fastDocViewTest?.state()?.isIndexComplete && window.__fastDocViewTest.state().firstVisible, null, 120_000)
 await page.waitForTimeout(1500)
 const after = await state()
+const afterTop = await rowTopInViewport(before.firstVisible?.index)
 console.log(`  before: block ${before.firstVisible?.index} @ ${before.firstVisible?.offsetWithinRow?.toFixed(1)} px   after: block ${after.firstVisible?.index} @ ${after.firstVisible?.offsetWithinRow?.toFixed(1)} px`)
-check(after.firstVisible?.index === before.firstVisible?.index, 'same first visible block after reload')
-check(Math.abs((after.firstVisible?.offsetWithinRow ?? 0) - (before.firstVisible?.offsetWithinRow ?? 0)) <= 2, 'same offset within the block (2 px)')
+console.log(`  block ${before.firstVisible?.index}'s top in the viewport: before ${beforeTop?.toFixed(2)} px, after ${afterTop?.toFixed(2)} px`)
+// compared in pixels, not by "first visible block": rows have fractional heights and readFirstVisible works on the rounded
+// offsetTop / offsetHeight, so a row edge within a pixel of the viewport's top reads as either neighbour
+check(beforeTop != null && afterTop != null && Math.abs(afterTop - beforeTop) <= 1, 'the same block at the same pixel after reload (1 px)')
 
 check(consoleErrors.length === 0, `no console errors${consoleErrors.length ? ': ' + consoleErrors.slice(0, 3).join(' | ') : ''}`)
 await browser.close()

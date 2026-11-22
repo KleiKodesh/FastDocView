@@ -26,29 +26,25 @@ internal interface IDocxOnDemandRelationships
     byte[]? ReadOnDemandPart(string partName);
 }
 
-/// <summary>A relationship map read from a .rels part, with the ids it does not list resolved on demand (and remembered).</summary>
+/// <summary>
+/// A relationship map read from a .rels part, with the ids it does not list resolved on demand. Nothing is remembered: a
+/// resolution is a pure function of the id (cheap: a base64 decode), and the map is read from several threads at once
+/// (picture lookups run outside the document's read lock), so it never changes after it is made.
+/// </summary>
 internal sealed class DocxRelationshipMapWithFallback<TValue>(Dictionary<string, TValue> listed, DocxRelationshipMapWithFallback<TValue>.Resolver resolve)
     : IReadOnlyDictionary<string, TValue>
 {
     public delegate bool Resolver(string relationshipId, out TValue value);
 
-    private readonly Dictionary<string, TValue> _resolved = new(StringComparer.Ordinal);
-
-    public bool TryGetValue(string key, out TValue value)
-    {
-        if (listed.TryGetValue(key, out value!) || _resolved.TryGetValue(key, out value!)) return true;
-        if (!resolve(key, out value)) return false;
-        _resolved[key] = value;
-        return true;
-    }
+    public bool TryGetValue(string key, out TValue value) => listed.TryGetValue(key, out value!) || resolve(key, out value);
 
     public TValue this[string key] => TryGetValue(key, out TValue? value) ? value : throw new KeyNotFoundException(key);
     public bool ContainsKey(string key) => TryGetValue(key, out _);
-    // enumeration covers what is listed and resolved so far: an on-demand id is known only once it is asked for
-    public IEnumerable<string> Keys => listed.Keys.Concat(_resolved.Keys);
-    public IEnumerable<TValue> Values => listed.Values.Concat(_resolved.Values);
-    public int Count => listed.Count + _resolved.Count;
-    public IEnumerator<KeyValuePair<string, TValue>> GetEnumerator() => listed.Concat(_resolved).GetEnumerator();
+    // enumeration covers what is listed: an on-demand id is known only when it is asked for
+    public IEnumerable<string> Keys => listed.Keys;
+    public IEnumerable<TValue> Values => listed.Values;
+    public int Count => listed.Count;
+    public IEnumerator<KeyValuePair<string, TValue>> GetEnumerator() => listed.GetEnumerator();
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 

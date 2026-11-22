@@ -148,7 +148,7 @@ public sealed class OdtListStyle
     /// <see cref="OdtStylesListStyleFilterStream"/>: a converted Word file has thousands of list styles, and even a
     /// streaming XmlReader over them costs a few hundred ms; the element shape is fixed (ODF 1.3 part 3 16.32 text:list-style:
     /// level elements, each with style:list-level-properties / style:list-level-label-alignment), so a tag-and-attribute
-    /// walk suffices. Attribute values are entity-decoded.
+    /// walk suffices. Attribute values are decoded as the XML parse reads them (WordDocumentXml.DecodeAttributeValue).
     /// </summary>
     internal static OdtListStyle Parse(ReadOnlySpan<byte> element, string textPrefix, string stylePrefix, string foPrefix, ParsedLevels cache, out string? name)
     {
@@ -411,7 +411,7 @@ public sealed class OdtListStyle
             if (slot >= 0)
             {
                 string value = Encoding.UTF8.GetString(element.Slice(position + 1, close).ToArray());
-                slots[slot] = value.IndexOf('&') >= 0 ? System.Net.WebUtility.HtmlDecode(value) : value;
+                slots[slot] = WordDocumentXml.DecodeAttributeValue(value);
             }
             position += close + 2;
         }

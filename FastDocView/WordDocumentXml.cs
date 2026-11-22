@@ -161,4 +161,50 @@ public static class WordDocumentXml
         public override string? LookupNamespace(string prefix)
             => base.LookupNamespace(prefix) ?? (prefix.Length > 0 ? UndeclaredPrefixNamespacePrefix + prefix : null);
     }
+
+    /// <summary>
+    /// An attribute value's raw text (between its quotes) as an XML parser reports it (XML 1.0 2.11 and 3.3.3): line ends
+    /// normalised, each literal tab / line feed / carriage return a space, then the five predefined entities and character
+    /// references decoded (a reference written as such keeps its character: "&amp;#9;" is a tab). Not HTML decoding, which
+    /// keeps literal tabs and knows HTML entity names. An unknown entity is left as written.
+    /// </summary>
+    internal static string DecodeAttributeValue(string raw)
+    {
+        if (raw.IndexOfAny(AttributeSpecialCharacters) < 0) return raw;
+        string text = raw.Replace("\r\n", "\n");
+        var decoded = new System.Text.StringBuilder(text.Length);
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c is '\t' or '\n' or '\r') { decoded.Append(' '); continue; }
+            if (c != '&') { decoded.Append(c); continue; }
+            int end = text.IndexOf(';', i + 1);
+            string? replacement = end < 0 ? null : EntityText(text.Substring(i + 1, end - i - 1));
+            if (replacement is null) { decoded.Append(c); continue; }
+            decoded.Append(replacement);
+            i = end;
+        }
+        return decoded.ToString();
+    }
+
+    private static readonly char[] AttributeSpecialCharacters = ['&', '\t', '\n', '\r'];
+
+    private static string? EntityText(string name)
+    {
+        switch (name)
+        {
+            case "lt": return "<";
+            case "gt": return ">";
+            case "amp": return "&";
+            case "quot": return "\"";
+            case "apos": return "'";
+        }
+        if (name.Length < 2 || name[0] != '#') return null;
+        bool isHex = name[1] is 'x';
+        string digits = name.Substring(isHex ? 2 : 1);
+        if (digits.Length == 0 || !int.TryParse(digits, isHex ? System.Globalization.NumberStyles.AllowHexSpecifier : System.Globalization.NumberStyles.None,
+                                                System.Globalization.CultureInfo.InvariantCulture, out int code)
+            || code is < 1 or > 0x10FFFF || code is >= 0xD800 and <= 0xDFFF) return null;
+        return char.ConvertFromUtf32(code);
+    }
 }

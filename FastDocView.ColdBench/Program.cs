@@ -21,10 +21,13 @@ foreach (string file in files)
     string last = "";
     for (int run = 0; run < runs; run++)
     {
-        string cache = Path.Combine(Path.GetDirectoryName(Environment.ProcessPath)!, "cold-cache-" + Guid.NewGuid().ToString("N"));
+        string cache = Path.Combine(AppContext.BaseDirectory, "cold-cache-" + Guid.NewGuid().ToString("N"));
         try
         {
             var start = new ProcessStartInfo(Environment.ProcessPath!) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            // under "dotnet FastDocView.ColdBench.dll" (not the published exe) the process is the dotnet host: the child needs the dll
+            if (string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "dotnet", StringComparison.OrdinalIgnoreCase))
+                start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "FastDocView.ColdBench.dll"));
             start.ArgumentList.Add("--child"); start.ArgumentList.Add(file); start.ArgumentList.Add(cache);
             using Process child = Process.Start(start)!;
             try { child.PriorityClass = ProcessPriorityClass.Idle; } catch (InvalidOperationException) { }
@@ -37,7 +40,7 @@ foreach (string file in files)
             int at = line.IndexOf("paint=", StringComparison.Ordinal) + 6;
             paints.Add(double.Parse(line[at..line.IndexOf(' ', at)], CultureInfo.InvariantCulture));
         }
-        finally { try { if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true); } catch (IOException) { } }
+        finally { try { if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
     }
     string median = paints.Count == 0 ? "-" : paints.Order().ElementAt(paints.Count / 2).ToString("0", CultureInfo.InvariantCulture);
     string row = $"{Path.GetFileName(file),-40} paint median {median,6} ms   last: {last}";

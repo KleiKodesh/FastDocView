@@ -8,7 +8,8 @@ namespace FastDocView.DocxHtml;
 /// the w:styleId, w:type and w:default its start tag carries), so a style is parsed only when a window uses it
 /// (<see cref="DocxStyleCascade"/>) - a converted or long-lived document's styles.xml holds thousands of styles (the sample:
 /// 850 KB), of which a window uses a few. The same walk as <see cref="DocxNumberingPartSlices"/>: a part whose shape it cannot
-/// follow (another prefix for the main namespace, unbalanced tags, an entity in a style id) gives null, and the caller parses
+/// follow (another prefix for the main namespace, a top-level element under another prefix, a style without a w:styleId,
+/// an encoding other than UTF-8, unbalanced tags, an entity in a style id) gives null, and the caller parses
 /// the part whole, as before.
 /// </summary>
 internal sealed class DocxStylesPartSlices
@@ -35,6 +36,7 @@ internal sealed class DocxStylesPartSlices
     public static DocxStylesPartSlices? TryCut(byte[] bytes)
     {
         var span = new ReadOnlySpan<byte>(bytes);
+        if (!IsUtf8Declared(span)) return null;                                 // the slices are parsed as UTF-8 (no declaration of their own)
         int position = 0;
         while (true)
         {
@@ -69,6 +71,8 @@ internal sealed class DocxStylesPartSlices
             if (!isElement) continue;
             int elementStart = position;
             if (!DocxNumberingPartSlices.TryReadTag(span, ref position, out ReadOnlySpan<byte> name, out bool selfClosing)) return null;
+            // a top-level element under another prefix (or the default namespace) may still be a w:style the whole parse reads
+            if (depth == 1 && !name.StartsWith("w:"u8)) return null;
             bool isStyle = depth == 1 && name.SequenceEqual("w:style"u8);
             bool isDefaults = depth == 1 && name.SequenceEqual("w:docDefaults"u8);
             if (!isStyle && !isDefaults)
@@ -81,7 +85,7 @@ internal sealed class DocxStylesPartSlices
             var slice = new Slice(elementStart, position - elementStart);
             if (isDefaults) { slices.DocumentDefaults ??= slice; continue; }      // the whole-part parse reads the first
             if (!TryAttribute(tag, "w:styleId"u8, out string? id)) return null;
-            if (id is null) continue;                                           // no id: the parse skips it too
+            if (id is null) return null;                                        // no w:styleId: maybe the id under another prefix
             slices.StylesById[id] = slice;
             if (!TryAttribute(tag, "w:default"u8, out string? isDefaultText) || !TryAttribute(tag, "w:type"u8, out string? type)) return null;
             // DocxStyleCascade.IsOn: a missing w:default means NOT default; present, "1" / "true" / "on" is on
@@ -133,6 +137,19 @@ internal sealed class DocxStylesPartSlices
             value = Encoding.UTF8.GetString(raw.ToArray());
             return true;
         }
+    }
+
+    /// <summary>False when the XML declaration names an encoding other than UTF-8 (a UTF-8 byte order mark or no declaration: UTF-8).</summary>
+    private static bool IsUtf8Declared(ReadOnlySpan<byte> span)
+    {
+        if (span.Length >= 2 && (span[0] is 0xFF or 0xFE || span[1] == 0)) return false;   // UTF-16 (a byte order mark, or '<' then a zero byte)
+        int start = span.StartsWith(new byte[] { 0xEF, 0xBB, 0xBF }) ? 3 : 0;
+        if (!span.Slice(start).StartsWith("<?xml"u8)) return true;
+        int end = span.Slice(start).IndexOf("?>"u8);
+        if (end < 0) return false;
+        ReadOnlySpan<byte> declaration = span.Slice(start, end);
+        if (!TryAttribute(declaration, "encoding"u8, out string? encoding)) return false;
+        return encoding is null || string.Equals(encoding, "UTF-8", StringComparison.OrdinalIgnoreCase) || string.Equals(encoding, "UTF8", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSpace(byte b) => b is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n';

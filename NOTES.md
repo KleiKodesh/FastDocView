@@ -3400,6 +3400,21 @@ What was left on the paint path in AOT, and the fixes:
 Charts are not deferred to a second fetch: with the reads above a chart in the first window costs ~2-5 ms, below the cost
 of a second round trip; deferring would need the page to refetch before the index completes (it refetches provisional
 blocks only after).
-appCheck "same first visible block after reload" on .doc / .odt / .fodt: after = the previous block at an offset equal
-that looks like the same pixel row read on the other side of a block boundary (not verified against master); the library returns the same
-blocks either way (.docx and Word 2003 XML land exactly). If it is a real shift, it is in the app's position restore (vue-frontend), not the library.
+appCheck "same first visible block after reload" on .doc / .odt / .fodt was not a shift: rows are 34.55 px tall,
+readFirstVisible compares the rounded offsetTop + offsetHeight with scrollTop, so a row edge within a pixel of the viewport's top
+reads as either neighbour (master before the cold-start work, 50f892e, failed the same way on .odt / .fodt). Measured with
+getBoundingClientRect, the block's top moves 0.46 px (.odt / .fodt) and 0.79 px (.doc) over a reload. appCheck now compares the
+saved block's sub-pixel top in the viewport before and after (1 px).
+
+Review of round 2 (2026-11-22), fixed with checks (`--cold-lazy`, in `--fidelity`; SeekableDeflate.Tests `ZipEntryLocatorTest`):
+- styles.xml slicer: a top-level element under another prefix (or the default namespace) of the main namespace, a w:style whose
+  styleId has another prefix, and an XML declaration naming an encoding other than UTF-8 were cut wrongly (the style missing, the
+  names decoded as UTF-8); the part is now parsed whole for those.
+- .odt style:name / list style names cut from bytes were HTML-decoded (literal tabs and line ends kept); now decoded as the XML
+  parse does (`WordDocumentXml.DecodeAttributeValue`: each literal tab / line end a space, the five entities and character references).
+- Word 2003 XML: the on-demand relationship maps remembered resolved ids in a Dictionary written from several threads (picture ids
+  are looked up outside the read lock); they now remember nothing (an id resolves by a base64 decode).
+- Zip: a Zip64 extra field shorter than it claims, or a local header offset past the file, threw argument errors; now bad data.
+- ColdBench under `dotnet <dll>` put its cache beside dotnet.exe and started the child without the dll.
+Checked and not bugs: data descriptors, repeated names (first wins, as before), a short recorded directory size, basedOn loops,
+latent styles, repeated style ids, Word 2003 files without notes, an element left open at the body's end.

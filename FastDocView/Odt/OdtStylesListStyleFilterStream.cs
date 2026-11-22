@@ -266,7 +266,7 @@ internal sealed class OdtStylesListStyleFilterStream : Stream
         _element = null;
     }
 
-    /// <summary>style:family and style:name of a style:style start tag (entity-decoded), as the XML parse would read them.</summary>
+    /// <summary>style:family and style:name of a style:style start tag, decoded as the XML parse reads them (literal tabs and line ends as spaces).</summary>
     private (string? family, string? name) StyleKey(ReadOnlySpan<byte> element)
     {
         int tagEnd = 0;
@@ -303,7 +303,7 @@ internal sealed class OdtStylesListStyleFilterStream : Stream
             int end = tag.Slice(position).IndexOf(quote);
             if (end < 0) return null;
             string value = Encoding.UTF8.GetString(tag.Slice(position, end).ToArray());
-            return value.IndexOf('&') >= 0 ? System.Net.WebUtility.HtmlDecode(value) : value;
+            return WordDocumentXml.DecodeAttributeValue(value);
         }
         return null;
     }
