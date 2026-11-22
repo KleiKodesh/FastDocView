@@ -13,7 +13,9 @@ namespace FastDocView.Docx;
 internal abstract class DocxVirtualPackageStream : Stream
 {
     /// <summary>The zip compression method given to a derived part (outside the APPNOTE.TXT 4.4.5 range); only this package reads it.</summary>
-    public const ushort DerivedPartMethod = 0xF003;
+    // 0xF004 since Word 2003 relationship ids are made from their targets (2026-11-22): an index saved over the older
+    // translation does not fit (its translated offsets differ) and is rebuilt
+    public const ushort DerivedPartMethod = 0xF004;
 
     protected Stream SourceFile { get; }
     private Segment[] _segments = [];
@@ -148,14 +150,23 @@ internal abstract class DocxVirtualPackageStream : Stream
         if (_decodedPart == index) return _decoded!;
         _decoded = null;
         _decodedPart = -1;
-        var decoded = new byte[segment.Length];
+        byte[] decoded = DecodeBase64(SourceFile, segment.FileOffset, segment.Base64End, segment.Length);
+        _decodedPart = index;
+        _decoded = decoded;
+        return decoded;
+    }
+
+    /// <summary>The bytes of the base64 text in [<paramref name="start"/>, <paramref name="end"/>) of the file, streamed through one 64 KB buffer.</summary>
+    protected static byte[] DecodeBase64(Stream file, long start, long end, long decodedLength)
+    {
+        var decoded = new byte[decodedLength];
         var chunk = new byte[1 << 16];
-        long remaining = segment.Base64End - segment.FileOffset;
-        SourceFile.Position = segment.FileOffset;
+        long remaining = end - start;
+        file.Position = start;
         int written = 0, quantum = 0, bits = 0, padding = 0;
         while (remaining > 0)
         {
-            int read = SourceFile.Read(chunk, 0, (int)Math.Min(chunk.Length, remaining));
+            int read = file.Read(chunk, 0, (int)Math.Min(chunk.Length, remaining));
             if (read <= 0) throw new EndOfStreamException("The XML file ended inside a binary part.");
             remaining -= read;
             for (int i = 0; i < read; i++)
@@ -178,8 +189,6 @@ internal abstract class DocxVirtualPackageStream : Stream
         }
         if (quantum != 0) throw new InvalidDataException("A binary part is not valid base64.");
         if (written != decoded.Length) throw new InvalidDataException("A binary part's decoded length is not what its base64 promised.");
-        _decodedPart = index;
-        _decoded = decoded;
         return decoded;
     }
 

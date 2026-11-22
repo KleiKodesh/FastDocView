@@ -114,7 +114,7 @@ public static class Word2003WindowedTest
                     using (var file = WordDocumentFileStream.OpenShared(path))
                     {
                         var layout = FastDocView.Docx.Word2003SourceScanner.Scan(file);
-                        Console.WriteLine($"   open pass alone: {clock.ElapsedMilliseconds} ms ({layout.Pictures.Count} pictures, {layout.Pictures.Sum(picture => picture.TextEnd - picture.TextStart) >> 20} MB base64, {layout.HyperlinkTargets.Count} link targets)");
+                        Console.WriteLine($"   open pass alone: {clock.ElapsedMilliseconds} ms ({layout.HeaderPictures.Count} header pictures, body from byte {layout.BodyStart})");
                     }
                     clock.Restart();
                 }

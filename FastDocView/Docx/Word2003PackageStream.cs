@@ -6,10 +6,13 @@ namespace FastDocView.Docx;
 
 /// <summary>
 /// A Word 2003 XML file (w:wordDocument) presented as a .docx package, windowed like every other format: nothing is
-/// translated whole. At open, one byte pass (<see cref="Word2003SourceScanner"/>: no XML parse, no DOM) finds the body's
-/// byte range, every picture's base64 range (w:binData), every hyperlink target (w:hlink w:dest) and whether notes
-/// exist; the header parts before the body (w:styles, w:lists, w:docPr: small) are translated into styles.xml,
-/// numbering.xml and settings.xml, and the relationships are made from what the pass found. The body and the notes are
+/// translated whole, and the open reads only what precedes the body. A byte pass over the header
+/// (<see cref="Word2003SourceScanner"/>: no XML parse, no DOM) finds where the body starts and the pictures the header
+/// uses (list picture bullets); the header parts (w:styles, w:lists, w:docPr: small) are translated into styles.xml,
+/// numbering.xml and settings.xml. A hyperlink's or picture's relationship id is made from its target / picture name
+/// (<see cref="Word2003XmlTranslator.HyperlinkIdOf"/>), so the body needs no pass at open: the package resolves such an id
+/// when it is looked up (<see cref="IDocxOnDemandRelationships"/>), and a body picture's w:binData is found by a forward
+/// search from where the last search stopped. The notes parts always exist (empty when the body has no notes). The body and the notes are
 /// derived parts (<see cref="DocxVirtualPackageStream.DerivedPartMethod"/>): the .docx reader's index pass pulls them
 /// block by block (each body child is cut out by <see cref="Word2003BodyBlockSplitter"/> and translated on its own by
 /// <see cref="Word2003XmlTranslator.Translation"/>), recording a checkpoint (the block's byte offset in the file, its
@@ -18,7 +21,7 @@ namespace FastDocView.Docx;
 /// checkpoints (with no window bytes). A block's translation depends only on its own bytes (note ids come from its
 /// offset, relationship ids from the open pass), so a block translated again is byte-identical to the index pass's.
 /// </summary>
-internal sealed class Word2003PackageStream : DocxVirtualPackageStream, IDocxDerivedPartSource
+internal sealed class Word2003PackageStream : DocxVirtualPackageStream, IDocxDerivedPartSource, IDocxOnDemandRelationships
 {
     /// <summary>
     /// Translated bytes between checkpoints. Denser than deflate's 2 MB: a translation checkpoint costs two numbers in the
@@ -32,7 +35,7 @@ internal sealed class Word2003PackageStream : DocxVirtualPackageStream, IDocxDer
     private readonly Word2003XmlTranslator.TranslationState _state = new();
     private readonly Dictionary<Word2003XmlTranslator.NotePass, (byte[] Prefix, byte[] Suffix)> _frames = new();
 
-    // The last file's open pass, keyed by its path, length and write time: a host asks Decide and then Open for the same
+    // The last file's header pass, keyed by its path, length and write time: a host asks Decide and then Open for the same
     // file, and the second needs no second pass over it. One entry (bounded); the layout is immutable.
     private static readonly object LastScanGate = new();
     private static (string Key, Word2003SourceLayout Layout)? _lastScan;
@@ -64,23 +67,59 @@ internal sealed class Word2003PackageStream : DocxVirtualPackageStream, IDocxDer
         }
         _layout = layout;
 
-        foreach (string target in layout.HyperlinkTargets) _state.HyperlinkId(target);
         var pictures = new List<Word2003SourceLayout.Picture>();
-        foreach (Word2003SourceLayout.Picture picture in layout.Pictures)
+        foreach (Word2003SourceLayout.Picture picture in layout.HeaderPictures)
             if (!_state.ImageRelationships.ContainsKey(picture.Name)) { _state.ImageId(picture.Name); pictures.Add(picture); }   // the first of a repeated name
         _state.Freeze();
+        foreach (Word2003SourceLayout.Picture picture in pictures) if (!_foundPictures.ContainsKey(picture.Name)) _foundPictures[picture.Name] = picture;
+        _pictureSearchFrom = layout.BodyStart;
 
         Word2003XmlTranslator.Header header = Word2003XmlTranslator.ReadHeader(file);
         var parts = new List<VirtualPart>();
-        foreach ((string name, byte[] bytes) in Word2003XmlTranslator.SynthesizedParts(header, _state, layout.HasFootnotes, layout.HasEndnotes))
+        foreach ((string name, byte[] bytes) in Word2003XmlTranslator.SynthesizedParts(header, _state, hasFootnotes: true, hasEndnotes: true))
             parts.Add(VirtualPart.Synthesized(name, bytes));
-        // the body's own bytes stand for the body part's size where the reader weighs parts (the notes are inside them)
-        parts.Add(VirtualPart.Derived(DocumentPartName, Math.Max(0, layout.BodyEnd - layout.BodyStart)));
-        if (layout.HasFootnotes) parts.Add(VirtualPart.Derived(FootnotesPartName, 0));
-        if (layout.HasEndnotes) parts.Add(VirtualPart.Derived(EndnotesPartName, 0));
+        // the body's own bytes (to the file's end: the body's end is not looked for) stand for the body part's size where the
+        // reader weighs parts (the notes are inside them)
+        parts.Add(VirtualPart.Derived(DocumentPartName, Math.Max(0, file.Length - layout.BodyStart)));
+        parts.Add(VirtualPart.Derived(FootnotesPartName, 0));
+        parts.Add(VirtualPart.Derived(EndnotesPartName, 0));
         foreach (Word2003SourceLayout.Picture picture in pictures)
-            parts.Add(VirtualPart.Base64(Word2003XmlTranslator.MediaPartPath(_state, picture.Name), picture.TextStart, picture.TextEnd, picture.DecodedLength));
+            parts.Add(VirtualPart.Base64(Word2003XmlTranslator.MediaPartPath(picture.Name), picture.TextStart, picture.TextEnd, picture.DecodedLength));
         Layout(parts);
+    }
+
+    // ---- relationships and pictures resolved on demand ----------------------------------------------------------------
+
+    private readonly Dictionary<string, Word2003SourceLayout.Picture> _foundPictures = new(StringComparer.Ordinal);
+    private long _pictureSearchFrom;              // the body offset the next w:binData search starts at (-1: the file was searched to its end)
+
+    public string? HyperlinkTarget(string relationshipId) => Word2003XmlTranslator.HyperlinkTargetOf(relationshipId);
+
+    public string? ImagePart(string relationshipId)
+        => Word2003XmlTranslator.ImageNameOf(relationshipId) is { } name ? Word2003XmlTranslator.MediaPartPath(name) : null;
+
+    public byte[]? ReadOnDemandPart(string partName)
+    {
+        if (Word2003XmlTranslator.ImageNameOfMediaPart(partName) is not { } name || FindPicture(name) is not { } picture) return null;
+        return DecodeBase64(SourceFile, picture.TextStart, picture.TextEnd, picture.DecodedLength);
+    }
+
+    /// <summary>
+    /// The first w:binData of that name: from those found so far, else searched for forward from where the last search
+    /// stopped (every picture passed on the way is remembered). A picture's w:binData precedes its first use, so a window
+    /// searches about as far as the blocks it shows; a name never defined searches to the file's end, once.
+    /// </summary>
+    private Word2003SourceLayout.Picture? FindPicture(string name)
+    {
+        if (_foundPictures.TryGetValue(name, out Word2003SourceLayout.Picture? found)) return found;
+        while (_pictureSearchFrom >= 0)
+        {
+            Word2003SourceLayout.Picture? next = Word2003SourceScanner.NextPicture(SourceFile, _layout, ref _pictureSearchFrom);
+            if (next is null) break;
+            if (!_foundPictures.ContainsKey(next.Name)) _foundPictures[next.Name] = next;
+            if (next.Name == name) return _foundPictures[name];
+        }
+        return null;
     }
 
     private static Word2003XmlTranslator.NotePass PassOf(ZipEntryLocation entry) => entry.Name switch
@@ -360,16 +399,17 @@ internal sealed class Word2003SourceLayout
 {
     public sealed record Picture(string Name, long TextStart, long TextEnd, long DecodedLength);
 
-    /// <summary>The body's content: just after the w:body start tag, up to the '&lt;' of its end tag.</summary>
-    public long BodyStart, BodyEnd;
+    /// <summary>The body's content starts just after the w:body start tag (its end is found by the block splitter).</summary>
+    public long BodyStart;
+    /// <summary>The w:body start tag was self-closing: no blocks.</summary>
+    public bool IsBodyEmpty;
     /// <summary>"w:" (or "" for a default namespace): the prefix the root binds to the 2003 namespace.</summary>
     public string WordQualifier = "w:";
     /// <summary>"wx:": the prefix of the auxiliary namespace (wx:sect / wx:sub-section wrap the body's blocks); null when unbound.</summary>
     public string? AuxiliaryQualifier;
     public readonly List<(string Prefix, string Namespace)> RootNamespaces = new();
-    public readonly List<Picture> Pictures = new();
-    public readonly List<string> HyperlinkTargets = new();
-    public bool HasFootnotes, HasEndnotes;
+    /// <summary>The w:binData before the body (list picture bullets), in file order.</summary>
+    public readonly List<Picture> HeaderPictures = new();
 
     /// <summary>A fresh parser context for one block: the root's namespace declarations and its xml:space.</summary>
     public XmlParserContext BlockContext()
@@ -382,11 +422,11 @@ internal sealed class Word2003SourceLayout
 }
 
 /// <summary>
-/// The open pass over a Word 2003 XML file: a byte scan (no XML parse, bounded memory) for the few tags whose
-/// information the package needs before any block is translated. Only start tags in the 2003 namespace are looked at:
-/// w:body (the body's range), w:binData (each picture's base64 text and decoded length), w:hlink (w:dest: one
-/// relationship per target) and, inside the body, w:footnote / w:endnote (whether the notes parts exist). Text cannot
-/// hold a '&lt;' (it is escaped), and Word writes no comments or CDATA in the body.
+/// The open pass over a Word 2003 XML file: a byte scan (no XML parse, bounded memory) of what precedes the body - the
+/// header parts - for where w:body starts and the w:binData pictures the header uses. Nothing after the body's start tag
+/// is read at open; body pictures are found later, one search at a time (<see cref="NextPicture"/>). Only start tags in
+/// the 2003 namespace are looked at. Text cannot hold a '&lt;' (it is escaped), and Word writes no comments or CDATA in
+/// the body.
 /// </summary>
 internal static class Word2003SourceScanner
 {
@@ -399,60 +439,62 @@ internal static class Word2003SourceScanner
         ReadRoot(file, layout);
         var reader = new Word2003ByteReader(file, 0, ChunkSize);
         string q = layout.WordQualifier;
-        const int Body = 0, BodyEnd = 1, BinData = 2, Hyperlink = 3, Footnote = 4, Endnote = 5;
-        byte[][] tags = [.. new[] { "<" + q + "body", "</" + q + "body", "<" + q + "binData", "<" + q + "hlink", "<" + q + "footnote", "<" + q + "endnote" }.Select(Encoding.UTF8.GetBytes)];
+        const int Body = 0, BinData = 1;
+        byte[][] tags = [.. new[] { "<" + q + "body", "<" + q + "binData" }.Select(Encoding.UTF8.GetBytes)];
         byte[] binDataEnd = Encoding.UTF8.GetBytes("</" + q + "binData");
-        var targets = new HashSet<string>(StringComparer.Ordinal);
-        bool inBody = false;
-        layout.BodyStart = layout.BodyEnd = -1;
-        bool[] active = [true, true, true, true, true, true];
-        long[] next = [long.MinValue, long.MinValue, long.MinValue, long.MinValue, long.MinValue, long.MinValue];
+        bool[] active = [true, true];
+        long[] next = [long.MinValue, long.MinValue];
         long[] searchedTo = new long[tags.Length];
-        while (reader.FindTag(tags, active, next, searchedTo) is int found and >= 0)
+        layout.BodyStart = -1;
+        while (layout.BodyStart < 0 && reader.FindTag(tags, active, next, searchedTo) is int found and >= 0)
         {
-            // a tag needed once is no longer looked for after it was found
-            if (found == Body || found == BodyEnd) active[found] = false;
-            if ((found == Footnote || found == Endnote) && inBody) active[found] = false;
-            switch (found)
+            if (found == Body)
             {
-                case Body when layout.BodyStart < 0:
-                {
-                    string tag = reader.ReadTag();
-                    layout.BodyStart = reader.Position;
-                    inBody = !tag.EndsWith("/", StringComparison.Ordinal);
-                    if (!inBody) layout.BodyEnd = layout.BodyStart;
-                    break;
-                }
-                case BodyEnd when inBody:
-                    layout.BodyEnd = reader.Position;
-                    inBody = false;
-                    reader.Skip(1);
-                    break;
-                case BinData:
-                {
-                    string tag = reader.ReadTag();
-                    string? pictureName = AttributeValue(tag, q + "name");
-                    if (tag.EndsWith("/", StringComparison.Ordinal) || pictureName is null) break;
-                    long start = reader.Position;
-                    (long end, long characters, int padding) = reader.Base64Until(binDataEnd);
-                    if (end < 0) break;
-                    layout.Pictures.Add(new Word2003SourceLayout.Picture(pictureName, start, end, Math.Max(0, characters / 4 * 3 - padding)));
-                    break;
-                }
-                case Hyperlink:
-                {
-                    string tag = reader.ReadTag();
-                    if (AttributeValue(tag, q + "dest") is { Length: > 0 } target && targets.Add(target)) layout.HyperlinkTargets.Add(target);
-                    break;
-                }
-                case Footnote when inBody: layout.HasFootnotes = true; reader.Skip(1); break;
-                case Endnote when inBody: layout.HasEndnotes = true; reader.Skip(1); break;
-                default: reader.Skip(1); break;
+                string tag = reader.ReadTag();
+                layout.BodyStart = reader.Position;
+                layout.IsBodyEmpty = tag.EndsWith("/", StringComparison.Ordinal);
             }
+            else if (ReadPicture(reader, q, binDataEnd) is { } picture) layout.HeaderPictures.Add(picture);
         }
-        if (layout.BodyStart < 0) { layout.BodyStart = layout.BodyEnd = reader.Position; }   // no body: an empty document
-        else if (layout.BodyEnd < 0) layout.BodyEnd = reader.Position;                       // cut off inside the body: up to the file's end
+        if (layout.BodyStart < 0) { layout.BodyStart = reader.Position; layout.IsBodyEmpty = true; }   // no body: an empty document
         return layout;
+    }
+
+    /// <summary>
+    /// The next w:binData picture at or after <paramref name="from"/>, which moves past it; null (and -1) when there is none
+    /// before the file's end.
+    /// </summary>
+    public static Word2003SourceLayout.Picture? NextPicture(Stream file, Word2003SourceLayout layout, ref long from)
+    {
+        if (from < 0 || layout.IsBodyEmpty) { from = -1; return null; }
+        var reader = new Word2003ByteReader(file, from, ChunkSize);
+        string q = layout.WordQualifier;
+        byte[][] tags = [Encoding.UTF8.GetBytes("<" + q + "binData")];
+        byte[] binDataEnd = Encoding.UTF8.GetBytes("</" + q + "binData");
+        bool[] active = [true];
+        long[] next = [long.MinValue];
+        long[] searchedTo = new long[1];
+        while (reader.FindTag(tags, active, next, searchedTo) >= 0)
+        {
+            Word2003SourceLayout.Picture? picture = ReadPicture(reader, q, binDataEnd);
+            if (picture is null) continue;
+            from = reader.Position;
+            return picture;
+        }
+        from = -1;
+        return null;
+    }
+
+    /// <summary>At a w:binData start tag: its name and base64 range (null for one without a name, empty, or never closed); moves past it.</summary>
+    private static Word2003SourceLayout.Picture? ReadPicture(Word2003ByteReader reader, string q, byte[] binDataEnd)
+    {
+        string tag = reader.ReadTag();
+        string? pictureName = AttributeValue(tag, q + "name");
+        if (tag.EndsWith("/", StringComparison.Ordinal) || pictureName is null) return null;
+        long start = reader.Position;
+        (long end, long characters, int padding) = reader.Base64Until(binDataEnd);
+        if (end < 0) return null;
+        return new Word2003SourceLayout.Picture(pictureName, start, end, Math.Max(0, characters / 4 * 3 - padding));
     }
 
     /// <summary>The root's namespace declarations; throws when the root is not the 2003 w:wordDocument.</summary>
@@ -708,14 +750,16 @@ internal sealed class Word2003BodyBlockSplitter
 {
     private readonly Stream _file;
     private readonly Word2003ByteReader _reader;
-    private readonly long _end;
+    private readonly byte[] _bodyClose;
     private readonly byte[]? _sectionOpen, _subSectionOpen;
+    private bool _isAtBodyEnd;
 
     public Word2003BodyBlockSplitter(Stream file, long start, Word2003SourceLayout layout)
     {
         _file = file;
         _reader = new Word2003ByteReader(file, start, 1 << 16);
-        _end = layout.BodyEnd;
+        _bodyClose = Encoding.UTF8.GetBytes("</" + layout.WordQualifier + "body");
+        _isAtBodyEnd = layout.IsBodyEmpty;
         if (layout.AuxiliaryQualifier is { } aux)
         {
             _sectionOpen = Encoding.UTF8.GetBytes("<" + aux + "sect");
@@ -731,10 +775,11 @@ internal sealed class Word2003BodyBlockSplitter
     {
         start = -1;
         length = 0;
-        while (_reader.Position < _end && _reader.FindByte((byte)'<') && _reader.Position < _end)
+        while (!_isAtBodyEnd && _reader.FindByte((byte)'<'))
         {
             int kind = TagKind();
             if (kind == TagSkipped) continue;
+            if (kind == TagEnd && _reader.Matches(_bodyClose) && IsNameEnd(_reader.PeekAt(_bodyClose.Length))) { _isAtBodyEnd = true; break; }   // the body's end
             if (kind == TagEnd) { SkipTag(); continue; }                       // a wrapper's end tag
             if (IsWrapper()) { SkipTag(); continue; }
             start = _reader.Position;
@@ -745,10 +790,10 @@ internal sealed class Word2003BodyBlockSplitter
                 if (tag == TagSkipped) { }
                 else if (tag == TagEnd) { SkipTag(); depth--; }
                 else { if (!SkipTag()) depth++; }
-                if (depth <= 0 || _reader.Position >= _end) break;
-                if (!_reader.FindByte((byte)'<') || _reader.Position >= _end) break;
+                if (depth <= 0) break;
+                if (!_reader.FindByte((byte)'<')) break;                       // cut off inside the block: up to the file's end
             }
-            long end = Math.Min(_reader.Position, _end);
+            long end = _reader.Position;
             length = checked((int)(end - start));
             if (block.Length < length) Array.Resize(ref block, Math.Max(length, block.Length * 2));
             ReadExactly(start, block, length);

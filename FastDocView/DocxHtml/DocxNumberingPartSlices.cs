@@ -86,7 +86,7 @@ internal sealed class DocxNumberingPartSlices
     }
 
     /// <summary>At '&lt;': skips a comment, CDATA section or processing instruction; an element start is left for <see cref="TryReadTag"/>.</summary>
-    private static bool TrySkipMarkup(ReadOnlySpan<byte> span, ref int position, out bool isElement)
+    internal static bool TrySkipMarkup(ReadOnlySpan<byte> span, ref int position, out bool isElement)
     {
         isElement = false;
         if (position + 1 >= span.Length) return false;
@@ -107,7 +107,7 @@ internal sealed class DocxNumberingPartSlices
     }
 
     /// <summary>Reads one start tag at '&lt;' (quotes honoured: a '&gt;' inside an attribute value does not end it); leaves the position after '&gt;'.</summary>
-    private static bool TryReadTag(ReadOnlySpan<byte> span, ref int position, out ReadOnlySpan<byte> name, out bool selfClosing)
+    internal static bool TryReadTag(ReadOnlySpan<byte> span, ref int position, out ReadOnlySpan<byte> name, out bool selfClosing)
     {
         name = default;
         selfClosing = false;
@@ -128,7 +128,7 @@ internal sealed class DocxNumberingPartSlices
     }
 
     /// <summary>After an element's start tag: skips its content and end tag, nested elements of any name included.</summary>
-    private static bool TrySkipElement(ReadOnlySpan<byte> span, ref int position)
+    internal static bool TrySkipElement(ReadOnlySpan<byte> span, ref int position)
     {
         int depth = 1;
         while (depth > 0)

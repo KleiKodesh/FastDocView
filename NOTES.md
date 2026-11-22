@@ -3370,3 +3370,36 @@ What was on the paint path, and the fixes:
 - ODT list styles with equal bytes after the start tag share one parsed object.
 Most of what is left in a JIT host is JIT itself (~950 methods compiled at Tier0 on a first open, hot loops at Tier0
 speed); ReadyToRun or the AOT service removes it. Measured on a loaded machine (numbers vary ~30%).
+
+### Round 2: the shipped configuration (2026-11-22)
+
+The app hosts FastDocView inside the KitveiHakodesh service, which ships native AOT (`PublishAot` in
+KitveiHakodeshService.csproj, published by Build/build.ps1 `PublishKitveiHakodeshService`): no JIT. `FastDocView.ColdBench`
+is published the same way (AOT, invariant globalization, workstation GC, GCConserveMemory 9) and times a cold first paint
+per file in a fresh process (`dotnet publish -c Release -r win-x64`, then `FastDocView.ColdBench.exe --runs 3 <files>`).
+That is the gate now; the JIT numbers of round 1 were mostly JIT.
+
+What was left on the paint path in AOT, and the fixes:
+- Zip packages: `ZipEntryLocator.Locate` read every entry's local header (a seek per part; ~40 ms for the 1,040-part
+  sample, paid by format detection and every part lookup). The central directory is read in one block; only the match's
+  local header is read.
+- .docx: styles.xml is cut into its styles (`DocxStylesPartSlices`, the numbering slicer's walk); a style is parsed when
+  first looked up. Falls back to the whole parse for a part the walk cannot follow.
+- .odt / .fodt: list styles keep their bytes until a list uses them (`OdtListStyle` levels parsed lazily); the list-style
+  filter parses an element from the chunk instead of copying the rest of the chunk per element; style:style elements are
+  cut from the bytes too and parsed on first lookup (`OdtStyleCascade.AddUnparsedStyle`); the first open's rendering
+  cascade is a view over the indexing cascade that filters a style when first used (`OdtStyleCascade.ForRendering`); the
+  index's sections carry the cut styles in one extra section, in cut order. .fodt page setup comes from a byte search for
+  office:automatic-styles / office:master-styles (`OdtFlatPageSetupReader`) instead of tokenising the 17 MB head.
+- Word 2003 XML: no pass over the body at open. Relationship ids of hyperlinks and pictures are made from the target /
+  picture name (base64url), resolved when looked up (`IDocxOnDemandRelationships`); a body picture's w:binData is found by
+  a forward search from where the last one stopped; the notes parts always exist; the block splitter finds `</w:body>`
+  itself. `DerivedPartMethod` 0xF004 invalidates sidecars made over the older translation.
+- RTF: object groups are captured and chart objects scanned with vectorised runs (a chart object carries megabytes of
+  preview hex): a chart costs ~2 ms instead of 10-25 ms.
+Charts are not deferred to a second fetch: with the reads above a chart in the first window costs ~2-5 ms, below the cost
+of a second round trip; deferring would need the page to refetch before the index completes (it refetches provisional
+blocks only after).
+appCheck "same first visible block after reload" on .doc / .odt / .fodt: after = the previous block at an offset equal
+that looks like the same pixel row read on the other side of a block boundary (not verified against master); the library returns the same
+blocks either way (.docx and Word 2003 XML land exactly). If it is a real shift, it is in the app's position restore (vue-frontend), not the library.

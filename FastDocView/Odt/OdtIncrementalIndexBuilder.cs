@@ -109,7 +109,8 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
     }
 
     /// <summary>The style sections captured so far (font faces, automatic styles: they precede office:body).</summary>
-    public System.Xml.Linq.XElement[] StyleSectionElementsForRendering() => _styles.SectionElementsForRendering();
+    /// <summary>A first open's rendering cascade: a view over this pass's cascade that filters each style as it is first used.</summary>
+    public OdtStyleCascade StylesForRendering() => OdtStyleCascade.ForRendering(_styles);
 
     /// <summary>Scans on until at least <paramref name="blockCount"/> blocks are known or the body ends.</summary>
     public void AdvanceUntilKnown(int blockCount)

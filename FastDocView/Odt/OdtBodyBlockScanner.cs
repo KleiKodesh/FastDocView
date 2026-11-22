@@ -943,7 +943,7 @@ internal sealed class OdtBodyBlockScanner
         var listStyles = new List<(string name, OdtListStyle style)>();
         try
         {
-            using var view = new OdtStylesListStyleFilterStream(new MemoryStream(whole, writable: false), (name, style) => listStyles.Add((name, style)));
+            using var view = new OdtStylesListStyleFilterStream(new MemoryStream(whole, writable: false), (name, style) => listStyles.Add((name, style)), _styles.AddUnparsedStyle);
             using XmlReader reader = WordDocumentXml.CreateReader(view, tolerateUndeclaredPrefixes: true, ignoreWhitespace: false);
             XElement parsed = XElement.Load(reader, LoadOptions.PreserveWhitespace).Elements().First();
             foreach ((string name, OdtListStyle style) in listStyles) _styles.AddListStyle(name, style);

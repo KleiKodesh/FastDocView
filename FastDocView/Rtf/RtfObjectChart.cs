@@ -21,6 +21,14 @@ internal static class RtfObjectChart
         for (int i = 0; i < group.Length; i++)
         {
             byte b = group[i];
+            if (b is not ((byte)'{' or (byte)'}' or (byte)'\\'))
+            {
+                // text and hex digits (a {\result} preview picture: megabytes) up to the next brace or control word
+                int next = group.AsSpan(i).IndexOfAny((byte)'{', (byte)'}', (byte)'\\');
+                if (next < 0) break;
+                i += next;
+                b = group[i];
+            }
             if (b == '{') { depth++; continue; }
             if (b == '}') { depth--; continue; }
             if (b != '\\' || i + 1 >= group.Length) continue;
@@ -78,19 +86,21 @@ internal static class RtfObjectChart
     /// <summary>The bytes of the hex digits from <paramref name="at"/> to the group's closing brace (white space skipped); null on any other character.</summary>
     private static byte[]? HexDigits(byte[] group, int at, out int end)
     {
-        var bytes = new List<byte>(Math.Max(0, (group.Length - at) / 2));
-        int high = -1;
-        for (end = at; end < group.Length; end++)
+        int close = Array.IndexOf(group, (byte)'}', at);
+        int stop = close < 0 ? group.Length : close;
+        var bytes = new byte[Math.Max(0, (stop - at) / 2)];
+        int count = 0, high = -1;
+        for (end = at; end < stop; end++)
         {
             byte b = group[end];
-            if (b == '}') break;
             if (b is (byte)'\r' or (byte)'\n' or (byte)' ' or (byte)'\t') continue;
             int nibble = b >= '0' && b <= '9' ? b - '0' : b >= 'a' && b <= 'f' ? b - 'a' + 10 : b >= 'A' && b <= 'F' ? b - 'A' + 10 : -1;
             if (nibble < 0) return null;
             if (high < 0) high = nibble;
-            else { bytes.Add((byte)(high << 4 | nibble)); high = -1; }
+            else { bytes[count++] = (byte)(high << 4 | nibble); high = -1; }
         }
-        return bytes.ToArray();
+        if (count != bytes.Length) Array.Resize(ref bytes, count);
+        return bytes;
     }
 
     private static bool IsLetter(byte b) => b is >= (byte)'a' and <= (byte)'z' or >= (byte)'A' and <= (byte)'Z';

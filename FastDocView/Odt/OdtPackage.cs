@@ -147,8 +147,12 @@ public static class OdtPackage
         if (isFlat)
         {
             long position = file.Position;
-            file.Position = 0;
-            try { return OdtPageSetup.Read(new NonClosingStream(file)); }
+            try
+            {
+                if (OdtFlatPageSetupReader.TryRead(file) is { } found) return found;
+                file.Position = 0;
+                return OdtPageSetup.Read(new NonClosingStream(file));
+            }
             finally { file.Position = position; }
         }
         ZipEntryLocation? entry = ZipEntryLocator.Locate(file, StylesEntryName);
@@ -254,7 +258,7 @@ public static class OdtPackage
         if (entry is null) { styles.PageSetup = OdtPageSetup.Empty; return; }
         var pageSetup = new OdtPageSetup.Collector();
         // list styles are cut out of the bytes before the XmlReader sees them (OdtStylesListStyleFilterStream)
-        using (Stream view = new OdtStylesListStyleFilterStream(OpenEntry(zip, entry), styles.AddListStyle))
+        using (Stream view = new OdtStylesListStyleFilterStream(OpenEntry(zip, entry), styles.AddListStyle, styles.AddUnparsedStyle))
         using (XmlReader reader = WordDocumentXml.CreateReader(view, tolerateUndeclaredPrefixes: true))
         {
             try

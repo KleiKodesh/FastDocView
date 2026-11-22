@@ -11,6 +11,47 @@ namespace FastDocView.Docx;
 /// most, unlike the body. Read through ZipArchive over any seekable stream, so it works the same
 /// on a file-system host and in the browser.
 /// </summary>
+/// <summary>
+/// A package some of whose relationships and parts are resolved when they are looked up instead of being listed at open
+/// (Word 2003 XML: hyperlinks and pictures are found in the body as its blocks are read, not by a pass over the whole file).
+/// The relationship parts list the rest as usual; these answer for the ids and part names they leave out.
+/// </summary>
+internal interface IDocxOnDemandRelationships
+{
+    /// <summary>The external target of a hyperlink relationship id, or null.</summary>
+    string? HyperlinkTarget(string relationshipId);
+    /// <summary>The package part name of a picture relationship id, or null.</summary>
+    string? ImagePart(string relationshipId);
+    /// <summary>The bytes of an on-demand part; null when <paramref name="partName"/> is not one (or its data is not found).</summary>
+    byte[]? ReadOnDemandPart(string partName);
+}
+
+/// <summary>A relationship map read from a .rels part, with the ids it does not list resolved on demand (and remembered).</summary>
+internal sealed class DocxRelationshipMapWithFallback<TValue>(Dictionary<string, TValue> listed, DocxRelationshipMapWithFallback<TValue>.Resolver resolve)
+    : IReadOnlyDictionary<string, TValue>
+{
+    public delegate bool Resolver(string relationshipId, out TValue value);
+
+    private readonly Dictionary<string, TValue> _resolved = new(StringComparer.Ordinal);
+
+    public bool TryGetValue(string key, out TValue value)
+    {
+        if (listed.TryGetValue(key, out value!) || _resolved.TryGetValue(key, out value!)) return true;
+        if (!resolve(key, out value)) return false;
+        _resolved[key] = value;
+        return true;
+    }
+
+    public TValue this[string key] => TryGetValue(key, out TValue? value) ? value : throw new KeyNotFoundException(key);
+    public bool ContainsKey(string key) => TryGetValue(key, out _);
+    // enumeration covers what is listed and resolved so far: an on-demand id is known only once it is asked for
+    public IEnumerable<string> Keys => listed.Keys.Concat(_resolved.Keys);
+    public IEnumerable<TValue> Values => listed.Values.Concat(_resolved.Values);
+    public int Count => listed.Count + _resolved.Count;
+    public IEnumerator<KeyValuePair<string, TValue>> GetEnumerator() => listed.Concat(_resolved).GetEnumerator();
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
 public sealed class DocxDocumentParts
 {
     public DocxStyleCascade Styles { get; }
@@ -89,6 +130,7 @@ public sealed class DocxDocumentParts
     /// <summary>A picture part's bytes, read on demand when the host asks for that picture (never kept); null when absent.</summary>
     public byte[]? ReadPartBytes(string partName)
     {
+        if (_package is IDocxOnDemandRelationships onDemand && onDemand.ReadOnDemandPart(partName) is { } bytesOnDemand) return bytesOnDemand;
         using var zip = new ZipArchive(_package, ZipArchiveMode.Read, leaveOpen: true);
         ZipArchiveEntry? entry = zip.GetEntry(partName);
         if (entry is null) return null;
@@ -123,7 +165,9 @@ public sealed class DocxDocumentParts
         XDocument? settings = LoadPart(zip, PartNames.Settings);          // parsed once: theme mapping, compatibility (note numbering is per section: Word ignores settings.xml footnotePr / endnotePr)
         Theme = new DocxTheme(LoadPart(zip, PartNames.Theme), settings);
         Compatibility = new DocxCompatibilitySettings(settings);
-        Styles = new DocxStyleCascade(LoadStyles(zip, PartNames.Styles), Theme) { Compatibility = Compatibility };
+        Styles = StylesPartSlices(zip, PartNames.Styles) is { } slices
+            ? new DocxStyleCascade(slices, Theme) { Compatibility = Compatibility }
+            : new DocxStyleCascade(LoadStyles(zip, PartNames.Styles), Theme) { Compatibility = Compatibility };
         HyperlinkTargets = LoadHyperlinkTargets(zip, DocxPackagePartNames.RelationshipsPartName(PartNames.Document));
         FootnoteHyperlinkTargets = PartNames.Footnotes is { } footnotes ? LoadHyperlinkTargets(zip, DocxPackagePartNames.RelationshipsPartName(footnotes)) : new Dictionary<string, string>();
         EndnoteHyperlinkTargets = PartNames.Endnotes is { } endnotes ? LoadHyperlinkTargets(zip, DocxPackagePartNames.RelationshipsPartName(endnotes)) : new Dictionary<string, string>();
@@ -133,6 +177,26 @@ public sealed class DocxDocumentParts
         RelatedParts = LoadRelatedParts(zip, PartNames.Document);
         FootnoteRelatedParts = LoadRelatedParts(zip, PartNames.Footnotes);
         EndnoteRelatedParts = LoadRelatedParts(zip, PartNames.Endnotes);
+        if (package is IDocxOnDemandRelationships onDemand)
+        {
+            // the ids the relationship parts leave out (Word 2003 XML body hyperlinks and pictures) resolve when looked up
+            bool Link(string id, out string target) => (target = onDemand.HyperlinkTarget(id)!) is not null;
+            bool Image(string id, out string part) => (part = onDemand.ImagePart(id)!) is not null;
+            bool ImageRelated(string id, out (string Type, string PartName) related)
+            {
+                related = onDemand.ImagePart(id) is { } part ? ("http://schemas.openxmlformats.org/officeDocument/2006/relationships/image", part) : default;
+                return related.PartName is not null;
+            }
+            IReadOnlyDictionary<string, string> Links(IReadOnlyDictionary<string, string> listed)
+                => new DocxRelationshipMapWithFallback<string>((Dictionary<string, string>)listed, Link);
+            IReadOnlyDictionary<string, string> Images(IReadOnlyDictionary<string, string> listed)
+                => new DocxRelationshipMapWithFallback<string>((Dictionary<string, string>)listed, Image);
+            IReadOnlyDictionary<string, (string Type, string PartName)> Related(IReadOnlyDictionary<string, (string Type, string PartName)> listed)
+                => new DocxRelationshipMapWithFallback<(string Type, string PartName)>((Dictionary<string, (string Type, string PartName)>)listed, ImageRelated);
+            HyperlinkTargets = Links(HyperlinkTargets); FootnoteHyperlinkTargets = Links(FootnoteHyperlinkTargets); EndnoteHyperlinkTargets = Links(EndnoteHyperlinkTargets);
+            ImageParts = Images(ImageParts); FootnoteImageParts = Images(FootnoteImageParts); EndnoteImageParts = Images(EndnoteImageParts);
+            RelatedParts = Related(RelatedParts); FootnoteRelatedParts = Related(FootnoteRelatedParts); EndnoteRelatedParts = Related(EndnoteRelatedParts);
+        }
     }
 
     private DocxNumberingDefinitions LoadNumbering()
@@ -236,6 +300,17 @@ public sealed class DocxDocumentParts
         {
             _counter?.ImportState(state);
         }
+    }
+
+    /// <summary>styles.xml cut into its styles without parsing it (<see cref="DocxStylesPartSlices"/>); null when absent or not cuttable (parsed whole then).</summary>
+    private static DocxStylesPartSlices? StylesPartSlices(ZipArchive zip, string? name)
+    {
+        ZipArchiveEntry? entry = name is null ? null : zip.GetEntry(name);
+        if (entry is null) return null;
+        using Stream stream = entry.Open();
+        var bytes = new MemoryStream(entry.Length is > 0 and < int.MaxValue ? (int)entry.Length : 0);
+        stream.CopyTo(bytes);
+        return DocxStylesPartSlices.TryCut(bytes.ToArray());
     }
 
     /// <summary>

@@ -69,7 +69,7 @@ internal static class Word2003XmlTranslator
         if (header.DocumentProperties is not null) document.Append(Relationship("rIdSettings", "settings", "settings.xml"));
         if (hasFootnotes) document.Append(Relationship("rIdFootnotes", "footnotes", "footnotes.xml"));
         if (hasEndnotes) document.Append(Relationship("rIdEndnotes", "endnotes", "endnotes.xml"));
-        document.Append(HyperlinkRelationships(state)).Append(imageRelationships).Append("</Relationships>");
+        document.Append(imageRelationships).Append("</Relationships>");
         parts.Add(("word/_rels/document.xml.rels", Utf8(document.ToString())));
         if (header.Lists is not null)      // picture bullets (w:listPicBullet) name their pictures through numbering.xml's own relationships
             parts.Add(("word/_rels/numbering.xml.rels", Utf8("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">"
@@ -77,32 +77,63 @@ internal static class Word2003XmlTranslator
         foreach (string? notes in new[] { hasFootnotes ? "footnotes" : null, hasEndnotes ? "endnotes" : null })
             if (notes is not null)
                 parts.Add(("word/_rels/" + notes + ".xml.rels", Utf8("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"" + PackageRelationshipNamespace + "\">"
-                                                                   + HyperlinkRelationships(state) + imageRelationships + "</Relationships>")));
+                                                                   + imageRelationships + "</Relationships>")));
         return parts;
     }
 
-    /// <summary>The package name of a picture (a w:binData name) the open pass found.</summary>
-    internal static string MediaPartPath(TranslationState state, string imageName) => "word/media/" + MediaPartName(state, imageName);
+    /// <summary>The package name of a picture (a w:binData name).</summary>
+    internal static string MediaPartPath(string imageName) => "word/media/" + MediaPartName(imageName);
+
+    private const string HyperlinkIdPrefix = "rIdL", ImageIdPrefix = "rIdI";
+
+    /// <summary>A hyperlink target's relationship id: the target itself, base64url-encoded (letters, digits, '-', '_': a valid id).</summary>
+    internal static string HyperlinkIdOf(string target) => HyperlinkIdPrefix + Base64Url(target);
+
+    /// <summary>A picture's relationship id: its w:binData name, base64url-encoded.</summary>
+    internal static string ImageIdOf(string imageName) => ImageIdPrefix + Base64Url(imageName);
+
+    /// <summary>The target a <see cref="HyperlinkIdOf"/> id stands for; null for any other id.</summary>
+    internal static string? HyperlinkTargetOf(string relationshipId)
+        => relationshipId.StartsWith(HyperlinkIdPrefix, StringComparison.Ordinal) ? FromBase64Url(relationshipId.Substring(HyperlinkIdPrefix.Length)) : null;
+
+    /// <summary>The picture name a <see cref="ImageIdOf"/> id stands for; null for any other id.</summary>
+    internal static string? ImageNameOf(string relationshipId)
+        => relationshipId.StartsWith(ImageIdPrefix, StringComparison.Ordinal) ? FromBase64Url(relationshipId.Substring(ImageIdPrefix.Length)) : null;
+
+    /// <summary>The picture name of a <see cref="MediaPartPath"/> part name; null for any other part.</summary>
+    internal static string? ImageNameOfMediaPart(string partName)
+    {
+        const string Media = "word/media/";
+        if (!partName.StartsWith(Media + ImageIdPrefix, StringComparison.Ordinal)) return null;
+        int dash = partName.IndexOf('-', Media.Length + ImageIdPrefix.Length);
+        // base64url text can hold '-': the id is the part up to the dash that the name's own encoding ends at
+        for (; dash > 0; dash = partName.IndexOf('-', dash + 1))
+            if (ImageNameOf(partName.Substring(Media.Length, dash - Media.Length)) is { } name && MediaPartPath(name) == partName) return name;
+        return null;
+    }
+
+    private static string Base64Url(string text)
+        => Convert.ToBase64String(new UTF8Encoding(false).GetBytes(text)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private static string? FromBase64Url(string text)
+    {
+        string padded = text.Replace('-', '+').Replace('_', '/');
+        padded += new string('=', (4 - padded.Length % 4) % 4);
+        try { return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(Convert.FromBase64String(padded)); }
+        catch (FormatException) { return null; }
+        catch (ArgumentException) { return null; }
+    }
 
     private static byte[] Utf8(string text) => new UTF8Encoding(false).GetBytes(text);
 
     private static string Relationship(string id, string type, string target)
         => "<Relationship Id=\"" + id + "\" Type=\"" + RelationshipNamespace + "/" + type + "\" Target=\"" + target + "\"/>";
 
-    private static string HyperlinkRelationships(TranslationState state)
-    {
-        var text = new StringBuilder();
-        foreach ((string id, string target) in state.Hyperlinks)
-            text.Append("<Relationship Id=\"").Append(Escape(id)).Append("\" Type=\"").Append(RelationshipNamespace).Append("/hyperlink\" Target=\"")
-                .Append(Escape(target)).Append("\" TargetMode=\"External\"/>");
-        return text.ToString();
-    }
-
     private static string ImageRelationships(TranslationState state)
     {
         var text = new StringBuilder();
         foreach (KeyValuePair<string, string> image in state.ImageRelationships)
-            text.Append(Relationship(image.Value, "image", "media/" + MediaPartName(state, image.Key)));      // only safe characters
+            text.Append(Relationship(image.Value, "image", "media/" + MediaPartName(image.Key)));      // only safe characters
         return text.ToString();
     }
 
@@ -118,7 +149,7 @@ internal static class Word2003XmlTranslator
     }
 
     /// <summary>The picture's part name: its relationship id first, so two names that clean to the same text stay two parts.</summary>
-    private static string MediaPartName(TranslationState state, string imageName) => state.ImageRelationships[imageName] + "-" + MediaFileName(imageName);
+    private static string MediaPartName(string imageName) => ImageIdOf(imageName) + "-" + MediaFileName(imageName);
 
     private static string ContentTypes(TranslationState state, Header header, bool hasFootnotes, bool hasEndnotes)
     {
@@ -210,35 +241,28 @@ internal static class Word2003XmlTranslator
     internal enum NotePass { None, Footnotes, Endnotes }
 
     /// <summary>
-    /// The ids a translation gives: relationships for every hyperlink target and picture, assigned in file order by the
-    /// open pass and then frozen (a block translated at any time, in any order, finds the same id); note ids made from
-    /// the byte offset of the block that holds the note, so a block's ids never depend on the blocks before it.
+    /// The ids a translation gives. A hyperlink's or picture's relationship id is made from its target / picture name
+    /// itself (<see cref="HyperlinkIdOf"/>, <see cref="ImageIdOf"/>), so no pass over the file has to collect them before a
+    /// block is translated: a block translated at any time, in any order, gets the same ids, and the package resolves an id
+    /// when it is looked up (<see cref="IDocxOnDemandRelationships"/>). Note ids are made from the byte offset of the block
+    /// that holds the note, so a block's ids never depend on the blocks before it.
     /// </summary>
     internal sealed class TranslationState
     {
+        /// <summary>The pictures the header parts use (list picture bullets): listed in the relationship parts made at open.</summary>
         public readonly Dictionary<string, string> ImageRelationships = new(StringComparer.Ordinal);   // "wordml://..." -> relationship id
-        public readonly List<(string id, string target)> Hyperlinks = new();
-        private readonly Dictionary<string, string> _hyperlinkIds = new(StringComparer.Ordinal);
         private bool _isFrozen;
         private int _noteIdBase, _notesInBlock;
 
-        /// <summary>Ends the open pass: later lookups never add a relationship (the relationship parts are already made).</summary>
+        /// <summary>Ends the header translation: pictures named after it are no longer listed (they resolve on demand).</summary>
         public void Freeze() => _isFrozen = true;
 
-        public string HyperlinkId(string target)
-        {
-            if (_hyperlinkIds.TryGetValue(target, out string? id)) return id;
-            if (_isFrozen) return "rIdLinkUnknown";
-            _hyperlinkIds[target] = id = "rIdLink" + (Hyperlinks.Count + 1);
-            Hyperlinks.Add((id, target));
-            return id;
-        }
+        public string HyperlinkId(string target) => HyperlinkIdOf(target);
 
         public string ImageId(string name)
         {
-            if (ImageRelationships.TryGetValue(name, out string? id)) return id;
-            if (_isFrozen) return "rIdImageUnknown";
-            ImageRelationships[name] = id = "rIdImage" + (ImageRelationships.Count + 1);
+            string id = ImageIdOf(name);
+            if (!_isFrozen && !ImageRelationships.ContainsKey(name)) ImageRelationships[name] = id;
             return id;
         }
 

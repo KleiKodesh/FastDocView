@@ -183,18 +183,10 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
             return whole;
         }
         var document = new OdtWindowedDocument(displayPath, null, builder, OdtBlockXmlReader.OverIncrementalBuild(file, builder),
-                                               RenderingStyles(builder.StyleSectionElementsForRendering()), decision, sidecarPathToSave,
+                                               builder.StylesForRendering(), decision, sidecarPathToSave,
                                                OdtPackage.ReadMeta(file, isFlat), OdtPackage.ReadTabsRelativeToIndent(file, isFlat));
         if (builder.IsEveryBlockKnown) document.CompleteIndexLocked();   // a short body: done already
         return document;
-    }
-
-    /// <summary>A first open's rendering cascade: the same filtered sections the index stores, as trees (no string round trip).</summary>
-    private static OdtStyleCascade RenderingStyles(XElement[] styleSections)
-    {
-        var styles = new OdtStyleCascade();
-        foreach (XElement section in styleSections) styles.AddSection(section);
-        return styles;
     }
 
     /// <summary>The cascade from captured style sections (no list styles) — a reopen never touches styles.xml.</summary>

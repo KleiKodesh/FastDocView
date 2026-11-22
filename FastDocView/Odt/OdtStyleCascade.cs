@@ -71,6 +71,19 @@ public sealed class OdtStyleCascade
     ];
 
     private readonly Dictionary<(string family, string name), XElement> _styles = new();
+    /// <summary>style:style elements cut from the bytes as the part streamed by (<see cref="OdtStylesListStyleFilterStream"/>), parsed
+    /// when first looked up: a LibreOffice conversion of a Word file declares thousands (the sample: 5,716 named, 2,702 automatic),
+    /// a window uses a few. Keys never overlap <see cref="_styles"/>: adding to one removes the key from the other (later wins).</summary>
+    private readonly Dictionary<(string family, string name), UnparsedStyle> _unparsedStyles = new();
+    /// <summary>The keys of the styles that came cut (parsed since or not): they are in no section, so the index's copy lists them itself.</summary>
+    private readonly Dictionary<(string family, string name), long> _cutStyleKeys = new();   // key -> the order it was cut in (the copy is deterministic)
+    private long _cutStyleCount;
+    /// <summary>A first open's rendering cascade reads its styles from the indexing cascade, each filtered as it is first used
+    /// (<see cref="ForRendering"/>); null for every other cascade.</summary>
+    private OdtStyleCascade? _renderingSource;
+
+    /// <summary>One style:style element's bytes, with the root start tag (namespace declarations) it is parsed inside.</summary>
+    internal sealed record UnparsedStyle(byte[] Element, byte[] RootOpenTag, string RootElementName);
     private readonly Dictionary<string, XElement> _defaultStyles = new(StringComparer.Ordinal);
     /// <summary>The named drawing styles of office:styles (ODF 1.3 part 3 16.40-16.44 / 16.46: draw:gradient, svg:linearGradient,
     /// svg:radialGradient, draw:hatch, draw:fill-image, draw:opacity, draw:marker, draw:stroke-dash) by (element local name, draw:name).</summary>
@@ -125,7 +138,12 @@ public sealed class OdtStyleCascade
             {
                 string? family = (string?)element.Attribute(Style + "family");
                 string? name = (string?)element.Attribute(Style + "name");
-                if (family is not null && name is not null) _styles[(family, name)] = element;
+                if (family is not null && name is not null)
+                {
+                    _styles[(family, name)] = element;
+                    _unparsedStyles.Remove((family, name));
+                    _cutStyleKeys.Remove((family, name));
+                }
             }
             else if (element.Name == Style + "default-style")
             {
@@ -175,41 +193,63 @@ public sealed class OdtStyleCascade
     /// (the strings are only for the saved index - the same content, without a serialise-and-parse round trip).
     /// </summary>
     public XElement[] SectionElementsForRendering()
-        => _sections.Select(section =>
+    {
+        var sections = _sections.Select(section => SectionForRendering(section, includeStyles: true)).ToList();
+        if (_cutStyleKeys.Count > 0)
         {
-            var copy = new XElement(section.Name);
-            foreach (XElement element in section.Elements())
+            // the styles that came cut, in a section of their own after the others (their keys are in no other section); the
+            // ones still unparsed are parsed for this copy only: the whole trees are not kept (a window parses the ones it uses)
+            var rest = new XElement(Office + "styles");
+            foreach ((string family, string name) key in _cutStyleKeys.OrderBy(pair => pair.Value).Select(pair => pair.Key))
             {
-                if (element.Name == Style + "font-face")
-                    copy.Add(new XElement(element.Name, element.Attribute(Style + "name"), element.Attribute(Svg + "font-family")));
-                else if (element.Name == Style + "style" || element.Name == Style + "default-style")
-                {
-                    var style = new XElement(element.Name, element.Attribute(Style + "name"), element.Attribute(Style + "family"),
-                                             element.Attribute(Style + "parent-style-name"), element.Attribute(Style + "list-style-name"));
-                    foreach (XElement properties in element.Elements())
-                    {
-                        HashSet<string>? handled = properties.Name.LocalName switch
-                        {
-                            "text-properties" => HandledTextProperties,
-                            "paragraph-properties" => HandledParagraphProperties,
-                            "table-properties" or "table-cell-properties" or "table-column-properties" or "table-row-properties" => HandledTableProperties,
-                            "graphic-properties" => HandledGraphicProperties,
-                            _ => null,
-                        };
-                        if (handled is null) continue;
-                        // graphic properties are kept whole: every drawing attribute (fill, stroke, markers, text area, wrap) is read
-                        var kept = new XElement(properties.Name, properties.Attributes().Where(attribute => properties.Name.LocalName == "graphic-properties" || handled.Contains(QualifiedName(attribute.Name))));
-                        if (properties.Element(Style + "drop-cap") is { } dropCap) kept.Add(new XElement(dropCap.Name, dropCap.Attributes()));   // style:drop-cap is a child element
-                        if (properties.Element(Style + "tab-stops") is { } tabStops) kept.Add(new XElement(tabStops));        // style:tab-stops too
-                        if (kept.HasAttributes || kept.HasElements) style.Add(kept);
-                    }
-                    copy.Add(style);
-                }
-                else if (IsDrawingStyle(element.Name) || IsDateTimeDataStyle(element.Name))
-                    copy.Add(new XElement(element));             // whole: gradient stops, marker paths, fill images, date / time parts
+                XElement? style = _styles.TryGetValue(key, out XElement? parsed) ? parsed
+                                : _unparsedStyles.TryGetValue(key, out UnparsedStyle? unparsed) ? Parse(unparsed) : null;
+                if (style is not null) rest.Add(StyleForRendering(style));
             }
-            return copy;
-        }).ToArray();
+            sections.Add(rest);
+        }
+        return sections.ToArray();
+    }
+
+    private static XElement SectionForRendering(XElement section, bool includeStyles)
+    {
+        var copy = new XElement(section.Name);
+        foreach (XElement element in section.Elements())
+        {
+            if (element.Name == Style + "font-face")
+                copy.Add(new XElement(element.Name, element.Attribute(Style + "name"), element.Attribute(Svg + "font-family")));
+            else if (element.Name == Style + "default-style" || (includeStyles && element.Name == Style + "style"))
+                copy.Add(StyleForRendering(element));
+            else if (IsDrawingStyle(element.Name) || IsDateTimeDataStyle(element.Name))
+                copy.Add(new XElement(element));             // whole: gradient stops, marker paths, fill images, date / time parts
+        }
+        return copy;
+    }
+
+    /// <summary>A style:style / style:default-style with only what rendering reads: name, family, parent, list style and the mapped properties.</summary>
+    private static XElement StyleForRendering(XElement element)
+    {
+        var style = new XElement(element.Name, element.Attribute(Style + "name"), element.Attribute(Style + "family"),
+                                 element.Attribute(Style + "parent-style-name"), element.Attribute(Style + "list-style-name"));
+        foreach (XElement properties in element.Elements())
+        {
+            HashSet<string>? handled = properties.Name.LocalName switch
+            {
+                "text-properties" => HandledTextProperties,
+                "paragraph-properties" => HandledParagraphProperties,
+                "table-properties" or "table-cell-properties" or "table-column-properties" or "table-row-properties" => HandledTableProperties,
+                "graphic-properties" => HandledGraphicProperties,
+                _ => null,
+            };
+            if (handled is null) continue;
+            // graphic properties are kept whole: every drawing attribute (fill, stroke, markers, text area, wrap) is read
+            var kept = new XElement(properties.Name, properties.Attributes().Where(attribute => properties.Name.LocalName == "graphic-properties" || handled.Contains(QualifiedName(attribute.Name))));
+            if (properties.Element(Style + "drop-cap") is { } dropCap) kept.Add(new XElement(dropCap.Name, dropCap.Attributes()));   // style:drop-cap is a child element
+            if (properties.Element(Style + "tab-stops") is { } tabStops) kept.Add(new XElement(tabStops));        // style:tab-stops too
+            if (kept.HasAttributes || kept.HasElements) style.Add(kept);
+        }
+        return style;
+    }
 
     private static string QualifiedName(XName name)
     {
@@ -221,6 +261,54 @@ public sealed class OdtStyleCascade
     /// <summary>A list style read without a DOM (styles.xml pass, see OdtPackage.ReadStyles); later ones win on name clashes.</summary>
     internal void AddListStyle(string name, OdtListStyle style) => _listStyles[name] = style;
 
+    /// <summary>A style:style cut from the part's bytes (its family and name read from the start tag); parsed when first looked up.</summary>
+    internal void AddUnparsedStyle(string family, string name, UnparsedStyle style)
+    {
+        _unparsedStyles[(family, name)] = style;
+        _cutStyleKeys[(family, name)] = _cutStyleCount++;
+        _styles.Remove((family, name));
+        _resolvedParagraphs.Clear();
+        _resolvedSpans.Clear();
+    }
+
+    /// <summary>The style:style of that family and name: parsed now when it was cut unparsed, filtered now in a rendering view.</summary>
+    private bool TryGetStyle(string family, string name, out XElement style)
+    {
+        if (_styles.TryGetValue((family, name), out style!)) return true;
+        if (_unparsedStyles.TryGetValue((family, name), out UnparsedStyle? unparsed))
+        {
+            _unparsedStyles.Remove((family, name));
+            if (Parse(unparsed) is not { } parsed) { style = null!; return false; }
+            _styles[(family, name)] = style = parsed;
+            return true;
+        }
+        if (_renderingSource is { } source && source.TryGetStyle(family, name, out XElement whole))
+        {
+            _styles[(family, name)] = style = StyleForRendering(whole);
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>The style:style of the bytes; null when they do not parse to one (broken bytes: as if the style were absent).</summary>
+    private static XElement? Parse(UnparsedStyle unparsed)
+    {
+        XElement parsed = OdtXmlFragment.Parse(unparsed.RootOpenTag, unparsed.RootElementName, unparsed.Element, 0, unparsed.Element.Length);
+        return parsed.Name == Style + "style" ? parsed : null;
+    }
+
+    /// <summary>
+    /// A first open's rendering cascade over the indexing cascade: what <see cref="SectionElementsForRendering"/> keeps, with the
+    /// style:style elements filtered one by one as they are first used instead of all at once (thousands in a converted Word file).
+    /// The indexing cascade is complete by then (every style section precedes office:body) and both are used under the document's lock.
+    /// </summary>
+    internal static OdtStyleCascade ForRendering(OdtStyleCascade source)
+    {
+        var view = new OdtStyleCascade { _renderingSource = source };
+        foreach (XElement section in source._sections) view.AddSection(SectionForRendering(section, includeStyles: false));
+        return view;
+    }
+
     /// <summary>A list style, its bullet style:font-name values resolved through the font-face-decls read so far (all of them by now).</summary>
     public OdtListStyle? ListStyle(string? name)
     {
@@ -230,7 +318,7 @@ public sealed class OdtStyleCascade
     }
 
     public XElement? StyleElement(string family, string? name)
-        => name is not null && _styles.TryGetValue((family, name), out XElement? style) ? style : null;
+        => name is not null && TryGetStyle(family, name, out XElement? style) ? style : null;
 
     /// <summary>The default paragraph formatting (style:default-style family paragraph).</summary>
     public OdtParagraphStyle DefaultParagraph => ResolveParagraph(null);
@@ -353,7 +441,7 @@ public sealed class OdtStyleCascade
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (string? current = name; current is not null && seen.Add(current);)
         {
-            if (!_styles.TryGetValue((family, current), out XElement? style)) break;
+            if (!TryGetStyle(family, current, out XElement? style)) break;
             chain.Add(style);
             current = (string?)style.Attribute(Style + "parent-style-name");
         }

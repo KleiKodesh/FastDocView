@@ -167,23 +167,49 @@ public sealed class OdtListStyle
         // equal bytes after the start tag (which only names it) give an equal list style, so the parsed one is shared
         ReadOnlySpan<byte> body = element.Slice(Math.Min(position, element.Length));
         if (cache.FindListStyle(body) is { } parsed) return parsed;
-        // each level element: from its start tag to the next level's (or the list style's end tag). A converted Word file
-        // repeats the same few level definitions thousands of times: a level parsed once is reused for equal bytes.
-        int levelStart = NextLevelStart(element, position, names);
-        while (levelStart >= 0)
-        {
-            int next = NextLevelStart(element, levelStart + 1, names);
-            ReadOnlySpan<byte> segment = element.Slice(levelStart, (next < 0 ? element.Length : next) - levelStart);
-            if (cache.Find(segment) is not { } built)
-            {
-                built = ParseLevel(segment, textPrefix, names);
-                cache.Add(segment, built);
-            }
-            if (built.index >= 0) listStyle._levels[built.index] = built.level;
-            levelStart = next;
-        }
-        cache.AddListStyle(body, listStyle);
+        // the levels are parsed when the list style is first used: a converted Word file declares thousands, a window uses a few
+        listStyle._unparsedBody = cache.AddListStyle(body, listStyle);
+        listStyle._unparsedNames = names;
+        listStyle._unparsedLevels = cache;
+        listStyle._unparsedTextPrefix = textPrefix;
         return listStyle;
+    }
+
+    // set by Parse until the levels are read (EnsureLevelsParsed): the bytes after the start tag, and what parsing them needs
+    private byte[]? _unparsedBody;
+    private ParseNames? _unparsedNames;
+    private ParsedLevels? _unparsedLevels;
+    private string? _unparsedTextPrefix;
+
+    /// <summary>Reads the levels of a list style Parse left unparsed. Under the shared lock: ParsedLevels is shared between list styles.</summary>
+    private void EnsureLevelsParsed()
+    {
+        if (Volatile.Read(ref _unparsedBody) is null) return;
+        lock (FontNameResolution)
+        {
+            if (_unparsedBody is not { } body) return;
+            ParseNames names = _unparsedNames!;
+            ParsedLevels cache = _unparsedLevels!;
+            // each level element: from its start tag to the next level's (or the list style's end tag). A converted Word file
+            // repeats the same few level definitions thousands of times: a level parsed once is reused for equal bytes.
+            int levelStart = NextLevelStart(body, 0, names);
+            while (levelStart >= 0)
+            {
+                int next = NextLevelStart(body, levelStart + 1, names);
+                ReadOnlySpan<byte> segment = body.AsSpan(levelStart, (next < 0 ? body.Length : next) - levelStart);
+                if (cache.Find(segment) is not { } built)
+                {
+                    built = ParseLevel(segment, _unparsedTextPrefix!, names);
+                    cache.Add(segment, built);
+                }
+                if (built.index >= 0) _levels[built.index] = built.level;
+                levelStart = next;
+            }
+            _unparsedNames = null;
+            _unparsedLevels = null;
+            _unparsedTextPrefix = null;
+            Volatile.Write(ref _unparsedBody, null);
+        }
     }
 
     private static int NextLevelStart(ReadOnlySpan<byte> element, int from, ParseNames names)
@@ -268,11 +294,14 @@ public sealed class OdtListStyle
             return null;
         }
 
-        public void AddListStyle(ReadOnlySpan<byte> body, OdtListStyle style)
+        /// <summary>Records the list style parsed from <paramref name="body"/>; returns the stored copy of the bytes.</summary>
+        public byte[] AddListStyle(ReadOnlySpan<byte> body, OdtListStyle style)
         {
             int hash = Hash(body);
             if (!_listStylesByHash.TryGetValue(hash, out List<(byte[] body, OdtListStyle style)>? candidates)) _listStylesByHash[hash] = candidates = new List<(byte[], OdtListStyle)>(1);
-            candidates.Add((body.ToArray(), style));
+            byte[] stored = body.ToArray();
+            candidates.Add((stored, style));
+            return stored;
         }
 
         public (int index, Level level)? Find(ReadOnlySpan<byte> segment)
@@ -488,6 +517,7 @@ public sealed class OdtListStyle
         lock (FontNameResolution)
         {
             if (_isFontNamesResolved) return;
+            EnsureLevelsParsed();                              // the same lock: re-entered
             foreach (Level level in _levels)
             {
                 if (level.Unresolved is not { } pending) continue;
@@ -512,11 +542,16 @@ public sealed class OdtListStyle
         return string.Join(",", margin, indent, tab, follow);
     }
 
-    public Level LevelAt(int level) => _levels[Math.Max(0, Math.Min(MaxLevels - 1, level))];
+    public Level LevelAt(int level)
+    {
+        EnsureLevelsParsed();
+        return _levels[Math.Max(0, Math.Min(MaxLevels - 1, level))];
+    }
 
     /// <summary>The label-relevant fields of every level, as the compact index stores the list styles a rescan needs.</summary>
     public void Write(BinaryWriter writer)
     {
+        EnsureLevelsParsed();
         foreach (Level level in _levels)
         {
             writer.Write(level.IsBullet);

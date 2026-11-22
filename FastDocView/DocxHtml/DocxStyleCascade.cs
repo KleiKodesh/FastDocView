@@ -15,6 +15,8 @@ public sealed class DocxStyleCascade
     public static readonly XNamespace W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
     private readonly Dictionary<string, XElement> _stylesById = new(StringComparer.Ordinal);
+    /// <summary>styles.xml cut into its styles, each parsed when first looked up (<see cref="TryGetStyle"/>); null when the part was parsed whole.</summary>
+    private readonly DocxStylesPartSlices? _slices;
     private readonly Dictionary<string, WordParagraphFormatting> _resolvedParagraphStyles = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<XElement>> _styleChains = new(StringComparer.Ordinal);
     private readonly Dictionary<(string tableStyleId, DocxTableConditions conditions), List<XElement>> _tableCellProperties = new();
@@ -29,6 +31,31 @@ public sealed class DocxStyleCascade
 
     /// <summary>The document theme (fonts + colors) the cascade resolves theme references through; null = no theme part.</summary>
     public DocxTheme? Theme => _theme;
+
+    /// <summary>The cascade over styles.xml cut into its styles: only w:docDefaults is parsed now, each style when first used.</summary>
+    internal DocxStyleCascade(DocxStylesPartSlices slices, DocxTheme? theme = null)
+    {
+        _theme = theme;
+        _slices = slices;
+        DocumentDefaults.RunFormatting.UsesWordOpenTypeDefaults = true;
+        XElement? documentDefaults = slices.DocumentDefaults is { } defaults ? slices.Parse(defaults) : null;
+        ApplyRunProperties(DocumentDefaults.RunFormatting, documentDefaults?.Element(W + "rPrDefault")?.Element(W + "rPr"), _theme, WordStyleLayer.DocumentDefaults);
+        ResolveToggles(DocumentDefaults.RunFormatting);
+        ApplyParagraphProperties(DocumentDefaults, documentDefaults?.Element(W + "pPrDefault")?.Element(W + "pPr"), _theme);
+        _defaultParagraphStyleId = slices.DefaultParagraphStyleId;
+        _defaultCharacterStyleId = slices.DefaultCharacterStyleId;
+    }
+
+    /// <summary>The w:style with that id: parsed now from its slice when the part was cut.</summary>
+    private bool TryGetStyle(string styleId, out XElement style)
+    {
+        if (_stylesById.TryGetValue(styleId, out style!)) return true;
+        if (_slices is null || !_slices.StylesById.TryGetValue(styleId, out DocxStylesPartSlices.Slice slice)) return false;
+        XElement parsed = _slices.Parse(slice);
+        if (parsed.Name != W + "style") return false;              // broken bytes: as if absent
+        _stylesById[styleId] = style = parsed;
+        return true;
+    }
 
     public DocxStyleCascade(XDocument? stylesDocument, DocxTheme? theme = null)
     {
@@ -61,6 +88,8 @@ public sealed class DocxStyleCascade
     /// </summary>
     public string? StyleIdByName(string name)
     {
+        if (_slices is not null)
+            foreach (string id in _slices.StylesById.Keys) TryGetStyle(id, out _);     // a name lookup reads every style (STYLEREF fields only)
         foreach (KeyValuePair<string, XElement> pair in _stylesById)
             if (string.Equals((string?)pair.Value.Element(W + "name")?.Attribute(W + "val"), name, StringComparison.OrdinalIgnoreCase)) return pair.Key;
         return _stylesById.ContainsKey(name) ? name : null;
@@ -278,7 +307,7 @@ public sealed class DocxStyleCascade
         if (styleId is null) return 0;
         int outline = ResolveParagraphStyle(styleId).OutlineLevel;
         if (outline is >= 0 and <= 8) return outline + 1;
-        if (!_stylesById.TryGetValue(styleId, out XElement? style)) return 0;
+        if (!TryGetStyle(styleId, out XElement style)) return 0;
         string? name = ((string?)style.Element(W + "name")?.Attribute(W + "val"))?.ToLowerInvariant();
         if (name is not null && name.StartsWith("heading ", StringComparison.Ordinal)
             && int.TryParse(name.Substring(8), NumberStyles.Integer, CultureInfo.InvariantCulture, out int level) && level is >= 1 and <= 9)
@@ -312,7 +341,7 @@ public sealed class DocxStyleCascade
     {
         var chain = new List<XElement>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        while (styleId is not null && seen.Add(styleId) && _stylesById.TryGetValue(styleId, out XElement? style) && chain.Count < 32)
+        while (styleId is not null && seen.Add(styleId) && TryGetStyle(styleId, out XElement style) && chain.Count < 32)
         {
             chain.Add(style);
             styleId = (string?)style.Element(W + "basedOn")?.Attribute(W + "val");
