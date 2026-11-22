@@ -42,6 +42,11 @@ internal sealed class DocBinaryBlockScanner
     /// <summary>The CP every block of the scan so far ends at (the next block's start) - the last block's end once <see cref="Finish"/> ran.</summary>
     public int ScannedEndCp => _paragraphStart;
     public int BlockCount => BlockStartCps.Count;
+    /// <summary>
+    /// Where the blocks added so far end: the open row's first CP while a row is being collected, else the next paragraph's
+    /// start. The on-demand index pass stops its partial index here.
+    /// </summary>
+    public int AddedBlocksEndCp => _rowStart >= 0 ? _rowStart : _paragraphStart;
 
     /// <summary>Raised after a block is added, with its index and start CP and whether the list state captured by <see cref="PendingAnchorState"/> is for it.</summary>
     public event Action<int, int>? BlockAdded;

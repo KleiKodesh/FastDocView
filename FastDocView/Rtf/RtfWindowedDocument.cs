@@ -7,7 +7,7 @@ namespace FastDocView.Rtf;
 /// file itself is the random-access view (like a flat .fodt): the one index pass records each block's byte range and
 /// the group state at its start; a window reads and parses only its blocks' bytes. Small files keep the index in
 /// memory for the session; big ones (policy) save it as a sidecar so a reopen reads no RTF at all.
-/// A sidecar first open with <see cref="WordIndexPolicy.IndexesOnDemand"/> returns after the first
+/// A first open with <see cref="WordIndexPolicy.IndexesOnDemand"/> (any size; only a sidecar-sized one saves its index) returns after the first
 /// <see cref="OnDemandFirstBlockCount"/> blocks; <see cref="ScanAhead"/> parses on (the same one pass, paused between calls),
 /// windows read the known blocks from the partial index, and the finished index is saved when the pass ends.
 /// </summary>
@@ -150,9 +150,11 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         try
         {
             WordIndexDecision decision = policy.Decide(filePath, file.Length, cached is not null);
-            bool isOnDemand = decision.Mode == WordIndexMode.Sidecar && cached is null && policy.IndexesOnDemand;
+            // on demand also below the sidecar size (RTF reads the file either way): only the sidecar is not saved then
+            bool isOnDemand = cached is null && policy.IndexesOnDemand;
             RtfWindowedDocument document = isOnDemand
-                ? OpenOnDemand(file, filePath, decision, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation, indexPath)
+                ? OpenOnDemand(file, filePath, decision, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation,
+                               decision.Mode == WordIndexMode.Sidecar ? indexPath : null)
                 : OpenFromStream(file, filePath, decision, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
             if (!isOnDemand && decision.Mode == WordIndexMode.Sidecar && cached is null)
             {
@@ -186,7 +188,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
     /// is parsed by <see cref="ScanAhead"/>. The document's direction and stylesheet come from what the first blocks show.
     /// </summary>
     private static RtfWindowedDocument OpenOnDemand(Stream file, string displayPath, WordIndexDecision decision, long sourceLength, long sourceLastWriteTicksUtc,
-                                                    IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation, string sidecarPathToSave)
+                                                    IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation, string? sidecarPathToSave)
     {
         // the cancellation stops the open only: later steps run under the host's own calls
         RtfRandomAccessIndexBuilder builder = RtfRandomAccessIndexBuilder.Incremental(file, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
@@ -194,7 +196,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         if (builder.IsEveryBlockKnown)
         {
             RtfRandomAccessIndex whole = builder.Complete();
-            try { whole.Save(sidecarPathToSave); }
+            try { if (sidecarPathToSave is not null) whole.Save(sidecarPathToSave); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
             return new RtfWindowedDocument(displayPath, file, whole, null, decision, sidecarPathToSave: null);
         }

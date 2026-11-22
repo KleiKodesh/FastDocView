@@ -726,7 +726,7 @@ direction is read from), and `ScanAhead` runs the **same one pass** on, paused b
   and 303 ms (.rtf), count only grows.
 - RTF direction (2026-11-04 fix): the paragraph majority is counted over the first 100 blocks only, in the one-go
   pass as in the on-demand one, so a first open and a reopen from the saved index show the same direction.
-- .doc stays one-go: its index pass on the 40 MB sample is 0.5-0.9 s cold, and it is cancellable.
+- .doc stays one-go: its index pass on the 40 MB sample is 0.5-0.9 s cold, and it is cancellable. (Superseded 2026-11-22: .doc opens on demand too, see "Cold first open".)
 - Cancellation: `WordWindowedDocumentSet.Open(..., cancellation)`; every builder checks the token per
   step (also when the first blocks are already known). After an on-demand open returns, the token is
   dropped: later steps run under the host's own scan calls. The app's service cancels by the page's open
@@ -3348,3 +3348,25 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
 - Holes and parts: every closed ring of a cap is bevelled into the material (an even-odd hole's bands grow outward) and the cap
   keeps its holes; the contour grows every outline and shrinks every hole by half its width. shapes-3d-parts-v1 (donut, frame,
   no-symbol, divide sign; contour and bevels): all 8 extents within 0.6 pt of Word's print.
+
+## Cold first open (2026-11-22)
+
+`--cold-bench [--runs N] <files>` times a cold first paint: a fresh process per run (nothing JIT-warmed), an empty
+sidecar cache, open as the dev server / app service does (`WordWindowedDocumentSet`, on demand) + summary + first 40
+blocks rendered for display. `FASTDOCVIEW_COLD_WARM=1` with `--cold-open <file> <cache>` repeats the open in the same
+process, splitting JIT from the work itself.
+
+What was on the paint path, and the fixes:
+- .doc built its whole block index at open (40 MB sample: ~2 s cold). The block scan is now resumable
+  (`DocBinaryBlockIndexBuilder` over `DocBinaryPieceTable.CharacterChunks`, the very chunks a one-go pass reads): the open
+  returns after 256 blocks, windows read a partial index, `ScanAhead` goes on, the sidecar saved at the end is
+  byte-identical to the one-go build (`--streaming-incremental` checks it on the sample).
+- RTF and .doc below the sidecar size also open on demand (no sidecar saved): a 7 MB RTF paid a 400 ms whole pass.
+- Flat OPC skipped every part's data byte by byte to find its closing tag; now a vectorised search per chunk.
+- .fodt: the scanner tokenised every tag of the style sections (a LibreOffice conversion has 15 MB of list styles before
+  the body) and parsed them as XML trees. While a section is captured with no child open it now jumps to the section's
+  closing tag, and captured sections go through `OdtStylesListStyleFilterStream` like styles.xml. A section whose XML is
+  broken marks the scan malformed (its tags are no longer tokenised).
+- ODT list styles with equal bytes after the start tag share one parsed object.
+Most of what is left in a JIT host is JIT itself (~950 methods compiled at Tier0 on a first open, hot loops at Tier0
+speed); ReadyToRun or the AOT service removes it. Measured on a loaded machine (numbers vary ~30%).

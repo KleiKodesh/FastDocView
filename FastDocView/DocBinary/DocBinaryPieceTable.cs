@@ -353,7 +353,16 @@ public sealed class DocBinaryPieceTable
     /// <summary>Streams the raw characters of a CP range in chunks, for the paragraph-boundary scan.</summary>
     public void ScanCharacters(int cpStart, int cpEnd, Action<char[], int, int> onChunk, int chunkCharacters = 1 << 16)
     {
-        if (cpEnd <= cpStart) return;
+        foreach ((char[] characters, int count, int chunkCp) in CharacterChunks(cpStart, cpEnd, chunkCharacters)) onChunk(characters, count, chunkCp);
+    }
+
+    /// <summary>
+    /// The same chunks <see cref="ScanCharacters"/> hands out, one per step, so a scan can pause between chunks and resume (the
+    /// on-demand index pass) and still see exactly the chunks a scan in one go sees. The array is reused between steps.
+    /// </summary>
+    public IEnumerable<(char[] characters, int count, int chunkCp)> CharacterChunks(int cpStart, int cpEnd, int chunkCharacters = 1 << 16)
+    {
+        if (cpEnd <= cpStart) yield break;
         var characters = new char[chunkCharacters];
         var bytes = new byte[chunkCharacters * 2];
         foreach ((Piece piece, int start, int end) in SegmentsOf(cpStart, cpEnd))
@@ -370,7 +379,7 @@ public sealed class DocBinaryPieceTable
                 int decoded = read;
                 if (Word6Runs is not null) decoded = DecodeWord6(bytes, read, piece.FileOffset + (cp - piece.CpStart) * piece.BytesPerCharacter, piece.FileOffset + (long)piece.Length * piece.BytesPerCharacter, piece.IsCompressed, characters, ref isTrailFirst);
                 else decoded = DocBinaryTextDecoder.Decode(bytes, read, piece.IsCompressed, characters, UpperHalf);
-                onChunk(characters, decoded, (int)cp);
+                yield return (characters, decoded, (int)cp);
             }
         }
     }

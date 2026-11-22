@@ -222,39 +222,66 @@ internal sealed class DocxFlatPackageStream : DocxVirtualPackageStream
         }
 
         /// <summary>The position of the closing tag's '&lt;' (and, for base64, its character count and '=' padding), or -1.</summary>
+        /// <remarks>A part's data is skipped a chunk at a time with a vectorised search for the closing tag (a body part is
+        /// most of the file: byte-by-byte it was most of a first open); only base64 data is looked at byte by byte, to count it.</remarks>
         private (long end, long base64Characters, int padding) FindClosingTag(byte[] closing, bool countBase64)
         {
             long characters = 0;
             int padding = 0;
-            int matched = 0;
-            long matchStart = -1;
+            void Count(ReadOnlySpan<byte> data)
+            {
+                if (!countBase64) return;
+                foreach (byte b in data)
+                    if (b > ' ')
+                    {
+                        characters++;
+                        if (b == '=') padding++;
+                    }
+            }
             while (true)
             {
-                int b = Next();
-                if (b < 0) return (-1, 0, 0);
-                if (b == closing[matched])
+                // the closing tag and the byte after it must fit in what is buffered
+                if (_chunkLength - _chunkPosition <= closing.Length && !Refill())
                 {
-                    if (matched == 0) matchStart = Position - 1;
-                    if (++matched == closing.Length)
-                    {
-                        int after = Next();
-                        if (after is '>' or ' ' or '\t' or '\r' or '\n')
-                        {
-                            if (after != '>') while (Next() is int c && c >= 0 && c != '>') { }
-                            return (matchStart, characters, padding);
-                        }
-                        matched = 0;
-                    }
+                    Count(_chunk.AsSpan(_chunkPosition, _chunkLength - _chunkPosition));
+                    return (-1, 0, 0);
+                }
+                ReadOnlySpan<byte> data = _chunk.AsSpan(_chunkPosition, _chunkLength - _chunkPosition);
+                int found = data.IndexOf(closing);
+                if (found < 0 || found + closing.Length >= data.Length)
+                {
+                    // no complete match here: everything before a possible match at the end is data
+                    int safe = found >= 0 ? found : data.Length - closing.Length;
+                    Count(data.Slice(0, safe));
+                    _chunkPosition += safe;
+                    if (!Refill()) { Count(_chunk.AsSpan(_chunkPosition, _chunkLength - _chunkPosition)); return (-1, 0, 0); }
                     continue;
                 }
-                matched = b == closing[0] ? 1 : 0;
-                if (matched == 1) { matchStart = Position - 1; continue; }
-                if (countBase64 && b > ' ')
+                Count(data.Slice(0, found));
+                long matchStart = Position + found;
+                byte after = data[found + closing.Length];
+                _chunkPosition += found + closing.Length + 1;
+                if (after is (byte)'>' or (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n')
                 {
-                    characters++;
-                    if (b == '=') padding++;
+                    if (after != '>') while (Next() is int c && c >= 0 && c != '>') { }
+                    return (matchStart, characters, padding);
                 }
+                // a longer name that starts the same: not the closing tag, go on after its '<'
+                _chunkPosition -= closing.Length;
             }
+        }
+
+        /// <summary>Moves the unread bytes to the buffer's start and reads more after them; false when nothing more was read.</summary>
+        private bool Refill()
+        {
+            int unread = _chunkLength - _chunkPosition;
+            Buffer.BlockCopy(_chunk, _chunkPosition, _chunk, 0, unread);
+            _chunkStart += _chunkPosition;
+            _chunkPosition = 0;
+            _file.Position = _chunkStart + unread;
+            int read = _file.Read(_chunk, unread, ChunkSize - unread);
+            _chunkLength = unread + Math.Max(0, read);
+            return read > 0;
         }
 
         private static string ElementName(string tag)

@@ -15,29 +15,148 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
     private readonly Stream _wordDocument;
     private readonly Stream _tableStream;
     private readonly Stream? _dataStream;
-    private readonly DocBinaryBlockIndex _index;
-    private readonly DocBinaryCompactBlockTable _table;
+    private DocBinaryBlockIndex _indexField;
+    private DocBinaryCompactBlockTable _tableField;
+    private DocBinaryBlockIndexBuilder? _builder;          // null once the index is complete
+    private bool _isIndexStale;                            // the builder knows more blocks than _indexField
+    private string? _sidecarPathToSave;                    // an on-demand first open saves the finished index here
     private readonly DocBinaryParagraphHtmlRenderer _renderer;
     private readonly DocBinaryStyleSheet _styles;
     private readonly DocBinaryNoteReferences _notes;
 
     public string FilePath { get; }
-    public int BlockCount => _index.BlockCount;
+    /// <summary>The blocks known so far while an on-demand index is scanning (only grows), exact once complete.</summary>
+    public int BlockCount => KnownBlockCount;
+
+    /// <summary>
+    /// A first open with <see cref="WordIndexPolicy.IndexesOnDemand"/> (any size; only a sidecar-sized one saves its index) returns once this many blocks are known; the
+    /// rest of the block scan runs under <see cref="ScanAhead"/> and the windows past the known blocks.
+    /// </summary>
+    public const int OnDemandFirstBlockCount = 256;
+
+    /// <summary>The index of the blocks known so far (a partial index is re-made only after the scan moved on).</summary>
+    private DocBinaryBlockIndex _index
+    {
+        get
+        {
+            if (_isIndexStale && IsRefreshDue()) RefreshIndex(_builder!.CreatePartialIndex());
+            return _indexField;
+        }
+    }
+
+    private DocBinaryCompactBlockTable _table
+    {
+        get
+        {
+            if (_isIndexStale && IsRefreshDue()) RefreshIndex(_builder!.CreatePartialIndex());
+            return _tableField;
+        }
+    }
+
+    // Re-making the partial index copies its tables (O(known blocks)), so it is re-made only when the known blocks doubled or half
+    // a second passed (a scan interleaved with window reads stays linear), and at once when a window needs blocks past it.
+    private long _refreshedAtTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+    private bool IsRefreshDue() => _builder!.KnownBlockCount >= 2L * Math.Max(1, _indexField.BlockCount)
+                                   || System.Diagnostics.Stopwatch.GetTimestamp() - _refreshedAtTicks > System.Diagnostics.Stopwatch.Frequency / 2;
+
+    /// <summary>The partial index covers blocks before <paramref name="end"/> (or every known block).</summary>
+    private void CoverKnownBlocks(long end)
+    {
+        if (_isIndexStale && end > _indexField.BlockCount) RefreshIndex(_builder!.CreatePartialIndex());
+    }
+
+    private void RefreshIndex(DocBinaryBlockIndex index)
+    {
+        _isIndexStale = false;
+        _refreshedAtTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        _indexField = index;
+        _tableField = new DocBinaryCompactBlockTable(index, PieceTable, _renderer, _styles, ListDefinitions);
+        _sections = null;
+        _noteReferences = null;
+        _searchCursor = null;
+    }
 
     /// <summary>
     /// The block holding a bookmark's start: the bookmark tables (SttbfBkmk + PlcfBkf, small, read at open) give its CP and the
     /// block index maps it - nothing stored in the index, no text read. Bookmarks outside the main text (notes, headers) are null.
     /// </summary>
     public int? FindBookmark(string name)
-        => Bookmarks.StartOf(name) is { } cp && cp < FileInformationBlock.MainTextCharacterCount && _index.BlockCount > 0 ? WithTable(() => _table.BlockAt(cp)) : null;
+    {
+        if (Bookmarks.StartOf(name) is not { } cp || cp >= FileInformationBlock.MainTextCharacterCount) return null;
+        lock (_readLock)      // Monitor is reentrant: ScanAhead takes it again
+        {
+            while (_builder is not null && cp >= KnownEndCp()) ScanAhead(4096);
+            return KnownBookmark(name);
+        }
+    }
+
+    /// <summary>A bookmark among the blocks known so far (no scanning: field lookups run mid-render).</summary>
+    private int? KnownBookmark(string name)
+    {
+        if (Bookmarks.StartOf(name) is not { } cp || cp >= FileInformationBlock.MainTextCharacterCount) return null;
+        lock (_readLock)
+        {
+            CoverKnownBlocks(int.MaxValue);
+            return _index.BlockCount > 0 && cp < _index.MainTextCharacterCount ? WithTable(() => _table.BlockAt(cp)) : null;
+        }
+    }
+
+    /// <summary>Where the blocks of the index end (the main text's end once complete).</summary>
+    private int KnownEndCp() { CoverKnownBlocks(int.MaxValue); return _index.MainTextCharacterCount; }
 
     public DocBinaryBookmarks Bookmarks { get; }
 
     /// <summary>Page text width per section, from PlcfSed (read at open: one small record per section).</summary>
-    public IReadOnlyList<WordDocumentSection> Sections { get; }
-    public bool IsIndexComplete => true;
-    public int KnownBlockCount => _index.BlockCount;
-    public int ScanAhead(int blocks) => BlockCount;          // always complete
+    public IReadOnlyList<WordDocumentSection> Sections
+    {
+        get
+        {
+            lock (_readLock)
+                // a Word 6/95 Dop ends at 0x54: no iGutterPos word there (that is a Word 97 addition) - the gutter stays at the side
+                return _sections ??= DocBinarySectionTable.Read(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, _index.SectionFirstBlocks,
+                                                                FileInformationBlock.IsWord6 ? default : FileInformationBlock.DocumentProperties, _word6Sprms);
+        }
+    }
+    private IReadOnlyList<WordDocumentSection>? _sections;
+    private readonly DocBinaryWord6Sprms? _word6Sprms;
+    public bool IsIndexComplete { get { lock (_readLock) return _builder is null; } }
+    public int KnownBlockCount { get { lock (_readLock) return _builder?.KnownBlockCount ?? _indexField.BlockCount; } }
+
+    /// <summary>Scans on by up to <paramref name="blocks"/> blocks (index only, nothing rendered); saves the sidecar when the pass ends.</summary>
+    public int ScanAhead(int blocks)
+    {
+        lock (_readLock)
+        {
+            if (_builder is not { } builder) return _indexField.BlockCount;
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try
+            {
+                builder.AdvanceUntilKnown((int)Math.Min(int.MaxValue, (long)builder.KnownBlockCount + Math.Max(1, blocks)));
+                if (builder.IsEveryBlockKnown) CompleteIndexLocked();
+                else _isIndexStale = true;
+                return _builder?.KnownBlockCount ?? _indexField.BlockCount;
+            }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
+    private void CompleteIndexLocked()
+    {
+        DocBinaryBlockIndex index = _builder!.Complete();
+        _builder = null;
+        RefreshIndex(index);
+        if (_sidecarPathToSave is null) return;
+        try { index.Save(_sidecarPathToSave); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }   // the sidecar is a cache
+        _sidecarPathToSave = null;
+    }
+
+    /// <summary>Scans on until blocks before <paramref name="end"/> are known (or the text ends) and the index covers them.</summary>
+    private void EnsureKnown(long end)
+    {
+        if (_builder is { } builder && builder.KnownBlockCount < end) ScanAhead((int)Math.Min(int.MaxValue, end - builder.KnownBlockCount));
+        CoverKnownBlocks(end);
+    }
     public bool IsRightToLeft { get; }
     public string Stylesheet { get; }
     public WordIndexDecision Decision { get; }
@@ -95,8 +214,12 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
         var file = new WordDocumentFileStream(filePath);
         try
         {
-            var document = new DocBinaryWindowedDocument(file, filePath, policy, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation);
-            if (document.Decision.Mode == WordIndexMode.Sidecar && cached is null) document._index.Save(indexPath);
+            var document = new DocBinaryWindowedDocument(file, filePath, policy, cached, info.Length, info.LastWriteTimeUtc.Ticks, progress, cancellation, indexPath);
+            if (document.Decision.Mode == WordIndexMode.Sidecar && !document.Decision.HasCachedIndex && document._builder is null)
+            {
+                try { document._indexField.Save(indexPath); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }   // the sidecar is a cache
+            }
             document._releasableFile = file;
             document._isReadingFromFile = true;                // .doc text is always read through the piece table
             file.Release();                                   // no handle on the file between windows (Word must be able to save it)
@@ -118,7 +241,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
 
     private DocBinaryWindowedDocument(Stream file, string displayPath, WordIndexPolicy policy, DocBinaryBlockIndex? cachedIndex,
                                       long sourceLength, long sourceLastWriteTicksUtc,
-                                      IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation)
+                                      IProgress<WordDocumentIndexProgress>? progress, CancellationToken cancellation, string? onDemandSidecarPath = null)
     {
         FilePath = displayPath;
         if (DocBinaryWord2FileStream.StartsWithWord2Identifier(file))
@@ -137,6 +260,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                        ?? throw new InvalidDataException($"Table stream {FileInformationBlock.TableStreamName} is missing.");
         PieceTable = new DocBinaryPieceTable(_wordDocument, _tableStream, FileInformationBlock);
         DocBinaryWord6Sprms? word6Sprms = DocBinaryWord6Sprms.For(FileInformationBlock);
+        _word6Sprms = word6Sprms;
         _styles = new DocBinaryStyleSheet(_tableStream, FileInformationBlock.StyleSheet, word6Sprms)
         {
             Fonts = DocBinaryFontTable.Read(_tableStream, FileInformationBlock.FontTable, FileInformationBlock.IsWord6, FileInformationBlock.IsWord2),
@@ -176,14 +300,27 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                             && cachedIndex.NoteReferenceBlocks.Length == _notes.References.Length
                             && cachedIndex.SectionFirstBlocks.Length == sectionStartCps.Length;
         Decision = policy.Decide(displayPath, (long)FileInformationBlock.MainTextCharacterCount * 2, isCacheValid);
-        _index = isCacheValid ? cachedIndex!
-               : DocBinaryBlockIndex.Build(PieceTable, _renderer, _styles, ListDefinitions, _notes.References.Select(r => r.ReferenceCp).ToArray(), sectionStartCps, FileInformationBlock.MainTextCharacterCount,
-                                           sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
-
-        _table = new DocBinaryCompactBlockTable(_index, PieceTable, _renderer, _styles, ListDefinitions);
-        // a Word 6/95 Dop ends at 0x54: no iGutterPos word there (that is a Word 97 addition) - the gutter stays at the side
-        Sections = DocBinarySectionTable.Read(_wordDocument, _tableStream, FileInformationBlock.SectionDescriptors, _index.SectionFirstBlocks,
-                                              FileInformationBlock.IsWord6 ? default : FileInformationBlock.DocumentProperties, word6Sprms);
+        DocBinaryBlockIndex index;
+        if (isCacheValid) index = cachedIndex!;
+        else
+        {
+            // a sidecar first open with on-demand indexing returns after the first blocks; the scan goes on under ScanAhead
+            var builder = new DocBinaryBlockIndexBuilder(PieceTable, _renderer, _styles, ListDefinitions, _notes.References.Select(r => r.ReferenceCp).ToArray(), sectionStartCps,
+                                                         FileInformationBlock.MainTextCharacterCount, sourceLength, sourceLastWriteTicksUtc, progress, cancellation);
+            // on demand also below the sidecar size (the text is read through the piece table either way): no sidecar is saved then
+            bool isOnDemand = onDemandSidecarPath is not null && policy.IndexesOnDemand;
+            builder.AdvanceUntilKnown(isOnDemand ? OnDemandFirstBlockCount : int.MaxValue);
+            if (builder.IsEveryBlockKnown) index = builder.Complete();
+            else
+            {
+                builder.ClearCancellation();                    // the cancellation stops the open only: later steps run under the host's calls
+                _builder = builder;
+                _sidecarPathToSave = Decision.Mode == WordIndexMode.Sidecar ? onDemandSidecarPath : null;
+                index = builder.CreatePartialIndex();
+            }
+        }
+        _indexField = index;
+        _tableField = new DocBinaryCompactBlockTable(index, PieceTable, _renderer, _styles, ListDefinitions);
         IsRightToLeft = DetectRightToLeft();
         if (_renderer.FieldContext is { } fieldContext) fieldContext.IsRightToLeftText = IsRightToLeft;
         // the document default in the set its (mostly right-to-left) text draws in: sprmPFBiDi no longer makes runs complex
@@ -282,9 +419,10 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
             FilePath = path,
             FileSize = size,
             BookmarkText = BookmarkText,
-            BookmarkBlock = FindBookmark,
-            ListLabelOfBlock = block => block >= 0 && block < BlockCount ? _table.ListLabelOf(block) : null,
-            ListContextOfBlock = block => block >= 0 && block < BlockCount ? _table.ListContextOf(block) : null,
+            BookmarkBlock = KnownBookmark,
+            IsBookmarkListComplete = () => _builder is null,
+            ListLabelOfBlock = block => block >= 0 && block < _index.BlockCount ? _table.ListLabelOf(block) : null,
+            ListContextOfBlock = block => block >= 0 && block < _index.BlockCount ? _table.ListContextOf(block) : null,
             NoteMarkOfBookmark = NoteMarkOfBookmark,
             StyledParagraph = StyledParagraph,
             Headings = () => _index is null ? [] : Headings,
@@ -295,7 +433,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
     /// <summary>NOTEREF: the label of the first note referenced in the bookmark's block.</summary>
     private string? NoteMarkOfBookmark(string name)
     {
-        if (FindBookmark(name) is not { } block) return null;
+        if (KnownBookmark(name) is not { } block) return null;
         ReadOnlySpan<DocBinaryNoteReferences.NoteReference> references = _notes.InRange(_table.BlockStartCp(block), _table.BlockEndCp(block));
         return references.Length > 0 ? _notes.Label(references[0]) : null;
     }
@@ -303,7 +441,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
     /// <summary>STYLEREF: the nearest paragraph block in the named style (its PAPX istd, the style's STD name), backward from a block or forward after it.</summary>
     private (int block, string text)? StyledParagraph(string styleName, int from, bool forward)
     {
-        for (int block = forward ? from + 1 : Math.Min(from, BlockCount - 1); forward ? block < BlockCount : block >= 0; block += forward ? 1 : -1)
+        int known = _index.BlockCount;
+        for (int block = forward ? from + 1 : Math.Min(from, known - 1); forward ? block < known : block >= 0; block += forward ? 1 : -1)
         {
             if (_table.BlockKindOf(block) == WordDocumentBlockKind.TableRow) continue;
             int start = _table.BlockStartCp(block), end = _table.BlockEndCp(block);
@@ -498,7 +637,8 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                 throw new WordDocumentSourceChangedException(FilePath);
             try
             {
-                int end = (int)Math.Min(BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
+                EnsureKnown((long)fromBlock + Math.Max(1, maxBlocksToScan));
+                int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
                 var hits = new List<int>();
                 var counts = new List<int>();
                 DocBinarySearchCursor? cursor = null;
@@ -506,7 +646,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                 {
                     cursor = _searchCursor is { } previous && previous.NextBlock == fromBlock ? previous
                            : new DocBinarySearchCursor(PieceTable, _renderer, _styles, ListDefinitions, fromBlock, _table.BlockStartCp(fromBlock),
-                                                       BlockCount, FileInformationBlock.MainTextCharacterCount);
+                                                       _index.BlockCount, _index.MainTextCharacterCount);
                     _searchCursor = null;                  // a cursor that throws mid-batch is not resumed
                 }
                 for (int blockIndex = fromBlock; blockIndex < end; blockIndex++)
@@ -536,8 +676,9 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                     if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
                 }
                 cursor?.ReleaseLargeBuffer();
-                _searchCursor = cursor ?? _searchCursor;
-                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: true, BlockCount);
+                // a cursor made over a partial index ends at its last block: not resumed while the index grows
+                _searchCursor = _builder is not null ? null : cursor ?? _searchCursor;
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: _builder is null, _index.BlockCount);
             }
             finally { _releasableFile?.Release(); }
         }
@@ -550,7 +691,11 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
             // Only documents that still read the file (index mode) are at risk; a stale in-memory body is still consistent.
             if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
                 throw new WordDocumentSourceChangedException(FilePath);
-            try { return _blockRenderGuard.Render(firstBlockIndex, count, _index.BlockCount, RenderBlocksLocked, _table.BlockKindOf); }
+            try
+            {
+                EnsureKnown((long)Math.Max(0, firstBlockIndex) + Math.Max(0, count) + 1);   // +1: a row's last-row border looks at the next block
+                return _blockRenderGuard.Render(firstBlockIndex, count, _index.BlockCount, RenderBlocksLocked, _table.BlockKindOf);
+            }
             finally { _releasableFile?.Release(); }
         }
     }
@@ -558,12 +703,13 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
     private IReadOnlyList<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count)
     {
         var result = new List<WordDocumentBlockHtml>(count);
-        int last = Math.Min(BlockCount, firstBlockIndex + count);
+        int known = _index.BlockCount;
+        int last = Math.Min(known, firstBlockIndex + count);
         for (int blockIndex = Math.Max(0, firstBlockIndex); blockIndex < last; blockIndex++)
         {
             int start = _table.BlockStartCp(blockIndex), end = _table.BlockEndCp(blockIndex);
             WordDocumentBlockKind kind = _table.BlockKindOf(blockIndex);
-            if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex;
+            if (_renderer.FieldContext is { } fieldContext) { fieldContext.CurrentBlock = blockIndex; fieldContext.UsedIncompleteIndex = false; }
             _renderer.ColumnWidthPt = WordDocumentPageSetup.TextWidthPointsAt(Sections, blockIndex);
             _renderer.ColumnLeftPt = WordDocumentPageSetup.ColumnLeftPointsAt(Sections, blockIndex);
             string html;
@@ -572,7 +718,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
             {
                 // the table's outer top / bottom border on its first / last row (the block kinds around it, from the index)
                 bool isFirstRow = blockIndex == 0 || _table.BlockKindOf(blockIndex - 1) != WordDocumentBlockKind.TableRow;
-                bool isLastRow = blockIndex + 1 >= BlockCount || _table.BlockKindOf(blockIndex + 1) != WordDocumentBlockKind.TableRow;
+                bool isLastRow = blockIndex + 1 >= known || _table.BlockKindOf(blockIndex + 1) != WordDocumentBlockKind.TableRow;
                 html = _renderer.RenderRow(start, end, _index.CellsMergedBelow(blockIndex), isFirstRow, isLastRow);
                 notes = RenderNotesIn(start, end);
             }
@@ -584,7 +730,10 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                 html = _renderer.Render(start, end, PreviousStyleKey(blockIndex), listLabel: _table.ListLabelOf(blockIndex), dropCapParagraph: dropCap);
                 notes = dropCap is { } initial ? [.. RenderNotesIn(initial.start, initial.end), .. RenderNotesIn(start, end)] : RenderNotesIn(start, end);
             }
-            result.Add(new WordDocumentBlockHtml(blockIndex, kind, Html.WordParagraphFloats.Hoist(html), notes));
+            // the last known block of a partial index: the block after it (a following row's merged cells, the table's end) is not known yet
+            bool isAwaitingNext = _builder is not null && blockIndex == known - 1;
+            result.Add(new WordDocumentBlockHtml(blockIndex, kind, Html.WordParagraphFloats.Hoist(html), notes,
+                                                 _renderer.FieldContext?.UsedIncompleteIndex == true || isAwaitingNext));
         }
         return result;
     }
@@ -602,7 +751,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
     /// </summary>
     private bool IsDropCapJoiningNext(int blockIndex)
     {
-        bool IsParagraph(int index) => index >= 0 && index < BlockCount && _table.BlockKindOf(index) == WordDocumentBlockKind.Paragraph;
+        bool IsParagraph(int index) => index >= 0 && index < _index.BlockCount && _table.BlockKindOf(index) == WordDocumentBlockKind.Paragraph;
         return IsParagraph(blockIndex) && IsParagraph(blockIndex + 1)
                && _renderer.IsDropCapFrame(_table.BlockStartCp(blockIndex), _table.BlockEndCp(blockIndex))
                && !_renderer.IsDropCapFrame(_table.BlockStartCp(blockIndex + 1), _table.BlockEndCp(blockIndex + 1));
@@ -647,12 +796,22 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
     }
 
     /// <summary>From the index — captured during the block scan, so a reopen reads no text for the TOC.</summary>
-    public IReadOnlyList<WordDocumentHeading> Headings => _index.Headings;
+    public IReadOnlyList<WordDocumentHeading> Headings { get { lock (_readLock) return _index.Headings; } }
 
     public (int footnotes, int endnotes) NoteCounts => (_notes.FootnoteCount, _notes.EndnoteCount);
 
     public IReadOnlyList<WordDocumentNoteReference> NoteReferences
-        => _noteReferences ??= _notes.References.Select((r, i) => new WordDocumentNoteReference(r.Kind, r.Number, _index.NoteReferenceBlocks[i])).ToArray();
+    {
+        get
+        {
+            lock (_readLock)
+            {
+                DocBinaryBlockIndex index = _index;            // a partial index knows the blocks of the references before its end only
+                return _noteReferences ??= _notes.References.Take(index.NoteReferenceBlocks.Length)
+                    .Select((r, i) => new WordDocumentNoteReference(r.Kind, r.Number, index.NoteReferenceBlocks[i])).ToArray();
+            }
+        }
+    }
     private WordDocumentNoteReference[]? _noteReferences;
 
     public void Dispose()

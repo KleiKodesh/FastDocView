@@ -21,6 +21,7 @@
 //   dotnet run -c Release -- --profile-markup <path>...  cold / reopen / window ms of .txt / .mht files
 //   dotnet run -c Release -- --rtf [N]             synthetic .rtf (N repeating blocks, default 20000); with --corpus, the RTF files of the list
 //                                                  are audited (unhandled control words) and opened + rendered; --rtf-audit <path>... audits files
+//   dotnet run -c Release -- --cold-bench [--runs N] <path>...   cold first paint per file (fresh process per run, empty sidecar cache)
 //   dotnet run -c Release -- --skip-synthetic --corpus ../test-data --corpus-sample 300   quick pass: fixed-seed sample + the fixed-case regressions
 //   dotnet run -c Release -- --skip-synthetic --corpus <list.txt>   the same over a whole file list, aggregated + open/render crash check
 using FastDocView.Tests;
@@ -69,6 +70,18 @@ for (int i = 0; i < args.Length; i++)
         case "--connector-route": OdtConnectorRouteTest.Run(); OdtConnectedShapesTest.Run(); skipSynthetic = true; break;   // only the connector routing checks (seconds)
         case "--mhtml-pictures": WebArchivePicturesTest.Run(); skipSynthetic = true; break;   // web archive pictures (seconds)
         case "--word-xml": WordXmlFormatsTest.Run(); Word2003WindowedTest.Run([]); skipSynthetic = true; break;
+        case "--cold-open": return ColdOpenBenchmark.RunChild(args[i + 1], args[i + 2]);   // one cold first open (child of --cold-bench)
+        case "--cold-bench":                                                           // cold first paint per file, a fresh process per run
+        {
+            int runs = 3;
+            var files = new List<string>();
+            while (i + 1 < args.Length)
+            {
+                if (args[i + 1] == "--runs") { runs = int.Parse(args[i + 2]); i += 2; }
+                else files.Add(args[++i]);
+            }
+            ColdOpenBenchmark.RunParent(files, runs); return 0;
+        }
         case "--word2003-big":                                                         // timed first paint of big Word 2003 XML (and .docx) files
         {
             var big = new List<string>();

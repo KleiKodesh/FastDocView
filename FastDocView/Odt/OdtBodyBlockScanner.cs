@@ -62,6 +62,8 @@ internal sealed class OdtBodyBlockScanner
 
     // capture of style sections (before the body)
     private MemoryStream? _capture;
+    private byte[]? _captureCloseTag;
+    private byte[] _captureTail = [];              // SkipToCaptureEnd: the last bytes of a chunk skipped whole              // "</office:styles" while a section is captured (SkipToCaptureEnd)
     private long _capturedUpTo;
 
     // block state
@@ -274,6 +276,7 @@ internal sealed class OdtBodyBlockScanner
             {
                 case State.Text:
                 {
+                    if (_captureCloseTag is not null && Top == Frame.Capture && SkipToCaptureEnd(span, ref position)) break;
                     int next = span.Slice(position).IndexOf((byte)'<');
                     int textLength = next < 0 ? count - position : next;
                     if (textLength > 0) OnText(span.Slice(position, textLength));
@@ -383,6 +386,58 @@ internal sealed class OdtBodyBlockScanner
         }
         if (_capture is not null) CopyCaptured(_offset + count);
         _offset += count;
+    }
+
+    /// <summary>
+    /// Inside a captured style section with no child open, nothing but the section's end matters to the scan (its bytes are
+    /// captured by offset; its children are skipped frames): jump with a vectorised search to its closing tag instead of
+    /// tokenising every tag in between. A LibreOffice .fodt of a converted Word file has 15 MB of styles before its body.
+    /// True when the position moved; the tokenizer then goes on from there (the closing tag itself, or a chunk's tail that
+    /// may hold its start).
+    /// </summary>
+    private bool SkipToCaptureEnd(ReadOnlySpan<byte> span, ref int position)
+    {
+        byte[] close = _captureCloseTag!;
+        if (_captureTail.Length > 0)
+        {
+            // the previous chunk ended in the skipped bytes: its last bytes may begin the closing tag
+            byte[] tail = _captureTail;
+            _captureTail = [];
+            if (position == 0)
+            {
+                int head = Math.Min(span.Length, close.Length);
+                var joined = new byte[tail.Length + head];
+                Buffer.BlockCopy(tail, 0, joined, 0, tail.Length);
+                span.Slice(0, head).CopyTo(joined.AsSpan(tail.Length));
+                int at = joined.AsSpan().IndexOf(close);
+                if (at >= 0 && at < tail.Length)
+                {
+                    // the closing tag began in the previous chunk: read it as a tag crossing the chunk edge
+                    _partialTag.SetLength(0);
+                    _partialTag.Write(tail, at, tail.Length - at);
+                    _quote = 0;
+                    _tagStartOffset = _offset - (tail.Length - at);
+                    _state = State.Tag;
+                    return true;
+                }
+                if (at < 0 && span.Length < close.Length)
+                {
+                    // a chunk shorter than the tag: the held bytes grow over it
+                    int keepJoined = Math.Min(close.Length - 1, joined.Length);
+                    _captureTail = joined.AsSpan(joined.Length - keepJoined).ToArray();
+                    position = span.Length;
+                    return true;
+                }
+            }
+        }
+        int found = span.Slice(position).IndexOf(close);
+        if (found == 0) return false;
+        if (found > 0) { position += found; return true; }
+        // not in this chunk: skip it all, keeping the bytes that may begin the closing tag for the next chunk
+        int keep = Math.Min(close.Length - 1, span.Length - position);
+        _captureTail = span.Slice(span.Length - keep).ToArray();
+        position = span.Length;
+        return true;
     }
 
     private void AppendPartial(byte[] chunk, int start, int length)
@@ -840,6 +895,10 @@ internal sealed class OdtBodyBlockScanner
     {
         _capture = new MemoryStream();
         _capture.Write(openTag.ToArray(), 0, openTag.Length);
+        int nameEnd = 1;
+        while (nameEnd < openTag.Length && openTag[nameEnd] is not ((byte)' ' or (byte)'>' or (byte)'/' or (byte)'\t' or (byte)'\r' or (byte)'\n')) nameEnd++;
+        bool isSelfClosing = openTag.Length >= 2 && openTag[openTag.Length - 2] == (byte)'/';
+        _captureCloseTag = isSelfClosing ? null : Encoding.UTF8.GetBytes("</" + Encoding.UTF8.GetString(openTag.Slice(1, nameEnd - 1).ToArray()));
         _capturedUpTo = tagEndOffset;
     }
 
@@ -859,9 +918,44 @@ internal sealed class OdtBodyBlockScanner
     private void FinishCapture(long tagEndOffset)
     {
         CopyCaptured(tagEndOffset);
-        string section = Encoding.UTF8.GetString(_capture!.GetBuffer(), 0, (int)_capture.Length);
+        MemoryStream capture = _capture!;
         _capture = null;
-        _styles.AddSection(ParseSection(RootOpenTag, section));
+        _captureCloseTag = null;
+        _captureTail = [];
+        _styles.AddSection(ParseSectionWithoutListStyles(RootOpenTag, capture.GetBuffer(), (int)capture.Length));
+    }
+
+    /// <summary>
+    /// A captured section as a tree, its text:list-style elements cut out and parsed from their bytes on the way
+    /// (<see cref="OdtStylesListStyleFilterStream"/>, as styles.xml of a package is read) and handed to the cascade: a .fodt
+    /// written by LibreOffice from a Word file holds thousands of list styles in office:styles (the sample: 13 MB), which as XML
+    /// trees took a second of the first open. Malformed: the scan is malformed (the tags were not tokenised), and the plain parse
+    /// (<see cref="ParseSection"/>) recovers what it can.
+    /// </summary>
+    private XElement ParseSectionWithoutListStyles(string rootOpenTag, byte[] section, int length)
+    {
+        string rootName = OdtXmlFragment.RootElementName(rootOpenTag);
+        byte[] head = Encoding.UTF8.GetBytes(rootOpenTag), tail = Encoding.UTF8.GetBytes("</" + rootName + ">");
+        var whole = new byte[head.Length + length + tail.Length];
+        Buffer.BlockCopy(head, 0, whole, 0, head.Length);
+        Buffer.BlockCopy(section, 0, whole, head.Length, length);
+        Buffer.BlockCopy(tail, 0, whole, head.Length + length, tail.Length);
+        var listStyles = new List<(string name, OdtListStyle style)>();
+        try
+        {
+            using var view = new OdtStylesListStyleFilterStream(new MemoryStream(whole, writable: false), (name, style) => listStyles.Add((name, style)));
+            using XmlReader reader = WordDocumentXml.CreateReader(view, tolerateUndeclaredPrefixes: true, ignoreWhitespace: false);
+            XElement parsed = XElement.Load(reader, LoadOptions.PreserveWhitespace).Elements().First();
+            foreach ((string name, OdtListStyle style) in listStyles) _styles.AddListStyle(name, style);
+            return parsed;
+        }
+        catch (Exception exception) when (exception is XmlException or InvalidOperationException)
+        {
+            // the section's tags were skipped, not tokenised (SkipToCaptureEnd): its XML error makes the scan malformed here,
+            // as a mismatched tag seen by the tokenizer did
+            IsMalformed = true;
+            return ParseSection(rootOpenTag, Encoding.UTF8.GetString(section, 0, length));
+        }
     }
 
     /// <summary>A captured section parsed inside the root tag (for its namespace declarations).</summary>

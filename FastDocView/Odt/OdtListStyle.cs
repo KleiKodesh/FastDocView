@@ -163,6 +163,10 @@ public sealed class OdtListStyle
         while (nameEnd < element.Length && element[nameEnd] is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n' or (byte)'/' or (byte)'>')) nameEnd++;
         position = ReadAttributes(element, nameEnd, names, tag);
         name = tag[ParseNames.Name];
+        // a converted Word file repeats whole list styles under new names (the sample: 3,058 list styles, 467 different bodies):
+        // equal bytes after the start tag (which only names it) give an equal list style, so the parsed one is shared
+        ReadOnlySpan<byte> body = element.Slice(Math.Min(position, element.Length));
+        if (cache.FindListStyle(body) is { } parsed) return parsed;
         // each level element: from its start tag to the next level's (or the list style's end tag). A converted Word file
         // repeats the same few level definitions thousands of times: a level parsed once is reused for equal bytes.
         int levelStart = NextLevelStart(element, position, names);
@@ -178,6 +182,7 @@ public sealed class OdtListStyle
             if (built.index >= 0) listStyle._levels[built.index] = built.level;
             levelStart = next;
         }
+        cache.AddListStyle(body, listStyle);
         return listStyle;
     }
 
@@ -219,6 +224,7 @@ public sealed class OdtListStyle
                 for (int i = 0; i < ParseNames.Mode; i++) level[i] = tag[i];
                 level[ParseNames.StyleName] = tag[ParseNames.StyleName];
                 level[ParseNames.Href] = tag[ParseNames.Href];
+                level[ParseNames.LetterSync] = tag[ParseNames.LetterSync];      // style:num-letter-sync (AA, BB... rather than AA, AB...)
             }
             else if (levelLocalName is not null && qualifiedName.SequenceEqual(names.Properties))
             {
@@ -245,12 +251,29 @@ public sealed class OdtListStyle
     }
 
     /// <summary>
-    /// Levels parsed so far, by their bytes (one cache per styles.xml pass). Levels are only changed by ResolveFontNames, which gives equal bytes equal results,
-    /// so equal definitions share one <see cref="Level"/>.
+    /// Levels and whole list styles parsed so far, by their bytes (one cache per styles.xml pass). Levels are only changed by
+    /// ResolveFontNames, which gives equal bytes equal results, so equal definitions share one <see cref="Level"/> / list style.
     /// </summary>
     internal sealed class ParsedLevels
     {
         private readonly Dictionary<int, List<(byte[] bytes, int index, Level level)>> _byHash = new();
+        private readonly Dictionary<int, List<(byte[] body, OdtListStyle style)>> _listStylesByHash = new();
+
+        /// <summary>A list style parsed before from the same bytes after its start tag (only its name differs); shared, like levels.</summary>
+        public OdtListStyle? FindListStyle(ReadOnlySpan<byte> body)
+        {
+            if (!_listStylesByHash.TryGetValue(Hash(body), out List<(byte[] body, OdtListStyle style)>? candidates)) return null;
+            foreach ((byte[] bytes, OdtListStyle style) in candidates)
+                if (body.SequenceEqual(bytes)) return style;
+            return null;
+        }
+
+        public void AddListStyle(ReadOnlySpan<byte> body, OdtListStyle style)
+        {
+            int hash = Hash(body);
+            if (!_listStylesByHash.TryGetValue(hash, out List<(byte[] body, OdtListStyle style)>? candidates)) _listStylesByHash[hash] = candidates = new List<(byte[], OdtListStyle)>(1);
+            candidates.Add((body.ToArray(), style));
+        }
 
         public (int index, Level level)? Find(ReadOnlySpan<byte> segment)
         {

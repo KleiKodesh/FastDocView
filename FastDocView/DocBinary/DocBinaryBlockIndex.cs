@@ -73,28 +73,20 @@ public sealed class DocBinaryBlockIndex
                                             DocBinaryListDefinitions lists, IReadOnlyList<int> noteReferenceCps, IReadOnlyList<int> sectionStartCps,
                                             int mainTextCharacterCount, long sourceLength, long sourceLastWriteTicksUtc,
                                             IProgress<WordDocumentIndexProgress>? progress = null, CancellationToken cancellation = default)
-    {
-        var scanner = new DocBinaryBlockScanner(renderer, styles, lists);
-        var anchorBlocks = new List<int>();
-        var anchorStates = new List<byte[]>();
-        scanner.CaptureStateAtOrAfterCp = 0;
-        scanner.BlockAdded += (blockIndex, startCp) =>
-        {
-            if (scanner.StateOfLastBlock is not { } state && blockIndex != 0) return;
-            anchorBlocks.Add(blockIndex);
-            anchorStates.Add(scanner.StateOfLastBlock ?? []);
-            scanner.CaptureStateAtOrAfterCp = startCp + AnchorSpanCharacters;
-        };
-        pieces.ScanCharacters(0, mainTextCharacterCount, (characters, count, chunkCp) =>
-        {
-            cancellation.ThrowIfCancellationRequested();
-            scanner.Feed(characters, count, chunkCp);
-            progress?.Report(new WordDocumentIndexProgress(chunkCp + count, mainTextCharacterCount, scanner.BlockCount));
-        });
-        scanner.Finish(mainTextCharacterCount);
+        => new DocBinaryBlockIndexBuilder(pieces, renderer, styles, lists, noteReferenceCps, sectionStartCps, mainTextCharacterCount,
+                                          sourceLength, sourceLastWriteTicksUtc, progress, cancellation).Complete();
 
+    /// <summary>
+    /// An index over the blocks a scan has found so far (<paramref name="scanner"/>, which may still be mid-text) or over every
+    /// block once it finished: <paramref name="endCp"/> is where those blocks end. Notes and sections past it get no block yet.
+    /// </summary>
+    internal static DocBinaryBlockIndex FromScan(DocBinaryBlockScanner scanner, List<int> anchorBlocks, List<byte[]> anchorStates, int endCp,
+                                                 IReadOnlyList<int> noteReferenceCps, IReadOnlyList<int> sectionStartCps,
+                                                 long sourceLength, long sourceLastWriteTicksUtc, bool isComplete)
+    {
         List<int> starts = scanner.BlockStartCps;
-        int EndOf(int block) => block + 1 < starts.Count ? starts[block + 1] : mainTextCharacterCount;
+        int blockCount = starts.Count;
+        int EndOf(int block) => block + 1 < blockCount ? starts[block + 1] : endCp;
         byte[][] deltas = WordListCounterState.Deltas(anchorStates);
         var anchors = new WordIndexSpanAnchor[anchorBlocks.Count];
         for (int i = 0; i < anchors.Length; i++)
@@ -103,13 +95,17 @@ public sealed class DocBinaryBlockIndex
             anchors[i] = new WordIndexSpanAnchor(block, starts[block], block > 0 ? starts[block - 1] : -1,
                                                  block > 0 ? scanner.BlockKinds[block - 1] : WordDocumentBlockKind.Other, deltas[i]);
         }
-        var lengths = new int[starts.Count];
+        var lengths = new int[blockCount];
         for (int i = 0; i < lengths.Length; i++) lengths[i] = EndOf(i) - starts[i];
-        var noteBlocks = new int[noteReferenceCps.Count];
+        // complete: every reference / section lies in some block; partial: only those before endCp do (the prefix, both lists are in CP order)
+        int KnownCount(IReadOnlyList<int> cps) { int n = 0; while (n < cps.Count && (isComplete || cps[n] < endCp)) n++; return n; }
+        var noteBlocks = new int[KnownCount(noteReferenceCps)];
         for (int i = 0; i < noteBlocks.Length; i++) noteBlocks[i] = BlockAt(starts, noteReferenceCps[i]);
+        // sections keep one entry each (the section table is read against them); one not reached yet starts after the known blocks
         var sectionBlocks = new int[sectionStartCps.Count];
-        for (int i = 0; i < sectionBlocks.Length; i++) sectionBlocks[i] = BlockAt(starts, Math.Min(sectionStartCps[i], mainTextCharacterCount));
-        return new DocBinaryBlockIndex(sourceLength, sourceLastWriteTicksUtc, mainTextCharacterCount, starts.Count, anchors,
+        for (int i = 0; i < sectionBlocks.Length; i++)
+            sectionBlocks[i] = isComplete || sectionStartCps[i] < endCp ? BlockAt(starts, Math.Min(sectionStartCps[i], endCp)) : blockCount;
+        return new DocBinaryBlockIndex(sourceLength, sourceLastWriteTicksUtc, endCp, blockCount, anchors,
                                        WordIndexTextLengthGroups.Totals(lengths), scanner.Headings.ToArray(), noteBlocks, sectionBlocks)
         {
             MergedRowBlocks = scanner.MergedRowBlocks.ToArray(),
