@@ -1784,6 +1784,25 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   for="des" op="equ" primFontSz by forName in its lin algorithm (:1419-1430, getDiagramFontHeights) and turns on the
   text frame's AUTOFIT for tx shapes (:1732-1734), each frame shrunk on its own at render time; it has no text
   rectangle, kerning or grow-to-text step, so Word's drawings are the reference for (1) and (3)-(6).
+  2026-11-22 (fifth round): real font metrics. Text is measured in the font Word draws each character with
+  (DocxDrawingTextFonts): complex-script characters (Hebrew, Arabic, Syriac, Thaana, Thai) take the run's a:cs, else the
+  theme's script font (the supplemental a:font for the character's script, e.g. the Office theme's minor "Hebr" = Arial),
+  else a:cs of the theme, else Arial / Times New Roman; other letters the run's a:latin, else the theme's minor Latin font,
+  else Calibri; spaces, digits and punctuation the slot of the strong character before them; a face without the glyph hands
+  it on. Combining marks (niqqud) add no width. WordFontMetrics reads hmtx through the Windows cmap (format 4 / 12), the kern
+  table's format 0 pairs and hhea ascender - descender + line gap (Word's line height for DrawingML text: Times New Roman
+  1.1499 em, not its win metrics 1.1074 - times-block-list is 29 pt only with hhea) from the installed font file
+  (WordFontFile: Windows font folders, read only, common families by their known file name, else one name-table scan), once
+  per family per process; without a file, embedded tables for Calibri / Cambria / Times New Roman / Arial (DocxChartFontWidths,
+  DocxCalibriKerning). Word evidence: with the theme's a:cs set to David and "Hebr" = Arial, Word sizes the Hebrew as Arial
+  (hebrew-david-block-list 29 pt; David's metrics give 32), so the script font wins over a:cs, as in DocxTheme.FontFor.
+  LibreOffice resolves +mn-cs to the theme's a:cs only and ignores the supplemental fonts in DrawingML text
+  (oox/source/drawingml/theme.cxx:71-91 resolveFont, textfont.cxx:79-84, textcharacterproperties.cxx:105-114), and measures
+  at render time with VCL fonts, so Word is the reference. Fixtures: scripts/make-smartart-hebrew-fixtures.py writes the
+  texts (u-escapes) to smartart-hebrew-fixtures.json, make-smartart-layouts.ps1 -Fixtures builds them in hidden Word:
+  Hebrew block list / niqqud block list / vertical list / process / horizontal list, mixed Hebrew-English block list, Times
+  New Roman theme, David theme a:cs - all at Word's size (--smartart; before: 1-13 pt off).
+  Live: vue-demo/playwright/smartartFontCheck.mjs <name>=<pt> ... opens the -nodrawing copies in the rig and reads the text size.
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
   pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns

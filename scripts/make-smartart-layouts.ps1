@@ -1,6 +1,9 @@
 # Builds test-data/smartart-layouts/: one .docx per built-in SmartArt layout (Word 16, hidden, no alerts), each with a known
 # node text set, saved by Word with its drawing part, plus Word's PDF of it (print layout). strip-smartart-drawing.py then
 # makes the "-nodrawing" copies the layout engine is tested on. Only the Word instance this script started is quit.
+# -Fixtures <json>: build only the entries of that file instead (scripts/make-smartart-hebrew-fixtures.py writes Hebrew ones:
+# id, name, texts, optional minorLatin / minorComplex = the theme's minor Latin / complex-script typeface).
+param([string]$Fixtures)
 $ErrorActionPreference = 'Stop'
 $folder = Join-Path $PSScriptRoot '..\test-data\smartart-layouts'
 New-Item -ItemType Directory -Force $folder | Out-Null
@@ -20,6 +23,14 @@ $layouts = @(
     @('chevron1',   'chevron',     @('Step A', 'Step B', 'Step C')),
     @('list1',      'stacked-list', @('Red', 'Green', 'Blue', 'White'))
 )
+$themeFonts = @{}
+if ($Fixtures) {
+    $layouts = @()
+    foreach ($f in (Get-Content -Raw $Fixtures | ConvertFrom-Json)) {
+        $layouts += ,@($f.id, $f.name, @($f.texts))
+        $themeFonts[$f.name] = @($f.minorLatin, $f.minorComplex)
+    }
+}
 $before = @(Get-Process WINWORD -ErrorAction SilentlyContinue | ForEach-Object Id)
 $word = New-Object -ComObject Word.Application
 $mine = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id } | ForEach-Object Id)
@@ -36,6 +47,12 @@ try {
         $doc = $word.Documents.Add()
         try {
         $doc.ActiveWindow.View.Type = 3
+        if ($themeFonts.ContainsKey($name)) {
+            # MsoFontLanguageIndex: msoThemeLatin = 1, msoThemeComplexScript = 2
+            $minor = $doc.DocumentTheme.ThemeFontScheme.MinorFont
+            if ($themeFonts[$name][0]) { $minor.Item(1).Name = $themeFonts[$name][0] }
+            if ($themeFonts[$name][1]) { $minor.Item(2).Name = $themeFonts[$name][1] }
+        }
         $shape = $doc.InlineShapes.AddSmartArt($byId[$id], $doc.Paragraphs(1).Range)
         $art = $shape.SmartArt
         while ($art.AllNodes.Count -gt 0) { $art.AllNodes.Item(1).Delete() }

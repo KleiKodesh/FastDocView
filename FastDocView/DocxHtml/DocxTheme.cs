@@ -90,6 +90,21 @@ public sealed class DocxTheme
         return string.IsNullOrEmpty(face) ? null : face;
     }
 
+    /// <summary>The major or minor font's Latin typeface (a:latin); null when empty.</summary>
+    public string? LatinFont(bool major) => (major ? _major : _minor).Latin is { Length: > 0 } face ? face : null;
+
+    /// <summary>
+    /// The major or minor font's typeface for complex-script text of an ISO 15924 script (Hebr, Arab, ...) in DrawingML text:
+    /// the supplemental a:font of that script first (Word sizes Hebrew in the theme's "Hebr" font even when a:cs names another:
+    /// test-data/smartart-layouts/hebrew-david-block-list), else a:cs, else the font of w:themeFontLang/@bidi's script; null when none.
+    /// </summary>
+    public string? ComplexScriptFont(bool major, string? script)
+    {
+        ThemeFontSet set = major ? _major : _minor;
+        string? face = set.SupplementalFor(script) ?? (set.ComplexScript is { Length: > 0 } cs ? cs : set.SupplementalFor(_bidiScript));
+        return string.IsNullOrEmpty(face) ? null : face;
+    }
+
     private readonly struct ThemeFontSet
     {
         public readonly string? Latin;

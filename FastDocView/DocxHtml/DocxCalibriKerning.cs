@@ -2,7 +2,7 @@ namespace FastDocView.DocxHtml;
 
 /// <summary>
 /// Calibri's pair kerning between printable ASCII characters, from the font's own kern table (format 0, horizontal; Windows
-/// calibri.ttf, 2048 units per em): what Word adds between two letters of kerned text (SmartArt runs carry kern="1200").
+/// calibri.ttf, 2048 units per em): what Word adds between two letters of kerned text (SmartArt runs carry kern="1200"); the fallback when calibri.ttf can't be read.
 /// </summary>
 internal static class DocxCalibriKerning
 {
@@ -52,16 +52,9 @@ internal static class DocxCalibriKerning
         122, 118, -18, 122, 119, -22, 122, 121, -18,
     ];
 
-    private static readonly Dictionary<int, short> ByPair = Build();
-
-    private static Dictionary<int, short> Build()
+    /// <summary>Every pair: the embedded fallback of <see cref="Html.WordFontMetrics"/> when calibri.ttf can't be read.</summary>
+    public static IEnumerable<(char Left, char Right, double Em)> All()
     {
-        var map = new Dictionary<int, short>(Pairs.Length / 3);
-        for (int i = 0; i + 2 < Pairs.Length; i += 3) map[(Pairs[i] << 8) + Pairs[i + 1]] = Pairs[i + 2];
-        return map;
+        for (int i = 0; i + 2 < Pairs.Length; i += 3) yield return ((char)Pairs[i], (char)Pairs[i + 1], Pairs[i + 2] / UnitsPerEm);
     }
-
-    /// <summary>The kerning between two characters in em (0 outside printable ASCII or for an unkerned pair).</summary>
-    public static double Pair(char left, char right)
-        => left >= ' ' && left <= '~' && right >= ' ' && right <= '~' && ByPair.TryGetValue((left << 8) + right, out short units) ? units / UnitsPerEm : 0;
 }

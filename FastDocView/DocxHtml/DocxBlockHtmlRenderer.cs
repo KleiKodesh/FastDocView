@@ -1351,7 +1351,7 @@ public sealed class DocxBlockHtmlRenderer
     /// <summary>A SmartArt's shapes from its drawing part, else laid out from its data and layout parts (empty when neither: the drawing keeps its size, nothing drawn).</summary>
     private List<WordShape>? DiagramShapes(XElement diagram, double width, double height)
     {
-        if (RelatedPart is null || DocxDrawingParts.DiagramDrawing(id => RelatedPart(_currentPicturePart, id), diagram, width * 12700, height * 12700) is not { } drawing) return null;
+        if (RelatedPart is null || DocxDrawingParts.DiagramDrawing(id => RelatedPart(_currentPicturePart, id), diagram, width * 12700, height * 12700, _styles.Theme) is not { } drawing) return null;
         return DocxShapeReader.Read(new XElement("shapes", drawing.Tree), width, height, _styles.Theme,
                                     embed => PartPictureId?.Invoke(drawing.PartName, embed), null);
     }

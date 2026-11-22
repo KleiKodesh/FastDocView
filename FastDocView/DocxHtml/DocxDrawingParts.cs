@@ -15,9 +15,9 @@ internal static class DocxDrawingParts
     /// <summary>
     /// The namespace-free dsp:spTree of a SmartArt's drawing and the drawing part's name. Without a drawing part the diagram is
     /// laid out from its data model and the layout definition (r:lo), with the colors (r:cs) and quickStyle (r:qs) parts, in a
-    /// frame of the given EMU size (DocxDiagramLayout; the part name is then the data part's). Null when neither works.
+    /// frame of the given EMU size, its text measured in the theme's fonts (DocxDiagramLayout; the part name is then the data part's). Null when neither works.
     /// </summary>
-    public static (XElement Tree, string PartName)? DiagramDrawing(RelatedPartReader related, XElement diagram, double widthEmu = DefaultDiagramWidthEmu, double heightEmu = DefaultDiagramHeightEmu)
+    public static (XElement Tree, string PartName)? DiagramDrawing(RelatedPartReader related, XElement diagram, double widthEmu = DefaultDiagramWidthEmu, double heightEmu = DefaultDiagramHeightEmu, DocxTheme? theme = null)
     {
         if (related((string?)diagram.Attribute("dm") ?? "") is not { } data) return null;
         foreach (XElement extension in data.Xml.Descendants().Where(e => e.Name.LocalName == "dataModelExt"))
@@ -30,7 +30,7 @@ internal static class DocxDrawingParts
         if ((string?)diagram.Attribute("lo") is not { Length: > 0 } layoutId || related(layoutId) is not { } layout || layout.Xml.Root is null || data.Xml.Root is null) return null;
         XElement? Part(string attribute) => (string?)diagram.Attribute(attribute) is { Length: > 0 } id && related(id)?.Xml.Root is { } root ? DocxShapeGeometry.WithoutNamespaces(root) : null;
         XElement? laidOut = DocxDiagramLayout.Lay(DocxShapeGeometry.WithoutNamespaces(data.Xml.Root), DocxShapeGeometry.WithoutNamespaces(layout.Xml.Root),
-                                                  Part("cs"), Part("qs"), widthEmu, heightEmu);
+                                                  Part("cs"), Part("qs"), widthEmu, heightEmu, theme);
         return laidOut is null ? null : (laidOut, data.PartName);
     }
 

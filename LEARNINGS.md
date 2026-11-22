@@ -511,3 +511,10 @@ sequence search per wanted tag (keeping each tag's next hit) reads 91 MB in abou
 read in text mode see '
 ' only - match on '
 ', then normalise the line ends.
+
+SmartArt text fonts (2026-11-22): Word measures Hebrew in DrawingML text with the theme's supplemental script font
+("Hebr", Arial in the Office theme) even when the theme's a:cs names another face (David gave 32 pt, Word 29 = Arial);
+LibreOffice ignores the supplemental fonts there. A DrawingML line is hhea ascender - descender + line gap high, not the
+win metrics (Times New Roman: 1.1499 vs 1.1074 em decides 29 vs 30 pt). Current Calibri has Hebrew glyphs, so "has the
+glyph" alone can't pick the Hebrew face: the slot (complex script) decides first. A search-count check over node texts
+must count a text inside a longer one too (two Hebrew node names shared a word).

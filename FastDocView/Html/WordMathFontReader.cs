@@ -72,13 +72,7 @@ internal static class WordMathFontReader
         }
     }
 
-    private static IEnumerable<string> FontFolders()
-    {
-        string system = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
-        if (system.Length > 0) yield return system;
-        string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (local.Length > 0) yield return Path.Combine(local, "Microsoft", "Windows", "Fonts");
-    }
+    private static IEnumerable<string> FontFolders() => WordFontFile.Folders();
 
     /// <summary>Family / full name -> file and face, over every font file (name tables only).</summary>
     private static Dictionary<string, (string path, int face)> ScanFontFiles()

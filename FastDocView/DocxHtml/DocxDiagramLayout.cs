@@ -26,7 +26,7 @@ internal static class DocxDiagramLayout
     private static readonly char[] Space = [' '];
 
     /// <summary>The diagram's shapes as a namespace-free spTree in a frame of the given EMU size; null when the parts don't lay out.</summary>
-    public static XElement? Lay(XElement data, XElement layoutDefinition, XElement? colors, XElement? quickStyle, double widthEmu, double heightEmu)
+    public static XElement? Lay(XElement data, XElement layoutDefinition, XElement? colors, XElement? quickStyle, double widthEmu, double heightEmu, DocxTheme? theme = null)
     {
         if (widthEmu <= 0 || heightEmu <= 0) return null;
         var model = new DataModel(data);
@@ -34,7 +34,7 @@ internal static class DocxDiagramLayout
         if (layoutDefinition.Element("layoutNode") is not { } rootElement) return null;
         var layout = new LayoutTree();
         LayoutNodeAtom root = layout.ReadLayoutNode(rootElement, null, "b");
-        var diagram = new Diagram(model, layout, colors, quickStyle);
+        var diagram = new Diagram(model, layout, colors, quickStyle, new DocxDrawingTextFonts(theme));
         var frame = new DiagramShape { Name = root.Name, IsGroup = true, Width = widthEmu, Height = heightEmu };
         new ShapeCreationVisitor(diagram, model.Root, frame, root).Visit(root);
         new ShapeLayoutingVisitor(diagram, model.Root).Visit(root);
@@ -495,6 +495,7 @@ internal static class DocxDiagramLayout
         public string StyleLabel = "";
         public int ColorIndex;
         public readonly List<(XElement Paragraph, int Level)> Paragraphs = [];
+        public DocxDrawingTextFonts? TextFonts;    // measures the paragraphs in the fonts Word draws them with (the theme's)
         public readonly List<XElement> OwnProperties = [];
         public bool HasText => Paragraphs.Count > 0;
         // text, set by the tx algorithm
@@ -520,8 +521,9 @@ internal static class DocxDiagramLayout
         public (object Owner, string ForName)? FontGroup;   // a primFontSz op="equ" constraint of an ancestor: every shape it covers takes one size
     }
 
-    private sealed class Diagram(DataModel model, LayoutTree layout, XElement? colors, XElement? quickStyle)
+    private sealed class Diagram(DataModel model, LayoutTree layout, XElement? colors, XElement? quickStyle, DocxDrawingTextFonts textFonts)
     {
+        public readonly DocxDrawingTextFonts TextFonts = textFonts;
         public readonly DataModel Model = model;
         public readonly LayoutTree Layout = layout;
         public readonly XElement? Colors = colors, QuickStyle = quickStyle;
@@ -811,6 +813,7 @@ internal static class DocxDiagramLayout
         {
             DataModel model = Diagram.Model;
             shape.Presentation = presentation;
+            shape.TextFonts = Diagram.TextFonts;
             var sources = model.Connections.Where(c => c.Type == "presOf" && c.Destination == presentation.Id).OrderBy(c => c.DestinationOrder).ToList();
             if (sources.Count > 0)
             {
@@ -1665,13 +1668,15 @@ internal static class DocxDiagramLayout
 
     /// <summary>
     /// The height in points the shape's paragraphs take at a font size in a line width (null when a word is wider): words
-    /// wrapped by the theme's minor font's own advance widths (Calibri: DocxChartFontWidths, from the font's hmtx table), lines
-    /// of the font's line height (ascent + descent, 1.2207 em for Calibri) at Word's 90 % line spacing, 35 % after each
-    /// paragraph but the last, sub-levels at 78 % of the size.
+    /// wrapped by the advance widths of the fonts Word draws each character with (DocxDrawingTextFonts: the theme's minor Latin
+    /// font, its complex-script font for Hebrew and other complex scripts, read from the font files; kerned from 12 pt as Word
+    /// writes kern="1200" on SmartArt runs), lines of the tallest used font's line height (hhea ascender - descender + line gap, 1.2207 em
+    /// for Calibri) at Word's 90 % line spacing, 35 % after each paragraph but the last, sub-levels at 78 % of the size.
     /// </summary>
     internal static double? TextHeight(DiagramShape shape, double size, double width)
     {
         if (shape.Paragraphs.Count == 0) return 0;
+        DocxDrawingTextFonts fonts = shape.TextFonts ?? new DocxDrawingTextFonts(null);
         int baseLevel = shape.Paragraphs.Min(p => p.Level);
         double used = 0;
         foreach ((XElement paragraph, int level) in shape.Paragraphs)
@@ -1679,39 +1684,23 @@ internal static class DocxDiagramLayout
             double paragraphSize = level > baseLevel && shape.BulletList ? size * 0.78 : size;
             double indent = shape.BulletList && level - baseLevel >= shape.BulletStartLevel ? 22.5 * (level - baseLevel - shape.BulletStartLevel + 1) : 0;
             double lineWidth = width - indent;
-            string text = string.Concat(paragraph.Elements("r").Select(r => (string?)r.Element("t") ?? ""));
+            DocxDrawingTextFonts.MeasuredParagraph measured = fonts.Measure(paragraph);
+            // pair kerning: SmartArt text is kerned from 12 pt (Word writes kern="1200" on every run)
+            double kerned = paragraphSize >= 12 ? 1 : 0;
             int lines = 1;
-            double current = 0, space = TextWidth(" ", paragraphSize);
-            foreach (string word in text.Split(Space, StringSplitOptions.RemoveEmptyEntries))
+            double current = 0;
+            for (int i = 0; i < measured.Words.Length; i++)
             {
-                double wordWidth = TextWidth(word, paragraphSize);
+                double wordWidth = (measured.Words[i] + kerned * measured.Kerning[i]) * paragraphSize;
                 if (wordWidth > lineWidth + 0.01) return null;
-                double withSpace = current == 0 ? wordWidth : current + space + wordWidth;
+                if (measured.BreakBefore[i]) { lines++; current = wordWidth; continue; }
+                double withSpace = current == 0 ? wordWidth : current + measured.Spaces[i] * paragraphSize + wordWidth;
                 if (withSpace > lineWidth + 0.01) { lines++; current = wordWidth; }
                 else current = withSpace;
             }
-            used += lines * paragraphSize * LineHeightEm * 0.9 + (used > 0 ? paragraphSize * 0.35 : 0);
+            used += lines * paragraphSize * measured.LineHeightEm * 0.9 + (used > 0 ? paragraphSize * 0.35 : 0);
         }
         return used;
-    }
-
-    private const double LineHeightEm = 1.2207;
-    private static readonly double[] MinorFontWidths = DocxChartFontWidths.Fonts.First(f => f.Name == "Calibri").Widths;
-    private static readonly double MinorFontAverage = DocxChartFontWidths.Fonts.First(f => f.Name == "Calibri").Average;
-
-    /// <summary>A text's advance width in points in the minor font (Calibri metrics and kerning pairs; outside ASCII the font's average width).</summary>
-    internal static double TextWidth(string text, double size)
-    {
-        double em = 0;
-        char previous = '\0';
-        foreach (char c in text)
-        {
-            em += c >= ' ' && c <= '~' ? MinorFontWidths[c - ' '] : MinorFontAverage;
-            // pair kerning: SmartArt text is kerned from 12 pt (Word writes kern="1200" on every run)
-            if (size >= 12) em += DocxCalibriKerning.Pair(previous, c);
-            previous = c;
-        }
-        return em * size;
     }
 
     /// <summary>
