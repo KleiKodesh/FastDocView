@@ -18,7 +18,9 @@ namespace FastDocView.Tests;
 public static class SmartArtLayoutFidelityTest
 {
     /// <summary>The layouts the engine matches Word for (box edges within <see cref="TolerancePoints"/>); the others are reported, not checked.</summary>
-    private static readonly string[] Layouts = ["block-list", "process", "pyramid", "vertical-list", "chevron", "cycle", "hierarchy", "org-chart"];
+    private static readonly string[] Layouts = ["block-list", "process", "pyramid", "vertical-list", "chevron", "cycle", "hierarchy", "org-chart", "horizontal-list", "stacked-list"];
+    /// <summary>The layouts whose autofit font size must equal Word's (font-metric fitting); the others report a different size only.</summary>
+    private static readonly string[] FontFittedLayouts = ["block-list", "horizontal-list", "stacked-list"];
     private const double TolerancePoints = 4;
     private const double EmuPerPoint = 12700;
 
@@ -30,7 +32,9 @@ public static class SmartArtLayoutFidelityTest
         foreach (string path in Directory.GetFiles(folder, "*-v1.docx").OrderBy(p => p, StringComparer.Ordinal))
         {
             string name = Path.GetFileNameWithoutExtension(path).Replace("-v1", "");
-            (double worst, int matched, int expected, string detail) = Compare(path);
+            (double worst, int matched, int expected, string detail, string fonts) = Compare(path);
+            if (FontFittedLayouts.Contains(name)) TestReport.Check(fonts.Length == 0, $"{name}: font sizes as Word's{(fonts.Length == 0 ? "" : " " + fonts)}");
+            else if (fonts.Length > 0) Console.WriteLine($"   INFO  {name}: font sizes differ from Word's: {fonts}");
             bool required = Layouts.Contains(name);
             string summary = $"{name}: {matched} of {expected} shapes laid out, worst edge {worst.ToString("0.0", CultureInfo.InvariantCulture)} pt";
             if (required) TestReport.Check(matched == expected && worst <= TolerancePoints, summary + (matched == expected && worst <= TolerancePoints ? "" : " " + detail));
@@ -69,7 +73,7 @@ public static class SmartArtLayoutFidelityTest
     }
 
     /// <summary>The laid-out shapes against the drawing part's, by modelId: the largest difference of any box edge, in points.</summary>
-    private static (double Worst, int Matched, int Expected, string Detail) Compare(string path)
+    private static (double Worst, int Matched, int Expected, string Detail, string Fonts) Compare(string path)
     {
         using ZipArchive zip = ZipFile.OpenRead(path);
         XElement Part(string name) => DocxShapeGeometry.WithoutNamespaces(XDocument.Load(zip.GetEntry(name)!.Open()).Root!);
@@ -90,7 +94,21 @@ public static class SmartArtLayoutFidelityTest
             if (difference > TolerancePoints) detail.Add($"{Shorten(id)} ours {Box(mine)} word {Box(word)}");
             worst = Math.Max(worst, difference);
         }
-        return (worst, matched, words.Count, string.Join("; ", detail.Take(4)));
+        // the autofit font size: each shape's first run at Word's size (whole points)
+        var ourSizes = FontSizes(laidOut);
+        var fonts = new List<string>();
+        foreach ((string id, string size) in FontSizes(Part("word/diagrams/drawing1.xml").Element("spTree")))
+            if (!ourSizes.TryGetValue(id, out string? mine) || mine != size) fonts.Add($"{Shorten(id)} {mine ?? "none"} word {size}");
+        return (worst, matched, words.Count, string.Join("; ", detail.Take(4)), string.Join("; ", fonts.Take(3)));
+    }
+
+    private static Dictionary<string, string> FontSizes(XElement? tree)
+    {
+        var sizes = new Dictionary<string, string>();
+        foreach (XElement shape in tree?.Elements("sp") ?? [])
+            if (shape.Descendants().FirstOrDefault(e => e.Name.LocalName == "rPr" && e.Attribute("sz") is not null) is { } run)
+                sizes[(string?)shape.Attribute("modelId") ?? ""] = (string)run.Attribute("sz")!;
+        return sizes;
     }
 
     private static Dictionary<string, (double X, double Y, double W, double H)> Boxes(XElement? tree)
@@ -98,9 +116,9 @@ public static class SmartArtLayoutFidelityTest
         var boxes = new Dictionary<string, (double, double, double, double)>();
         foreach (XElement shape in tree?.Elements("sp") ?? [])
         {
-            // Word's empty helper shapes (connectors drawn as custom geometry, no fill) are compared only when they have a preset
+            // preset shapes and the custom-geometry connectors Word writes for hierarchies (their boxes)
             XElement? transform = shape.Element("spPr")?.Element("xfrm");
-            if (transform is null || shape.Element("spPr")?.Element("prstGeom") is null) continue;
+            if (transform is null || shape.Element("spPr")?.Elements().Any(e => e.Name.LocalName is "prstGeom" or "custGeom") is not true) continue;
             double Value(string element, string attribute) => double.Parse((string?)transform.Element(element)?.Attribute(attribute) ?? "0", CultureInfo.InvariantCulture) / EmuPerPoint;
             boxes[(string?)shape.Attribute("modelId") ?? ""] = (Value("off", "x"), Value("off", "y"), Value("ext", "cx"), Value("ext", "cy"));
         }

@@ -1753,7 +1753,19 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   Constraints resolve in one place (Resolve: in order, again until settled; "self" values such as sp / sibSp). Search:
   the scanner and the reference reader report a SmartArt as "dm lo"; without a drawing part the data points' text is
   read in data-model order when the layout part exists (what is drawn). The stripper keeps r:lo / r:qs / r:cs on the diagram element (no index change: the layout
-  XML is stripped per render). 
+  XML is stripped per render).
+  2026-11-22 (third round): font-driven layouts and tree connectors. Text is wrapped by the theme minor font's own advance
+  widths (Calibri hmtx, DocxChartFontWidths; line height 1.2207 em at Word's 90 %), not an average estimate. A lin row whose
+  children's lengths come from the font size (horizontal / stacked bullet lists: h = k primFontSz) tries whole font sizes
+  from primFontSz down until the row fits unscaled; a composite whose heights come from the font size caps each text child
+  by its own "h <= k w" and takes the largest size whose text fits; that size then holds for every shape below (Fit). The
+  ancestors' for="des" constraints size a lin's children too, and horzAlign / vertAlign place the row. Tree connectors
+  (conn connRout bend, begPts bCtr, endPts tCtr) are routed after every shape is placed: bottom middle of the parent's
+  srcNode shape (its box when unnamed), elbow bendDist (hierRoot "bendDist = 0.5 sp") above the end for bendPt end, top
+  middle of the child's dstNode shape; drawn as a custGeom polyline as Word writes them (LibreOffice master does the same:
+  oox/source/drawingml/diagram/diagramlayoutatoms.cxx:6118). forEach ch then self ptType="parTrans" (hierarchy1) walks to
+  the transition into the node. --smartart: all ten layouts within 4 pt (hierarchy connectors 0.0, org chart 3.6,
+  horizontal list 0.2, stacked list 0.0), and block list / horizontal list / stacked list at Word's font size. 
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
   pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns

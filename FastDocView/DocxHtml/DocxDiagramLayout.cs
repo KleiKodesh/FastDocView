@@ -40,6 +40,7 @@ internal static class DocxDiagramLayout
         new ShapeLayoutingVisitor(diagram, model.Root).Visit(root);
         SortByZOrder(frame);
         TextFitting.FitAll(frame);
+        RouteConnectors(frame);
         var tree = new XElement("spTree");
         Emit(frame, 0, 0, tree, diagram);
         return tree.HasElements ? tree : null;
@@ -457,6 +458,11 @@ internal static class DocxDiagramLayout
         public (string Type, double Factor)[] Margins = [];
         public bool Autofit;
         public string AlgorithmType = "";      // the algorithm its layout node chose (hierRoot / hierChild rows of a tree)
+        public (double X, double Y)[]? Path;   // a connector drawn as a polyline in its own box (EMU), as Word writes hierarchy connectors
+        public DiagramShape? RouteFrom, RouteTo;   // a tree connector: the parent's and the child's hierRoot, routed once every shape is placed
+        public string SourceNode = "", DestinationNode = "", BendPoint = "def";   // conn params srcNode / dstNode / bendPt
+        public double BendDistance;            // bendDist (EMU): how far from the end (bendPt end) or the start (beg) the elbow turns
+        public double? FixedFontSize;          // the font size a font-driven layout chose for the shapes below it (lin / composite)
         public bool HierarchyPlaced;           // laid out with the whole tree by the outermost hierarchy algorithm
         public bool FillsParent;               // the pyramid's level shape: its composite group's whole box
         public double BeginPad, EndPad;        // a connector's padding along its space, as fractions of it (begPad / endPad over connDist)
@@ -602,6 +608,16 @@ internal static class DocxDiagramLayout
                 if (held.Length > 0)
                     transition = model.Connections.FirstOrDefault(c => c.Type == "parOf" && c.Destination == held && c.SiblingTransition.Length > 0)?.SiblingTransition ?? "";
                 PassNodeId = transition;
+                DefaultVisit(forEach);
+                PassNodeId = held;
+                return;
+            }
+            if (iterator.Axes.Count == 1 && iterator.Axes[0] == "self" && iterator.PointType == "parTrans"
+                && model.Connections.FirstOrDefault(c => c.Type == "parOf" && c.Destination == PassNodeId && c.ParentTransition.Length > 0) is { } parentLink)
+            {
+                // forEach ch, then self ptType="parTrans" (hierarchy1's connectors): the transition into the node the pass stands on
+                string held = PassNodeId;
+                PassNodeId = parentLink.ParentTransition;
                 DefaultVisit(forEach);
                 PassNodeId = held;
                 return;
@@ -789,7 +805,8 @@ internal static class DocxDiagramLayout
         protected override void VisitAlgorithm(AlgorithmAtom algorithm)
         {
             if (_looking == Looking.Algorithm && Diagram.ShapeOfPresentation.TryGetValue(Current, out DiagramShape? shape))
-                Algorithms.Lay(algorithm, shape, _constraints, _allConstraints.Skip(_ownFrom).ToList(), _rules, Diagram);
+                Algorithms.Lay(algorithm, shape, _constraints, _allConstraints.Skip(_ownFrom).ToList(),
+                               _allConstraints.Take(_ownFrom).Where(c => c.For == "des").ToList(), _rules, Diagram);
         }
 
         protected override void VisitLayoutNode(LayoutNodeAtom node)
@@ -843,7 +860,7 @@ internal static class DocxDiagramLayout
 
     private static class Algorithms
     {
-        public static void Lay(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> constraints, List<Constraint> own, List<RuleAtom> rules, Diagram diagram)
+        public static void Lay(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> constraints, List<Constraint> own, List<Constraint> inherited, List<RuleAtom> rules, Diagram diagram)
         {
             if (algorithm.Type != "lin") shape.Children.RemoveAll(c => c.IsGroup && c.Children.Count == 0);
             switch (algorithm.Type)
@@ -852,7 +869,7 @@ internal static class DocxDiagramLayout
                 case "conn": Connector(algorithm, shape); break;
                 case "cycle": Cycle(algorithm, shape, own); break;
                 case "hierChild" or "hierRoot": Hierarchy(algorithm, shape, own); break;
-                case "lin": Linear(algorithm, shape, own); break;
+                case "lin": Linear(algorithm, shape, own, inherited); break;
                 case "pyra": Pyramid(algorithm, shape); break;
                 case "snake": Snake(algorithm, shape, own); break;
                 case "sp": shape.Paragraphs.Clear(); break;
@@ -874,11 +891,30 @@ internal static class DocxDiagramLayout
         }
 
         /// <summary>CompositeAlg::applyConstraintToLayout.</summary>
-        private static void ApplyConstraint(Constraint constraint, Dictionary<string, Dictionary<string, double>> properties)
+        private static void ApplyConstraint(Constraint constraint, Dictionary<string, Dictionary<string, double>> properties,
+                                            double? font = null, HashSet<(string, string)>? fixedValues = null)
         {
             if (constraint.ForName.Length == 0) return;
+            if (fixedValues is not null && fixedValues.Contains((constraint.ForName, constraint.Type))) return;
+            if (!properties.TryGetValue(constraint.ForName, out Dictionary<string, double>? target)) target = null;
+            if (font is { } size)
+            {
+                // a fitted font size: font sizes are capped by it, a length from a font size is that many millimetres per point
+                if (IsFontUnit(constraint.Type) && (constraint.Value > 0 || constraint.RefType != "none"))
+                {
+                    if (target is null) properties[constraint.ForName] = target = [];
+                    target[constraint.Type] = Math.Min(constraint.Value > 0 ? constraint.Value : size, size);
+                    return;
+                }
+                if (IsFontUnit(constraint.RefType))
+                {
+                    if (target is null) properties[constraint.ForName] = target = [];
+                    target[constraint.Type] = size * constraint.Factor * EmuPerMillimetre;
+                    return;
+                }
+            }
             if (!properties.TryGetValue(constraint.RefForName, out Dictionary<string, double>? reference)) return;
-            if (!properties.TryGetValue(constraint.ForName, out Dictionary<string, double>? target)) properties[constraint.ForName] = target = [];
+            if (target is null) properties[constraint.ForName] = target = [];
             if (reference.TryGetValue(constraint.RefType, out double value)) target[constraint.Type] = value * constraint.Factor;
             else if (InferFromProperty(reference, constraint.RefType, out double inferred)) target[constraint.Type] = inferred * constraint.Factor;
             else target[constraint.Type] = constraint.Value * (IsFontUnit(constraint.RefType) ? EmuPerPoint : EmuPerMillimetre);
@@ -886,6 +922,41 @@ internal static class DocxDiagramLayout
 
         /// <summary>CompositeAlg::layoutShapeChildren: children placed by their constraints (l / t / r / b / ctrX / ctrY / w / h), content centred vertically.</summary>
         private static void Composite(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> constraints)
+        {
+            Composite(algorithm, shape, constraints, shape.FixedFontSize, null);
+            if (shape.FixedFontSize is not null || !constraints.Any(c => c.Type is "w" or "h" && IsFontUnit(c.RefType) && shape.Children.Any(child => child.Name == c.ForName))) return;
+            // heights from the font size (h = 1.22 primFontSz) with text children capped by their own "h <= k w": the largest whole
+            // font size, from the stated one down, at which each such text fits its cap with its margins; the text child takes the
+            // cap's height (Word's drawings of the horizontal bullet list)
+            double start = constraints.Where(c => c.Type == "primFontSz" && c.Value > 0).Select(c => c.Value).DefaultIfEmpty(65).Max();
+            var capped = shape.Children.Where(c => c.HasText && c.OwnConstraints.Any(o => o.Type == "h" && o.RefType == "w" && o.Operator == "lte")).ToList();
+            double chosen = 5;
+            for (double size = Math.Floor(Math.Min(start, 400)); size >= 5; size--)
+            {
+                bool fits = true;
+                foreach (DiagramShape child in capped)
+                {
+                    double cap = child.Width * child.OwnConstraints.First(o => o.Type == "h" && o.RefType == "w" && o.Operator == "lte").Factor / EmuPerPoint;
+                    double margin(string type) => child.OwnConstraints.Where(o => o.Type == type && o.RefType == "primFontSz").Select(o => o.Factor * size).FirstOrDefault();
+                    double width = child.Width / EmuPerPoint - margin("lMarg") - margin("rMarg");
+                    if (TextHeight(child, size, width) is not { } text || text + margin("tMarg") + margin("bMarg") > cap + 0.01) { fits = false; break; }
+                }
+                if (fits) { chosen = size; break; }
+            }
+            var fixedValues = new HashSet<(string, string)>();
+            var heights = new Dictionary<string, double>();
+            foreach (DiagramShape child in capped)
+            {
+                heights[child.Name] = child.Width * child.OwnConstraints.First(o => o.Type == "h" && o.RefType == "w" && o.Operator == "lte").Factor;
+                fixedValues.Add((child.Name, "h"));
+            }
+            shape.FixedFontSize = chosen;
+            foreach (DiagramShape inner in Descendants(shape)) inner.FixedFontSize = chosen;
+            Composite(algorithm, shape, constraints, chosen, (fixedValues, heights));
+        }
+
+        private static void Composite(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> constraints, double? font,
+                                      (HashSet<(string, string)> Names, Dictionary<string, double> Heights)? fixedHeights)
         {
             var properties = new Dictionary<string, Dictionary<string, double>>();
             var parent = properties[""] = [];
@@ -901,12 +972,14 @@ internal static class DocxDiagramLayout
                 if (parent["w"] < shape.Width) parentXOffset = (shape.Width - parent["w"]) / 2;
                 parent["l"] = parentXOffset; parent["t"] = 0; parent["r"] = shape.Width - parentXOffset; parent["b"] = shape.Height;
             }
-            foreach (Constraint constraint in constraints) ApplyConstraint(constraint, properties);
+            if (fixedHeights is { } fixedSet)
+                foreach (var pair in fixedSet.Heights) properties[pair.Key] = new() { ["h"] = pair.Value };
+            foreach (Constraint constraint in constraints) ApplyConstraint(constraint, properties, font, fixedHeights?.Names);
             double verticalMin = double.MaxValue, verticalMax = 0;
             LayoutNodeAtom? ownNode = algorithm.OwnerNode;
             foreach (DiagramShape child in shape.Children)
             {
-                foreach (Constraint constraint in constraints.Where(c => c.ForName == child.Name)) ApplyConstraint(constraint, properties);
+                foreach (Constraint constraint in constraints.Where(c => c.ForName == child.Name)) ApplyConstraint(constraint, properties, font, fixedHeights?.Names);
                 foreach (LayoutNodeAtom childNode in ownNode?.Children.OfType<LayoutNodeAtom>().Where(n => n.Name == child.Name) ?? [])
                     foreach (ConstraintAtom own in childNode.Children.OfType<ConstraintAtom>())
                     {
@@ -916,7 +989,7 @@ internal static class DocxDiagramLayout
                         Constraint copy = constraint.Copy();
                         copy.ForName = childNode.Name;
                         copy.RefForName = childNode.Name;
-                        ApplyConstraint(copy, properties);
+                        ApplyConstraint(copy, properties, font, fixedHeights?.Names);
                     }
                 double width = shape.Width, height = shape.Height, x = 0, y = 0;
                 if (child.FillsParent) { (child.X, child.Y, child.Width, child.Height) = (0, 0, shape.Width, shape.Height); continue; }
@@ -963,6 +1036,9 @@ internal static class DocxDiagramLayout
                 shape.Preset = ConnectorType(algorithm);
                 if (shape.Preset is null) shape.HideGeometry = true;
             }
+            shape.SourceNode = algorithm.Parameter("srcNode", "");
+            shape.DestinationNode = algorithm.Parameter("dstNode", "");
+            shape.BendPoint = algorithm.Parameter("bendPt", "def");
             // LibreOffice resizes by the direct constraints but then keeps the parent's own size (conn: rParent w / h), so the shape keeps its place
         }
 
@@ -1094,7 +1170,7 @@ internal static class DocxDiagramLayout
                 return size;
             }
 
-            void Place(DiagramShape node, double scale, int depth)
+            void Place(DiagramShape node, double scale, int depth, DiagramShape? parentRoot = null, double gapAbove = 0)
             {
                 if (depth > 64) return;
                 node.HierarchyPlaced = true;
@@ -1103,12 +1179,24 @@ internal static class DocxDiagramLayout
                 {
                     bool fromRight = algorithm.Parameter("linDir", "fromL") == "fromR" && node == shape;
                     double x = 0;
-                    foreach (DiagramShape item in node.Children.Where(IsRoot))
+                    DiagramShape? pending = null;      // the parTrans connector the layout puts before each child (forEach ch: parTrans, then the node)
+                    foreach (DiagramShape item in node.Children)
                     {
+                        if (IsConnector(item)) { pending = item; continue; }
+                        if (!IsRoot(item)) { pending = null; continue; }
                         var itemSize = measured[item];
                         (item.X, item.Y, item.Width, item.Height) = (fromRight ? width * scale - x - itemSize.Width * scale : x, 0, itemSize.Width * scale, itemSize.Height * scale);
                         Place(item, scale, depth + 1);
                         x += (itemSize.Width + siblingSpace) * scale;
+                        if (pending is not null && parentRoot is not null)
+                        {
+                            // Word's elbow from the parent's box to the child's, routed once the composites have placed their shapes;
+                            // the elbow turns bendDist (the parent hierRoot's "bendDist = fact sp", 0.5 sp by default) from its end
+                            double factor = parentRoot.OwnConstraints.FirstOrDefault(c => c.Type == "bendDist")?.Factor ?? 0.5;
+                            (pending.RouteFrom, pending.RouteTo, pending.BendDistance) = (parentRoot, item, gapAbove * factor);
+                            pending.HideGeometry = false;
+                            pending = null;
+                        }
                     }
                 }
                 else
@@ -1127,11 +1215,11 @@ internal static class DocxDiagramLayout
                         if (rowSize.Width <= 0) { row.HierarchyPlaced = true; continue; }
                         y += gap;
                         (row.X, row.Y, row.Width, row.Height) = ((width - rowSize.Width) / 2 * scale, y * scale, rowSize.Width * scale, rowSize.Height * scale);
-                        Place(row, scale, depth + 1);
+                        Place(row, scale, depth + 1, node, gap * scale);
                         y += rowSize.Height;
                     }
                 }
-                foreach (DiagramShape connector in node.Children.Where(IsConnector)) { connector.HideGeometry = true; connector.Width = connector.Height = 0; }
+                foreach (DiagramShape connector in node.Children.Where(c => IsConnector(c) && c.RouteTo is null)) { connector.HideGeometry = true; connector.Width = connector.Height = 0; }
             }
 
             (double totalWidth, double totalHeight) = Measure(shape, 0);
@@ -1156,7 +1244,20 @@ internal static class DocxDiagramLayout
         /// from the font size given after it): values keyed "n:" + forName, "t:" + ptType, "all" (every child) or "self" (the
         /// node itself: its w / h to start with, its sp / sibSp / secSibSp); a reference without refFor reads "self".
         /// </summary>
-        private static Dictionary<string, Dictionary<string, double>> Resolve(List<Constraint> own, double width, double height)
+        private static IEnumerable<DiagramShape> Descendants(DiagramShape shape)
+        {
+            // depth first in document order, an explicit stack (no nested iterators on deep layouts)
+            var pending = new Stack<DiagramShape>();
+            for (int i = shape.Children.Count - 1; i >= 0; i--) pending.Push(shape.Children[i]);
+            while (pending.Count > 0)
+            {
+                DiagramShape current = pending.Pop();
+                yield return current;
+                for (int i = current.Children.Count - 1; i >= 0; i--) pending.Push(current.Children[i]);
+            }
+        }
+
+        private static Dictionary<string, Dictionary<string, double>> Resolve(List<Constraint> own, double width, double height, double? font = null)
         {
             var keyed = new Dictionary<string, Dictionary<string, double>> { ["self"] = new() { ["w"] = width, ["h"] = height } };
             for (int pass = 0; pass < 3; pass++)
@@ -1174,6 +1275,8 @@ internal static class DocxDiagramLayout
                         value = referenced * constraint.Factor * (IsFontUnit(constraint.RefType) && !IsFontUnit(constraint.Type) ? EmuPerMillimetre : 1);
                 }
                 if (value is null) continue;
+                // a font-driven layout tries font sizes from the stated one down: the stated size is the most a font may be
+                if (font is { } fitted && IsFontUnit(constraint.Type)) value = Math.Min(value.Value, fitted);
                 string key = constraint.ForName.Length > 0 ? "n:" + constraint.ForName : constraint.PointType != "none" ? "t:" + constraint.PointType
                            : constraint.For is "ch" or "des" ? "all" : "self";
                 if (key == "self" && constraint.Type is "w" or "h") continue;     // the node's own size is its parent's to set
@@ -1183,9 +1286,9 @@ internal static class DocxDiagramLayout
             return keyed;
         }
 
-        private static List<Dictionary<string, double>> ChildSizes(DiagramShape shape, List<Constraint> own, out double? spacing)
+        private static List<Dictionary<string, double>> ChildSizes(DiagramShape shape, List<Constraint> own, out double? spacing, double? font = null)
         {
-            Dictionary<string, Dictionary<string, double>> keyed = Resolve(own, shape.Width, shape.Height);
+            Dictionary<string, Dictionary<string, double>> keyed = Resolve(own, shape.Width, shape.Height, font);
             spacing = keyed["self"].TryGetValue("sp", out double space) ? space : null;
             var sizes = new List<Dictionary<string, double>>();
             foreach (DiagramShape child in shape.Children)
@@ -1201,6 +1304,15 @@ internal static class DocxDiagramLayout
                     if (constraint.RefType == "none") { if (constraint.Value != 0) size[constraint.Type] = constraint.Value * EmuPerMillimetre; }
                     else if (size.TryGetValue(constraint.RefType, out double referenced)) size[constraint.Type] = referenced * constraint.Factor;
                 }
+                // a group the constraints don't size takes the size its contents are given (a row holding a text box)
+                foreach (string dimension in new[] { "w", "h" })
+                    if (!size.ContainsKey(dimension) && child.Children.Count > 0)
+                    {
+                        double largest = 0;
+                        foreach (DiagramShape inner in Descendants(child))
+                            if (keyed.TryGetValue("n:" + inner.Name, out var innerSize) && innerSize.TryGetValue(dimension, out double value)) largest = Math.Max(largest, value);
+                        if (largest > 0) size[dimension] = largest;
+                    }
                 if (child.OwnConstraints.FirstOrDefault(c => c.Type == "begPad") is { } begin) child.BeginPad = begin.Factor;
                 if (child.OwnConstraints.FirstOrDefault(c => c.Type == "endPad") is { } end) child.EndPad = end.Factor;
                 sizes.Add(size);
@@ -1216,12 +1328,33 @@ internal static class DocxDiagramLayout
         /// across-axis alignment of vertAlign / horzAlign mid). A connector child keeps its space and is drawn within it, between
         /// its begin and end padding, turned to the flow. chOrder="t" puts the later children behind the earlier ones.
         /// </summary>
-        private static void Linear(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> own)
+        private static void Linear(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> own, List<Constraint> inherited)
         {
             if (shape.Children.Count == 0 || shape.Width == 0 || shape.Height == 0) return;
             string direction = algorithm.Parameter("linDir", "fromL");
             bool horizontal = direction is "fromL" or "fromR", reverse = direction is "fromR" or "fromB";
-            List<Dictionary<string, double>> sizes = ChildSizes(shape, own, out double? spacing);
+            // the ancestors' constraints for descendants (for="des") size this row's children too
+            own = inherited.Concat(own).ToList();
+            double? font = shape.FixedFontSize;
+            List<Dictionary<string, double>> sizes = ChildSizes(shape, own, out double? spacing, font);
+            var below = new HashSet<string>(Descendants(shape).Select(d => d.Name));
+            if (font is null && own.Any(c => c.Type == (horizontal ? "w" : "h") && IsFontUnit(c.RefType) && below.Contains(c.ForName)))
+            {
+                // sizes from the font size (h = 0.82 primFontSz and the like): the largest whole font size, from the stated one down
+                // to the rule's floor, at which the row fits without scaling (the tx algorithm's step-down; Word's drawings)
+                double start = own.Where(c => c.Type == "primFontSz" && c.Value > 0).Select(c => c.Value).DefaultIfEmpty(65).Max();
+                double alongRoom0 = horizontal ? shape.Width : shape.Height;
+                for (double size = Math.Floor(Math.Min(start, 400)); size >= 5; size--)
+                {
+                    font = size;
+                    sizes = ChildSizes(shape, own, out spacing, size);
+                    double total = (spacing ?? 0) * Math.Max(shape.Children.Count - 1, 0);
+                    for (int i = 0; i < shape.Children.Count; i++) total += sizes[i].TryGetValue(horizontal ? "w" : "h", out double length) ? length : 0;
+                    if (total <= alongRoom0 + 1) break;
+                }
+                shape.FixedFontSize = font;
+                foreach (DiagramShape inner in Descendants(shape)) inner.FixedFontSize = font;
+            }
             int count = shape.Children.Count;
             double along = 0, across = 0;
             var lengths = new double[count];
@@ -1240,7 +1373,10 @@ internal static class DocxDiagramLayout
             // (h = 0.6 w) follows the scaled length, any other keeps its constrained size; both stay inside the shape
             string alongType = horizontal ? "w" : "h", acrossType = horizontal ? "h" : "w";
             double scale = Math.Min(1, along > 0 ? alongRoom / along : 1);
-            double position = (alongRoom - along * scale) / 2;
+            // where the row sits along its flow: horzAlign (fromL / fromR) or vertAlign (fromT / fromB), centred by default
+            string alignment = horizontal ? algorithm.Parameter("horzAlign", "ctr") : algorithm.Parameter("vertAlign", "mid");
+            double slack = alongRoom - along * scale;
+            double position = alignment is "l" or "t" ? 0 : alignment is "r" or "b" ? slack : slack / 2;
             for (int k = 0; k < count; k++)
             {
                 int i = reverse ? count - 1 - k : k;
@@ -1381,6 +1517,7 @@ internal static class DocxDiagramLayout
         /// <summary>The largest size from the starting one down to the floor (whole points) at which the text fits the shape inside its margins.</summary>
         private static double Fit(DiagramShape shape)
         {
+            if (shape.FixedFontSize is { } fixedSize) return fixedSize;
             for (double size = Math.Floor(shape.FontSize); size > shape.MinimumFontSize; size -= 1)
                 if (Fits(shape, size)) return size;
             return Math.Min(shape.FontSize, shape.MinimumFontSize);
@@ -1390,37 +1527,52 @@ internal static class DocxDiagramLayout
         {
             (double left, double top, double right, double bottom) = Insets(shape, size);
             double width = shape.Width / EmuPerPoint - left - right, height = shape.Height / EmuPerPoint - top - bottom;
-            if (width <= 0 || height <= 0) return false;
-            int baseLevel = shape.Paragraphs.Min(p => p.Level);
-            double used = 0;
-            foreach ((XElement paragraph, int level) in shape.Paragraphs)
-            {
-                double paragraphSize = level > baseLevel && shape.BulletList ? size * 0.78 : size;
-                double indent = shape.BulletList && level - baseLevel >= shape.BulletStartLevel ? 22.5 * (level - baseLevel - shape.BulletStartLevel + 1) : 0;
-                double lineWidth = width - indent;
-                string text = string.Concat(paragraph.Elements("r").Select(r => (string?)r.Element("t") ?? ""));
-                int lines = 1;
-                double current = 0;
-                foreach (string word in text.Split(Space, StringSplitOptions.RemoveEmptyEntries))
-                {
-                    double wordWidth = Estimate(word, paragraphSize);
-                    if (wordWidth > lineWidth) return false;
-                    double withSpace = current == 0 ? wordWidth : current + paragraphSize * 0.25 + wordWidth;
-                    if (withSpace > lineWidth) { lines++; current = wordWidth; }
-                    else current = withSpace;
-                }
-                used += lines * paragraphSize * 1.2 * 0.9 + (used > 0 ? paragraphSize * 0.35 : 0);
-            }
-            return used <= height;
+            return width > 0 && height > 0 && TextHeight(shape, size, width) is { } used && used <= height + 0.01;
         }
+    }
 
-        /// <summary>An average-width estimate of a word's width in points (no font metrics in the core: half an em per character, wider capitals).</summary>
-        private static double Estimate(string word, double size)
+    /// <summary>
+    /// The height in points the shape's paragraphs take at a font size in a line width (null when a word is wider): words
+    /// wrapped by the theme's minor font's own advance widths (Calibri: DocxChartFontWidths, from the font's hmtx table), lines
+    /// of the font's line height (ascent + descent, 1.2207 em for Calibri) at Word's 90 % line spacing, 35 % after each
+    /// paragraph but the last, sub-levels at 78 % of the size.
+    /// </summary>
+    internal static double? TextHeight(DiagramShape shape, double size, double width)
+    {
+        if (shape.Paragraphs.Count == 0) return 0;
+        int baseLevel = shape.Paragraphs.Min(p => p.Level);
+        double used = 0;
+        foreach ((XElement paragraph, int level) in shape.Paragraphs)
         {
-            double ems = 0;
-            foreach (char c in word) ems += char.IsUpper(c) ? 0.62 : char.IsDigit(c) ? 0.51 : c is 'i' or 'l' or 'j' or 't' or 'f' or 'r' ? 0.3 : c is 'm' or 'w' ? 0.8 : 0.5;
-            return ems * size;
+            double paragraphSize = level > baseLevel && shape.BulletList ? size * 0.78 : size;
+            double indent = shape.BulletList && level - baseLevel >= shape.BulletStartLevel ? 22.5 * (level - baseLevel - shape.BulletStartLevel + 1) : 0;
+            double lineWidth = width - indent;
+            string text = string.Concat(paragraph.Elements("r").Select(r => (string?)r.Element("t") ?? ""));
+            int lines = 1;
+            double current = 0, space = TextWidth(" ", paragraphSize);
+            foreach (string word in text.Split(Space, StringSplitOptions.RemoveEmptyEntries))
+            {
+                double wordWidth = TextWidth(word, paragraphSize);
+                if (wordWidth > lineWidth + 0.01) return null;
+                double withSpace = current == 0 ? wordWidth : current + space + wordWidth;
+                if (withSpace > lineWidth + 0.01) { lines++; current = wordWidth; }
+                else current = withSpace;
+            }
+            used += lines * paragraphSize * LineHeightEm * 0.9 + (used > 0 ? paragraphSize * 0.35 : 0);
         }
+        return used;
+    }
+
+    private const double LineHeightEm = 1.2207;
+    private static readonly double[] MinorFontWidths = DocxChartFontWidths.Fonts.First(f => f.Name == "Calibri").Widths;
+    private static readonly double MinorFontAverage = DocxChartFontWidths.Fonts.First(f => f.Name == "Calibri").Average;
+
+    /// <summary>A text's advance width in points in the minor font (Calibri metrics; outside ASCII the font's average width).</summary>
+    internal static double TextWidth(string text, double size)
+    {
+        double em = 0;
+        foreach (char c in text) em += c >= ' ' && c <= '~' ? MinorFontWidths[c - ' '] : MinorFontAverage;
+        return em * size;
     }
 
     internal static (double Left, double Top, double Right, double Bottom) Insets(DiagramShape shape, double size)
@@ -1460,10 +1612,72 @@ internal static class DocxDiagramLayout
 
     // ── output: dsp:sp elements, as Word writes the drawing part ──────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The tree connectors as Word draws them (conn connRout="bend", begPts bCtr, endPts tCtr): from the bottom centre of the
+    /// parent's srcNode shape (its box when unnamed) down to the elbow, across, down to the top centre of the child's dstNode
+    /// shape; the elbow bendDist above the end (bendPt end), below the start (beg) or halfway. The connector's box is the path's.
+    /// </summary>
+    private static void RouteConnectors(DiagramShape frame)
+    {
+        var origin = new Dictionary<DiagramShape, (double X, double Y)>();
+        var connectors = new List<(DiagramShape Shape, DiagramShape Parent)>();
+        var stack = new Stack<(DiagramShape Shape, double X, double Y)>();
+        stack.Push((frame, frame.X, frame.Y));
+        while (stack.Count > 0)
+        {
+            (DiagramShape current, double x, double y) = stack.Pop();
+            origin[current] = (x, y);
+            foreach (DiagramShape child in current.Children)
+            {
+                if (child.RouteTo is not null) connectors.Add((child, current));
+                stack.Push((child, x + child.X, y + child.Y));
+            }
+        }
+        foreach ((DiagramShape connector, DiagramShape parent) in connectors)
+        {
+            if (Endpoint(connector.RouteFrom!, connector.SourceNode) is not { } source || Endpoint(connector.RouteTo!, connector.DestinationNode) is not { } destination) { Unroutable(connector); continue; }
+            (double sx, double sy) = origin[source];
+            (double dx, double dy) = origin[destination];
+            double beginX = sx + source.Width / 2, beginY = sy + source.Height, endX = dx + destination.Width / 2, endY = dy;
+            if (endY <= beginY) { Unroutable(connector); continue; }
+            double bendY = connector.BendPoint switch
+            {
+                "end" => endY - connector.BendDistance,
+                "beg" => beginY + connector.BendDistance,
+                _ => (beginY + endY) / 2,
+            };
+            bendY = Math.Min(Math.Max(bendY, beginY), endY);
+            double left = Math.Min(beginX, endX);
+            (double px, double py) = origin[parent];
+            (connector.X, connector.Y, connector.Width, connector.Height) = (left - px, beginY - py, Math.Abs(endX - beginX), endY - beginY);
+            connector.Path = [(beginX - left, 0), (beginX - left, bendY - beginY), (endX - left, bendY - beginY), (endX - left, endY - beginY)];
+        }
+
+        // a connector that can't be routed is not drawn at all
+        static void Unroutable(DiagramShape connector) { connector.HideGeometry = true; connector.Width = connector.Height = 0; connector.Path = null; }
+
+        // the named shape inside a hierRoot (its first such descendant), else the hierRoot's box: its first child that isn't a row, root or connector
+        DiagramShape? Endpoint(DiagramShape root, string name)
+        {
+            if (name.Length > 0)
+            {
+                var pending = new Stack<DiagramShape>(root.Children);
+                while (pending.Count > 0)
+                {
+                    DiagramShape candidate = pending.Pop();
+                    if (candidate.Name == name && origin.ContainsKey(candidate)) return candidate;
+                    if (candidate.AlgorithmType is not ("hierChild" or "hierRoot")) foreach (DiagramShape inner in candidate.Children) pending.Push(inner);
+                }
+            }
+            return root.Children.FirstOrDefault(c => c.AlgorithmType is not ("hierChild" or "hierRoot") && c.Preset != "conn" && c.DataNodeType is not ("sibTrans" or "parTrans"));
+        }
+    }
+
     private static void Emit(DiagramShape shape, double offsetX, double offsetY, XElement tree, Diagram diagram)
     {
         double x = offsetX + shape.X, y = offsetY + shape.Y;
-        if (!shape.IsGroup && (shape.Preset is not null || shape.HasText) && shape.Width > 0 && shape.Height > 0) tree.Add(Sp(shape, x, y, diagram));
+        if (shape.Path is not null && shape.Height > 0) tree.Add(Sp(shape, x, y, diagram));
+        else if (!shape.IsGroup && (shape.Preset is not null || shape.HasText) && shape.Width > 0 && shape.Height > 0) tree.Add(Sp(shape, x, y, diagram));
         foreach (DiagramShape child in shape.Children) Emit(child, x, y, tree, diagram);
     }
 
@@ -1473,6 +1687,15 @@ internal static class DocxDiagramLayout
         if (shape.Rotation != 0) transform.SetAttributeValue("rot", ((long)Math.Round(shape.Rotation * 60000)).ToString(CultureInfo.InvariantCulture));
         var properties = new XElement("spPr", transform);
         bool hidden = shape.HideGeometry || shape.Preset is null or "conn";
+        if (shape.Path is { } points)
+        {
+            // a polyline, no fill, the line from the style (lnRef with the colors part's line colour)
+            var path = new XElement("path", new XAttribute("w", Math.Max(1, (long)Math.Round(shape.Width))), new XAttribute("h", Math.Max(1, (long)Math.Round(shape.Height))));
+            for (int i = 0; i < points.Length; i++)
+                path.Add(new XElement(i == 0 ? "moveTo" : "lnTo", new XElement("pt", Attr("x", points[i].X), Attr("y", points[i].Y))));
+            properties.Add(new XElement("custGeom", new XElement("avLst"), new XElement("gdLst"), new XElement("pathLst", path)), new XElement("noFill"));
+            return new XElement("sp", new XAttribute("modelId", shape.Presentation?.Id ?? ""), properties, Style(shape, diagram));
+        }
         properties.Add(new XElement("prstGeom", new XAttribute("prst", hidden ? "rect" : shape.Preset!), Adjustments(shape.Adjustments)));
         XElement? ownFill = shape.OwnProperties.LastOrDefault(e => e.Name.LocalName is "noFill" or "solidFill" or "gradFill" or "blipFill" or "pattFill");
         XElement? ownLine = shape.OwnProperties.LastOrDefault(e => e.Name.LocalName == "ln");
