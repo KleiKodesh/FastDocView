@@ -1,21 +1,26 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 
 namespace FastDocView.Html;
 
 /// <summary>
 /// One font face's horizontal metrics for measuring text as Word lays it out: advance widths (hmtx through the Windows
-/// Unicode cmap, format 4 / 12), pair kerning (the kern table's horizontal format 0 subtables: what Word applies to kerned
-/// text) and the line height Word gives a line of the face (hhea ascender - descender + line gap, em). Read once per family from
-/// the installed font file (<see cref="WordFontFile"/>; only the head / hhea / OS/2 / hmtx / cmap / kern tables, nothing
-/// written) and kept for the process. Without a font file (not Windows, WASM, a family not installed) the families Office
-/// themes use fall back to embedded tables (<see cref="DocxHtml.DocxChartFontWidths"/>: Calibri / Cambria / Times New Roman /
-/// Arial printable ASCII, Arial's Hebrew block, Calibri's kern pairs); other characters there take the face's average width.
-/// Immutable once built, so lookups need no lock.
+/// Unicode cmap, format 4 / 12), pair kerning (the kern table's horizontal format 0 subtables; a face without one kerns through
+/// its GPOS 'kern' pair adjustments, formats 1 and 2), complex-script shaping (GSUB through <see cref="WordFontLayoutTables"/>:
+/// Arabic positional forms and ligatures, Hebrew composition) and the line height Word gives a line of the face (hhea
+/// ascender - descender + line gap, em). Read once per family and style (regular, bold, italic, bold italic: each its own font
+/// file) from the installed font file (<see cref="WordFontFile"/>; only the head / hhea / OS/2 / hmtx / cmap / kern / GSUB /
+/// GPOS / GDEF tables, nothing written) and kept for the process; families load independently (no lock is held while one is
+/// read). Without a font file (not Windows, WASM, a family not installed) the families Office themes use fall back to embedded
+/// tables (<see cref="DocxHtml.DocxChartFontWidths"/>: Calibri / Cambria / Times New Roman / Arial printable ASCII, Arial's
+/// Hebrew block, Calibri's kern pairs); other characters there take the face's average width. Immutable once built.
 /// </summary>
 internal sealed class WordFontMetrics
 {
-    private static readonly object Lock = new();
-    private static readonly Dictionary<string, WordFontMetrics?> ByFamily = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, Lazy<WordFontMetrics?>> ByFamily = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Test switches: turn one measuring step off to prove a fixture depends on it (the SmartArt harness only).</summary>
+    internal static bool DisableStyles, DisableGposKerning, DisableShaping;
 
     public readonly string Family;
     /// <summary>hhea ascender - descender + line gap in em: the height of one single-spaced line of DrawingML text in the face.</summary>
@@ -24,10 +29,14 @@ internal sealed class WordFontMetrics
     private readonly double[] _advancesEm;          // per glyph
     private readonly ushort[]?[] _glyphPages;       // code point >> 8 -> 256 glyph ids (0 = not in the font)
     private readonly Dictionary<uint, double>? _kerningEm;   // left glyph << 16 | right glyph -> adjustment
+    private readonly WordFontLayoutTables? _layout;
+    private readonly double _unitsPerEm;
 
-    private WordFontMetrics(string family, double lineHeightEm, double averageEm, double[] advancesEm, ushort[]?[] glyphPages, Dictionary<uint, double>? kerningEm)
+    private WordFontMetrics(string family, double lineHeightEm, double averageEm, double[] advancesEm, ushort[]?[] glyphPages, Dictionary<uint, double>? kerningEm,
+                            WordFontLayoutTables? layout = null, double unitsPerEm = 2048)
     {
         Family = family; LineHeightEm = lineHeightEm; _averageEm = averageEm; _advancesEm = advancesEm; _glyphPages = glyphPages; _kerningEm = kerningEm;
+        _layout = layout; _unitsPerEm = unitsPerEm;
     }
 
     /// <summary>Whether the face has a glyph for the code point.</summary>
@@ -40,7 +49,7 @@ internal sealed class WordFontMetrics
         return glyph == 0 ? _averageEm : _advancesEm[Math.Min(glyph, _advancesEm.Length - 1)];
     }
 
-    /// <summary>The pair kerning between two characters in em (0 for an unkerned pair or a face without a kern table).</summary>
+    /// <summary>The kern table's pair kerning between two characters in em (0 for an unkerned pair or a face without a kern table).</summary>
     public double Kerning(int left, int right)
     {
         if (_kerningEm is null) return 0;
@@ -54,24 +63,80 @@ internal sealed class WordFontMetrics
         return page >= 0 && page < _glyphPages.Length && _glyphPages[page] is { } glyphs ? glyphs[codePoint & 0xFF] : 0;
     }
 
-    /// <summary>The metrics of a family: its installed font file, else an embedded table for Calibri / Cambria / Times New Roman / Arial; null otherwise.</summary>
-    public static WordFontMetrics? Of(string? family)
+    /// <summary>
+    /// The width of a run of characters drawn in this face, in em, and its pair kerning apart (added only to kerned text).
+    /// Complex scripts (<paramref name="complex"/>; <paramref name="openTypeScript"/> "arab", "syrc", "hebr", "thaa", "thai") go
+    /// through the font's GSUB as a shaper applies it by default: composition (ccmp, locl), Arabic / Syriac positional forms from
+    /// cursive joining (isol / fina / medi / init), then required and standard ligatures and contextual alternates (rlig, calt,
+    /// liga, clig, mset); other text is measured glyph by glyph (Word draws Latin text without ligatures by default). Marks add
+    /// no width (GDEF class 3, else a non-spacing mark character). Kerning: the kern table's pairs, else GPOS 'kern' pair
+    /// adjustments of the script.
+    /// </summary>
+    public double ShapedWidth(IReadOnlyList<int> codePoints, string openTypeScript, bool complex, out double kerningEm)
+    {
+        kerningEm = 0;
+        var buffer = new List<WordFontLayoutTables.Glyph>(codePoints.Count);
+        string?[]? forms = complex && openTypeScript is "arab" or "syrc" ? WordArabicJoining.Forms(codePoints) : null;
+        for (int i = 0; i < codePoints.Count; i++) buffer.Add(new WordFontLayoutTables.Glyph(Glyph(codePoints[i]), forms?[i]));
+        bool shaped = false;
+        if (complex && !DisableShaping && _layout is { HasSubstitutions: true } && buffer.TrueForAll(g => g.Id != 0))
+        {
+            var unshaped = new List<WordFontLayoutTables.Glyph>(buffer);
+            try { _layout.Substitute(buffer, openTypeScript, ShapingStages); shaped = true; }
+            catch (Exception exception) when (WordFontFile.IsUnreadable(exception)) { buffer = unshaped; }
+        }
+        bool classes = _layout is not null && _layout.HasGlyphClasses;
+        double width = 0;
+        var spacing = new List<int>(buffer.Count);
+        for (int i = 0; i < buffer.Count; i++)
+        {
+            int glyph = buffer[i].Id;
+            bool mark = classes ? _layout!.GlyphClass(glyph) == 3 : !shaped && IsNonSpacingMark(codePoints[i]);
+            if (mark) continue;
+            width += glyph == 0 ? _averageEm : _advancesEm[Math.Min(glyph, _advancesEm.Length - 1)];
+            if (glyph != 0) spacing.Add(glyph);
+        }
+        if (spacing.Count > 1)
+        {
+            if (_kerningEm is not null)
+            {
+                for (int i = 1; i < spacing.Count; i++)
+                    if (_kerningEm.TryGetValue((uint)spacing[i - 1] << 16 | (uint)spacing[i], out double value)) kerningEm += value;
+            }
+            else if (_layout is not null && !DisableGposKerning)
+            {
+                try { kerningEm = _layout.PairKerning(spacing, openTypeScript) / _unitsPerEm; }
+                catch (Exception exception) when (WordFontFile.IsUnreadable(exception)) { kerningEm = 0; }
+            }
+        }
+        return width;
+    }
+
+    /// <summary>The GSUB feature stages a shaper applies to complex-script text by default (HarfBuzz hb-ot-shaper-arabic.cc / hb-ot-shaper-hebrew.cc: composition, positional forms, ligatures).</summary>
+    private static readonly string[][] ShapingStages = [["ccmp", "locl"], ["isol", "fina", "medi", "init"], ["rlig", "calt", "liga", "clig", "mset"]];
+
+    /// <summary>The metrics of a family's regular face: its installed font file, else an embedded table for Calibri / Cambria / Times New Roman / Arial; null otherwise.</summary>
+    public static WordFontMetrics? Of(string? family) => Of(family, false, false);
+
+    /// <summary>The metrics of a family in a style: its bold / italic font file, else the nearest installed style (the embedded tables are regular only).</summary>
+    public static WordFontMetrics? Of(string? family, bool bold, bool italic)
     {
         if (string.IsNullOrWhiteSpace(family)) return null;
-        lock (Lock)
+        if (DisableStyles) bold = italic = false;
+        string key = (bold ? "b" : "") + (italic ? "i" : "") + "|" + family;
+        return ByFamily.GetOrAdd(key, _ => new Lazy<WordFontMetrics?>(() => Load(family!, bold, italic), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
+    }
+
+    private static WordFontMetrics? Load(string family, bool bold, bool italic)
+    {
+        WordFontMetrics? metrics = null;
+        try
         {
-            if (ByFamily.TryGetValue(family!, out WordFontMetrics? known)) return known;
-            WordFontMetrics? metrics = null;
-            try
-            {
-                if (WordFontFile.Find(family!) is { } file)
-                    using (FileStream stream = WordFontFile.Open(file.Path)) metrics = Read(family!, stream, file.Face);
-            }
-            catch (Exception exception) when (WordFontFile.IsUnreadable(exception)) { metrics = null; }
-            metrics ??= Embedded(family!);
-            ByFamily[family!] = metrics;
-            return metrics;
+            if (WordFontFile.Find(family, bold, italic) is { } file)
+                using (FileStream stream = WordFontFile.Open(file.Path)) metrics = Read(family, stream, file.Face);
         }
+        catch (Exception exception) when (WordFontFile.IsUnreadable(exception)) { metrics = null; }
+        return metrics ?? Embedded(family);
     }
 
     private static WordFontMetrics? Read(string family, Stream stream, int face)
@@ -91,8 +156,12 @@ internal sealed class WordFontMetrics
         double average = tables.TryGetValue("OS/2", out var os2At) && WordFontFile.Read(stream, os2At) is { Length: >= 4 } os2 ? WordFontFile.S16(os2, 2) / unitsPerEm : 0;
         ushort[]?[] pages = GlyphPages(cmap);
         Dictionary<uint, double>? kerning = tables.TryGetValue("kern", out var kernAt) ? Kerning(WordFontFile.Read(stream, kernAt), unitsPerEm) : null;
-        return new WordFontMetrics(family, lineHeight, average > 0 ? average : advances.Average(), advances, pages, kerning);
+        byte[]? Optional(string tag) => tables.TryGetValue(tag, out var at) ? WordFontFile.Read(stream, at) : null;
+        byte[]? gsub = Optional("GSUB"), gpos = Optional("GPOS"), gdef = Optional("GDEF");
+        WordFontLayoutTables? layout = gsub is null && gpos is null && gdef is null ? null : new WordFontLayoutTables(gsub, gpos, gdef);
+        return new WordFontMetrics(family, lineHeight, average > 0 ? average : advances.Average(), advances, pages, kerning, layout, unitsPerEm);
     }
+
 
     /// <summary>The Windows Unicode cmap (3,10 format 12, else 3,1 format 4, else 0,* format 4 / 12; a symbol font's 3,0 at U+F000 and its ASCII alias) as glyph pages.</summary>
     private static ushort[]?[] GlyphPages(byte[] cmap)

@@ -105,6 +105,22 @@ public sealed class DocxTheme
         return string.IsNullOrEmpty(face) ? null : face;
     }
 
+    /// <summary>
+    /// The major or minor font's typeface for East Asian text of an ISO 15924 script (Jpan, Hans, Hant, Hang) in DrawingML text:
+    /// the supplemental a:font of that script first, as for complex scripts (Word draws Japanese text in the theme's "Jpan" Yu
+    /// Mincho even when a:ea names MS Gothic: test-data/smartart-layouts/msgothic-lines-block-list), else a:ea, else the font of
+    /// w:themeFontLang/@eastAsia's script; null when none.
+    /// </summary>
+    public string? EastAsianFont(bool major, string? script)
+    {
+        ThemeFontSet set = major ? _major : _minor;
+        string? face = set.SupplementalFor(script) ?? (set.EastAsian is { Length: > 0 } ea ? ea : set.SupplementalFor(_eastAsiaScript));
+        return string.IsNullOrEmpty(face) ? null : face;
+    }
+
+    /// <summary>The ISO 15924 script of w:themeFontLang/@eastAsia (Jpan, Hans, Hant, Hang); null when not set.</summary>
+    public string? EastAsianScript => _eastAsiaScript;
+
     private readonly struct ThemeFontSet
     {
         public readonly string? Latin;
@@ -144,7 +160,7 @@ public sealed class DocxTheme
     /// Word bidi / eastAsia language can name; the list mirrors LibreOffice ThemeHandler.cxx
     /// fromLCIDToScriptTag (which keys on LCIDs — settings.xml carries tags, so the primary subtag is matched).
     /// </summary>
-    private static string? ScriptTagOfLanguage(string? languageTag)
+    internal static string? ScriptTagOfLanguage(string? languageTag)
     {
         if (string.IsNullOrEmpty(languageTag)) return null;
         int dash = languageTag.IndexOf('-');

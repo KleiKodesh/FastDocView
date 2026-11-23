@@ -22,7 +22,11 @@ public static class SmartArtLayoutFidelityTest
     /// <summary>The layouts the engine matches Word for (box edges within <see cref="TolerancePoints"/>); the others are reported, not checked.</summary>
     private static readonly string[] Layouts = ["block-list", "process", "pyramid", "vertical-list", "chevron", "cycle", "hierarchy", "org-chart", "horizontal-list", "stacked-list", "pyramid-4-levels",
                                                 // Hebrew (Arial from the theme's Hebr font, niqqud without width), mixed Hebrew / English, a Times New Roman theme, a theme a:cs of David (Word still uses the Hebr font)
-                                                "hebrew-block-list", "hebrew-niqqud-block-list", "hebrew-vertical-list", "hebrew-process", "hebrew-horizontal-list", "mixed-block-list", "times-block-list", "hebrew-david-block-list"];
+                                                "hebrew-block-list", "hebrew-niqqud-block-list", "hebrew-vertical-list", "hebrew-process", "hebrew-horizontal-list", "mixed-block-list", "times-block-list", "hebrew-david-block-list",
+                                                // bold / italic faces, GPOS kerning (Latin, Hebrew), Arabic shaping, East Asian fonts and line height
+                                                "bold-block-list", "italic-block-list", "bold-italic-block-list", "bold-hebrew-block-list", "bahnschrift-kern-block-list",
+                                                "hadassah-hebrew-block-list", "arabic-block-list", "arabic-words-block-list", "japanese-block-list", "chinese-block-list",
+                                                "yugothic-lines-block-list", "msgothic-lines-block-list", "malgun-lines-block-list", "simsun-lines-block-list", "korean-ea-block-list"];
     private const double TolerancePoints = 4;
     private const double EmuPerPoint = 12700;
 
@@ -47,6 +51,35 @@ public static class SmartArtLayoutFidelityTest
         }
         RunDeepData();
         RunFontMetrics();
+        RunFontDependencies(folder);
+    }
+
+    /// <summary>
+    /// Each font-measuring step is needed for Word's size in its fixture (test-data/smartart-layouts, made by
+    /// scripts/make-smartart-font-fixtures.py in hidden Word): with the step switched off the fixture's sizes differ from Word's.
+    /// </summary>
+    private static void RunFontDependencies(string folder)
+    {
+        TestReport.Step("SmartArt font measuring: each step is needed for Word's size");
+        void Without(string fixture, string step, Action off, Action on)
+        {
+            string path = Path.Combine(folder, fixture + "-v1.docx");
+            if (!File.Exists(path)) { TestReport.Check(false, fixture + " present"); return; }
+            off();
+            string fonts;
+            try { fonts = Compare(path).Fonts; }
+            finally { on(); }
+            TestReport.Check(fonts.Length > 0, $"{fixture}: without {step} the size differs from Word's ({fonts})");
+        }
+        Without("italic-block-list", "the italic face", () => WordFontMetrics.DisableStyles = true, () => WordFontMetrics.DisableStyles = false);
+        Without("bold-hebrew-block-list", "the bold face", () => WordFontMetrics.DisableStyles = true, () => WordFontMetrics.DisableStyles = false);
+        Without("bahnschrift-kern-block-list", "GPOS pair kerning", () => WordFontMetrics.DisableGposKerning = true, () => WordFontMetrics.DisableGposKerning = false);
+        Without("hadassah-hebrew-block-list", "Hebrew kerning", () => DocxDrawingTextFonts.KernComplexScripts = false, () => DocxDrawingTextFonts.KernComplexScripts = true);
+        Without("arabic-block-list", "GSUB shaping", () => WordFontMetrics.DisableShaping = true, () => WordFontMetrics.DisableShaping = false);
+        Without("japanese-block-list", "the East Asian font slot", () => DocxDrawingTextFonts.DisableEastAsianSlot = true, () => DocxDrawingTextFonts.DisableEastAsianSlot = false);
+        Without("malgun-lines-block-list", "the East Asian font slot", () => DocxDrawingTextFonts.DisableEastAsianSlot = true, () => DocxDrawingTextFonts.DisableEastAsianSlot = false);
+        if (WordFontFile.Find("Calibri", true, false) is { } bold && WordFontFile.Find("Calibri") is { } regular)
+            TestReport.Check(!string.Equals(bold.Path, regular.Path, StringComparison.OrdinalIgnoreCase), $"Calibri bold is its own font file ({Path.GetFileName(bold.Path)})");
     }
 
     /// <summary>

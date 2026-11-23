@@ -518,3 +518,10 @@ LibreOffice ignores the supplemental fonts there. A DrawingML line is hhea ascen
 win metrics (Times New Roman: 1.1499 vs 1.1074 em decides 29 vs 30 pt). Current Calibri has Hebrew glyphs, so "has the
 glyph" alone can't pick the Hebrew face: the slot (complex script) decides first. A search-count check over node texts
 must count a text inside a longer one too (two Hebrew node names shared a word).
+
+SmartArt fonts, sixth round (2026-11-23): whole-point autofit sizes hide width changes - fixtures must be one long word
+per node (width-limited) or several lines (height-limited), and each needs a "switch the step off, the size must move"
+check, else it proves nothing (the first bold / Georgia / Arabic fixtures matched with and without the fix). Word's PDF
+/BaseFont names show which face Word really used: Japanese was Yu Mincho from Office's cloud font cache even with the
+theme's a:ea set, not the a:ea face. Georgia's GPOS kerns almost nothing; Bahnschrift kerns a lot. The Bash tool turns
+backslash-u escapes in a command into real characters: write fixture sources with chr(92) + 'u' or a placeholder.

@@ -1803,6 +1803,23 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   Hebrew block list / niqqud block list / vertical list / process / horizontal list, mixed Hebrew-English block list, Times
   New Roman theme, David theme a:cs - all at Word's size (--smartart; before: 1-13 pt off).
   Live: vue-demo/playwright/smartartFontCheck.mjs <name>=<pt> ... opens the -nodrawing copies in the rig and reads the text size.
+  2026-11-23 (sixth round): the fifth round's approximations closed, each proven by a fixture whose size moves without it
+  (--smartart "each step is needed"; scripts/make-smartart-font-fixtures.py, u-escapes, built in hidden Word): (1) b / i runs
+  are measured in the bold / italic font file (WordFontFile by head.macStyle; italic Times 22 -> 21 pt, bold Arial Hebrew
+  32 -> 31); (2) a face without a kern table kerns through GPOS 'kern' pair adjustments, formats 1 and 2, through extension
+  lookups (WordFontLayoutTables; Bahnschrift 23 -> 24 pt), and Word kerns Hebrew too (Hadassah Friedlaender 40 -> 43 pt);
+  David has no kerning at all (GPOS mark only), so the brief's David example needed none; (3) complex scripts go through the
+  font's GSUB (ccmp / locl, Arabic positional forms from Unicode 16 ArabicShaping.txt joining types, rlig / calt / liga /
+  clig / mset; single, multiple, ligature, context and chained context formats 1-3) - Arabic in Arial 29 -> 42 pt; (4) East
+  Asian characters take the a:ea slot: the theme's supplemental "Jpan" / "Hang" ... font first (Word draws Japanese in Yu
+  Mincho even with a:ea = MS Gothic, Word's PDF names the font), then a:ea, then Windows' faces; Han follows the run's lang;
+  Japanese / Chinese break between characters (default kinsoku); a line with East Asian text is 1.3 x the font's hhea
+  height (Yu Mincho, Malgun Gothic, SimSun multi-line fixtures fit only with it); Office's cloud fonts
+  (%LocalAppData%/Microsoft/FontCache/4/CloudFonts, read only) are searched, where Yu Mincho lives; (5) font lookups hold
+  no lock while reading files: known files are found per family, the name map of all font files is a Lazy built once
+  only when a family needs it, metrics per family / style are Lazy entries of a ConcurrentDictionary. LibreOffice
+  (oox/source/drawingml/textcharacterproperties.cxx, textfont.cxx) passes the faces to VCL and measures at render time,
+  so Word's drawings are the reference.
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
   pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns

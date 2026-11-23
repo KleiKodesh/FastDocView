@@ -2,7 +2,8 @@
 # node text set, saved by Word with its drawing part, plus Word's PDF of it (print layout). strip-smartart-drawing.py then
 # makes the "-nodrawing" copies the layout engine is tested on. Only the Word instance this script started is quit.
 # -Fixtures <json>: build only the entries of that file instead (scripts/make-smartart-hebrew-fixtures.py writes Hebrew ones:
-# id, name, texts, optional minorLatin / minorComplex = the theme's minor Latin / complex-script typeface).
+# id, name, texts, optional minorLatin / minorComplex / minorEastAsian = the theme's minor Latin / complex-script / East Asian
+# typeface; make-smartart-font-fixtures.py adds bold / italic (every node's text) and complexFont (the runs' a:cs typeface)).
 param([string]$Fixtures)
 $ErrorActionPreference = 'Stop'
 $folder = Join-Path $PSScriptRoot '..\test-data\smartart-layouts'
@@ -24,11 +25,13 @@ $layouts = @(
     @('list1',      'stacked-list', @('Red', 'Green', 'Blue', 'White'))
 )
 $themeFonts = @{}
+$runFormats = @{}
 if ($Fixtures) {
     $layouts = @()
     foreach ($f in (Get-Content -Raw $Fixtures | ConvertFrom-Json)) {
         $layouts += ,@($f.id, $f.name, @($f.texts))
-        $themeFonts[$f.name] = @($f.minorLatin, $f.minorComplex)
+        $themeFonts[$f.name] = @($f.minorLatin, $f.minorComplex, $f.minorEastAsian)
+        $runFormats[$f.name] = @($f.bold, $f.italic, $f.complexFont)
     }
 }
 $before = @(Get-Process WINWORD -ErrorAction SilentlyContinue | ForEach-Object Id)
@@ -48,10 +51,11 @@ try {
         try {
         $doc.ActiveWindow.View.Type = 3
         if ($themeFonts.ContainsKey($name)) {
-            # MsoFontLanguageIndex: msoThemeLatin = 1, msoThemeComplexScript = 2
+            # MsoFontLanguageIndex: msoThemeLatin = 1, msoThemeComplexScript = 2, msoThemeEastAsian = 3
             $minor = $doc.DocumentTheme.ThemeFontScheme.MinorFont
             if ($themeFonts[$name][0]) { $minor.Item(1).Name = $themeFonts[$name][0] }
             if ($themeFonts[$name][1]) { $minor.Item(2).Name = $themeFonts[$name][1] }
+            if ($themeFonts[$name][2]) { $minor.Item(3).Name = $themeFonts[$name][2] }
         }
         $shape = $doc.InlineShapes.AddSmartArt($byId[$id], $doc.Paragraphs(1).Range)
         $art = $shape.SmartArt
@@ -64,6 +68,14 @@ try {
                 $node.TextFrame2.TextRange.Text = $t.Substring(1); $child = $node; $childParent = $top
             }
             else { $top = $art.Nodes.Add(); $top.TextFrame2.TextRange.Text = $t }
+        }
+        if ($runFormats.ContainsKey($name)) {
+            foreach ($node in $art.AllNodes) {
+                $font = $node.TextFrame2.TextRange.Font
+                if ($runFormats[$name][0]) { $font.Bold = -1 }
+                if ($runFormats[$name][1]) { $font.Italic = -1 }
+                if ($runFormats[$name][2]) { $font.NameComplexScript = $runFormats[$name][2] }
+            }
         }
         $base = Join-Path $folder ($name + '-v1')
         $doc.SaveAs2($base + '.docx', 16)

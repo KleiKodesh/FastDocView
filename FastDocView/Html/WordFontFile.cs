@@ -1,27 +1,38 @@
+using System.Collections.Concurrent;
 using System.Text;
 
 namespace FastDocView.Html;
 
 /// <summary>
 /// Installed TrueType / OpenType font files (OpenType 1.9 "Font file": the table directory, a 'ttcf' collection header, the
-/// name table), read only - nothing is written. The Windows font folders (system and per-user) are the only places looked in;
+/// name table), read only - nothing is written. The Windows font folders (system and per-user) and Office's cloud font cache
+/// (%LocalAppData%/Microsoft/FontCache/4/CloudFonts, where Office keeps fonts it downloads on demand) are the only places looked in;
 /// not on Windows they are missing and every lookup is null. A family is found by its family, typographic family or full name
-/// (name IDs 1 / 16 / 4, every language) - first in the file Windows installs it as (<see cref="KnownFiles"/>, checked by its
-/// names), else by one scan of every file's name table, kept for the process. A regular face (head.macStyle without bold /
-/// italic) wins over a styled one of the same family.
+/// (name IDs 1 / 16 / 4, every language) in the face of the wanted style (head.macStyle bold / italic bits): first in the files
+/// Windows installs it as (<see cref="KnownFiles"/>, checked by their names and style), else in a name map of every file's name
+/// and head tables, built once, lazily, by the first lookup that needs it. No lock is held across file reads: a family with a
+/// known file, or one already found, never waits for the map; lookups that need the map wait only for the map itself.
+/// A missing style falls back to the nearest installed one (bold italic: bold, italic, regular).
 /// </summary>
 internal static class WordFontFile
 {
-    private static readonly object Lock = new();
-    private static Dictionary<string, (string Path, int Face, bool Regular)>? _scanned;
+    /// <summary>Family / full name -> the file and face of each style (index: bold 1 | italic 2); built once on first need.</summary>
+    private static readonly Lazy<Dictionary<string, (string Path, int Face)?[]>> NameMap = new(Scan, LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly ConcurrentDictionary<string, Lazy<(string Path, int Face)?>> Found = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The file Windows installs common Office / Hebrew families as: found without scanning every font file.</summary>
-    private static readonly Dictionary<string, string> KnownFiles = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>The files Windows installs common Office / Hebrew / East Asian families as (any style order): found without the name map.</summary>
+    private static readonly Dictionary<string, string[]> KnownFiles = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Calibri"] = "calibri.ttf", ["Arial"] = "arial.ttf", ["Times New Roman"] = "times.ttf", ["Cambria"] = "cambria.ttc",
-        ["Tahoma"] = "tahoma.ttf", ["Segoe UI"] = "segoeui.ttf", ["Courier New"] = "cour.ttf", ["Verdana"] = "verdana.ttf",
-        ["David"] = "david.ttf", ["Miriam"] = "mriam.ttf", ["Miriam Fixed"] = "mriamc.ttf", ["Narkisim"] = "nrkis.ttf",
-        ["Gisha"] = "gisha.ttf", ["Levenim MT"] = "lvnm.ttf", ["FrankRuehl"] = "frank.ttf", ["Rod"] = "rod.ttf", ["Aharoni"] = "ahronbd.ttf",
+        ["Calibri"] = ["calibri.ttf", "calibrib.ttf", "calibrii.ttf", "calibriz.ttf"], ["Arial"] = ["arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"],
+        ["Times New Roman"] = ["times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf"], ["Cambria"] = ["cambria.ttc", "cambriab.ttf", "cambriai.ttf", "cambriaz.ttf"],
+        ["Tahoma"] = ["tahoma.ttf", "tahomabd.ttf"], ["Segoe UI"] = ["segoeui.ttf", "segoeuib.ttf", "segoeuii.ttf", "segoeuiz.ttf"],
+        ["Courier New"] = ["cour.ttf", "courbd.ttf", "couri.ttf", "courbi.ttf"], ["Verdana"] = ["verdana.ttf", "verdanab.ttf", "verdanai.ttf", "verdanaz.ttf"],
+        ["Georgia"] = ["georgia.ttf", "georgiab.ttf", "georgiai.ttf", "georgiaz.ttf"],
+        ["David"] = ["david.ttf", "davidbd.ttf"], ["Miriam"] = ["mriam.ttf"], ["Miriam Fixed"] = ["mriamc.ttf"], ["Narkisim"] = ["nrkis.ttf"],
+        ["Gisha"] = ["gisha.ttf", "gishabd.ttf"], ["Levenim MT"] = ["lvnm.ttf", "lvnmbd.ttf"], ["FrankRuehl"] = ["frank.ttf"], ["Rod"] = ["rod.ttf"], ["Aharoni"] = ["ahronbd.ttf"],
+        ["Yu Gothic"] = ["YuGothR.ttc", "YuGothB.ttc"], ["MS Gothic"] = ["msgothic.ttc"], ["Meiryo"] = ["meiryo.ttc", "meiryob.ttc"],
+        ["SimSun"] = ["simsun.ttc"], ["Microsoft YaHei"] = ["msyh.ttc", "msyhbd.ttc"], ["Microsoft JhengHei"] = ["msjh.ttc", "msjhbd.ttc"], ["PMingLiU"] = ["mingliu.ttc"],
+        ["Malgun Gothic"] = ["malgun.ttf", "malgunbd.ttf"],
     };
 
     /// <summary>The Windows font folders: system, then per-user installed fonts (read only).</summary>
@@ -31,41 +42,74 @@ internal static class WordFontFile
         if (system.Length > 0) yield return system;
         string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (local.Length > 0) yield return Path.Combine(local, "Microsoft", "Windows", "Fonts");
+        // Office's cloud fonts (downloaded on demand, one folder per family, e.g. the Office theme's Jpan "Yu Mincho"): Word
+        // draws with them, so they are measured too
+        if (local.Length > 0 && Directory.Exists(Path.Combine(local, "Microsoft", "FontCache", "4", "CloudFonts")))
+            foreach (string family in Directory.EnumerateDirectories(Path.Combine(local, "Microsoft", "FontCache", "4", "CloudFonts"))) yield return family;
     }
 
     public static FileStream Open(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
-    /// <summary>The file and face of an installed family (regular face preferred); null when no font file has that name.</summary>
-    public static (string Path, int Face)? Find(string family)
+    /// <summary>The file and face of an installed family's regular face; null when no font file has that name.</summary>
+    public static (string Path, int Face)? Find(string family) => Find(family, false, false);
+
+    /// <summary>The file and face of an installed family in a style (else the nearest installed style); null when no font file has that name.</summary>
+    public static (string Path, int Face)? Find(string family, bool bold, bool italic)
     {
-        lock (Lock)
-        {
-            if (_scanned is null && KnownFiles.TryGetValue(family, out string? fileName))
-                foreach (string folder in Folders())
-                {
-                    string path = Path.Combine(folder, fileName);
-                    if (!File.Exists(path)) continue;
-                    try
-                    {
-                        using FileStream stream = Open(path);
-                        List<long> faces = FaceOffsets(stream);
-                        for (int face = 0; face < faces.Count; face++)
-                        {
-                            var tables = Tables(stream, faces[face]);
-                            if (tables.TryGetValue("name", out var name) && Names(Read(stream, name)).Contains(family, StringComparer.OrdinalIgnoreCase)) return (path, face);
-                        }
-                    }
-                    catch (Exception exception) when (IsUnreadable(exception)) { }
-                }
-            _scanned ??= Scan();
-            return _scanned.TryGetValue(family, out var found) ? (found.Path, found.Face) : null;
-        }
+        int style = (bold ? 1 : 0) | (italic ? 2 : 0);
+        return Found.GetOrAdd(style + "|" + family, _ => new Lazy<(string, int)?>(() => Locate(family, style), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
     }
 
-    /// <summary>Family / full name -> file and face over every font file of the folders (name and head tables only).</summary>
-    private static Dictionary<string, (string, int, bool)> Scan()
+    private static (string Path, int Face)? Locate(string family, int style)
     {
-        var files = new Dictionary<string, (string Path, int Face, bool Regular)>(StringComparer.OrdinalIgnoreCase);
+        if (KnownFiles.TryGetValue(family, out string[]? fileNames))
+        {
+            var faces = new (string Path, int Face)?[4];
+            foreach (string folder in Folders())
+                foreach (string fileName in fileNames)
+                {
+                    string path = Path.Combine(folder, fileName);
+                    if (File.Exists(path)) AddFaces(path, faces, family);
+                }
+            // found in its known files: no scan (a style Windows doesn't ship, such as FrankRuehl bold, takes the nearest face)
+            if (Pick(faces, style) is { } known) return known;
+        }
+        return NameMap.Value.TryGetValue(family, out var styles) ? Pick(styles, style) : null;
+    }
+
+    /// <summary>The wanted style, else the nearest one (bold italic: bold, italic, regular); null when the family has no face.</summary>
+    private static (string Path, int Face)? Pick((string Path, int Face)?[] faces, int style)
+    {
+        int[] order = style switch { 3 => [3, 1, 2, 0], 2 => [2, 0, 3, 1], 1 => [1, 0, 3, 2], _ => [0, 1, 2, 3] };
+        foreach (int s in order) if (faces[s] is { } face) return face;
+        return null;
+    }
+
+    /// <summary>Records each face of a file named <paramref name="family"/> under its style.</summary>
+    private static void AddFaces(string path, (string Path, int Face)?[] faces, string family)
+    {
+        try
+        {
+            using FileStream stream = Open(path);
+            List<long> offsets = FaceOffsets(stream);
+            for (int face = 0; face < offsets.Count; face++)
+            {
+                var tables = Tables(stream, offsets[face]);
+                if (!tables.TryGetValue("name", out var name) || !Names(Read(stream, name)).Contains(family, StringComparer.OrdinalIgnoreCase)) continue;
+                faces[StyleOf(stream, tables)] ??= (path, face);
+            }
+        }
+        catch (Exception exception) when (IsUnreadable(exception)) { }
+    }
+
+    /// <summary>head.macStyle bold (bit 0) | italic (bit 1); regular when there is no head table.</summary>
+    private static int StyleOf(Stream stream, Dictionary<string, (long Offset, long Length)> tables)
+        => tables.TryGetValue("head", out var head) && head.Length >= 46 ? U16(Read(stream, head), 44) & 3 : 0;
+
+    /// <summary>Family / full name -> file and face per style over every font file of the folders (name and head tables only).</summary>
+    private static Dictionary<string, (string Path, int Face)?[]> Scan()
+    {
+        var files = new Dictionary<string, (string Path, int Face)?[]>(StringComparer.OrdinalIgnoreCase);
         foreach (string folder in Folders())
         {
             if (!Directory.Exists(folder)) continue;
@@ -81,9 +125,12 @@ internal static class WordFontFile
                     {
                         var tables = Tables(stream, faces[face]);
                         if (!tables.TryGetValue("name", out var name)) continue;
-                        bool regular = !tables.TryGetValue("head", out var head) || head.Length < 46 || (U16(Read(stream, head), 44) & 3) == 0;
+                        int style = StyleOf(stream, tables);
                         foreach (string fontName in Names(Read(stream, name)))
-                            if (!files.TryGetValue(fontName, out var known) || regular && !known.Regular) files[fontName] = (path, face, regular);
+                        {
+                            if (!files.TryGetValue(fontName, out var styles)) files[fontName] = styles = new (string, int)?[4];
+                            styles[style] ??= (path, face);
+                        }
                     }
                 }
                 catch (Exception exception) when (IsUnreadable(exception)) { }
