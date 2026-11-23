@@ -116,11 +116,21 @@ public static class PictureEffectsFidelityTest
         string[] turned = Pictures(Html(extra));
         double? Lift(string picture) => Regex.Match(picture, "feFuncR type=\"linear\" slope=\"1.043\" intercept=\"([^\"]+)\"") is { Success: true } match
             ? double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) * 255 : null;
-        // extra: 0, lat -5, lat 5, lon -5, lon 5, lat 30 + lon 30, lat -30 + lon -30, lat -60, lat 60, lon 60, lon -60 (Word: 5 10 3 4 7 1 7 44 29 1 0)
-        double[] word = [5, 10, 3, 4, 7, 1, 7, 44, 29, 1, 0];
+        // extra: 0, lat -5, lat 5, lon -5, lon 5, lat 30 + lon 30, lat -30 + lon -30, lat -60, lat 60, lon 60, lon -60 (Word: 5 10 3 4 7 0.3 6.3 44 29 1 0;
+        // the two-axis pair re-read 2026-11-24 with each picture mapped back onto the swatch, first read as 1 / 7)
+        double[] word = [5, 10, 3, 4, 7, 0.3, 6.3, 44, 29, 1, 0];
         TestReport.Check(turned.Length == word.Length, $"light: {word.Length} turned pictures ({turned.Length})");
         for (int i = 0; i < Math.Min(turned.Length, word.Length); i++)
-            TestReport.Check(Lift(turned[i]) is { } lift && Math.Abs(lift - word[i]) <= (i is 5 or 6 ? 4.5 : 0.5), $"light: picture {i} lift {Lift(turned[i]):0.#} (Word {word[i]})");
+            TestReport.Check(Lift(turned[i]) is { } lift && Math.Abs(lift - word[i]) <= (i is 5 or 6 ? 1 : 0.5), $"light: picture {i} lift {Lift(turned[i]):0.#} (Word {word[i]})");
+        // two axes (effects-light-two-v1, make_light_two.py): 0 / 0, then lat -45 .. 45 by 15 (no 0) x lon the same, lifts read from
+        // Word's PDF with each picture mapped back onto the swatch (2026-11-24)
+        string two = Path.Combine(Folder, "effects-light-two-v1.docx");
+        double[] twoWord = [4.4, 3.4, 13.2, 35.4, 82.4, 80.1, 56.3, 0.4, 6.0, 23.7, 72.7, 69.6, 45.2, 0, 1.7, 9.0, 35.6, 33.2, 20.3,
+                            1.3, 2.7, 1.6, 0, 0, 0, 10.2, 13.3, 11.6, 2.7, 0.4, 0, 26.2, 29.2, 27.5, 12.3, 5.3, 1.4];
+        string[] both = File.Exists(two) ? Pictures(Html(two)) : [];
+        TestReport.Check(both.Length == twoWord.Length, $"light, two axes: {twoWord.Length} turned pictures ({both.Length})");
+        for (int i = 0; i < Math.Min(both.Length, twoWord.Length); i++)
+            TestReport.Check(Lift(both[i]) is { } lift && Math.Abs(lift - twoWord[i]) <= 1, $"light, two axes: picture {i} lift {Lift(both[i]):0.#} (Word {twoWord[i]})");
         string[] small = Pictures(Html(soft));
         double Peak(string picture, string direction)
             => Regex.Matches(GradientOf(picture, direction), @"rgba\(0,0,0,([0-9.]+)\)").Cast<Match>()

@@ -135,7 +135,9 @@ public sealed class WordPictureEffects
     /// every channel comes out 1.043 x itself plus a lift that depends on the angle (its PDF of effects-light-v1, orthographic
     /// camera, error under 1 level; a perspective camera adds a few levels of its own across the picture). Measured lifts in
     /// levels, by Word's lat / lon in degrees (negative = 360 - angle); between them straight lines, beyond them the end value.
-    /// Both angles turned: the flat picture's 5 levels (Word: lat 30 + lon 30 lifts 1, lat -30 + lon -30 lifts 7).
+    /// Both angles turned: Word's lifts on a lat x lon grid (effects-light-two-v1, make_light_two.py, 2026-11-24), read bilinearly
+    /// with the one-axis tables as its middle row and column; past 45 degrees the grid's edge. The lift is not the sum of the two
+    /// axes (lat -45: lon -15 lifts 35, lon 0 64, lon 15 82).
     /// </summary>
     private const double LightGain = 1.043;
 
@@ -159,8 +161,33 @@ public sealed class WordPictureEffects
         double lat = Signed(latitude), lon = Signed(longitude);
         if (Math.Abs(lon) < 1e-9) return Lookup(LatitudeLift, lat);
         if (Math.Abs(lat) < 1e-9) return Lookup(LongitudeLift, lon);
-        return 5;
+        double GridAt(int row, int column)
+            => row == 3 ? Lookup(LongitudeLift, GridAngles[column]) : column == 3 ? Lookup(LatitudeLift, GridAngles[row]) : TwoAxisLift[row, column];
+        (int Index, double Fraction) Cell(double angle)
+        {
+            angle = Math.Max(GridAngles[0], Math.Min(GridAngles[GridAngles.Length - 1], angle));
+            int i = 0;
+            while (i < GridAngles.Length - 2 && angle > GridAngles[i + 1]) i++;
+            return (i, (angle - GridAngles[i]) / (GridAngles[i + 1] - GridAngles[i]));
+        }
+        (int r, double fr) = Cell(lat);
+        (int c, double fc) = Cell(lon);
+        return (GridAt(r, c) * (1 - fc) + GridAt(r, c + 1) * fc) * (1 - fr) + (GridAt(r + 1, c) * (1 - fc) + GridAt(r + 1, c + 1) * fc) * fr;
     }
+
+    private static readonly double[] GridAngles = [-45, -30, -15, 0, 15, 30, 45];
+
+    /// <summary>Word's lifts with both axes turned (rows lat, columns lon, both -45 .. 45 by 15; row / column 0 from the one-axis tables).</summary>
+    private static readonly double[,] TwoAxisLift =
+    {
+        { 3.4, 13.2, 35.4, 0, 82.4, 80.1, 56.3 },
+        { 0.4, 6.0, 23.7, 0, 72.7, 69.6, 45.2 },
+        { 0, 1.7, 9.0, 0, 35.6, 33.2, 20.3 },
+        { 0, 0, 0, 0, 0, 0, 0 },
+        { 1.3, 2.7, 1.6, 0, 0, 0, 0 },
+        { 10.2, 13.3, 11.6, 0, 2.7, 0.4, 0 },
+        { 26.2, 29.2, 27.5, 0, 12.3, 5.3, 1.4 },
+    };
 
     /// <summary>The CSS for the picture's element: the filter, opacity, the soft edge's mask and the rotation ("" when none).</summary>
     public string Css(string? filterId, double widthPt = 0, double heightPt = 0)

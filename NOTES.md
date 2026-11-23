@@ -3582,3 +3582,29 @@ Review of round 2 (2026-11-22), fixed with checks (`--cold-lazy`, in `--fidelity
 - ColdBench under `dotnet <dll>` put its cache beside dotnet.exe and started the child without the dll.
 Checked and not bugs: data descriptors, repeated names (first wins, as before), a short recorded directory size, basedOn loops,
 latent styles, repeated style ids, Word 2003 files without notes, an element left open at the body's end.
+
+## Picture light rig with both axes turned; 3-D chart scene findings (2026-11-24)
+
+- Fixture test-data/word-picture-effects/effects-light-two-v1.docx (make_light_two.py from effects-light-ortho-v1.docx, chart-free;
+  save-light-two.ps1 lets a hidden Word 16 print the PDF): swatch-v1.png with an orthographic camera at lat x lon = -45 .. 45 by 15
+  (no 0) plus 0 / 0. Lifts read by mapping each printed picture back onto the swatch (corner quad, or for lat / lon +-45 the
+  rotation itself), out = 1.043 x in + lift on unclipped pixels: gain stays 1.04 everywhere. The lift is not a sum of the axes:
+  lat -45 with lon -15 / 0 / 15 lifts 35 / 64 / 82; lat 15 with any lon about 0-3; lat -30 lon -30 6.3, lat 30 lon 30 0.3
+  (first read as 7 / 1). A Phong fit of the threePt rig ([MS-OI29500] table, scene3dhelper.cxx:647-652) to the one-axis lifts
+  left 8 levels rms, so the grid itself is used: bilinear over the grid with the one-axis tables as its middle row and column,
+  clamped past 45 degrees. LibreOffice turns a 3-D picture into an extruded custom shape only when it has an extrusion effect
+  (oox shape.cxx:1363-1392, scene3dhelper.cxx:381-444) and lights it with its own model; an orthographic picture stays flat.
+- 3-D chart perspective placement (word-charts-perspective-v1 wall corners, scripts/measure-word-chart-perspective-walls.py):
+  the automatic height is base x plot height / plot width (base = floor((categories + series) / 2) / categories), not the plain
+  ratio. With the camera of 2026-11-16 the box keeps the PARALLEL fit's scale (fit 0.1-0.8 pt rms with only an x / y / z offset):
+  height-limited scenes sit with their centre on the screen plane, width-limited ones are pushed back (y0: the front face lies on
+  the screen plane and touches both sides). In the limiting direction the projected box touches as in the parallel view; in a
+  width-limited scene the left edge stays put and the right edge falls 0.5-5 pt short. The free direction stays unexplained:
+  the box bbox is off-centre by 0.3-0.5 of the box centre's own offset (y80 -15 pt, rotX 40 rotY 50 perspective 120 -30 pt).
+  Rules tried and rejected (median / max rms): centred 8-corner bbox 2.1 / 16 (same as 2026-11-16), drawn faces 2.9, a one-step
+  centring 2.6 / 38, fit on the eye axis then translate 2.7 / 17, camera-aligned 3-D bounding box 16, eye moved instead of the box
+  4-90, parallel placement + lateral eye 2-40.
+- Right-angled scenes at rotX 25-30 (word-charts-right-angled-v1): Word's front is about 2 % smaller (R 30 20: value labels 3.1 pt
+  further in, both ends). Tried depth across sinY cosX, sinY / cosX, sinY / cosY and depth up tan X, sinX cosY, sinX / cosY: each
+  helps one chart and costs others (sinY cosX: R 30 20 3.05 -> 0.9 pt, C 25 35 S 4.0 -> 0.8, but R 20 30 max 1.1 -> 5.6), so the
+  oblique stays sinY / sinX; more probes are needed.
