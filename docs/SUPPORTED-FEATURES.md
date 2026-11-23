@@ -164,6 +164,7 @@ Headers / footers, columns and page layout are not shown (flow view): see UNSUPP
 | Separator notes dropped | yes | yes | yes | n.a. | n.a. | n.a. |
 | Search inside notes (own notes search, apart from the main text) | yes | yes | yes | yes | n.a. | n.a. |
 | Notes inside table cells | yes | yes | yes | yes | n.a. | n.a. |
+| Notes inside fields: in a field's result, in an EQ field's code (mark in place), in another field's code (mark after the result) | ruby only (N5) | ruby only (N5) | yes (N5) | n.a. | n.a. | n.a. |
 | Notes inside text boxes, nested frames and shape text (mark in the body, pane, search, numbered in document order) | yes (N3) | n.a. (N3) | n.a. (N3) | yes (N4) | n.a. | n.a. |
 | Notes pane (app: one windowed scroller of all notes, click lands the note), hover tooltip (book view's link tooltip) | yes | yes | yes | yes | yes | partial (17) |
 
@@ -176,6 +177,8 @@ N4. LibreOffice drops a note in a text frame (sw thints.cxx SwTextNode::InsertHi
     frames keep footnotes) and will not load a file with one in a shape's text; we show what the file holds, numbered in
     document order. A note in Fontwork text, a dimension label or a shape the drawing leaves out (no geometry, a frame inside a group) is in
     the pane, in document order, but has no mark.
+N5. RTF: test-data/word-ruby/note-in-field-v1.rtf (hand-written, `--ruby`); LibreOffice also keeps a {ootnote} inside
+    ldinst (rtfdispatchdestination.cxx:265-317). .doc / .docx: checked against Word only inside a ruby (ruby-edges-v1).
 N2. The citation text LibreOffice wrote is shown; without one, num-format, start-value and start-numbering-at="chapter" are followed.
 16. Torat Emet note lines only.
 17. Word's own HTML note links and texts are passed through.

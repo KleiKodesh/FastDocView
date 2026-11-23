@@ -2470,14 +2470,20 @@ both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Ch
   from Word's UI having already stored the cut text. A comma guide's rest + "," come before the base itself (its marks and
   bookmarks kept). Search and GetText feed the base the same way in both readers (DocxRubyText.SearchRest, then the base without
   ")"). Copied w:t map back to their originals for paragraph-end trimming. ";" separates nothing in Word
-  (ruby-edges-semicolon-v1.rtf: "(g;6);b;6)" prints "g;6" over ";b;6"); LibreOffice's ";" fallback is not followed. Left: a
-  note mark inside a .doc / RTF ruby's EQ code is not drawn.
+  (ruby-edges-semicolon-v1.rtf: "(g;6);b;6)" prints "g;6" over ";b;6"); LibreOffice's ";" fallback is not followed. (A note mark
+  inside a .doc / RTF ruby's EQ code is drawn since 2026-11-17, next entry.)
 - .doc / RTF note marks and tabs inside a ruby (2026-11-17): the note reference inside the EQ code (.doc 0x02, an RTF
   \chftn {\footnote} inside \fldinst) becomes `WordFieldRuby.NoteMarkPlaceholder` in the code; the renderers swap it for the
   note's numbered mark in the field's HTML (.doc: DocBinaryFieldReader.InstructionNoteCps + AppendNoteMark; RTF: the parser
   keeps such a note instead of skipping it, so the index numbers it and the block carries it, and the renderer queues its
   mark). Word's PDFs of ruby-edges-v1.doc / .rtf: "abc" then mark 1, "3,base" then mark 2; notes 1 and 2 in order. A tab in a
   .doc field code stays a tab (it read as a space).
+- RTF notes inside any field (2026-11-23): test-data/word-ruby/note-in-field-v1.rtf (hand-written; `--ruby`, NoteInField)
+  checks a note in a plain EQ code ( fraction: mark in the numerator), in a ldrslt (mark between the result's runs),
+  in a non-EQ code (MERGEFIELD: mark after the result, AppendInstructionNoteMarks), numbering 1-4 with a body note, the
+  notes pane and SearchNotes. Already right, no code change; LibreOffice resolves {ootnote} in any destination, field code
+  included (sw/source/writerfilter/rtftok/rtfdispatchdestination.cxx:265-317, no FIELDINSTRUCTION check). Where Word puts
+  a non-EQ code's note mark is not checked against Word (needs a Word-saved probe).
 - .doc (render time, no index change): sprmCPbiGrf 0x4888 bit 0 + sprmCPbiIBullet 0x6887 (4 bytes) in the LVL grpprlChpx (ww8par3.cxx:808-819,
   :839-845; writer wrtw8num.cxx:355-358) name picture N of the paragraph holding the "_PictureBullets" bookmark, counted from the bookmark start
   (ww8par.cxx:5302-5348); that paragraph's runs are read once per renderer, the id is the PICF offset as for any inline picture. Hidden (vanish)

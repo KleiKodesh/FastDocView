@@ -22,6 +22,7 @@ public static class RubyAndBulletFontFidelityTest
         }
         Escapes(root);
         Edges(root);
+        NoteInField(root);
         foreach (string extension in new[] { ".fodt", ".odt" })
         {
             string path = Path.Combine(root, "odt-bullet-fonts", "bullet-font-name-v1" + extension);
@@ -189,6 +190,37 @@ public static class RubyAndBulletFontFidelityTest
                          "ruby-edges-v1.docx: search does not find a \")\" Word does not draw");
         string text = WordDocumentText.GetText(document);
         TestReport.Check(text.Contains("3,base") && text.Contains("abcy") && !text.Contains("ab)c"), "ruby-edges-v1.docx: GetText reads the bases as drawn");
+    }
+
+    /// <summary>
+    /// test-data/word-ruby/note-in-field-v1.rtf (hand-written): a note inside a plain EQ field's code (a fraction, not a
+    /// ruby), inside a field's result, inside a non-EQ field's code, and one in body text for comparison. LibreOffice
+    /// resolves {ootnote} wherever it stands, field code included (rtfdispatchdestination.cxx:265-317). Each note keeps
+    /// its mark and its number: in the EQ numerator, between the result's runs, after a non-EQ field's result.
+    /// </summary>
+    private static void NoteInField(string root)
+    {
+        const string file = "note-in-field-v1.rtf";
+        List<string> blocks = RenderAll(root, file);
+        string Block(string label) => blocks.FirstOrDefault(html => html.Contains(label, StringComparison.Ordinal)) ?? "";
+        static string Mark(int n) => "data-note-number=\"" + n + "\">" + n + "</sup>";
+        string a = Block("case A:"), b = Block("case B:"), c = Block("case C:"), e = Block("case E:");
+        int numerator = a.IndexOf("<mfrac><mrow>", StringComparison.Ordinal), denominator = a.IndexOf("</mrow><mrow>", StringComparison.Ordinal);
+        int markA = a.IndexOf(Mark(1), StringComparison.Ordinal);
+        TestReport.Check(numerator >= 0 && markA > numerator && markA < denominator, $"{file}: a note in a plain EQ field's code keeps its mark in place (the fraction's numerator)");
+        TestReport.Check(b.Contains("res<sup", StringComparison.Ordinal) && b.Contains(Mark(2) + "ult", StringComparison.Ordinal), $"{file}: a note in a field's result is drawn between the result's runs");
+        TestReport.Check(c.Contains("merged<sup", StringComparison.Ordinal) && c.Contains(Mark(3), StringComparison.Ordinal) && !c.Contains("name", StringComparison.Ordinal),
+                         $"{file}: a note in a non-EQ field's code is drawn after the field's result; the code stays hidden");
+        TestReport.Check(e.Contains(Mark(4), StringComparison.Ordinal), $"{file}: the body note after them is numbered 4");
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-note-in-field") };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(Path.Combine(root, "word-ruby", file), policy);
+        List<WordDocumentNoteHtml> notes = document.RenderBlocks(0, document.BlockCount).SelectMany(block => block.Notes).ToList();
+        TestReport.Check(notes.Count == 4 && Enumerable.Range(0, 4).All(i => notes[i].Number == i + 1 && PlainText(notes[i].Html).Contains("note " + "ABCE"[i])),
+                         $"{file}: the notes pane lists the four notes in order, each with its text ({notes.Count} note(s))");
+        TestReport.Check(document.SearchNotes("note A", WordDocumentSearchOptions.Default, 0, 100).HitBlocks.Length == 1
+                         && document.SearchNotes("note C", WordDocumentSearchOptions.Default, 0, 100).HitBlocks.Length == 1
+                         && document.Search("note A", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0,
+                         $"{file}: notes inside field codes are found by the notes search, not in the body");
     }
 
     private static List<string> RenderAll(string root, string file)
