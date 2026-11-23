@@ -281,7 +281,7 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 |---|---|---|---|---|---|---|
 | Tracked changes as Word's final view (deletions hidden) | yes | yes | yes | yes | n.a. | n.a. |
 | Ruby (as HTML ruby: guide font, size and alignment; search reads the base) | yes | partial (14) | partial (14) | yes | n.a. | n.a. |
-| EQ field equations (MathML Core) | yes | yes | yes | n.a. | n.a. | n.a. |
+| EQ field equations (MathML Core; every switch, with the spacing options \a \vsN \hsN and \s \aiN \diN) | yes | yes | yes | n.a. | n.a. | n.a. |
 
 14. Word saves a phonetic guide to .doc and RTF as an EQ field (`EQ \* jcN \* "Font:..." \* hpsN \o(\s\up N(guide),base)`); it is drawn as HTML ruby, but the base sits in the field code, so search does not find it (as Word's own field-result text is empty).
 

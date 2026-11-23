@@ -284,6 +284,14 @@ public static class WordFieldsFidelityTest
         TestReport.Check(cells == 3 && rows == 1, $"EQ \\a \\co2147483647: one row of three cells (got {rows} rows, {cells} cells)");
         string grid = WordFieldEvaluator.Compute(WordFieldInstruction.Parse("EQ \\a \\co2(1,2,3,4)"), English).Html ?? "";
         TestReport.Check(grid.Split("<mtr>").Length - 1 == 2 && grid.Split("<mtd>").Length - 1 == 4, "EQ \\a \\co2: two rows of two");
+        // EQ \a \vsN \hsN: N points more between rows / columns; \s \aiN \diN: space above / below the line (ECMA-376 17.16.5.20)
+        string spaced = WordFieldEvaluator.Compute(WordFieldInstruction.Parse(@"EQ \a \co2 \vs6 \hs4(1,2,3,4)"), English).Html ?? "";
+        TestReport.Check(spaced.Split("padding-top:calc(0.5ex + 6pt)").Length - 1 == 2 && spaced.Split("padding-inline-start:calc(0.4em + 4pt)").Length - 1 == 2,
+            @"EQ \a \vs6 \hs4: the second row and the second column take the extra space");
+        string raised = WordFieldEvaluator.Compute(WordFieldInstruction.Parse(@"EQ \s \ai12 \di3(x)"), English).Html ?? "";
+        TestReport.Check(raised.Contains("padding-top:12pt;padding-bottom:3pt;"), @"EQ \s \ai12 \di3: space above and below the line");
+        string stack = WordFieldEvaluator.Compute(WordFieldInstruction.Parse(@"EQ \s \ai2(a,b)"), English).Html ?? "";
+        TestReport.Check(stack.Contains("<mtable class=\"eq-stack\" style=\"padding-top:2pt;\">"), @"EQ \s \ai2 on a stack: space above it");
 
         // 8. DollarText: the whole part is checked and spelled, the cents round without a carry (Word 16)
         Check("= 999999.999 \\* DollarText", "nine hundred ninety-nine thousand nine hundred ninety-nine and 00/100");

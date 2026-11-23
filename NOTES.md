@@ -2769,6 +2769,15 @@ tlch); checked by the same test.
   Cambria Math (7.1 pt for Word's 4.8: the content's ink reads just above Word's 2.971 em variant, the next one is
   wider). The 3-row parenthesis in Cambria Math is 1.12 for the same reason.
 
+
+### EQ field: spacing options (2026-11-23)
+- ECMA-376 Part 1 17.16.5.20: \a \vsN / \hsN add N points between rows / columns; \s \aiN / \diN add N points above / below the line.
+  Drawn as CSS padding (MathML Core keeps the CSS box model): the cells of row 2+ / column 2+ get the UA padding
+  (0.5ex / 0.4em) plus N pt; \s puts padding on its mpadded (one element) or its stack mtable, so the line grows.
+- LibreOffice gives no reference: Read_F_Equation (sw/source/filter/ww8/ww8par5.cxx:2719-2744) reads only EQ \o
+  (combined characters / input) and \* ruby (Read_SubF_Ruby); other EQ codes keep their field result.
+- Open (needs Word): \o alignment, integral limits without \in, \b with only \lc (UNSUPPORTED-FEATURES.md).
+- Test: --fields (WordFieldsFidelityTest, EQ \a \vs6 \hs4, \s \ai12 \di3, \s \ai2 on a stack).
 ## Web archive pictures (2026-11-10)
 Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) and an `<img>` fallback inside
 `<![if !vml]>`, which is what a browser shows. The renderer skips the VML copy and draws the `<img>` through the picture

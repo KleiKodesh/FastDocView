@@ -170,11 +170,16 @@ public static class WordFieldEquation
                 case "l": return "<mrow>" + string.Join("<mo>,</mo>", elements) + "</mrow>";
                 case "s":
                 {
+                    // \aiN / \diN: N points of space above / below the line (17.16.5.20), as padding the line box grows by
+                    int above = Math.Max(0, int.TryParse(Option("ai"), out int a) ? a : 0), below = Math.Max(0, int.TryParse(Option("di"), out int bl) ? bl : 0);
+                    string space = (above > 0 ? "padding-top:" + above.ToString(CultureInfo.InvariantCulture) + "pt;" : "")
+                                   + (below > 0 ? "padding-bottom:" + below.ToString(CultureInfo.InvariantCulture) + "pt;" : "");
+                    string spaceAttribute = space.Length > 0 ? " style=\"" + space + "\"" : "";
                     if (elements.Count > 1)
-                        return "<mtable class=\"eq-stack\">" + string.Concat(elements.Select(e => "<mtr><mtd><mrow>" + e + "</mrow></mtd></mtr>")) + "</mtable>";
+                        return "<mtable class=\"eq-stack\"" + spaceAttribute + ">" + string.Concat(elements.Select(e => "<mtr><mtd><mrow>" + e + "</mrow></mtd></mtr>")) + "</mtable>";
                     int up = int.TryParse(Option("up"), out int u) ? u : 0, down = int.TryParse(Option("do"), out int d) ? d : 0;
                     int offset = up - down;
-                    return "<mpadded voffset=\"" + offset.ToString(CultureInfo.InvariantCulture) + "pt\"><mrow>" + At(elements, 0) + "</mrow></mpadded>";
+                    return "<mpadded voffset=\"" + offset.ToString(CultureInfo.InvariantCulture) + "pt\"" + spaceAttribute + "><mrow>" + At(elements, 0) + "</mrow></mpadded>";
                 }
                 case "i":
                 {
@@ -190,11 +195,18 @@ public static class WordFieldEquation
                     // more columns than elements is one row of all the elements (no empty cells; also keeps i + columns in range)
                     int columns = Math.Min(Math.Max(1, int.TryParse(Option("co"), out int co) ? co : 1), Math.Max(1, elements.Count));
                     string align = Has("al") ? "left" : Has("ar") ? "right" : "center";
+                    // \vsN / \hsN: N points more between rows / columns (17.16.5.20), added to the cell's own padding
+                    int vs = Math.Max(0, int.TryParse(Option("vs"), out int v) ? v : 0), hs = Math.Max(0, int.TryParse(Option("hs"), out int h) ? h : 0);
                     var table = new StringBuilder("<mtable columnalign=\"" + align + "\">");
                     for (int i = 0; i < elements.Count; i += columns)
                     {
                         table.Append("<mtr>");
-                        for (int j = i; j < i + columns; j++) table.Append("<mtd><mrow>").Append(j < elements.Count ? elements[j] : "").Append("</mrow></mtd>");
+                        for (int j = i; j < i + columns; j++)
+                        {
+                            string gap = (i > 0 && vs > 0 ? "padding-top:calc(0.5ex + " + vs.ToString(CultureInfo.InvariantCulture) + "pt);" : "")
+                                         + (j > i && hs > 0 ? "padding-inline-start:calc(0.4em + " + hs.ToString(CultureInfo.InvariantCulture) + "pt);" : "");
+                            table.Append(gap.Length > 0 ? "<mtd style=\"" + gap + "\"><mrow>" : "<mtd><mrow>").Append(j < elements.Count ? elements[j] : "").Append("</mrow></mtd>");
+                        }
                         table.Append("</mtr>");
                     }
                     return table.Append("</mtable>").ToString();
