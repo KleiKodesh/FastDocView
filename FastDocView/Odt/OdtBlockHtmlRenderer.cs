@@ -387,8 +387,9 @@ public sealed partial class OdtBlockHtmlRenderer
                 bool isComplex = complex[paragraphOffset + start];
                 int end = start + 1;
                 while (end < value.Length && complex[paragraphOffset + end] == isComplex) end++;
-                string piece = WordHtmlText.Encode(value.Substring(start, end - start));
-                string css = isComplex == current.UsesComplexScriptProperties ? "" : WordListLabelScript.WithScript(current, isComplex).ToCss(current);
+                WordRunFormatting pieceRun = isComplex == current.UsesComplexScriptProperties ? current : WordListLabelScript.WithScript(current, isComplex);
+                string piece = WordEastAsianText.Encode(value.Substring(start, end - start), pieceRun);
+                string css = ReferenceEquals(pieceRun, current) ? "" : pieceRun.ToCss(current);
                 if (css.Length > 0) html.Append("<span style=\"").Append(css).Append("\">");
                 WordHtmlText.AppendScaled(html, piece, current.CharacterScalePercent);
                 if (css.Length > 0) html.Append("</span>");
@@ -398,14 +399,15 @@ public sealed partial class OdtBlockHtmlRenderer
         }
         if (WordTextScript.PieceEnd(value, 0, _isParagraphRightToLeft, out bool firstIsComplex) == value.Length && firstIsComplex == current.UsesComplexScriptProperties)
         {
-            WordHtmlText.AppendScaled(html, WordHtmlText.Encode(value), current.CharacterScalePercent);
+            WordHtmlText.AppendScaled(html, WordEastAsianText.Encode(value, current), current.CharacterScalePercent);
             return;
         }
         for (int start = 0; start < value.Length;)
         {
             int end = WordTextScript.PieceEnd(value, start, _isParagraphRightToLeft, out bool isComplex);
-            string piece = WordHtmlText.Encode(value.Substring(start, end - start));
-            string css = isComplex == current.UsesComplexScriptProperties ? "" : WordListLabelScript.WithScript(current, isComplex).ToCss(current);
+            WordRunFormatting pieceRun = isComplex == current.UsesComplexScriptProperties ? current : WordListLabelScript.WithScript(current, isComplex);
+            string piece = WordEastAsianText.Encode(value.Substring(start, end - start), pieceRun);
+            string css = ReferenceEquals(pieceRun, current) ? "" : pieceRun.ToCss(current);
             if (css.Length > 0) html.Append("<span style=\"").Append(css).Append("\">");
             WordHtmlText.AppendScaled(html, piece, current.CharacterScalePercent);
             if (css.Length > 0) html.Append("</span>");

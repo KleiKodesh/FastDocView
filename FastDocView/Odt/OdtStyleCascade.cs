@@ -33,7 +33,7 @@ public sealed class OdtStyleCascade
         "fo:font-weight", "style:font-weight-complex", "fo:font-style", "style:font-style-complex",
         "style:text-underline-style", "style:text-underline-type", "style:text-underline-width", "style:text-underline-color", "style:text-underline-mode",
         "style:text-line-through-style", "style:text-line-through-type", "fo:font-size", "style:font-size-complex",
-        "style:font-name", "style:font-name-complex", "fo:font-family", "style:font-family-complex", "fo:color", "fo:background-color",
+        "style:font-name", "style:font-name-complex", "style:font-name-asian", "fo:font-family", "style:font-family-complex", "style:font-family-asian", "fo:color", "fo:background-color",
         "style:text-position", "fo:text-transform", "fo:font-variant", "fo:letter-spacing", "text:display", "style:text-outline",
         "fo:text-shadow", "style:font-relief", "fo:border", "style:text-emphasize", "style:text-scale", "fo:hyphenate", "fo:language", "fo:country",
         // the three languages a list number follows (LanguagesOf)
@@ -588,6 +588,8 @@ public sealed class OdtStyleCascade
         if (FontName(properties, Style + "font-name", Fo + "font-family") is { } font) run.FontName = FontWithoutFeatures(font, out run.FontFeaturesCss);
         if (FontName(properties, Style + "font-name-complex", Style + "font-family-complex") is { } complexFont)
             run.ComplexScriptFontName = FontWithoutFeatures(complexFont, out run.ComplexScriptFontFeaturesCss);
+        // the Asian font (ODF 20.271 style:font-name-asian; LibreOffice CharFontNameAsian, xmloff txtprmap.cxx): East Asian characters draw in it (WordEastAsianText)
+        if (FontName(properties, Style + "font-name-asian", Style + "font-family-asian") is { } asianFont) run.EastAsianFontName = FontWithoutFeatures(asianFont, out _);
 
         if ((string?)properties.Attribute(Fo + "color") is { } color) run.ColorHex = ColorHex(color);
         if ((string?)properties.Attribute(Fo + "background-color") is { } background)

@@ -28,12 +28,12 @@ public static class OdtFormattingAudit
     ];
 
     // Ignored by design, with reasons: pagination/hyphenation (no pages), language tags (no spell checking),
-    // East-Asian variants (no CJK script selection), kerning/scaling details, auto-direction flags.
+    // East-Asian size / weight / style variants (only the Asian font is drawn), kerning/scaling details, auto-direction flags.
     private static readonly HashSet<string> IgnoredProperties =
     [
         "fo:language", "fo:country", "style:language-asian", "style:country-asian", "style:language-complex", "style:country-complex",
         "fo:script", "style:script-asian", "style:script-complex", "style:rfc-language-tag", "style:rfc-language-tag-asian", "style:rfc-language-tag-complex",
-        "style:font-name-asian", "fo:font-family-asian", "style:font-family-asian", "style:font-size-asian", "style:font-weight-asian", "style:font-style-asian",
+        "fo:font-family-asian", "style:font-size-asian", "style:font-weight-asian", "style:font-style-asian",
         "style:font-family-generic", "style:font-pitch", "style:font-charset", "style:font-style-name", "style:font-family-generic-complex",
         "style:font-pitch-complex", "style:font-charset-complex", "style:font-style-name-complex", "style:font-family-generic-asian",
         "style:font-pitch-asian", "style:font-charset-asian", "style:font-style-name-asian",

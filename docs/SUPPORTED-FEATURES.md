@@ -22,6 +22,7 @@ separate paged view, which is not built yet.
 |---|---|---|---|---|---|---|
 | Fonts (Latin and complex-script sets, per-run script) | yes | yes | yes | yes (1) | n.a. | yes (2) |
 | Theme fonts (minorBidi / majorBidi, themeFontLang) | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
+| East Asian font slot per character (rFonts eastAsia / eastAsiaTheme, w:hint="eastAsia"; .doc sprmCRgFtc1 / sprmCIdctHint / STSHI ftcFE; ODT style:font-name-asian) | yes | yes | partial (6) | yes | n.a. | n.a. |
 | Sizes (Latin and complex) | yes | yes | yes | yes | n.a. | yes (2) |
 | Colours, auto colour | yes | yes | yes | yes | n.a. | yes (2) |
 | Theme colours with tint / shade | yes | n.a. | n.a. | n.a. | n.a. | n.a. |
@@ -52,6 +53,7 @@ separate paged view, which is not built yet.
 3. Drawn as a plain underline: CSS has no skip-the-spaces underline (LibreOffice does the same).
 4. Shadow / glow offset and blur are drawn; shadow scale and skew (sx, sy, kx, ky) are not (CSS text-shadow cannot transform). Reflection: a mirror image under each line from the baseline, its fade and distance as Word draws them; its blur is not drawn. 3-D text (props3d / scene3d) shows as its plain letters (see UNSUPPORTED-FEATURES.md).
 5. The settings apply to Latin runs only: Word ignores all of them on complex-script runs and draws Hebrew without ligatures or contextual alternates and Arabic with its ligatures (Word 16 XPS glyphs, test-data/word-text-effects/w14-scripts-v1.docx). .doc and RTF cannot store the settings (Word drops them on save); they get the same default: no ligatures or contextual alternates, Arabic with ligatures. Word picks the shaping by the letters' script, not the run's flags: Hebrew letters in a run without w:rtl / w:cs are set back to Hebrew's shaping, and Arabic letters keep their ligatures even where the run's feature list turns liga off. Arabic contextual alternates are always on in Word (Calibri's calt glyphs with w14:cntxtAlts off and on, test-data/word-text-effects/w14-arabic-calt-v1.docx). ODT follows LibreOffice: the font's own defaults (HarfBuzz: liga, clig, calt on = the browser's), plus the features a font name carries ("Gabriola:-liga&ss05", vcl FeatureParser). Web archives follow the browser: their ligature, number and feature CSS is kept.
+6. Han, kana, Hangul, CJK punctuation and full-width forms draw in the East Asian face in every run (right-to-left and complex-script runs too), w:hint="eastAsia" also moves the punctuation, symbols, Greek and Cyrillic both scripts share (not in right-to-left / complex-script runs), as Word 16's PDF (test-data/word-east-asian, `--east-asian-font`). RTF: Word splits the runs by script itself (\dbch\afN), which is followed; a right-to-left or complex-script RTF run carries no East Asian font, so its CJK characters keep the run's font. ODT has no hint attribute (Word's ODT export drops it).
 
 ## Paragraphs
 

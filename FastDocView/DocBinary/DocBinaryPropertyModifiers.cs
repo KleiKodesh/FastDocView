@@ -146,6 +146,8 @@ public static class DocBinaryPropertyModifiers
                 case 0x6865: formatting.BorderCss = Brc80Css(grpprl, operandAt); break;                                                  // sprmCBrc80
                 case 0xCA72: formatting.BorderCss = BrcCss(grpprl, operandAt, operandLength); break;                                     // sprmCBrc
                 case 0x4A4F: formatting.FontName = fonts?.NameOf(BitConverter.ToUInt16(grpprl, operandAt)) ?? formatting.FontName; break;   // ASCII text
+                case 0x4A50: formatting.EastAsianFontName = fonts?.NameOf(BitConverter.ToUInt16(grpprl, operandAt)) ?? formatting.EastAsianFontName; break;   // sprmCRgFtc1, East Asian text (sprmids.hxx: 0x4A50)
+                case 0x286F: formatting.IsEastAsianHint = grpprl[operandAt] == 1; break;   // sprmCIdctHint: 0 Latin, 1 East Asian, 2 complex bias (ww8par6.cxx Read_IdctHint)
                 case 0x4A5E: formatting.ComplexScriptFontName = fonts?.NameOf(BitConverter.ToUInt16(grpprl, operandAt)) ?? formatting.ComplexScriptFontName; break;  // bidi text
             }
         }

@@ -27,7 +27,7 @@ public sealed class DocBinaryStyleSheet
 
     /// <summary>
     /// Set once after construction; character sprms in style UPXs name fonts by index. Setting it also names the document's
-    /// default fonts: the STSHI's ftcAsci (Latin) and ftcBi (complex script; ftcOther when the STSHI is shorter), which every
+    /// default fonts: the STSHI's ftcAsci (Latin), ftcFE (East Asian) and ftcBi (complex script; ftcOther when the STSHI is shorter), which every
     /// style without a font of its own uses (LibreOffice ww8scan.cxx:6918-6930 reads them, ww8par2.cxx:3714-3726 Set1StyleDefaults).
     /// </summary>
     public DocBinaryFontTable Fonts
@@ -38,10 +38,11 @@ public sealed class DocBinaryStyleSheet
             _fonts = value;
             if (_defaultLatinFont >= 0 && value.NameOf(_defaultLatinFont) is { } latin) DocumentDefaults.RunFormatting.FontName = latin;
             if (_defaultComplexScriptFont >= 0 && value.NameOf(_defaultComplexScriptFont) is { } complex) DocumentDefaults.RunFormatting.ComplexScriptFontName = complex;
+            if (_defaultEastAsianFont >= 0 && value.NameOf(_defaultEastAsianFont) is { } eastAsian) DocumentDefaults.RunFormatting.EastAsianFontName = eastAsian;
         }
     }
     private DocBinaryFontTable _fonts = DocBinaryFontTable.Empty;
-    private int _defaultLatinFont = -1, _defaultComplexScriptFont = -1;
+    private int _defaultLatinFont = -1, _defaultEastAsianFont = -1, _defaultComplexScriptFont = -1;
 
     public WordParagraphFormatting DocumentDefaults { get; } = new()
     {
@@ -59,6 +60,7 @@ public sealed class DocBinaryStyleSheet
         int stshiLength = BitConverter.ToUInt16(bytes, 0);
         // Stshif ([MS-DOC] 2.9.271): rgftcStandardChpStsh = ftcAsci, ftcFE, ftcOther at 12..17, then the STSHI's ftcBi at 18
         if (stshiLength >= 14 && bytes.Length >= 2 + 14) _defaultLatinFont = BitConverter.ToUInt16(bytes, 2 + 12);
+        if (stshiLength >= 16 && bytes.Length >= 2 + 16) _defaultEastAsianFont = BitConverter.ToUInt16(bytes, 2 + 14);   // ww8par2.cxx:3727 RES_CHRATR_CJK_FONT
         if (stshiLength >= 18 && bytes.Length >= 2 + 18) _defaultComplexScriptFont = BitConverter.ToUInt16(bytes, 2 + 16);
         if (stshiLength >= 20 && bytes.Length >= 2 + 20) _defaultComplexScriptFont = BitConverter.ToUInt16(bytes, 2 + 18);
         int styleCount = BitConverter.ToUInt16(bytes, 2);

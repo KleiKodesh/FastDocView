@@ -765,24 +765,9 @@ public sealed class DocxBlockHtmlRenderer
         return run.ToCss(paragraphBase, WordDecorationOutput.StrikeOnly) is { Length: > 0 } css ? css : null;
     }
 
-    /// <summary>Text; CJK characters switch to the run's eastAsia face when it differs (see <see cref="WordRunFormatting.EastAsianFontSwitch"/>).</summary>
+    /// <summary>Text; East Asian characters switch to the run's East Asian face when it differs (<see cref="WordEastAsianText"/>).</summary>
     private static void AppendScriptText(StringBuilder html, string text, WordRunFormatting formatting)
-    {
-        string? eastAsianFont = formatting.EastAsianFontSwitch;
-        if (eastAsianFont is null) { WordHtmlText.AppendScaled(html, WordHtmlText.WithWordScriptShaping(WordHtmlText.Encode(text), formatting.ShapesHebrewApart), formatting.CharacterScalePercent, formatting.ReflectionCss); return; }
-        var pieces = new StringBuilder();
-        for (int start = 0; start < text.Length;)
-        {
-            bool isEastAsian = WordRunFormatting.IsEastAsianCharacter(text[start]);
-            int end = start + 1;
-            while (end < text.Length && WordRunFormatting.IsEastAsianCharacter(text[end]) == isEastAsian) end++;
-            string piece = WordHtmlText.Encode(text.Substring(start, end - start));
-            if (isEastAsian) pieces.Append("<span style=\"font-family:'").Append(WordHtmlText.CssFontName(eastAsianFont)).Append("'\">").Append(piece).Append("</span>");
-            else pieces.Append(piece);
-            start = end;
-        }
-        WordHtmlText.AppendScaled(html, WordHtmlText.WithWordScriptShaping(pieces.ToString(), formatting.ShapesHebrewApart), formatting.CharacterScalePercent, formatting.ReflectionCss);
-    }
+        => WordHtmlText.AppendScaled(html, WordHtmlText.WithWordScriptShaping(WordEastAsianText.Encode(text, formatting), formatting.ShapesHebrewApart), formatting.CharacterScalePercent, formatting.ReflectionCss);
 
     private IEnumerable<RenderStep> RenderRunChildren(XElement run, StringBuilder html, WordRunFormatting formatting)
     {

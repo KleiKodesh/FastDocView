@@ -532,8 +532,8 @@ overloads. Every rule below was read from the source named, not from memory:
   `a:cs` — the order of LibreOffice `ThemeHandler::getFontNameForTheme`; Word's Office theme has an
   empty `a:cs`, so without this step Hebrew would fall back to the Latin face. Our one deliberate
   deviation: a theme slot that resolves to nothing falls back to the explicit attribute instead of
-  overwriting with "" (keeps the docDefaults' David rather than losing the font). `eastAsiaTheme` is
-  parsed but the model has no East-Asian font slot.
+  overwriting with "" (keeps the docDefaults' David rather than losing the font). `eastAsiaTheme`
+  resolves through the supplemental font of `w:themeFontLang/@eastAsia` (zh-CN -> Hans), then `a:ea`.
 - **Theme colors** — `w:color`, `w:shd` (`themeFill*`), `w:u`, `w:bdr`, `w:pBdr` edges:
   `themeColor` → `clrSchemeMapping` (background1 → bg1 → light1, text2 → t2 → dark2; spec defaults
   when the mapping is absent, §17.15.1.20) → `a:clrScheme` entry (`srgbClr/@val` or
@@ -1102,7 +1102,16 @@ writerfilter/dmapper and Word 16 (COM / PDF export of synthetic files). Regressi
   style layer (`WordToggleLayers`): last value wins inside a basedOn chain, table / paragraph / character styles XOR,
   docDefaults on stays on, direct formatting absolute (Word 16). dstrike and webHidden are not toggles.
 - **Script choice**: a run with w:rtl or w:cs uses cs font / szCs / bCs / iCs for all its text; without them ascii /
-  sz / b / i, even for Hebrew letters and in a bidi paragraph (Word 16 PDF). CJK characters use rFonts eastAsia.
+  sz / b / i, even for Hebrew letters and in a bidi paragraph (Word 16 PDF). East Asian characters use the East Asian
+  font slot (`WordEastAsianText`, one path for .docx / .doc / .odt; classification shared with the SmartArt measuring code,
+  `DocxDrawingTextFonts.EastAsianScriptOf`): Han, kana, Hangul, CJK punctuation and full-width forms take rFonts eastAsia /
+  eastAsiaTheme in every run, w:rtl and w:cs runs too; `w:hint="eastAsia"` also moves Latin-1 punctuation / symbols (not
+  its letters, not U+00AB), U+02B0-U+04FF (spacing modifiers, Greek, Cyrillic) and U+2000-U+2E7F, but only in runs without
+  w:rtl / w:cs. .doc: sprmCRgFtc1 (0x4A50), sprmCIdctHint (0x286F, 1 = East Asian; ww8par6.cxx Read_IdctHint), STSHI ftcFE
+  as the default (ww8par2.cxx:3727). ODT: style:font-name-asian; Word's ODT export drops the hint. RTF: Word's own output is
+  already split by script (\dbch\afN). Measured: test-data/word-east-asian (Word 16 PDF per character, pdf-fonts.py),
+  `--east-asian-font`. LibreOffice agrees (scriptchangescanner.cxx: WEAK characters follow ScriptHintType::Asian, tdf#163660
+  Asian characters keep the Asian font inside right-to-left runs). Only the HTML changes; GetText / search are untouched.
 - **Underline / strike**: lines are drawn on the runs, never on the paragraph (a child cannot remove a parent's line);
   .docx draws the underline on text pieces: not under the spaces ending the paragraph (unless compat ulTrailSpace),
   "words" skips spaces, a bare `<w:u/>` draws nothing; dstrike = double line-through on its own element.

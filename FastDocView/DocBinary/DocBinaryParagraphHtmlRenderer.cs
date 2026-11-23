@@ -887,6 +887,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
                                string text, bool isSpecial, int runCp, DocBinaryFieldReader fieldState, string? noteLabel, uint? picture = null)
     {
         var visible = new StringBuilder(text.Length);
+        string? eastAsianFont = WordEastAsianText.SwitchFont(formatting);
+        int eastAsianSpanEnd = -1;
         string css = formatting.ToCss(paragraphBase) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft) + BaselineShiftCss;
         void Flush()
         {
@@ -895,6 +897,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
             WordHtmlText.AppendScaled(html, WordHtmlText.WithWordScriptShaping(visible.ToString()), formatting.CharacterScalePercent);
             if (css.Length > 0) html.Append("</span>");
             visible.Clear();
+            eastAsianSpanEnd = -1;
         }
         int nextBookmark = Bookmarks.FirstAtOrAfter(runCp);
         for (int i = 0; i < text.Length; i++)
@@ -961,6 +964,16 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 case '\u0005': continue;                                                  // annotation reference
             }
             if (c < ' ') continue;
+            if (eastAsianFont is not null && WordEastAsianText.IsEastAsian(WordEastAsianText.CodePointAt(text, i, out int length), formatting))
+            {
+                // in the run's East Asian face (WordEastAsianText); a character right after the last one joins its span
+                if (eastAsianSpanEnd == visible.Length && visible.Length > 0) visible.Length -= "</span>".Length;
+                else WordEastAsianText.AppendOpen(visible, eastAsianFont);
+                visible.Append(WordHtmlText.Encode(text.Substring(i, length))).Append("</span>");
+                eastAsianSpanEnd = visible.Length;
+                i += length - 1;
+                continue;
+            }
             visible.Append(WordHtmlText.Encode(c.ToString()));
         }
         Flush();

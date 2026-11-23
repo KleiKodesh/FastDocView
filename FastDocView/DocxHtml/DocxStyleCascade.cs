@@ -552,6 +552,7 @@ public sealed class DocxStyleCascade
                                        ?? theme?.FontFor((string?)property.Attribute(W + "hAnsiTheme")) ?? (string?)property.Attribute(W + "hAnsi") ?? formatting.FontName;
                     formatting.ComplexScriptFontName = theme?.FontFor((string?)property.Attribute(W + "cstheme")) ?? (string?)property.Attribute(W + "cs") ?? formatting.ComplexScriptFontName;
                     formatting.EastAsianFontName = theme?.FontFor((string?)property.Attribute(W + "eastAsiaTheme")) ?? (string?)property.Attribute(W + "eastAsia") ?? formatting.EastAsianFontName;
+                    if ((string?)property.Attribute(W + "hint") is { } hint) formatting.IsEastAsianHint = hint == "eastAsia";   // ST_Hint: default / eastAsia / cs
                     break;
             }
         }
