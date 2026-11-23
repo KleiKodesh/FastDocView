@@ -187,6 +187,22 @@ internal sealed class OdtIncrementalIndexBuilder : IOdtBlockTable
         }
     }
 
+    /// <summary>How many note references lie in the known blocks (the first ones of the scanner's list) - no copy.</summary>
+    public int KnownNoteReferenceCount
+    {
+        get
+        {
+            int known = KnownBlockCount;
+            List<OdtNoteReference> references = _scanner.NoteReferences;
+            int count = references.Count;
+            while (count > 0 && references[count - 1].BlockIndex >= known) count--;
+            return count;
+        }
+    }
+
+    /// <summary>Note reference <paramref name="index"/> (below <see cref="KnownNoteReferenceCount"/>).</summary>
+    public OdtNoteReference KnownNoteReferenceAt(int index) => _scanner.NoteReferences[index];
+
     // ── IOdtBlockTable over the known blocks ──────────────────────────────────────────
 
     int IOdtBlockTable.BlockCount => KnownBlockCount;

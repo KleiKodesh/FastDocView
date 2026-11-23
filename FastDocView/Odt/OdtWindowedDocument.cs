@@ -510,6 +510,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         _index = index;
         _blocks = _reader.SwitchToIndex(index);
         _builder = null;
+        _knownNoteReferences.Clear(); _knownNoteReferences.TrimExcess(); _knownNoteReferencesSnapshot = null;   // the index answers from now on
         RecordConnectedShapes(index);
         _noteReferences = null;
         CountNewNoteReferences();
@@ -856,12 +857,31 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
             lock (_readLock)
             {
                 if (_builder is not null)
-                    return KnownNoteReferences.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, r.BlockIndex)).ToArray();
+                {
+                    // while the on-demand scan runs: only the references found since the last call are converted, and a new
+                    // snapshot is made only when the count grew (not every known reference on every call)
+                    List<WordDocumentNoteReference> known = KnownNoteReferencesConverted();
+                    if (_knownNoteReferencesSnapshot is null || _knownNoteReferencesSnapshot.Length != known.Count) _knownNoteReferencesSnapshot = known.ToArray();
+                    return _knownNoteReferencesSnapshot;
+                }
                 return _noteReferences ??= _index!.NoteReferences.Select(r => new WordDocumentNoteReference(r.Kind, r.Number, r.BlockIndex)).ToArray();
             }
         }
     }
-    private WordDocumentNoteReference[]? _noteReferences;
+    private WordDocumentNoteReference[]? _noteReferences, _knownNoteReferencesSnapshot;
+    private readonly List<WordDocumentNoteReference> _knownNoteReferences = new();
+
+    /// <summary>The references known so far, converted once each (the builder's list only grows). Call under the read lock.</summary>
+    private List<WordDocumentNoteReference> KnownNoteReferencesConverted()
+    {
+        OdtIncrementalIndexBuilder builder = _builder!;
+        for (int i = _knownNoteReferences.Count, count = builder.KnownNoteReferenceCount; i < count; i++)
+        {
+            OdtNoteReference reference = builder.KnownNoteReferenceAt(i);
+            _knownNoteReferences.Add(new WordDocumentNoteReference(reference.Kind, reference.Number, reference.BlockIndex));
+        }
+        return _knownNoteReferences;
+    }
 
     /// <summary>
     /// Notes are inline in ODF (text:note-body): only the blocks holding the window's notes are rendered. The window lies in
@@ -872,7 +892,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         lock (_readLock)
         {
             // all of the window's runs under one lock, one source check and one file open (not one per run)
-            IReadOnlyList<WordDocumentNoteReference> references = NoteReferences;
+            IReadOnlyList<WordDocumentNoteReference> references = _builder is not null ? KnownNoteReferencesConverted() : NoteReferences;
             if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
                 throw new WordDocumentSourceChangedException(FilePath);
             _renderer.IsNotesOnly = true;

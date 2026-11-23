@@ -2168,6 +2168,34 @@ windowed note equals the note the blocks deliver.
 - Not changed: the sparse runs of a page (one block run per note) - the byte ring already joins near reads.
 
 
+### Notes in the shipped configuration (2026-11-23)
+
+`FastDocView.ColdBench.exe --notes [--runs N] <files>` (AOT, as shipped) times the note paths beside their body equivalents,
+each probe in a fresh process after the index completed: cold = first call, warm = median of 20 at random places (same
+seed both sides); the file is read once first so no probe pays the disk. Probes: note1 vs block1 (the note's own block),
+tooltip (index by kind + number, then the note for display), notes20 vs noteblocks20 (the page's own note blocks through
+the body path - the exact equivalent) and body20 (20 blocks where the page starts).
+
+Measured (AOT, 5 runs, ms cold / warm):
+
+| file | note1 | block1 | tooltip | notes20 | noteblocks20 | body20 |
+|---|---|---|---|---|---|---|
+| .odt synth | 1.67 / 1.45 | 1.68 / 0.92 | 1.57 / 1.31 | 1.92 / 1.56 | 2.27 / 2.00 | 1.95 / 1.54 |
+| .fodt synth | 3.62 / 1.00 | 3.64 / 1.03 | 3.79 / 1.07 | 4.27 / 2.18 | 5.72 / 4.25 | 4.41 / 1.92 |
+| .rtf synth | 7.81 / 1.05 | 7.64 / 1.05 | 7.80 / 1.05 | 8.47 / 1.53 | 11.81 / 5.30 | 9.03 / 1.28 |
+| .docx synth | 0.93 / 0.24 | 4.69 / 3.57 | 0.93 / 0.24 | 1.63 / 0.63 | 10.09 / 7.66 | 5.50 / 4.90 |
+| .doc sample | 0.74 / 0.56 | 30.81 / 0.78 | 0.77 / 0.51 | 4.20 / 5.27 | 29.90 / 10.80 | 27.98 / 2.41 |
+| .docx sample | 1.97 / 0.83 | 38.60 / 4.98 | 2.76 / 1.07 | 7.92 / 1.87 | 86.54 / 14.04 | 42.76 / 6.80 |
+
+- Against the exact equivalent (the same blocks) every note path is as fast or faster, cold and warm. The round-1 gaps
+  (.odt single note, .rtf cold page) were measurement order: the first probe of a file paid the disk / JIT.
+- Still above body20: .odt / .fodt / .rtf warm notes pages (+0.1 to +0.3 ms) - inline notes: the 20 holding paragraphs lie
+  over ~200 blocks, and the compact table rescans the blocks between them to find their bounds (render-only, both are equal);
+  .doc sample pages (5.3 vs 2.4 warm) - its notes are longer than 20 body paragraphs (each note is read from its own CP range).
+  Removing the rescan needs per-note-block byte ranges in the index (format bump) plus a field-free direct render: not done.
+- Fixed: .odt while the on-demand index builds, NoteReferences / RenderNotes converted (and copied) every known reference on
+  every call; now each is converted once. Output unchanged (`--notes-speed` hashes equal on all six files).
+
 Explicit document colours (run colour, underline colour, run / paragraph / cell shading, highlights) are written as
 `light-dark(original, darkVariant)` by `WordHtmlColor.Css`; the page's `color-scheme` picks one, so the HTML and the
 index cache stay theme-independent and a theme switch re-renders nothing. The dark variant keeps hue and chroma and
