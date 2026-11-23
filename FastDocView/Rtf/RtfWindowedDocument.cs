@@ -473,14 +473,19 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         }
     }
 
-    private List<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count)
+    private List<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count) => RenderBlocksLocked(firstBlockIndex, count, isNotesOnly: false);
+
+    /// <param name="isNotesOnly">For the notes pane: the blocks are parsed only for their notes, so the drop cap carried in from
+    /// the block before (one more block parsed per run) and the body HTML's float hoisting are skipped - both shape only the
+    /// body HTML, which the caller drops (a note's HTML is built in its own flow, never from the body's).</param>
+    private List<WordDocumentBlockHtml> RenderBlocksLocked(int firstBlockIndex, int count, bool isNotesOnly)
     {
         int first = Math.Max(0, firstBlockIndex);
         int end = (int)Math.Min(_index.BlockCount, (long)firstBlockIndex + Math.Max(0, count));
         var result = new List<WordDocumentBlockHtml>(Math.Max(0, end - first));
         // A drop-cap frame paragraph at the end of the block before the window is drawn in the window's first paragraph.
         (WordParagraphFormatting format, string html)? carried = null;
-        if (first > 0 && first < end && _table.BlockKindOf(first - 1) == WordDocumentBlockKind.Paragraph)   // a table row never ends in a drop cap
+        if (!isNotesOnly && first > 0 && first < end && _table.BlockKindOf(first - 1) == WordDocumentBlockKind.Paragraph)   // a table row never ends in a drop cap
         {
             _fieldContext.CurrentBlock = first - 1;
             _renderer.IncomingDropCap = null;
@@ -502,7 +507,7 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
             // the last row known while the index builds: whether the next row continues its cells (no bottom line there) is noted
             // when that row is indexed, so it is drawn again once the index is complete
             bool isRowAwaitingNext = kind == WordDocumentBlockKind.TableRow && _builder is not null && blockIndex == _index.BlockCount - 1;
-            result.Add(new WordDocumentBlockHtml(blockIndex, kind, Html.WordParagraphFloats.Hoist(html), notes, _fieldContext.UsedIncompleteIndex || isRowAwaitingNext));
+            result.Add(new WordDocumentBlockHtml(blockIndex, kind, isNotesOnly ? html : Html.WordParagraphFloats.Hoist(html), notes, _fieldContext.UsedIncompleteIndex || isRowAwaitingNext));
         }
         return result;
     }
@@ -559,8 +564,13 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         lock (_readLock)
         {
             if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
-            try { return WordDocumentNoteWindow.RenderFromBlocks(NoteReferences, firstNoteIndex, count, RenderBlocksLocked); }
-            finally { _releasableFile?.Release(); }
+            _renderer.IsNotesOnly = true;
+            try { return WordDocumentNoteWindow.RenderFromBlocks(NoteReferences, firstNoteIndex, count, (first, blocks) => RenderBlocksLocked(first, blocks, isNotesOnly: true)); }
+            finally
+            {
+                _renderer.IsNotesOnly = false;
+                _releasableFile?.Release();
+            }
         }
     }
 

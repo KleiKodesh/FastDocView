@@ -875,8 +875,13 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
             IReadOnlyList<WordDocumentNoteReference> references = NoteReferences;
             if (_releasableFile is not null && _isReadingFromFile && _releasableFile.HasSourceChanged)
                 throw new WordDocumentSourceChangedException(FilePath);
+            _renderer.IsNotesOnly = true;
             try { return WordDocumentNoteWindow.RenderFromBlocks(references, firstNoteIndex, count, RenderBlocksLocked); }
-            finally { _releasableFile?.Release(); }
+            finally
+            {
+                _renderer.IsNotesOnly = false;
+                _releasableFile?.Release();
+            }
         }
     }
 

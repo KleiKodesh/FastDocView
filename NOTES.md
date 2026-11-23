@@ -1663,8 +1663,7 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   stepped rescan = whole rescan and one pass = old path (8 queries incl. Hebrew plain / pointed, English,
   mixed; match case and notes on / off; batches 500 / 37 / 1; random starts).
 - **Notes pages**: RTF and ODT/FODT `RenderNotes` run all the page's block runs under one lock, one source
-  check and one release. Not done: a notes-only render (the body HTML of a note's block is still built and
-  dropped) - it needs renderer changes.
+  check and one release. Notes-only render: see "Notes-only render (2026-11-23)".
 - Single-value lookups (`ListLabelOf`, `ListLevelOf`, `BlockKindOf`): no host loops over them
   (KitveiHakodesh Core calls none), so no batch API was added.
 - Golden dumps byte-identical on .odt, .fodt, the .rtf book and the synthetic .rtf.
@@ -2130,11 +2129,44 @@ PagePlacementFidelityTest (centred wrapSquare floats left), OdtShapesFidelityTes
   characters skipped, complete 4-character groups decoded, an unfinished last group dropped).
   Check: `OdtDrawingFidelityTest.UnpaddedBinaryPicture`.
 - **Notes pane for .rtf / .odt / .fodt**: RenderNotes = the blocks' notes verified for all three (`NotesWindowTest` now
-  includes a synthetic .fodt) and live in the notes pane. Still not done: a notes-only render (the body HTML of a note's block is
-  built and dropped) - a speed item, not a correctness one.
+  includes a synthetic .fodt) and live in the notes pane. Notes-only render: done 2026-11-23 (below).
 
 
-## Dark theme (2026-11-04)
+## Notes-only render (2026-11-23)
+
+Goal (user): notes (pane, notes window, tooltip, jump to a note) as instant as body text - a notes page in the same ms
+range as a body window of the same size, cold and warm. Harness: `--notes-speed [files]` (many-notes synthetic .docx /
+.odt / .fodt / .rtf, 40 000 blocks, plus the files given; `FDV_NOTES_SPEED_ONLY=.odt` limits the synthetic set). It prints,
+per file, every note in pages of 20 vs a body window of 20 blocks at each page's start, 200 random single notes vs 200
+random single blocks, the first page after a fresh open (cold) for both, and a SHA-256 over every note (kind, number,
+label, HTML): equal before / after = byte-identical. `NotesWindowTest` (in `--fidelity` and `--real`) still checks every
+windowed note equals the note the blocks deliver.
+
+- .docx / .doc were already notes-only (each note read from its own part / CP range). They are faster than body windows.
+- .rtf: `RenderNotes` sets `RtfBlockHtmlRenderer.IsNotesOnly`: a top-level body paragraph is not built (same state changes:
+  link reopened, first-paragraph flag, baseline shift, drop-cap hand-over), the drop cap carried in from the block before a
+  run is not parsed (one extra block per run before) and the body HTML is not float-hoisted. Notes are built in their own
+  flow and never read the body's output.
+- .odt / .fodt: `OdtBlockHtmlRenderer.IsNotesOnly`: a plain paragraph (only text, spans, spaces, tabs, line breaks,
+  bookmarks and notes; no hidden-paragraph condition, no drop cap) renders only its notes, in document order, with the
+  paragraph's direction set as the full render sets it. Anything else (fields, links, drawings, tables, lists) takes the
+  full render, so field counters and the note order stay exactly as before.
+- Measured (net10, low priority, best of 3, noisy laptop; ms; notes vs body window of the same size):
+
+  | file | notes pages of 20 (before -> after) | body 20 blocks at the same places | 200 single notes / blocks | cold 20 notes / 20 blocks |
+  |---|---|---|---|---|
+  | .docx synthetic (2400 notes) | 381 -> 93 (unchanged code, noise) | 309 | 78 / 976 | 1.4 / 5.3 |
+  | .odt synthetic (4003) | 666 -> 201 | 200 | 342 / 201 | 3.2 / 2.8 |
+  | .fodt synthetic (4003) | 553 -> 411 | 322 | 489 / 434 | 2.8 / 3.4 |
+  | .rtf synthetic (3203) | 415 -> 293 | 278 | 716 / 825 | 15.7 / 8.7 |
+  | .doc sample (239) | 177 -> 77 (unchanged code) | 61 | 151 / 1406 | 4.1 / 11.0 |
+  | .docx sample (234) | 79 -> 52 (unchanged code) | 130 | 159 / 1895 | 5.7 / 23.7 |
+
+  The same notes through the old path (the blocks' body render, one call per run): .rtf 2401, .fodt 711. Hashes equal
+  before and after on all six files. Open: the .rtf cold first page (one parse per note block, 20 runs) stays about 2x a
+  cold body window.
+- Not changed: the sparse runs of a page (one block run per note) - the byte ring already joins near reads.
+
 
 Explicit document colours (run colour, underline colour, run / paragraph / cell shading, highlights) are written as
 `light-dark(original, darkVariant)` by `WordHtmlColor.Css`; the page's `color-scheme` picks one, so the HTML and the

@@ -120,9 +120,54 @@ public sealed partial class OdtBlockHtmlRenderer
         _isInsideLink = false;
         _renderedNotes = notes.Length == 0 ? null : new List<WordDocumentNoteHtml>(notes.Length);
         _currentBlock = block;
+        if (IsNotesOnly && notes.Length > 0 && IsPlainNoteParagraph(block))
+        {
+            // only the notes are wanted and the paragraph around them is plain text: each note's body is rendered as the full
+            // render would (the same order, the paragraph's direction) and the paragraph itself is not built
+            bool outerIsRightToLeft = _isParagraphRightToLeft;
+            _isParagraphRightToLeft = _styles.ResolveParagraph((string?)block.Attribute(TextNs + "style-name")).Formatting.IsRightToLeft;
+            foreach (XElement note in block.Descendants(TextNs + "note"))
+                if (!note.Ancestors(TextNs + "note").Any()) AppendNote(note, html);
+            _isParagraphRightToLeft = outerIsRightToLeft;
+            _currentBlock = null;
+            return ("", (IReadOnlyList<WordDocumentNoteHtml>?)_renderedNotes ?? []);
+        }
         RenderBlock(block, html, isTopLevel: true);
         _currentBlock = null;
         return (html.ToString(), (IReadOnlyList<WordDocumentNoteHtml>?)_renderedNotes ?? []);
+    }
+
+    /// <summary>Set by the notes pane's renders: a plain paragraph's own HTML is not built (<see cref="IsPlainNoteParagraph"/>).</summary>
+    public bool IsNotesOnly { get; set; }
+
+    /// <summary>
+    /// A text:p / text:h holding only text, spans, spaces, tabs, line breaks, bookmarks and notes (and no hidden-paragraph
+    /// condition): nothing in it but its notes reaches a note's HTML (no field advances, no drawing reorders the notes, no link
+    /// or drop cap is open around a note). A note body's own content is not looked at - it is rendered either way.
+    /// </summary>
+    private bool IsPlainNoteParagraph(XElement block)
+    {
+        if (block.Name != TextNs + "p" && block.Name != TextNs + "h") return false;
+        if (Fields?.IsParagraphHidden(block) == true) return false;
+        if (_styles.ResolveParagraph((string?)block.Attribute(TextNs + "style-name")).Formatting.DropCapLines > 0) return false;
+        return IsPlainNoteContent(block);
+    }
+
+    private static bool IsPlainNoteContent(XElement element)
+    {
+        foreach (XElement child in element.Elements())
+        {
+            if (child.Name.Namespace != TextNs) return false;
+            switch (child.Name.LocalName)
+            {
+                case "note": if (!IsPlainNoteContent(child)) return false; break;
+                case "note-body": break;                                   // rendered on its own either way
+                case "span": case "note-citation": if (!IsPlainNoteContent(child)) return false; break;
+                case "s": case "tab": case "line-break": case "soft-page-break": case "bookmark": case "bookmark-start": case "bookmark-end": break;
+                default: return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>The paragraph style key of a block (for the next block's contextual spacing) — text:style-name.</summary>

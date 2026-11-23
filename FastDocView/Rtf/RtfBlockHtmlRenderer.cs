@@ -84,6 +84,9 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     /// <summary>Before <see cref="Render"/>: a drop-cap frame paragraph the previous block ended with (its <see cref="PendingDropCap"/>).</summary>
     public (WordParagraphFormatting format, string html)? IncomingDropCap { get; set; }
 
+    /// <summary>Set by the notes pane's renders: top-level body paragraphs are not built (their HTML is dropped anyway).</summary>
+    public bool IsNotesOnly { get; set; }
+
     public (string html, IReadOnlyList<WordDocumentNoteHtml> notes) Render(Stream file, RtfRandomAccessIndex index, RtfCompactBlockTable table, int blockIndex)
     {
         PendingDropCap = null;
@@ -296,6 +299,19 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     {
         bool isInTable = (_flow == _bodyFlow || _flow.IsTextBox) && (state.IsInTable || _flow.Tables.Count > 0 && _flow.Tables[0].Cells.Count > 0);
         bool isTopLevel = _flow == _bodyFlow && !isInTable;
+        if (IsNotesOnly && isTopLevel)
+        {
+            // only the notes are wanted: the body paragraph is dropped with the same state changes as below (a note's HTML is
+            // built in its own flow and never reads the body's output)
+            string? link = _flow.OpenLink;
+            _flow.Inline.Clear();
+            _flow.HasInline = false;
+            _flow.ListText = null;
+            if (link is not null) _flow.Inline.Append(link);
+            if (state.DropCapLines <= 0) { _isFirstParagraph = false; IncomingDropCap = null; PendingDropCap = null; }
+            _baselineShift = 0;
+            return;
+        }
         WordParagraphFormatting formatting = ParagraphFormatting(state);
         int outline = isTopLevel ? (state.OutlineLevel is >= 0 and <= 8 ? state.OutlineLevel : state.OutlineLevel == 9 ? -1 : _tables.OutlineLevelOfStyle(state.Style)) : -1;
         string tag = _flow.IsTextBox ? "span" : outline is >= 0 and <= 5 ? "h" + (outline + 1) : "p";

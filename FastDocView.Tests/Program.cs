@@ -111,6 +111,7 @@ for (int i = 0; i < args.Length; i++)
         case "--shapes-3d": Shapes3DFidelityTest.Run(); skipSynthetic = true; break;   // only the 3-D shape checks (seconds)
         case "--smartart": SmartArtLayoutFidelityTest.Run(); skipSynthetic = true; break;   // only SmartArt laid out without its drawing part (seconds)   // only the 3-D shape checks (seconds)
         case "--word6": Word6DocumentsTest.Run(); Word6DocumentsTest.RunWord2(); Word6DocumentsTest.RunAsian(); return TestReport.FailureCount == 0 ? 0 : 1;   // only the Word 6.0 / 95 checks
+        case "--notes-speed": { var speed = new List<string>(); while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) speed.Add(args[++i]); NotesRenderSpeedTest.Run(speed.Where(File.Exists)); return TestReport.FailureCount == 0 ? 0 : 1; }   // notes-only render ms + output hash (synthetic many-notes files + the given ones)
         case "--fidelity": fidelityOnly = true; break;                               // only the small Word-fidelity checks (seconds)
         case "--page-width": pageWidthOnly = true; break;                               // only the page-text-width checks (+ --real files)                                  // only the small Word-fidelity checks (seconds)
         case "--incremental-open":                                                     // optional block count, default 1000000
