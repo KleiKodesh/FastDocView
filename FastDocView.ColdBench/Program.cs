@@ -8,7 +8,8 @@ using FastDocView;
 // --notes: the note paths instead, each beside its body equivalent (see NoteProbe): a single note by index vs its own
 // block, a notes page of 20 vs a body window of 20 at the page's first note block, a tooltip lookup (kind + number) vs the
 // note's block. Cold = the first call in a fresh process (after the index completed), warm = median of 20 more at random
-// places (the same seed for the note and the body side). Prints extensions only.
+// places (the same seed for the note and the body side); notes20 / body20 also print their median HTML and text characters.
+// Prints extensions only.
 const int FirstWindowBlocks = 40;
 if (args.Length == 3 && args[0] == "--child") return Child(args[1], args[2]);
 if (args.Length == 4 && args[0] == "--child-probe") return NoteProbe(args[1], args[2], args[3]);
@@ -83,7 +84,7 @@ static int RunNoteProbes(List<string> files, int runs)
         File.ReadAllBytes(file);     // the OS file cache warm for every probe alike (else the first probe pays the disk)
         foreach (string probe in probes)
         {
-            var cold = new List<double>(); var warm = new List<double>(); string failure = "";
+            var cold = new List<double>(); var warm = new List<double>(); string failure = "", size = "";
             for (int run = 0; run < runs; run++)
             {
                 string cache = Path.Combine(AppContext.BaseDirectory, "cold-cache-" + Guid.NewGuid().ToString("N"));
@@ -93,11 +94,12 @@ static int RunNoteProbes(List<string> files, int runs)
                     if (!line.StartsWith("PROBE ", StringComparison.Ordinal)) { failure = line; break; }
                     string[] parts = line.Split(' ');
                     cold.Add(double.Parse(parts[1], CultureInfo.InvariantCulture)); warm.Add(double.Parse(parts[2], CultureInfo.InvariantCulture));
+                    if (parts.Length >= 5) size = $"html {parts[3]} chars, text {parts[4]}";
                 }
                 finally { try { if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
             }
             static string Median(List<double> values) => values.Count == 0 ? "-" : values.Order().ElementAt(values.Count / 2).ToString("0.00", CultureInfo.InvariantCulture);
-            Console.WriteLine($"{Path.GetExtension(file),-8} {probe,-12} {Median(cold),8} {Median(warm),8} {failure}");
+            Console.WriteLine($"{Path.GetExtension(file),-8} {probe,-12} {Median(cold),8} {Median(warm),8} {size}{failure}");
         }
     }
     return 0;
@@ -133,7 +135,23 @@ static int NoteProbe(string path, string cacheDirectory, string probe)
             if (produced == 0) throw new InvalidOperationException("nothing rendered");
         }
         double warmMedian = times.Skip(1).Order().ElementAt(10);
-        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"PROBE {times[0]:0.000} {warmMedian:0.000}"));
+        // what the page carries (not timed): the median HTML and text characters of the probe's output at the same places
+        string size = "";
+        if (probe is "notes20" or "body20")
+        {
+            var html = new List<int>(); var text = new List<int>();
+            foreach (int note in targets.Skip(1))
+            {
+                IEnumerable<string> parts = probe == "notes20"
+                    ? document.RenderNotesForDisplay(note, 20).Select(n => n.Html)
+                    : document.RenderBlocksForDisplay(references[note].BlockIndex, 20).Select(b => b.Html);
+                string joined = string.Concat(parts);
+                html.Add(joined.Length);
+                text.Add(System.Text.RegularExpressions.Regex.Replace(joined, "<[^>]*>", "").Length);
+            }
+            size = $" {html.Order().ElementAt(10)} {text.Order().ElementAt(10)}";
+        }
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"PROBE {times[0]:0.000} {warmMedian:0.000}{size}"));
         return 0;
     });
 }

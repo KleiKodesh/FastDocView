@@ -7,7 +7,8 @@ namespace FastDocView.Rtf;
 /// with the anchor's parser snapshot and list state, so every value equals the one the pass found. The rescan runs only
 /// as far as the asked-for block and resumes from there on the next request (a window at a span's start reads one 64 KB
 /// buffer, not the span's 256 KB); a handful of spans stay cached (LRU). A search batch is fed from the same rescan
-/// (<see cref="Search"/>), so its blocks are parsed once.
+/// (<see cref="Search"/>), so its blocks are parsed once. Blocks holding notes are answered from the index's stored values
+/// (<see cref="RtfNoteBlockTable"/>) without a rescan.
 /// </summary>
 internal sealed class RtfCompactBlockTable
 {
@@ -119,18 +120,21 @@ internal sealed class RtfCompactBlockTable
         }
     }
 
-    public long BlockStartOffset(int blockIndex) => SpanOf(blockIndex, out int local).Starts[local];
-    public long BlockEndOffset(int blockIndex) => SpanOf(blockIndex, out int local).Ends[local];
-    public WordDocumentBlockKind BlockKindOf(int blockIndex) => SpanOf(blockIndex, out int local).Kinds[local];
+    /// <summary>The block's entry in the index's note blocks (stored values, no span rescan), or -1.</summary>
+    private int NoteBlockAt(int blockIndex) => _index.NoteBlocks.Find(blockIndex);
+
+    public long BlockStartOffset(int blockIndex) => NoteBlockAt(blockIndex) is >= 0 and var note ? _index.NoteBlocks.StartOf(note) : SpanOf(blockIndex, out int local).Starts[local];
+    public long BlockEndOffset(int blockIndex) => NoteBlockAt(blockIndex) is >= 0 and var note ? _index.NoteBlocks.EndOf(note) : SpanOf(blockIndex, out int local).Ends[local];
+    public WordDocumentBlockKind BlockKindOf(int blockIndex) => NoteBlockAt(blockIndex) is >= 0 and var note ? _index.NoteBlocks.KindOf(note) : SpanOf(blockIndex, out int local).Kinds[local];
     public int BlockTextLengthOf(int blockIndex) => SpanOf(blockIndex, out int local).TextLengths[local];
     /// <summary>The parser's group-state snapshot at the block's first byte (what a window restores before parsing its bytes).</summary>
-    public byte[] SnapshotOf(int blockIndex) => SpanOf(blockIndex, out int local).SnapshotOf(local);
+    public byte[] SnapshotOf(int blockIndex) => NoteBlockAt(blockIndex) is >= 0 and var note ? _index.NoteBlocks.SnapshotOf(note) : SpanOf(blockIndex, out int local).SnapshotOf(local);
     /// <summary>The fields open where a block starts and the field counters there (RtfFieldTracker.Serialize).</summary>
-    public string FieldStateOf(int blockIndex) => SpanOf(blockIndex, out int local).FieldStateOf(local);
+    public string FieldStateOf(int blockIndex) => NoteBlockAt(blockIndex) is >= 0 and var note ? _index.NoteBlocks.FieldStateOf(note) : SpanOf(blockIndex, out int local).FieldStateOf(local);
 
     /// <summary>What a span search computes field results from (the renderer's context).</summary>
     public Fields.WordFieldContext? FieldContext { get; set; }
-    public string? ListLabelOf(int blockIndex) => SpanOf(blockIndex, out int local).LabelOf(local);
+    public string? ListLabelOf(int blockIndex) => NoteBlockAt(blockIndex) is >= 0 and var note ? _index.NoteBlocks.ListLabelOf(note) : SpanOf(blockIndex, out int local).LabelOf(local);
     /// <summary>The style number (\sN) of the block's first paragraph; -1 when none.</summary>
     public int StyleOf(int blockIndex) => SpanOf(blockIndex, out int local).BlockStyles[local];
     /// <summary>The list override (\lsN) of the block's first paragraph; -1 when none.</summary>

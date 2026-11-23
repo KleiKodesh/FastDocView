@@ -2195,6 +2195,16 @@ Measured (AOT, 5 runs, ms cold / warm):
   Removing the rescan needs per-note-block byte ranges in the index (format bump) plus a field-free direct render: not done.
 - Fixed: .odt while the on-demand index builds, NoteReferences / RenderNotes converted (and copied) every known reference on
   every call; now each is converted once. Output unchanged (`--notes-speed` hashes equal on all six files).
+- Closed (same day, index formats .odt 27 / .rtf 27): each note-holding block's values are stored at index time
+  (`OdtNoteBlockTable` / `RtfNoteBlockTable`: byte range, kind, list label (+ level / layout on .odt), field state, and on
+  .rtf the parser snapshot, interned). The compact tables answer those blocks from there first, so a notes page reads only
+  its own blocks' bytes, no span rescan. Values are the index pass's own: `--notes-speed` hashes equal on all six files.
+  AOT `--notes`, 5 runs, ms cold / warm (noisier machine than the table above; body20 beside it):
+  .odt notes20 2.81 / 1.38 vs body20 5.63 / 4.57; .fodt 2.90 / 1.73 vs 6.22 / 3.74; .rtf 1.55 / 0.69 vs 19.05 / 2.84
+  (rtf note1 0.51 / 0.35). Every note path is now at or under body20 on these formats.
+- .doc sample notes page (5.41 warm vs body20 3.18): measured, not overhead. The 20 notes carry 44 575 HTML / 11 535 text
+  characters, the 20 body blocks 8 244 / 941 - 5.4x the HTML, 12x the text. Per HTML character the notes path is ~3x
+  cheaper (0.12 vs 0.39 us). `--notes` now prints the median HTML / text characters of notes20 and body20. Not changed.
 
 Explicit document colours (run colour, underline colour, run / paragraph / cell shading, highlights) are written as
 `light-dark(original, darkVariant)` by `WordHtmlColor.Css`; the page's `color-scheme` picks one, so the HTML and the

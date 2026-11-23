@@ -88,6 +88,7 @@ public static class OdtRandomAccessIndexBuilder
             ConnectedShapeBlocks = scanner.ConnectedShapeBlocks.ToArray(),
             ConnectedShapes = scanner.ConnectedShapeBlocks.Count == 0 ? OdtConnectedShapeTable.Empty : null,
             HasUnreadableRest = hasUnreadableRest,
+            NoteBlocks = OdtNoteBlockTable.From(scanner, blockCount),
         };
     }
 }

@@ -18,7 +18,7 @@ namespace FastDocView.Odt;
 public sealed class OdtRandomAccessIndex
 {
     private const string Magic = "KHODTIDX";
-    private const int FormatVersion = 26;    // 26: missing page-layout values take Word's defaults (Letter, 1 in margins); 25: a missing fo:margin-top / -bottom is LibreOffice's 2 cm; 24: section top / bottom margins (+1, 0 = unknown); 23: style sections keep style:tab-stops; 22: field states carry the heading (outline) counters, the outline style is kept with the list styles; 21: scan states carry the field values (OdtFieldState), bookmarks also list sequence ref-names and note ids, style sections keep date / time data styles; 20: list levels keep a bullet style:font-name resolved through the font-face declarations; 19: HasUnreadableRest (a body cut short or malformed); 18: style sections keep loext:writing-mode on cells; 17: style sections keep the Asian / complex languages and the script / rfc tags (list numbers in the paragraph language); 16: style sections keep table row heights (style:row-height / min-row-height); 15: list levels mark a recoded symbol bullet (Latin label script); 14: list levels keep picture bullets, symbol-font bullets and the label text style; 13: style sections keep fo:hyphenate, fo:language / fo:country and style:drop-cap; 12: loext:margin-gutter no longer added twice to section widths; 11: section column lefts (+1, 0 = unknown); 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
+    private const int FormatVersion = 27;    // 27: note blocks (each note-holding block's byte range, kind, list values and field state: a notes page reads no span); 26: missing page-layout values take Word's defaults (Letter, 1 in margins); 25: a missing fo:margin-top / -bottom is LibreOffice's 2 cm; 24: section top / bottom margins (+1, 0 = unknown); 23: style sections keep style:tab-stops; 22: field states carry the heading (outline) counters, the outline style is kept with the list styles; 21: scan states carry the field values (OdtFieldState), bookmarks also list sequence ref-names and note ids, style sections keep date / time data styles; 20: list levels keep a bullet style:font-name resolved through the font-face declarations; 19: HasUnreadableRest (a body cut short or malformed); 18: style sections keep loext:writing-mode on cells; 17: style sections keep the Asian / complex languages and the script / rfc tags (list numbers in the paragraph language); 16: style sections keep table row heights (style:row-height / min-row-height); 15: list levels mark a recoded symbol bullet (Latin label script); 14: list levels keep picture bullets, symbol-font bullets and the label text style; 13: style sections keep fo:hyphenate, fo:language / fo:country and style:drop-cap; 12: loext:margin-gutter no longer added twice to section widths; 11: section column lefts (+1, 0 = unknown); 10: connected shapes (OdtConnectedShapeTable); 9: graphic properties whole, every named drawing style (hatch, opacity, marker, stroke-dash, fill-image) kept; 5: compact per-block tables; 6: no per-block tables - span anchors + scan state, used list styles, one window store, Elias-Fano lists; 7: graphic styles kept (frame wrap / position); 8: text box / shape graphic properties and draw:gradient kept
     /// <summary>Body bytes between span anchors: a random block rescans at most this much on top of the inflate from its checkpoint.</summary>
     public const long AnchorSpanBytes = 256 << 10;
 
@@ -50,6 +50,8 @@ public sealed class OdtRandomAccessIndex
     public WordDocumentBookmarkTable Bookmarks { get; init; } = WordDocumentBookmarkTable.Empty;
     /// <summary>The body broke off after the last block (cut short, or a mismatched end tag): the reader shows one "could not be read" block after it.</summary>
     public bool HasUnreadableRest { get; init; }
+    /// <summary>The blocks holding notes, with what a span rescan would find for them (a notes page renders them without one).</summary>
+    internal OdtNoteBlockTable NoteBlocks { get; init; } = OdtNoteBlockTable.Empty;
     /// <summary>The blocks holding shapes with an id (OdtBodyBlockScanner.ConnectedShapeBlocks) - only while <see cref="ConnectedShapes"/> is still to be recorded; not stored.</summary>
     internal int[] ConnectedShapeBlocks { get; init; } = [];
     /// <summary>The shapes connectors may be glued to, by id; null until recorded from <see cref="ConnectedShapeBlocks"/> (OdtWindowedDocument, before the index is saved).</summary>
@@ -180,6 +182,8 @@ public sealed class OdtRandomAccessIndex
         writer.Write(noteBytes.ToArray());
         IndexBinaryArrays.WriteCompressedStrings(writer, NoteReferences.Select(r => r.Label).ToArray());
         Section($"note references ({NoteReferences.Length})");
+        NoteBlocks.Write(writer);
+        Section($"note blocks ({NoteBlocks.Blocks.Length})");
         IndexBinaryArrays.WriteDeltaVarints(writer, SectionFirstBlocks);
         IndexBinaryArrays.WriteVarints(writer, SectionTextWidths);
         IndexBinaryArrays.WriteVarints(writer, SectionColumnLefts);
@@ -244,6 +248,7 @@ public sealed class OdtRandomAccessIndex
                 notes[i] = new OdtNoteReference(noteBlocks[i], (WordDocumentNoteKind)kind, previousNumber[kind], noteLabels[i], -1, -1);
             }
         }
+        OdtNoteBlockTable noteBlockTable = OdtNoteBlockTable.Read(reader, blockCount, lastBlockEnd);
         int[] sectionFirstBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
         int[] sectionTextWidths = IndexBinaryArrays.ReadVarints(reader);
         int[] sectionColumnLefts = IndexBinaryArrays.ReadVarints(reader);
@@ -269,6 +274,7 @@ public sealed class OdtRandomAccessIndex
             Bookmarks = new WordDocumentBookmarkTable(bookmarkNames, bookmarkBlocks),
             ConnectedShapes = connectedShapes,
             HasUnreadableRest = hasUnreadableRest,
+            NoteBlocks = noteBlockTable,
         };
     }
 

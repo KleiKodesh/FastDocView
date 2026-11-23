@@ -325,6 +325,9 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
             MergedRowBlocks = _mergedRowBlocks.Where(block => block < known).ToArray(),
             MergedRowCells = _mergedRowCells.Where((_, i) => _mergedRowBlocks[i] < known).ToArray(),
             BorderJoinedBlocks = _borderJoinedBlocks.Where(block => block + 1 < known).ToArray(),
+            NoteBlocks = RtfNoteBlockTable.From(_notes.Select(n => n.BlockIndex).Where(block => block < known).Distinct().ToArray(), _starts, _ends, _kinds,
+                                                block => _labelIds[block] >= 0 ? _labels[_labelIds[block]] : null,
+                                                block => _fieldStateIds[block], _fieldStates, block => _stateIds[block], _states),
         };
     }
 

@@ -5,7 +5,8 @@ namespace FastDocView.Odt;
 /// text length, list level / label / layout are recovered by rescanning its span - from the anchor's block start forward,
 /// with a fresh <see cref="OdtBodyBlockScanner"/> seated there (frames + numbering state from the anchor, list styles
 /// from the index) - so every value equals the one the index pass found. A span is scanned only as far as asked and kept
-/// for later requests; a handful of spans stay cached (LRU). The bytes read while scanning stay in a bounded ring, so
+/// for later requests; a handful of spans stay cached (LRU). Blocks holding notes are answered from the index's stored
+/// values (<see cref="OdtNoteBlockTable"/>) without a scan. The bytes read while scanning stay in a bounded ring, so
 /// the window just located is parsed from them without a second read; sequential windows cost one inflate pass.
 /// </summary>
 internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
@@ -145,8 +146,12 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
         return bytes;
     }
 
+    /// <summary>The block's entry in the index's note blocks (stored values, no span scan), or -1.</summary>
+    private int NoteBlockAt(int blockIndex) => _index.NoteBlocks.Find(blockIndex);
+
     public long BlockStartOffset(int blockIndex)
     {
+        if (NoteBlockAt(blockIndex) is >= 0 and var note) return _index.NoteBlocks.StartOf(note);
         if (IsAnchorPredecessor(blockIndex, out WordIndexSpanAnchor anchor)) return anchor.PreviousBlockPosition;
         Span span = EnsureStarted(blockIndex, out int local);
         return span.Scanner.BlockStartOffsets[local];
@@ -154,12 +159,14 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
 
     public long BlockEndOffset(int blockIndex)
     {
+        if (NoteBlockAt(blockIndex) is >= 0 and var note) return _index.NoteBlocks.EndOf(note);
         Span span = EnsureFinished(blockIndex, out int local);
         return span.Scanner.BlockEndOffsets[local];
     }
 
     public WordDocumentBlockKind BlockKindOf(int blockIndex)
     {
+        if (NoteBlockAt(blockIndex) is >= 0 and var note) return _index.NoteBlocks.KindOf(note);
         if (IsAnchorPredecessor(blockIndex, out WordIndexSpanAnchor anchor)) return anchor.PreviousBlockKind;
         Span span = EnsureStarted(blockIndex, out int local);
         return span.Scanner.BlockKinds[local];
@@ -167,6 +174,7 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
 
     public int BlockTextLengthOf(int blockIndex)
     {
+        if (NoteBlockAt(blockIndex) is >= 0 and var note) return _index.NoteBlocks.TextLengthOf(note);
         Span span = EnsureFinished(blockIndex, out int local);
         return span.Scanner.BlockTextLengths[local];
     }
@@ -183,6 +191,7 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
 
     public string? ListLabelOf(int blockIndex)
     {
+        if (NoteBlockAt(blockIndex) is >= 0 and var note) return _index.NoteBlocks.ListLabelOf(note);
         Span span = EnsureStarted(blockIndex, out int local);
         int labelIndex = span.Scanner.BlockListLabelIds[local];
         return labelIndex >= 0 ? span.Scanner.ListLabels[labelIndex] : null;
@@ -190,6 +199,7 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
 
     public string ListLabelLayoutOf(int blockIndex)
     {
+        if (NoteBlockAt(blockIndex) is >= 0 and var note) return _index.NoteBlocks.ListLabelLayoutOf(note);
         Span span = EnsureStarted(blockIndex, out int local);
         int labelIndex = span.Scanner.BlockListLabelIds[local];
         return labelIndex >= 0 ? span.Scanner.ListLabelLayouts[labelIndex] : "";
@@ -197,6 +207,7 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
 
     public int ListLevelOf(int blockIndex)
     {
+        if (NoteBlockAt(blockIndex) is >= 0 and var note) return _index.NoteBlocks.ListLevelOf(note);
         Span span = EnsureStarted(blockIndex, out int local);
         byte level = span.Scanner.BlockListLevels[local];
         return level == 255 ? -1 : level;
@@ -204,6 +215,7 @@ internal sealed partial class OdtCompactBlockTable : IOdtBlockTable
 
     public OdtFieldState FieldStateOf(int blockIndex)
     {
+        if (NoteBlockAt(blockIndex) is >= 0 and var note) return _index.NoteBlocks.FieldStateOf(note);
         Span span = EnsureStarted(blockIndex, out int local);
         return span.Scanner.BlockFieldStates[local];
     }

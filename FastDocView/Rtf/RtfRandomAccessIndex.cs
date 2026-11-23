@@ -18,7 +18,7 @@ public readonly record struct RtfNoteReference(int BlockIndex, WordDocumentNoteK
 public sealed class RtfRandomAccessIndex
 {
     private const string Magic = "KHRTFIDX";
-    private const int FormatVersion = 26;    // 26: section top / bottom margins (+1, 0 = unknown); 25: each open group's starting tab stops in the snapshot; 24: \deftab in the header tables, tab stops in the snapshot; 23: notes inside a field code (an EQ ruby's base) are indexed; 22: border groups (paragraphs joined to the next), cell text direction, border spacing / shadow / between (snapshot); 21: counted list labels stored beside {\listtext}; 20: list style links (\liststyleid), whole levels in list overrides; 19: note labels by section (\sftn* \saftn*), document restart words; 18: {\mmathPr} math settings in the header tables; 17: row height (\trrh) in the snapshot; 16: row definitions carry merges, vertical alignment, cell + row borders (snapshot), rows merged down; 15: list level character formatting, Word 6 levels; 14: list picture bullets; 13: list level fonts; 12: drop caps, hyphenation, language (group state + header); 11: gutter placement (rtlgutter, gutterprl) in section widths; 10: group state carries borders, shading, underline colour, emphasis; 9: section column lefts; 8: XE / TA entries;     // 7: anchor heads hold the open fields + field counters (RtfFieldTracker)
+    private const int FormatVersion = 27;    // 27: note blocks (each note-holding block's byte range, kind, label, field state and parser snapshot: a notes page reads no span); 26: section top / bottom margins (+1, 0 = unknown); 25: each open group's starting tab stops in the snapshot; 24: \deftab in the header tables, tab stops in the snapshot; 23: notes inside a field code (an EQ ruby's base) are indexed; 22: border groups (paragraphs joined to the next), cell text direction, border spacing / shadow / between (snapshot); 21: counted list labels stored beside {\listtext}; 20: list style links (\liststyleid), whole levels in list overrides; 19: note labels by section (\sftn* \saftn*), document restart words; 18: {\mmathPr} math settings in the header tables; 17: row height (\trrh) in the snapshot; 16: row definitions carry merges, vertical alignment, cell + row borders (snapshot), rows merged down; 15: list level character formatting, Word 6 levels; 14: list picture bullets; 13: list level fonts; 12: drop caps, hyphenation, language (group state + header); 11: gutter placement (rtlgutter, gutterprl) in section widths; 10: group state carries borders, shading, underline colour, emphasis; 9: section column lefts; 8: XE / TA entries;     // 7: anchor heads hold the open fields + field counters (RtfFieldTracker)
      // 4: compact block tables; 5: no per-block tables - span anchors + parser snapshot + list state, Elias-Fano lists; 6: row indent + alignment in the snapshot
     /// <summary>File bytes between span anchors: a random block rescans at most this much.</summary>
     public const long AnchorSpanBytes = 256 << 10;
@@ -71,6 +71,8 @@ public sealed class RtfRandomAccessIndex
 
     /// <summary>Block <paramref name="blockIndex"/> and the block after it are one border group.</summary>
     public bool IsBorderJoinedToNext(int blockIndex) => blockIndex >= 0 && Array.BinarySearch(BorderJoinedBlocks, blockIndex) >= 0;
+    /// <summary>The blocks holding notes, with what a span rescan would find for them (a notes page renders them without one).</summary>
+    internal RtfNoteBlockTable NoteBlocks { get; init; } = RtfNoteBlockTable.Empty;
     private readonly WordListCounterState.DeltaChain _scanStates;
 
     public RtfRandomAccessIndex(long sourceFileLength, long sourceLastWriteTicksUtc, RtfDocumentTables tables, bool isRightToLeft,
@@ -175,6 +177,8 @@ public sealed class RtfRandomAccessIndex
         writer.Write(noteBytes.ToArray());
         IndexBinaryArrays.WriteCompressedStrings(writer, NoteReferences.Select(r => r.Label).ToArray());
         Section($"note references ({NoteReferences.Length})");
+        NoteBlocks.Write(writer);
+        Section($"note blocks ({NoteBlocks.Blocks.Length})");
         IndexBinaryArrays.WriteDeltaVarints(writer, SectionLastBlocks);
         IndexBinaryArrays.WriteVarints(writer, SectionTextWidths);
         IndexBinaryArrays.WriteVarints(writer, SectionColumnLefts);
@@ -236,6 +240,7 @@ public sealed class RtfRandomAccessIndex
                 notes[i] = new RtfNoteReference(noteBlocks[i], (WordDocumentNoteKind)kind, previousNumber[kind], noteLabels[i]);
             }
         }
+        RtfNoteBlockTable noteBlockTable = RtfNoteBlockTable.Read(reader, blockCount, lastBlockEnd);
         int[] sectionLastBlocks = IndexBinaryArrays.ReadDeltaVarintsInt32(reader);
         int[] sectionTextWidths = IndexBinaryArrays.ReadVarints(reader);
         int[] sectionColumnLefts = IndexBinaryArrays.ReadVarints(reader);
@@ -267,6 +272,7 @@ public sealed class RtfRandomAccessIndex
             MergedRowBlocks = mergedRowBlocks,
             MergedRowCells = mergedRowCells,
             BorderJoinedBlocks = borderJoinedBlocks,
+            NoteBlocks = noteBlockTable,
         };
     }
 
