@@ -20,7 +20,7 @@ internal sealed class WordFontMetrics
     private static readonly ConcurrentDictionary<string, Lazy<WordFontMetrics?>> ByFamily = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Test switches: turn one measuring step off to prove a fixture depends on it (the SmartArt harness only).</summary>
-    internal static bool DisableStyles, DisableGposKerning, DisableShaping;
+    internal static bool DisableStyles, DisableGposKerning, DisableShaping, DisableIndicShaping;
 
     public readonly string Family;
     /// <summary>hhea ascender - descender + line gap in em: the height of one single-spaced line of DrawingML text in the face.</summary>
@@ -65,36 +65,51 @@ internal sealed class WordFontMetrics
 
     /// <summary>
     /// The width of a run of characters drawn in this face, in em, and its pair kerning apart (added only to kerned text).
-    /// Complex scripts (<paramref name="complex"/>; <paramref name="openTypeScript"/> "arab", "syrc", "hebr", "thaa", "thai") go
-    /// through the font's GSUB as a shaper applies it by default: composition (ccmp, locl), Arabic / Syriac positional forms from
-    /// cursive joining (isol / fina / medi / init), then required and standard ligatures and contextual alternates (rlig, calt,
-    /// liga, clig, mset); other text is measured glyph by glyph (Word draws Latin text without ligatures by default). Marks add
-    /// no width (GDEF class 3, else a non-spacing mark character). Kerning: the kern table's pairs, else GPOS 'kern' pair
-    /// adjustments of the script.
+    /// Complex scripts (<paramref name="complex"/>; <paramref name="openTypeScript"/> "arab", "syrc", "mong", "hebr", "thaa",
+    /// "thai", or an Indic script "deva" ... "mlym") go through the font's GSUB as a shaper applies it by default: composition
+    /// (ccmp, locl), Arabic / Syriac / Mongolian positional forms from cursive joining (isol / fina / medi / init), then required
+    /// and standard ligatures and contextual alternates (rlig, calt, liga, clig, mset, rclt; reverse chaining runs from the end);
+    /// Indic text through <see cref="WordIndicShaper"/> (reordering, masked features, the font's advances as they are: the
+    /// Indic shaper zeroes no marks); other text is measured glyph by glyph (Word draws Latin text without ligatures by
+    /// default). Marks add no width (GDEF class 3, else a non-spacing mark character); joiners (ZWJ / ZWNJ) none. Kerning: the
+    /// kern table's pairs, else GPOS 'kern' pair adjustments of the script.
     /// </summary>
     public double ShapedWidth(IReadOnlyList<int> codePoints, string openTypeScript, bool complex, out double kerningEm)
     {
         kerningEm = 0;
+        bool indic = complex && !DisableIndicShaping && WordIndicShaper.Handles(openTypeScript);
+        if (indic) codePoints = WordIndicShaper.Decompose(codePoints, Has);
         var buffer = new List<WordFontLayoutTables.Glyph>(codePoints.Count);
-        string?[]? forms = complex && openTypeScript is "arab" or "syrc" ? WordArabicJoining.Forms(codePoints) : null;
-        for (int i = 0; i < codePoints.Count; i++) buffer.Add(new WordFontLayoutTables.Glyph(Glyph(codePoints[i]), forms?[i]));
+        string?[]? forms = complex && openTypeScript is "arab" or "syrc" or "mong" ? WordArabicJoining.Forms(codePoints) : null;
+        for (int i = 0; i < codePoints.Count; i++) buffer.Add(new WordFontLayoutTables.Glyph(Glyph(codePoints[i]), forms?[i], codePoints[i]));
         bool shaped = false;
-        if (complex && !DisableShaping && _layout is { HasSubstitutions: true } && buffer.TrueForAll(g => g.Id != 0))
+        if (complex && !DisableShaping && _layout is { HasSubstitutions: true } && buffer.TrueForAll(g => g.Id != 0 || IsJoiner(g.CodePoint)))
         {
             var unshaped = new List<WordFontLayoutTables.Glyph>(buffer);
-            try { _layout.Substitute(buffer, openTypeScript, ShapingStages); shaped = true; }
+            try
+            {
+                if (indic) WordIndicShaper.Shape(_layout, buffer, openTypeScript, Glyph);
+                else _layout.Substitute(buffer, openTypeScript, ShapingStages);
+                shaped = true;
+            }
             catch (Exception exception) when (WordFontFile.IsUnreadable(exception)) { buffer = unshaped; }
         }
-        bool classes = _layout is not null && _layout.HasGlyphClasses;
+        bool classes = _layout is not null && _layout.HasGlyphClasses && !(indic && shaped);
         double width = 0;
         var spacing = new List<int>(buffer.Count);
         for (int i = 0; i < buffer.Count; i++)
         {
             int glyph = buffer[i].Id;
-            bool mark = classes ? _layout!.GlyphClass(glyph) == 3 : !shaped && IsNonSpacingMark(codePoints[i]);
+            if (IsJoiner(buffer[i].CodePoint)) continue;
+            bool mark = classes ? _layout!.GlyphClass(glyph) == 3 : !shaped && IsNonSpacingMark(buffer[i].CodePoint);
             if (mark) continue;
             width += glyph == 0 ? _averageEm : _advancesEm[Math.Min(glyph, _advancesEm.Length - 1)];
             if (glyph != 0) spacing.Add(glyph);
+        }
+        if (indic && shaped && !DisableGposKerning)
+        {
+            try { width += _layout!.Adjustments(spacing, WordIndicShaper.PositioningTag(_layout, openTypeScript), ["dist"]) / _unitsPerEm; }
+            catch (Exception exception) when (WordFontFile.IsUnreadable(exception)) { }
         }
         if (spacing.Count > 1)
         {
@@ -105,7 +120,7 @@ internal sealed class WordFontMetrics
             }
             else if (_layout is not null && !DisableGposKerning)
             {
-                try { kerningEm = _layout.PairKerning(spacing, openTypeScript) / _unitsPerEm; }
+                try { kerningEm = _layout.PairKerning(spacing, indic ? WordIndicShaper.PositioningTag(_layout, openTypeScript) : openTypeScript) / _unitsPerEm; }
                 catch (Exception exception) when (WordFontFile.IsUnreadable(exception)) { kerningEm = 0; }
             }
         }
@@ -113,7 +128,10 @@ internal sealed class WordFontMetrics
     }
 
     /// <summary>The GSUB feature stages a shaper applies to complex-script text by default (HarfBuzz hb-ot-shaper-arabic.cc / hb-ot-shaper-hebrew.cc: composition, positional forms, ligatures).</summary>
-    private static readonly string[][] ShapingStages = [["ccmp", "locl"], ["isol", "fina", "medi", "init"], ["rlig", "calt", "liga", "clig", "mset"]];
+    private static readonly string[][] ShapingStages = [["ccmp", "locl"], ["isol", "fina", "medi", "init"], ["rlig", "calt", "liga", "clig", "mset", "rclt"]];
+
+    /// <summary>ZERO WIDTH NON-JOINER / JOINER: default ignorables, drawn with no width (HarfBuzz hides them).</summary>
+    private static bool IsJoiner(int codePoint) => codePoint is 0x200C or 0x200D;
 
     /// <summary>The metrics of a family's regular face: its installed font file, else an embedded table for Calibri / Cambria / Times New Roman / Arial; null otherwise.</summary>
     public static WordFontMetrics? Of(string? family) => Of(family, false, false);

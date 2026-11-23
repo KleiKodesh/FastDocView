@@ -525,3 +525,9 @@ check, else it proves nothing (the first bold / Georgia / Arabic fixtures matche
 /BaseFont names show which face Word really used: Japanese was Yu Mincho from Office's cloud font cache even with the
 theme's a:ea set, not the a:ea face. Georgia's GPOS kerns almost nothing; Bahnschrift kerns a lot. The Bash tool turns
 backslash-u escapes in a command into real characters: write fixture sources with chr(92) + 'u' or a placeholder.
+
+Shaping, seventh round (2026-11-24): HarfBuzz's x advances (uharfbuzz installed with pip --target into a scratch folder)
+are a cheap exact oracle for shaped totals. Nirmala UI's Indic widths are the hmtx sums of the shaped glyphs except where
+GPOS 'dist' moves them (Kannada below-base forms, Gujarati vowel signs) - same glyphs, different total, so compare glyph
+ids before blaming the reordering. A reverse chaining rule can look ahead to glyphs no character sequence produces; search
+with the shaper before building a fixture around one.

@@ -6,8 +6,9 @@ namespace FastDocView.DocxHtml;
 /// <summary>
 /// Measures DrawingML paragraphs (a:p with a:r / a:fld runs, namespace-free) in the fonts Word draws them with, for SmartArt
 /// autofit. Each character takes a font slot as Office text does: complex-script characters (Hebrew, Arabic, Syriac, Thaana,
-/// Thai, ... ) the run's a:cs typeface, else the theme's complex-script font for that script (DocxTheme.ComplexScriptFont: the
-/// supplemental a:font, the Office theme's "Hebr" = Arial, else a:cs), else Arial / Times New Roman; East Asian characters (Han,
+/// Thai, the Indic scripts Devanagari ... Malayalam) the run's a:cs typeface, else the theme's complex-script font for that
+/// script (DocxTheme.ComplexScriptFont: the supplemental a:font, the Office theme's "Hebr" = Arial, "Deva" = Mangal, else a:cs),
+/// else Arial / Times New Roman, then Nirmala UI (Windows' Indic face); East Asian characters (Han,
 /// kana, Hangul, CJK punctuation and full-width forms) the run's a:ea typeface, else the theme's East Asian font for the
 /// character's script (DocxTheme.EastAsianFont: a:ea, else the supplemental "Jpan" / "Hans" / "Hant" / "Hang" font; Han takes
 /// the script of the run's lang, else of w:themeFontLang/@eastAsia, else Jpan), else the faces Windows ships for that script;
@@ -208,7 +209,7 @@ internal sealed class DocxDrawingTextFonts(DocxTheme? theme)
 
     private IEnumerable<WordFontMetrics> ComplexFaces(string? typeface, string? script, bool bold, bool italic)
     {
-        foreach (string? name in new[] { Resolve(typeface, script), theme?.ComplexScriptFont(false, script), "Arial", "Times New Roman" })
+        foreach (string? name in new[] { Resolve(typeface, script), theme?.ComplexScriptFont(false, script), "Arial", "Times New Roman", "Nirmala UI" })
             if (WordFontMetrics.Of(name, bold, italic) is { } face) yield return face;
     }
 
@@ -248,6 +249,7 @@ internal sealed class DocxDrawingTextFonts(DocxTheme? theme)
     private static string OpenTypeScript(string? complexScript, int codePoint, Slot slot) => complexScript switch
     {
         "Hebr" => "hebr", "Arab" => "arab", "Syrc" => "syrc", "Thaa" => "thaa", "Thai" => "thai",
+        "Deva" => "deva", "Beng" => "beng", "Guru" => "guru", "Gujr" => "gujr", "Orya" => "orya", "Taml" => "taml", "Telu" => "telu", "Knda" => "knda", "Mlym" => "mlym",
         _ => slot == Slot.EastAsian ? EastAsianScriptOf(codePoint) switch { "Hang" => "hang", "Jpan" => "kana", _ => "hani" } : "latn",
     };
 
@@ -259,6 +261,15 @@ internal sealed class DocxDrawingTextFonts(DocxTheme? theme)
         >= 0x0700 and <= 0x074F => "Syrc",
         >= 0x0780 and <= 0x07BF => "Thaa",
         >= 0x0E00 and <= 0x0E7F => "Thai",
+        >= 0x0900 and <= 0x097F => "Deva",
+        >= 0x0980 and <= 0x09FF => "Beng",
+        >= 0x0A00 and <= 0x0A7F => "Guru",
+        >= 0x0A80 and <= 0x0AFF => "Gujr",
+        >= 0x0B00 and <= 0x0B7F => "Orya",
+        >= 0x0B80 and <= 0x0BFF => "Taml",
+        >= 0x0C00 and <= 0x0C7F => "Telu",
+        >= 0x0C80 and <= 0x0CFF => "Knda",
+        >= 0x0D00 and <= 0x0D7F => "Mlym",
         _ => null,
     };
 

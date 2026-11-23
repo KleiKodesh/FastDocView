@@ -5,20 +5,39 @@ namespace FastDocView.Html;
 /// <summary>
 /// The OpenType layout tables of one face, read only, for measuring shaped text (OpenType 1.9 "GSUB", "GPOS", "GDEF",
 /// "OpenType Layout Common Table Formats"): glyph substitution by the features a shaper applies to a script (single, multiple,
-/// ligature, context and chained context substitution, through extension lookups; reverse chaining and alternates are not
-/// width-changing defaults and are skipped), lookup flags that skip base / ligature / mark glyphs (GDEF glyph classes, mark
+/// ligature, context, chained context and reverse chaining context substitution, through extension lookups; alternates are not
+/// a default feature and are skipped), lookup flags that skip base / ligature / mark glyphs (GDEF glyph classes, mark
 /// attachment classes, mark glyph sets) and GPOS pair adjustment (formats 1 and 2, through extension lookups) of the 'kern'
 /// feature: the x advance of both value records. Works on the raw table bytes; the lookups of a script and feature set are
 /// collected once and kept. A malformed table throws (the caller measures the text unshaped).
 /// </summary>
 internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? gdef)
 {
-    /// <summary>One glyph of the buffer with the positional form feature it takes ("init", "medi", "fina", "isol"; null = any).</summary>
-    internal struct Glyph(int id, string? form)
+    /// <summary>
+    /// One glyph of the buffer: the masked features it takes (<see cref="FeatureBit"/>: an Arabic positional form, the Indic
+    /// rphf / half / blwf ... a shaper's reordering assigns), the character it came from, and for Indic text its syllabic category,
+    /// position and syllable (lookups don't match across syllables) and whether a ligature / multiple substitution made it.
+    /// </summary>
+    internal struct Glyph(int id, string? form, int codePoint = 0)
     {
         public int Id = id;
-        public string? Form = form;
+        public uint Mask = FeatureBit(form);
+        public int CodePoint = codePoint;
+        public byte Category, Position;
+        public int Syllable;
+        public bool Ligated, Multiplied;
     }
+
+    /// <summary>
+    /// The mask bit of a feature a shaper applies only to the glyphs it marks (HarfBuzz F_GLOBAL off: the Arabic positional
+    /// forms, the Indic rphf / pref / blwf / abvf / half / pstf / init); 0 for a feature applied to every glyph.
+    /// </summary>
+    internal static uint FeatureBit(string? feature) => feature switch
+    {
+        "isol" => 1, "fina" => 2, "medi" => 4, "init" => 8,
+        "rphf" => 16, "pref" => 32, "blwf" => 64, "abvf" => 128, "half" => 256, "pstf" => 512,
+        _ => 0,
+    };
 
     /// <summary>Lookups of a table for one script and feature set, in lookup-list order, with the features each serves.</summary>
     private readonly ConcurrentDictionary<string, List<(int Lookup, string[] Features)>> _lookups = new(StringComparer.Ordinal);
@@ -28,6 +47,9 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
     private const int MaximumNesting = 64;
 
     public bool HasSubstitutions => gsub is not null;
+
+    /// <summary>Test switch: skip reverse chaining lookups, as before (the SmartArt harness proves its checks depend on them).</summary>
+    internal static bool DisableReverseChaining;
 
     /// <summary>Whether GDEF gives glyph classes (base / ligature / mark).</summary>
     public bool HasGlyphClasses => gdef is { Length: >= 6 } && U16(gdef, 4) > 0;
@@ -78,10 +100,23 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
         foreach (string[] stage in stages)
             foreach ((int lookup, string[] features) in Lookups(gsub, script, stage))
             {
-                bool positionalOnly = features.All(IsPositional);
+                // a lookup applies to a glyph when one of its features is global or the glyph carries a masked feature's bit
+                uint mask = 0;
+                bool global = false;
+                foreach (string feature in features)
+                    if (FeatureBit(feature) is var bit and > 0) mask |= bit; else global = true;
+                if (IsReverse(lookup))
+                {
+                    if (DisableReverseChaining) continue;
+                    // reverse chaining (type 8, Nastaliq): from the end of the text back, each glyph replaced in place, so a
+                    // rule's lookahead sees the glyphs already replaced (OpenType GSUB LookupType 8; HarfBuzz hb-ot-layout.cc apply_backward)
+                    for (int i = buffer.Count - 1; i >= 0; i--)
+                        if (global || (buffer[i].Mask & mask) != 0) ApplySubstitution(lookup, buffer, i, 0);
+                    continue;
+                }
                 for (int i = 0; i < buffer.Count; i++)
                 {
-                    if (positionalOnly && (buffer[i].Form is not { } form || Array.IndexOf(features, form) < 0)) continue;
+                    if (!global && (buffer[i].Mask & mask) == 0) continue;
                     int before = buffer.Count;
                     if (!ApplySubstitution(lookup, buffer, i, 0)) continue;
                     // continue after this lookup's output (a multiple substitution must not run again on the glyphs it made)
@@ -91,7 +126,55 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
             }
     }
 
-    private static bool IsPositional(string feature) => feature is "init" or "medi" or "fina" or "isol";
+    /// <summary>Applies one GSUB lookup over the buffer as <see cref="Substitute"/> does (reverse chaining from the end): a test hook for a single lookup of a font.</summary>
+    internal void ApplyLookup(List<Glyph> buffer, int lookup)
+    {
+        if (gsub is null) return;
+        if (IsReverse(lookup))
+        {
+            if (DisableReverseChaining) return;
+            for (int i = buffer.Count - 1; i >= 0; i--) ApplySubstitution(lookup, buffer, i, 0);
+        }
+        else for (int i = 0; i < buffer.Count; i++) ApplySubstitution(lookup, buffer, i, 0);
+    }
+
+    /// <summary>Whether a GSUB lookup is reverse chaining (type 8, also behind an extension lookup).</summary>
+    private bool IsReverse(int lookupIndex)
+    {
+        (int type, _, _, int[] subtables) = Lookup(gsub!, lookupIndex);
+        return type == 8 || type == 7 && subtables.Length > 0 && U16(gsub!, subtables[0] + 2) == 8;
+    }
+
+    /// <summary>Whether the table has the script (its own tag, not the DFLT / latn fallback).</summary>
+    public bool HasScript(string script) => gsub is not null && FindScript(gsub, U16(gsub, 4), script) is not null;
+
+    /// <summary>Whether GPOS has the script (its own tag).</summary>
+    public bool HasPositioningScript(string script) => gpos is not null && FindScript(gpos, U16(gpos, 4), script) is not null;
+
+    /// <summary>Whether the script's language system lists the feature with at least one lookup.</summary>
+    public bool HasFeature(string script, string feature) => gsub is not null && Lookups(gsub, script, [feature]).Count > 0;
+
+    /// <summary>
+    /// Whether one of the feature's lookups would substitute exactly this glyph sequence on its own (HarfBuzz
+    /// hb_ot_layout_lookup_would_substitute, as the Indic shaper asks it to find reph / below-base / post-base forms): a single,
+    /// multiple or reverse substitution of a one-glyph sequence, a ligature of all of them, a context rule matching from the
+    /// first with nothing before it.
+    /// </summary>
+    public bool WouldSubstitute(string script, string feature, params int[] glyphs)
+    {
+        if (gsub is null || glyphs.Length == 0) return false;
+        foreach ((int lookup, _) in Lookups(gsub, script, [feature]))
+        {
+            var buffer = glyphs.Select(g => new Glyph(g, null)).ToList();
+            (int type, _, _, int[] subtables) = Lookup(gsub, lookup);
+            if (type == 7 && subtables.Length > 0) type = U16(gsub, subtables[0] + 2);
+            if (type is 1 or 2 or 8 && glyphs.Length != 1) continue;
+            if (!ApplySubstitution(lookup, buffer, 0, 0)) continue;
+            if (type == 4 && buffer.Count != 1) continue;
+            return true;
+        }
+        return false;
+    }
 
     private (int Type, int Flag, int MarkSet, int[] Subtables) Lookup(byte[] table, int index)
     {
@@ -128,7 +211,7 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
                     int coverage = Coverage(table, at + U16(table, at + 2), glyph);
                     if (coverage < 0) continue;
                     int replacement = format == 1 ? (glyph + S16(table, at + 4)) & 0xFFFF : U16(table, at + 6 + coverage * 2);
-                    buffer[position] = new Glyph(replacement, buffer[position].Form);
+                    buffer[position] = buffer[position] with { Id = replacement };
                     return true;
                 }
                 case 2:
@@ -136,9 +219,9 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
                     int coverage = Coverage(table, at + U16(table, at + 2), glyph);
                     if (coverage < 0) continue;
                     int sequence = at + U16(table, at + 6 + coverage * 2), count = U16(table, sequence);
-                    string? form = buffer[position].Form;
+                    Glyph source = buffer[position];
                     buffer.RemoveAt(position);
-                    for (int k = count - 1; k >= 0; k--) buffer.Insert(position, new Glyph(U16(table, sequence + 2 + k * 2), form));
+                    for (int k = count - 1; k >= 0; k--) buffer.Insert(position, source with { Id = U16(table, sequence + 2 + k * 2), Multiplied = true });
                     return true;
                 }
                 case 4:
@@ -151,7 +234,7 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
                         int ligature = set + U16(table, set + 2 + l * 2), components = U16(table, ligature + 2);
                         int[]? matched = MatchInput(buffer, position, components, (k, g) => g == U16(table, ligature + 4 + (k - 1) * 2), flag, markSet);
                         if (matched is null) continue;
-                        buffer[position] = new Glyph(U16(table, ligature), buffer[position].Form);
+                        buffer[position] = buffer[position] with { Id = U16(table, ligature), Ligated = true, Multiplied = false };
                         for (int k = matched.Length - 1; k >= 1; k--) buffer.RemoveAt(matched[k]);
                         return true;
                     }
@@ -160,8 +243,23 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
                 case 5 or 6:
                     if (ApplyContext(table, type, format, at, buffer, position, flag, markSet, depth, ApplySubstitution)) return true;
                     continue;
+                case 8:
+                {
+                    // reverse chaining single substitution, only as a lookup of its own, never nested (HarfBuzz
+                    // OT/Layout/GSUB/ReverseChainSingleSubstFormat1.hh:111-160 apply)
+                    if (depth > 0 || format != 1) continue;
+                    int coverage = Coverage(table, at + U16(table, at + 2), glyph);
+                    if (coverage < 0) continue;
+                    int backtrack = U16(table, at + 4), lookaheadAt = at + 6 + backtrack * 2, lookahead = U16(table, lookaheadAt);
+                    int substitutesAt = lookaheadAt + 2 + lookahead * 2;
+                    if (coverage >= U16(table, substitutesAt)) continue;
+                    if (!MatchBacktrack(buffer, position, backtrack, (k, g) => Coverage(table, at + U16(table, at + 6 + k * 2), g) >= 0, flag, markSet)) continue;
+                    if (!MatchLookahead(buffer, position, lookahead, (k, g) => Coverage(table, at + U16(table, lookaheadAt + 2 + k * 2), g) >= 0, flag, markSet)) continue;
+                    buffer[position] = buffer[position] with { Id = U16(table, substitutesAt + 2 + coverage * 2) };
+                    return true;
+                }
                 default:
-                    continue;   // 3 alternate (not a default feature), 8 reverse chaining (Nastaliq), unknown
+                    continue;   // 3 alternate (not a default feature), unknown
             }
         }
         return false;
@@ -285,7 +383,8 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
         for (int k = 1; k < count; k++)
         {
             do at++; while (at < buffer.Count && Skips(buffer[at].Id, flag, markSet));
-            if (at >= buffer.Count || !matches(k, buffer[at].Id)) return null;
+            // Indic text: a rule never matches across a syllable (HarfBuzz F_PER_SYLLABLE; other text has syllable 0)
+            if (at >= buffer.Count || buffer[at].Syllable != buffer[position].Syllable || !matches(k, buffer[at].Id)) return null;
             positions[k] = at;
         }
         return positions;
@@ -297,7 +396,7 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
         for (int k = 0; k < count; k++)
         {
             do at--; while (at >= 0 && Skips(buffer[at].Id, flag, markSet));
-            if (at < 0 || !matches(k, buffer[at].Id)) return false;
+            if (at < 0 || buffer[at].Syllable != buffer[position].Syllable || !matches(k, buffer[at].Id)) return false;
         }
         return true;
     }
@@ -308,7 +407,7 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
         for (int k = 0; k < count; k++)
         {
             do at++; while (at < buffer.Count && Skips(buffer[at].Id, flag, markSet));
-            if (at >= buffer.Count || !matches(k, buffer[at].Id)) return false;
+            if (at >= buffer.Count || buffer[at].Syllable != buffer[last].Syllable || !matches(k, buffer[at].Id)) return false;
         }
         return true;
     }
@@ -316,15 +415,42 @@ internal sealed class WordFontLayoutTables(byte[]? gsub, byte[]? gpos, byte[]? g
     // ── GPOS ──────────────────────────────────────────────────────────────────────
 
     /// <summary>The pair kerning of a glyph sequence in font units: the 'kern' feature's pair adjustment lookups (x advance of both glyphs), each lookup passing over the glyphs its flags skip.</summary>
-    public int PairKerning(IReadOnlyList<int> glyphs, string script)
+    public int PairKerning(IReadOnlyList<int> glyphs, string script) => Adjustments(glyphs, script, ["kern"]);
+
+    /// <summary>
+    /// The x advance adjustments of a feature's GPOS lookups over a glyph sequence in font units: single adjustment (type 1,
+    /// formats 1 and 2) and pair adjustment (type 2), through extension lookups. 'dist' is the Indic shapers' required spacing
+    /// feature (Nirmala UI moves Kannada below-base forms and Gujarati vowel signs with it; HarfBuzz applies it by default).
+    /// </summary>
+    public int Adjustments(IReadOnlyList<int> glyphs, string script, string[] features)
     {
-        if (gpos is null || glyphs.Count < 2) return 0;
+        if (gpos is null || glyphs.Count == 0) return 0;
         byte[] table = gpos;
         int total = 0;
-        foreach ((int lookupIndex, _) in Lookups(table, script, ["kern"]))
+        foreach ((int lookupIndex, _) in Lookups(table, script, features))
         {
             (int lookupType, int flag, int markSet, int[] subtables) = Lookup(table, lookupIndex);
-            if (lookupType is not (2 or 9)) continue;
+            int realType = lookupType == 9 && subtables.Length > 0 ? U16(table, subtables[0] + 2) : lookupType;
+            if (realType == 1)
+            {
+                foreach (int glyph in glyphs)
+                {
+                    if (Skips(glyph, flag, markSet)) continue;
+                    foreach (int subtableAt in subtables)
+                    {
+                        (int type, int at) = Resolve(table, lookupType, subtableAt, 9);
+                        if (type != 1) continue;
+                        int coverage = Coverage(table, at + U16(table, at + 2), glyph);
+                        if (coverage < 0) continue;
+                        int valueFormat = U16(table, at + 4);
+                        int record = U16(table, at) == 1 ? at + 6 : at + 8 + coverage * ValueSize(valueFormat);
+                        if ((valueFormat & 4) != 0) total += S16(table, record + ValueSize(valueFormat & 3));
+                        break;
+                    }
+                }
+                continue;
+            }
+            if (realType != 2 || glyphs.Count < 2) continue;
             for (int i = 0; i < glyphs.Count; i++)
             {
                 if (Skips(glyphs[i], flag, markSet)) continue;

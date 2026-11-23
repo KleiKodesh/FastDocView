@@ -1819,6 +1819,22 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   only when a family needs it, metrics per family / style are Lazy entries of a ConcurrentDictionary. LibreOffice
   (oox/source/drawingml/textcharacterproperties.cxx, textfont.cxx) passes the faces to VCL and measures at render time,
   so Word's drawings are the reference.
+  2026-11-24 (seventh round, shaping): (1) GSUB reverse chaining single substitution (type 8, through extension lookups)
+  runs from the end of the text back, never nested (HarfBuzz OT/Layout/GSUB/ReverseChainSingleSubstFormat1.hh:111-160,
+  hb-ot-layout.cc:1949 apply_backward); 'rclt' joins the default stage; Mongolian joins the cursive-joining scripts. No
+  installed font's reverse rule changes a reachable text's width (Mongolian Baiti looks ahead to glyphs no text makes; Sans
+  Serif Collection's are zero-width marks), so --smartart checks the lookup on glyphs against the font's own rule (1937 1937
+  2508 -> 2520 2520 2508: only a reverse pass carries the change leftward). (2) WordIndicShaper: the Indic engine ported from
+  hb-ot-shaper-indic.cc 11.2.1 (categories from its generated Unicode 16 table, syllable scanner of
+  hb-ot-shaper-indic-machine.rl, base / reph / positions / masks of initial reordering, basic features one stage each, final
+  reordering of pre-base matras, reph and pre-base Ra, init, presentation features with liga off) plus the Indic 'dist'
+  GPOS spacing (single and pair adjustment); marks keep their advances (ZERO_WIDTH_MARKS_NONE); ZWJ / ZWNJ take no width.
+  Indic characters now take the complex-script slot (theme "Deva" ... fonts, then Nirmala UI). --smartart: 29 Indic totals
+  over Nirmala UI equal HarfBuzz's x advances (uharfbuzz), 25 of them differ without the engine; Kannada needed 'dist',
+  Telugu the pre-base Ra move. (3) Synthetic bold / italic: LibreOffice keeps advances (vcl/source/font/
+  LogicalFontInstance.cxx:471-479 NeedsArtificialBold / Italic only pick drawing; vcl/skia/x11/textrender.cxx:74-75
+  setEmbolden), as we do; Word's own widening is open. Word fixtures for Indic and Gabriola bold / italic are written by
+  scripts/make-smartart-shaping-fixtures.py but were not built (hidden Word automation was not permitted in this session).
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
   pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns

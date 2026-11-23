@@ -51,7 +51,106 @@ public static class SmartArtLayoutFidelityTest
         }
         RunDeepData();
         RunFontMetrics();
+        RunShaping();
         RunFontDependencies(folder);
+    }
+
+    /// <summary>
+    /// Shaped advance totals over installed fonts (read only) against HarfBuzz 11 (uharfbuzz, x advances summed; the Indic
+    /// shaper and reverse chaining as hb-ot-shaper-indic.cc / hb-ot-layout.cc apply them): Mongolian Baiti's 'rclt' is a
+    /// reverse chaining lookup (GSUB type 8, as Nastaliq fonts use; checked on glyphs too); Nirmala UI covers the nine Indic scripts (reph, half and
+    /// below-base forms, pre-base matras, pre-base Ra, split matras, conjuncts, 'dist' spacing). Each step must matter: without
+    /// reverse chaining the glyphs stay, without the Indic shaper totals move. Skipped when a font is not installed.
+    /// </summary>
+    private static void RunShaping()
+    {
+        TestReport.Step("Shaping: reverse chaining substitution and the Indic shaping engine (advance totals as HarfBuzz)");
+        (string Script, string Font, string CodePoints, int Units)[] cases =
+        [
+        ("mong", "Mongolian Baiti", "182E 1823 1829 182D 1823 182F", 3193),
+        ("mong", "Mongolian Baiti", "182E 1823 1829 182D 1823 182F 1824 1828", 4290),
+        ("deva", "Nirmala UI", "0915 093F 0938 094D 0924 093E 0928", 6191),
+        ("deva", "Nirmala UI", "0927 0930 094D 092E", 2677),
+        ("deva", "Nirmala UI", "0915 0930 094D 0924 0943", 3021),
+        ("deva", "Nirmala UI", "0939 093F 0928 094D 0926 0940", 4172),
+        ("deva", "Nirmala UI", "0926 094D 0935 093E 0930", 2808),
+        ("deva", "Nirmala UI", "0936 094D 0930 0940", 1862),
+        ("deva", "Nirmala UI", "0930 094D 0915 093F", 2300),
+        ("deva", "Nirmala UI", "0915 094D 0937 093F", 2001),
+        ("deva", "Nirmala UI", "0938 094D 0924 094D 0930 093F", 2707),
+        ("beng", "Nirmala UI", "0995 09CB", 3155),
+        ("beng", "Nirmala UI", "09B0 09CD 0995", 1799),
+        ("beng", "Nirmala UI", "0995 09CD 09B7 09BF", 2570),
+        ("beng", "Nirmala UI", "09AC 09BE 0982 09B2 09BE", 4705),
+        ("beng", "Nirmala UI", "09B0 09CD 09AC 09C7", 2088),
+        ("guru", "Nirmala UI", "0A2A 0A70 0A1C 0A3E 0A2C 0A40", 4997),
+        ("gujr", "Nirmala UI", "0A97 0AC1 0A9C 0AB0 0ABE 0AA4 0AC0", 6768),
+        ("gujr", "Nirmala UI", "0AA7 0AB0 0ACD 0AAE", 2739),
+        ("orya", "Nirmala UI", "0B13 0B21 0B3C 0B3F 0B06", 4467),
+        ("orya", "Nirmala UI", "0B15 0B4D 0B37 0B47", 2606),
+        ("taml", "Nirmala UI", "0B95 0BCA", 5087),
+        ("taml", "Nirmala UI", "0BA4 0BAE 0BBF 0BB4 0BCD", 6080),
+        ("telu", "Nirmala UI", "0C24 0C46 0C32 0C41 0C17 0C41", 6548),
+        ("telu", "Nirmala UI", "0C15 0C4D 0C37 0C4D 0C30", 2471),
+        ("knda", "Nirmala UI", "0C95 0CA8 0CCD 0CA8 0CA1", 5879),
+        ("knda", "Nirmala UI", "0C95 0CCA", 3160),
+        ("knda", "Nirmala UI", "0CB0 0CCD 0C95", 2940),
+        ("mlym", "Nirmala UI", "0D2E 0D32 0D2F 0D3E 0D33 0D02", 10163),
+        ("mlym", "Nirmala UI", "0D15 0D4A", 5255),
+        ("mlym", "Nirmala UI", "0D15 0D4D 0D37", 4037),
+        ];
+        int Differs(Func<(string Script, string Font, string CodePoints, int Units), bool> which)
+        {
+            int count = 0;
+            foreach (var test in cases.Where(which))
+                if (WordFontMetrics.Of(test.Font) is { } face && Math.Abs(Units(face, test) - test.Units) > 0.5) count++;
+            return count;
+        }
+        foreach (var test in cases)
+        {
+            if (WordFontMetrics.Of(test.Font) is not { } face || !face.Has(int.Parse(test.CodePoints.Split(' ')[0], NumberStyles.HexNumber)))
+            {
+                Console.WriteLine($"   INFO  {test.Font} not installed: {test.Script} {test.CodePoints} skipped");
+                continue;
+            }
+            double units = Units(face, test);
+            TestReport.Check(Math.Abs(units - test.Units) < 0.5, $"{test.Font} {test.Script} {test.CodePoints}: {units:0} units, HarfBuzz {test.Units}");
+        }
+        // no installed font's reverse chaining changes a reachable text's width (Mongolian Baiti's rule looks ahead to glyphs
+        // no character sequence makes): the lookup itself is checked on glyphs, against the font's own rule (rclt lookup 232:
+        // glyph 1937 before one of glyphs 2508-2513 or 2520 becomes 2520, a different width)
+        if (WordFontFile.Find("Mongolian Baiti") is { } mongolian)
+        {
+            WordFontLayoutTables layout;
+            using (FileStream stream = WordFontFile.Open(mongolian.Path))
+            {
+                var tables = WordFontFile.Tables(stream, WordFontFile.FaceOffsets(stream)[mongolian.Face]);
+                layout = new WordFontLayoutTables(WordFontFile.Read(stream, tables["GSUB"]), null, null);
+            }
+            List<int> Run()
+            {
+                var buffer = new List<WordFontLayoutTables.Glyph> { new(1937, null), new(1937, null), new(2508, null) };
+                layout.ApplyLookup(buffer, 232);
+                return buffer.Select(g => g.Id).ToList();
+            }
+            List<int> reversed = Run();
+            TestReport.Check(reversed.SequenceEqual([2520, 2520, 2508]), $"Mongolian Baiti rclt reverse chaining: 1937 1937 2508 -> {string.Join(" ", reversed)} (expected 2520 2520 2508: the rule's lookahead also covers 2520, so the change runs leftward only when applied from the end)");
+            WordFontLayoutTables.DisableReverseChaining = true;
+            try { TestReport.Check(Run().SequenceEqual([1937, 1937, 2508]), "without reverse chaining the glyphs stay"); }
+            finally { WordFontLayoutTables.DisableReverseChaining = false; }
+        }
+        WordFontMetrics.DisableIndicShaping = true;
+        int indic;
+        try { indic = Differs(t => t.Script != "mong"); }
+        finally { WordFontMetrics.DisableIndicShaping = false; }
+        TestReport.Check(indic > 0, $"without the Indic shaper {indic} Indic totals differ");
+    }
+
+    /// <summary>A code point list's shaped advance in the font's units (2048 per em for both test fonts).</summary>
+    private static double Units(WordFontMetrics face, (string Script, string Font, string CodePoints, int Units) test)
+    {
+        int[] codePoints = test.CodePoints.Split(' ').Select(h => int.Parse(h, NumberStyles.HexNumber)).ToArray();
+        return face.ShapedWidth(codePoints, test.Script, true, out _) * 2048;
     }
 
     /// <summary>
