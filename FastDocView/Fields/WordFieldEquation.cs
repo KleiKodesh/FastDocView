@@ -162,10 +162,13 @@ public static class WordFieldEquation
                     return elements.Count >= 2 ? "<mroot><mrow>" + elements[1] + "</mrow><mrow>" + elements[0] + "</mrow></mroot>" : "<msqrt><mrow>" + At(elements, 0) + "</mrow></msqrt>";
                 case "b":
                 {
-                    string left = Option("bc") ?? Option("lc") ?? "(";
-                    string right = Option("bc") is { } both ? Mirror(both) : Option("rc") ?? ")";
-                    return "<mrow><mo stretchy=\"true\">" + WordHtmlText.Encode(left) + "</mo><mrow>" + string.Concat(elements) + "</mrow><mo stretchy=\"true\">"
-                           + WordHtmlText.Encode(right) + "</mo></mrow>";
+                    // Word 16 (test-data/word-fields/eq-layout-v1.pdf): \lc\X alone draws only the left bracket, \rc\X alone
+                    // only the right one; no option draws ( ); \bc\X draws X and its mirror
+                    bool none = !Has("bc") && !Has("lc") && !Has("rc");
+                    string left = Option("bc") ?? Option("lc") ?? (none ? "(" : "");
+                    string right = Option("bc") is { } both ? Mirror(both) : Option("rc") ?? (none ? ")" : "");
+                    return "<mrow>" + (left.Length > 0 ? "<mo stretchy=\"true\">" + WordHtmlText.Encode(left) + "</mo>" : "") + "<mrow>" + string.Concat(elements) + "</mrow>"
+                           + (right.Length > 0 ? "<mo stretchy=\"true\">" + WordHtmlText.Encode(right) + "</mo>" : "") + "</mrow>";
                 }
                 case "l": return "<mrow>" + string.Join("<mo>,</mo>", elements) + "</mrow>";
                 case "s":
@@ -185,7 +188,8 @@ public static class WordFieldEquation
                 {
                     string symbol = Option("fc") ?? Option("vc") ?? (Has("su") ? "∑" : Has("pr") ? "∏" : "∫");
                     string op = "<mo largeop=\"true\" movablelimits=\"false\">" + WordHtmlText.Encode(symbol) + "</mo>";
-                    string limits = Has("in") || symbol == "∫"
+                    // limits above and below the symbol, integral too; \in puts them to its right (Word 16, eq-layout-v1.pdf)
+                    string limits = Has("in")
                         ? "<msubsup>" + op + "<mrow>" + At(elements, 0) + "</mrow><mrow>" + At(elements, 1) + "</mrow></msubsup>"
                         : "<munderover>" + op + "<mrow>" + At(elements, 0) + "</mrow><mrow>" + At(elements, 1) + "</mrow></munderover>";
                     return "<mrow>" + limits + "<mrow>" + At(elements, 2) + "</mrow></mrow>";
@@ -213,10 +217,11 @@ public static class WordFieldEquation
                 }
                 case "o":
                 {
-                    // overstrike: every element drawn on the same place (all but the last take no width)
-                    var html = new StringBuilder("<mrow>");
-                    for (int i = 0; i < elements.Count; i++)
-                        html.Append(i < elements.Count - 1 ? "<mpadded width=\"0\"><mrow>" + elements[i] + "</mrow></mpadded>" : "<mrow>" + elements[i] + "</mrow>");
+                    // overstrike: every element drawn in one place, as wide as the widest, centred (\ac, the default), left (\al) or
+                    // right (\ar) aligned (Word 16, eq-layout-v1.pdf); one CSS grid cell holds them all, baseline aligned
+                    string justify = Has("al") ? "start" : Has("ar") ? "end" : "center";
+                    var html = new StringBuilder("<mrow class=\"eq-overstrike\" style=\"justify-items:" + justify + "\">");
+                    foreach (string element in elements) html.Append("<mrow>").Append(element).Append("</mrow>");
                     return html.Append("</mrow>").ToString();
                 }
                 case "x":

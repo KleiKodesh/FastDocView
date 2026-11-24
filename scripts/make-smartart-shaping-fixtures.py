@@ -1,7 +1,7 @@
 """Writes scripts/smartart-shaping-fixtures.json (ASCII; non-Latin text as u-escapes) for make-smartart-layouts.ps1 -Fixtures:
 SmartArt block lists that check shaping against Word's own drawing part - Indic text in Nirmala UI (Devanagari reph, half
 and below-base forms; Kannada below-base forms Nirmala spaces with GPOS 'dist'; Telugu conjuncts) and a family with no bold /
-italic face (Gabriola: Word synthesizes the style). One long word per node, so a few percent of width moves the size a point.
+italic face (Gabriola, Sylfaen, Impact: Word synthesizes the style). One long word per node, so a few percent of width moves the size a point.
   python scripts/make-smartart-shaping-fixtures.py
   powershell -File scripts/make-smartart-layouts.ps1 -Fixtures scripts/smartart-shaping-fixtures.json
   python scripts/strip-smartart-drawing.py"""
@@ -34,6 +34,11 @@ fixtures = [
     {'id': 'default', 'name': 'gabriola-bold-block-list', 'bold': True, 'minorLatin': 'Gabriola', 'texts': LATIN},
     {'id': 'default', 'name': 'gabriola-italic-block-list', 'italic': True, 'minorLatin': 'Gabriola', 'texts': LATIN},
     {'id': 'default', 'name': 'gabriola-block-list', 'minorLatin': 'Gabriola', 'texts': LATIN},
+    # two more families with no bold face: does Word's synthesized bold measure narrower than the regular face in general?
+    {'id': 'default', 'name': 'sylfaen-bold-block-list', 'bold': True, 'minorLatin': 'Sylfaen', 'texts': LATIN},
+    {'id': 'default', 'name': 'sylfaen-block-list', 'minorLatin': 'Sylfaen', 'texts': LATIN},
+    {'id': 'default', 'name': 'impact-bold-block-list', 'bold': True, 'minorLatin': 'Impact', 'texts': LATIN},
+    {'id': 'default', 'name': 'impact-block-list', 'minorLatin': 'Impact', 'texts': LATIN},
 ]
 target = pathlib.Path(__file__).resolve().parent / 'smartart-shaping-fixtures.json'
 target.write_text(json.dumps(fixtures, ensure_ascii=True, indent=1) + '\n', encoding='ascii')

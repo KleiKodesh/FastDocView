@@ -166,7 +166,7 @@ Headers / footers, columns and page layout are not shown (flow view): see UNSUPP
 | Separator notes dropped | yes | yes | yes | n.a. | n.a. | n.a. |
 | Search inside notes (own notes search, apart from the main text) | yes | yes | yes | yes | n.a. | n.a. |
 | Notes inside table cells | yes | yes | yes | yes | n.a. | n.a. |
-| Notes inside fields: in a field's result, in an EQ field's code (mark in place), in another field's code (mark after the result) | ruby only (N5) | ruby only (N5) | yes (N5) | n.a. | n.a. | n.a. |
+| Notes inside fields: in a field's result, in an EQ field's code (mark in place), in another field's code (no mark, as Word; the note keeps its number) | yes (N5) | ruby only (N5) | yes (N5) | n.a. | n.a. | n.a. |
 | Notes inside text boxes, nested frames and shape text (mark in the body, pane, search, numbered in document order) | yes (N3) | n.a. (N3) | n.a. (N3) | yes (N4) | n.a. | n.a. |
 | Notes pane (app: one windowed scroller of all notes, click lands the note), hover tooltip (book view's link tooltip) | yes | yes | yes | yes | yes | partial (17) |
 
@@ -179,8 +179,9 @@ N4. LibreOffice drops a note in a text frame (sw thints.cxx SwTextNode::InsertHi
     frames keep footnotes) and will not load a file with one in a shape's text; we show what the file holds, numbered in
     document order. A note in Fontwork text, a dimension label or a shape the drawing leaves out (no geometry, a frame inside a group) is in
     the pane, in document order, but has no mark.
-N5. RTF: test-data/word-ruby/note-in-field-v1.rtf (hand-written, `--ruby`); LibreOffice also keeps a {ootnote} inside
-    ldinst (rtfdispatchdestination.cxx:265-317). .doc / .docx: checked against Word only inside a ruby (ruby-edges-v1).
+N5. RTF: test-data/word-ruby/note-in-field-v1.rtf (hand-written, `--ruby`); LibreOffice also keeps a {\footnote} inside
+    \fldinst (rtfdispatchdestination.cxx:265-317). Word 16's PDFs of it and of note-in-field-code-v1.rtf / Word's .docx of it draw no
+    mark for a note in a non-EQ field's code (the note is still numbered and listed). .doc: checked against Word only inside a ruby (ruby-edges-v1).
 N2. The citation text LibreOffice wrote is shown; without one, num-format, start-value and start-numbering-at="chapter" are followed.
 16. Torat Emet note lines only.
 17. Word's own HTML note links and texts are passed through.
@@ -283,7 +284,7 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 |---|---|---|---|---|---|---|
 | Tracked changes as Word's final view (deletions hidden) | yes | yes | yes | yes | n.a. | n.a. |
 | Ruby (as HTML ruby: guide font, size and alignment; search reads the base) | yes | partial (14) | partial (14) | yes | n.a. | n.a. |
-| EQ field equations (MathML Core; every switch, with the spacing options \a \vsN \hsN and \s \aiN \diN) | yes | yes | yes | n.a. | n.a. | n.a. |
+| EQ field equations (MathML Core; every switch, with the spacing options \a \vsN \hsN and \s \aiN \diN; checked against Word 16: \o centred by default, \al / \ar left / right, \i limits above and below unless \in, \b with only \lc or \rc one bracket) | yes | yes | yes | n.a. | n.a. | n.a. |
 
 14. Word saves a phonetic guide to .doc and RTF as an EQ field (`EQ \* jcN \* "Font:..." \* hpsN \o(\s\up N(guide),base)`); it is drawn as HTML ruby, but the base sits in the field code, so search does not find it (as Word's own field-result text is empty).
 

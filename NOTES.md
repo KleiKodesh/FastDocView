@@ -1844,6 +1844,14 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   LogicalFontInstance.cxx:471-479 NeedsArtificialBold / Italic only pick drawing; vcl/skia/x11/textrender.cxx:74-75
   setEmbolden), as we do; Word's own widening is open. Word fixtures for Indic and Gabriola bold / italic are written by
   scripts/make-smartart-shaping-fixtures.py but were not built (hidden Word automation was not permitted in this session).
+  Built 2026-11-24 (hidden Word 16, make-smartart-layouts.ps1 -Fixtures; plus Sylfaen and Impact, regular and bold): Word does
+  not widen a synthesized bold. Its PDFs draw the same glyphs filled and stroked (0.8 pt at 28 pt), and Sylfaen bold, Impact
+  bold and Gabriola italic get Word's sizes from the regular advances (now in --smartart's checked list). Gabriola bold is the
+  exception: Word draws its advances about 1.5 % narrower than the regular face's (drawn / hmtx 0.985 against 1.001 for
+  regular) and its autofit gives 28 pt where the regular face gets 27; we give 27 (INFO, cause not known). Kannada and Telugu
+  sizes match Word's; Devanagari is 28 pt for Word's 27: our snake boxes are 0.2 pt wider than Word's (Word's 3-node block
+  list is 2364168 EMU wide where the height allows 2366596, offset 1578 EMU from the top; process and cycle have the same few
+  hundred EMU), and that word sits on the edge (6.0532 em x 28 = 169.49 pt in our 169.55 pt line, Word's line 169.35).
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
   pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns
@@ -2575,10 +2583,16 @@ both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Ch
   .doc field code stays a tab (it read as a space).
 - RTF notes inside any field (2026-11-23): test-data/word-ruby/note-in-field-v1.rtf (hand-written; `--ruby`, NoteInField)
   checks a note in a plain EQ code ( fraction: mark in the numerator), in a ldrslt (mark between the result's runs),
-  in a non-EQ code (MERGEFIELD: mark after the result, AppendInstructionNoteMarks), numbering 1-4 with a body note, the
+  in a non-EQ code (MERGEFIELD: then a mark after the result; since 2026-11-24 no mark, as Word - below), numbering 1-4 with a body note, the
   notes pane and SearchNotes. Already right, no code change; LibreOffice resolves {ootnote} in any destination, field code
   included (sw/source/writerfilter/rtftok/rtfdispatchdestination.cxx:265-317, no FIELDINSTRUCTION check). Where Word puts
   a non-EQ code's note mark is not checked against Word (needs a Word-saved probe).
+  Checked 2026-11-24 (save-note-in-field.ps1: Word 16 opens the RTF, saves its PDF and its own .docx, then the .docx's PDF):
+  Word draws NO mark for a note in a non-EQ field's code - note-in-field-v1 case C prints "case C:  tailC", and
+  note-in-field-code-v1 (locked fields) "case G: quoted tailG" and "case H: last tailH" - while the notes are numbered and
+  listed (i - iv). The RTF
+  renderer now drops such marks when the field ends (a non-EQ code places none); .docx already drew none. (Word also leaves
+  out the locked MERGEFIELD result of case F, whose name follows the note; we draw it.)
 - .doc (render time, no index change): sprmCPbiGrf 0x4888 bit 0 + sprmCPbiIBullet 0x6887 (4 bytes) in the LVL grpprlChpx (ww8par3.cxx:808-819,
   :839-845; writer wrtw8num.cxx:355-358) name picture N of the paragraph holding the "_PictureBullets" bookmark, counted from the bookmark start
   (ww8par.cxx:5302-5348); that paragraph's runs are read once per renderer, the id is the PICF offset as for any inline picture. Hidden (vanish)
@@ -2871,7 +2885,14 @@ tlch); checked by the same test.
   (0.5ex / 0.4em) plus N pt; \s puts padding on its mpadded (one element) or its stack mtable, so the line grows.
 - LibreOffice gives no reference: Read_F_Equation (sw/source/filter/ww8/ww8par5.cxx:2719-2744) reads only EQ \o
   (combined characters / input) and \* ruby (Read_SubF_Ruby); other EQ codes keep their field result.
-- Open (needs Word): \o alignment, integral limits without \in, \b with only \lc (UNSUPPORTED-FEATURES.md).
+- Settled in Word 2026-11-24 (test-data/word-fields/eq-layout-v1.*, make-eq-layout-fixture.ps1, Word 16's PDF; --fields
+  EquationLayoutFidelityTest over the .docx / .doc / .rtf Word saved): \o draws its elements centred on each other by default
+  (W and i: centres 159.47 / 159.56 pt), \al from one left edge, \ar to one right edge, the field as wide as the widest element
+  in any order (an inline CSS grid, one cell for all, baseline aligned - Chromium lays out a MathML element with another display
+  as CSS). \i puts its limits above and below the symbol for the integral too, also with \fc / \vc; only \in puts them to the
+  right. \b with only \lc draws only the left bracket, with only \rc only the right one (\lc\{ a left brace alone); no option draws
+  ( ). Bracket sizes: Word builds them from Symbol pieces covering the content's line boxes (a fraction 46 pt, 3 rows 68 pt,
+  5 rows 114 pt at 20 pt text; rows of \a one 1.18 em line apart), the size MathML's stretchy operators take from the content.
 - Test: --fields (WordFieldsFidelityTest, EQ \a \vs6 \hs4, \s \ai12 \di3, \s \ai2 on a stack).
 ## Web archive pictures (2026-11-10)
 Word's "Single File Web Page" writes each picture twice: VML (`<v:imagedata>`) and an `<img>` fallback inside

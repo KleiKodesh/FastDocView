@@ -49,6 +49,8 @@ public static class WordDocumentHtmlStylesheet
             .word-document .field-page-placeholder { color: var(--fdv-muted-strong, #888); border: 1px dotted var(--fdv-rule, #bbb); border-radius: 2px; padding: 0 0.15em; font-size: 0.9em; user-select: none; }
             .word-document .form-checkbox { font-family: 'Segoe UI Symbol', sans-serif; }
             .word-document math.field-equation { font-family: inherit; }
+            .word-document math.field-equation .eq-overstrike { display: inline-grid; align-items: baseline; }
+            .word-document math.field-equation .eq-overstrike > * { grid-area: 1 / 1; }
             .word-document .text-box { display: inline-block; vertical-align: top; max-width: 100%; border: 1px solid var(--fdv-frame-border, #c8c8c8); padding: 2pt 6pt; margin: 2pt; }
             .word-document .section-break { border: 0; border-top: 3px double var(--fdv-rule, #bbb); margin: 8pt 0; }
             .word-document table.table-row { width: 100%; margin: 0; }

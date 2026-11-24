@@ -48,7 +48,10 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     // per block
     private RtfNoteReference[] _blockNotes = [];
-    private readonly Queue<string> _instructionNoteMarks = new();   // marks of notes met inside a field code, until the field's HTML places them
+    // marks of notes met inside a field code, until the field's HTML places them (an EQ code's placeholders); the rest are dropped
+    // when the field ends: Word 16 draws no mark for a note in a non-EQ field's code, though the note keeps its number and text
+    // (test-data/word-ruby/note-in-field-code-v1.rtf.pdf and note-in-field-v1.rtf.pdf, case C)
+    private readonly Queue<string> _instructionNoteMarks = new();
     private int _nextNote;
     private List<WordDocumentNoteHtml>? _renderedNotes;
     private string? _indexListLabel;
@@ -870,19 +873,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             linkFlow.OpenLink = null;
         }
         foreach ((Fields.WordFieldOutput output, string? link) in outputs) AppendFieldOutput(output, link);
-        if (_fields.Depth < before) AppendInstructionNoteMarks();             // only when a field ended (not the code's own groups)
-    }
-
-    /// <summary>
-    /// Marks of notes inside a field code that the field's HTML did not place (any field but an EQ ruby): drawn where the field
-    /// ends (its output, computed at the end, has placed its own first), so every note listed with the block keeps a mark.
-    /// </summary>
-    private void AppendInstructionNoteMarks()
-    {
-        if (_instructionNoteMarks.Count == 0) return;
-        FlushRun();
-        while (_instructionNoteMarks.TryDequeue(out string? mark)) _flow.Inline.Append(mark);
-        _flow.HasInline = true;
+        // dropped once the outermost field ended: an outer EQ code's placeholders may still take marks queued before an inner field
+        if (_fields.Depth < before && _fields.Depth == 0) _instructionNoteMarks.Clear();
     }
 
     /// <summary>{\*\bkmkend name}: an empty marker where the bookmark ends (REF without a result reads up to it).</summary>

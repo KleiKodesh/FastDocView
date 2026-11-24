@@ -23,6 +23,7 @@ public static class RubyAndBulletFontFidelityTest
         Escapes(root);
         Edges(root);
         NoteInField(root);
+        NoteInFieldCode(root);
         foreach (string extension in new[] { ".fodt", ".odt" })
         {
             string path = Path.Combine(root, "odt-bullet-fonts", "bullet-font-name-v1" + extension);
@@ -196,7 +197,7 @@ public static class RubyAndBulletFontFidelityTest
     /// test-data/word-ruby/note-in-field-v1.rtf (hand-written): a note inside a plain EQ field's code (a fraction, not a
     /// ruby), inside a field's result, inside a non-EQ field's code, and one in body text for comparison. LibreOffice
     /// resolves {ootnote} wherever it stands, field code included (rtfdispatchdestination.cxx:265-317). Each note keeps
-    /// its mark and its number: in the EQ numerator, between the result's runs, after a non-EQ field's result.
+    /// its number; the mark is drawn in the EQ numerator and between the result's runs, not for a non-EQ field's code (Word 16).
     /// </summary>
     private static void NoteInField(string root)
     {
@@ -209,8 +210,9 @@ public static class RubyAndBulletFontFidelityTest
         int markA = a.IndexOf(Mark(1), StringComparison.Ordinal);
         TestReport.Check(numerator >= 0 && markA > numerator && markA < denominator, $"{file}: a note in a plain EQ field's code keeps its mark in place (the fraction's numerator)");
         TestReport.Check(b.Contains("res<sup", StringComparison.Ordinal) && b.Contains(Mark(2) + "ult", StringComparison.Ordinal), $"{file}: a note in a field's result is drawn between the result's runs");
-        TestReport.Check(c.Contains("merged<sup", StringComparison.Ordinal) && c.Contains(Mark(3), StringComparison.Ordinal) && !c.Contains("name", StringComparison.Ordinal),
-                         $"{file}: a note in a non-EQ field's code is drawn after the field's result; the code stays hidden");
+        // Word 16 draws no mark for it (note-in-field-v1.rtf.pdf: "case C:  tailC", note ii still listed)
+        TestReport.Check(c.Contains("merged", StringComparison.Ordinal) && !c.Contains("note-reference", StringComparison.Ordinal) && !c.Contains("name", StringComparison.Ordinal),
+                         $"{file}: a note in a non-EQ field's code draws no mark (as Word); the code stays hidden");
         TestReport.Check(e.Contains(Mark(4), StringComparison.Ordinal), $"{file}: the body note after them is numbered 4");
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-note-in-field") };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(Path.Combine(root, "word-ruby", file), policy);
@@ -221,6 +223,32 @@ public static class RubyAndBulletFontFidelityTest
                          && document.SearchNotes("note C", WordDocumentSearchOptions.Default, 0, 100).HitBlocks.Length == 1
                          && document.Search("note A", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0,
                          $"{file}: notes inside field codes are found by the notes search, not in the body");
+    }
+
+    /// <summary>
+    /// test-data/word-ruby/note-in-field-code-v1.rtf (hand-written, locked fields) and Word 16's .docx of it (save-note-in-field.ps1):
+    /// Word's PDFs of both draw "case H: last tailH" - the locked MERGEFIELD's result and no mark for the note at the end of its code -
+    /// and "case G: quoted tailG" (locked QUOTE), while the notes are numbered and listed (i - iv for F, G, H and the body note I).
+    /// </summary>
+    private static void NoteInFieldCode(string root)
+    {
+        foreach (string file in new[] { "note-in-field-code-v1.rtf", "note-in-field-code-v1.docx" })
+        {
+            List<string> blocks = RenderAll(root, file);
+            string h = blocks.FirstOrDefault(html => html.Contains("case H:", StringComparison.Ordinal)) ?? "";
+            string g = blocks.FirstOrDefault(html => html.Contains("case G:", StringComparison.Ordinal)) ?? "";
+            TestReport.Check(PlainText(g).Contains("case G: quoted tailG", StringComparison.Ordinal) && !g.Contains("note-reference", StringComparison.Ordinal),
+                             $"{file}: a note in a locked QUOTE field's code draws no mark (got [{PlainText(g)}])");
+            string i = blocks.FirstOrDefault(html => html.Contains("case I:", StringComparison.Ordinal)) ?? "";
+            TestReport.Check(PlainText(h).Contains("case H: last tailH", StringComparison.Ordinal) && !h.Contains("note-reference", StringComparison.Ordinal),
+                             $"{file}: a note in a non-EQ field's code draws no mark; the result stays (got [{PlainText(h)}])");
+            TestReport.Check(i.Contains("data-note-number=\"4\"", StringComparison.Ordinal), $"{file}: the body note after three code notes is number 4");
+            var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-" + file.Replace('.', '-')) };
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(Path.Combine(root, "word-ruby", file), policy);
+            List<WordDocumentNoteHtml> notes = document.RenderBlocks(0, document.BlockCount).SelectMany(block => block.Notes).ToList();
+            TestReport.Check(notes.Count == 4 && Enumerable.Range(0, 4).All(n => notes[n].Number == n + 1 && PlainText(notes[n].Html).Contains("note " + "FGHI"[n])),
+                             $"{file}: the notes pane lists the four notes in order ({notes.Count} note(s))");
+        }
     }
 
     private static List<string> RenderAll(string root, string file)

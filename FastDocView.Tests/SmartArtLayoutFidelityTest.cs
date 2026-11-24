@@ -26,7 +26,11 @@ public static class SmartArtLayoutFidelityTest
                                                 // bold / italic faces, GPOS kerning (Latin, Hebrew), Arabic shaping, East Asian fonts and line height
                                                 "bold-block-list", "italic-block-list", "bold-italic-block-list", "bold-hebrew-block-list", "bahnschrift-kern-block-list",
                                                 "hadassah-hebrew-block-list", "arabic-block-list", "arabic-words-block-list", "japanese-block-list", "chinese-block-list",
-                                                "yugothic-lines-block-list", "msgothic-lines-block-list", "malgun-lines-block-list", "simsun-lines-block-list", "korean-ea-block-list"];
+                                                "yugothic-lines-block-list", "msgothic-lines-block-list", "malgun-lines-block-list", "simsun-lines-block-list", "korean-ea-block-list",
+                                                // Indic shaping in Nirmala UI (Kannada below-base forms and 'dist', Telugu conjuncts); families with no bold / italic
+                                                // face, whose synthesized style Word measures with the regular advances (Sylfaen, Impact bold; Gabriola italic)
+                                                "kannada-block-list", "telugu-block-list", "gabriola-block-list", "gabriola-italic-block-list",
+                                                "sylfaen-block-list", "sylfaen-bold-block-list", "impact-block-list", "impact-bold-block-list"];
     private const double TolerancePoints = 4;
     private const double EmuPerPoint = 12700;
 
