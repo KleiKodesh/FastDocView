@@ -27,7 +27,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| Tab layout details: the decimal point is always "." (Word uses the system's decimal symbol); an underline does not run under a laid-out tab | docx, doc, rtf, odt | The system decimal symbol is not known to the document; the tab's width is padding, which a text line does not cover | deferred |
 | Keep with next, keep lines, widow / orphan control, page break before | docx, doc, rtf, odt | Pagination: belongs to the paged view | planned (paged view) |
 | Frames (framePr) other than drop caps: absolute position, wrap | docx, doc, rtf | Frames flow as paragraphs; positioning is page-bound | planned (paged view) |
 | Hebrew hyphenation | all | Chromium has no Hebrew hyphenation dictionary | won't do |

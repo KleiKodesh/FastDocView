@@ -801,7 +801,8 @@ public sealed class OdtStyleCascade
     /// <summary>
     /// style:tab-stops (ODF 1.3 part 3 17.8, 19.497-19.506): style:position (from the indent, LibreOffice's default
     /// TABS_RELATIVE_TO_INDENT), style:type left / center / right / char (a decimal stop on style:char), the leader as its text
-    /// (style:leader-text, LibreOffice xmloff/source/style/xmltabi.cxx: the fill character; a leader style without text draws ".")
+    /// (style:leader-text, LibreOffice xmloff/source/style/xmltabi.cxx: the fill character; a leader style without text draws "."),
+    /// a char stop's own decimal character (style:char)
     /// - the fill characters Word has map to its leaders, any other to dots.
     /// </summary>
     private static WordTabStop[] ReadTabStops(XElement tabStops)
@@ -818,7 +819,9 @@ public sealed class OdtStyleCascade
             {
                 null or "" or " " => "none", "." => "dot", "-" => "hyphen", "_" => "underscore", "\u00B7" => "middleDot", _ => "dot",
             };
-            stops.Add(new WordTabStop(position, alignment, leader));
+            // a char stop aligns on style:char; without one LibreOffice takes ',' (xmloff/source/style/xmltabi.cxx:54, :92-94)
+            char decimalCharacter = alignment == "decimal" ? ((string?)stop.Attribute(Style + "char") is { Length: > 0 } character ? character[0] : ',') : '\0';
+            stops.Add(new WordTabStop(position, alignment, leader, decimalCharacter));
         }
         stops.Sort((a, b) => a.PositionTwips.CompareTo(b.PositionTwips));
         return stops.ToArray();

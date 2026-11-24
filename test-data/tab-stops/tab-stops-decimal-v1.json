@@ -1,0 +1,135 @@
+{
+ "paragraphs": [
+  {
+   "first": "A",
+   "text": "A 12,34",
+   "separators": [
+    184.87
+   ],
+   "end": 200.12
+  },
+  {
+   "first": "B",
+   "text": "B 12,34",
+   "separators": [
+    184.87
+   ],
+   "end": 200.12
+  },
+  {
+   "first": "C",
+   "text": "C 12.34",
+   "separators": [
+    199.99
+   ],
+   "end": 215.24
+  },
+  {
+   "first": "D",
+   "text": "D 12.34",
+   "separators": [
+    199.99
+   ],
+   "end": 215.24
+  },
+  {
+   "first": "E",
+   "text": "E 12,34",
+   "separators": [
+    184.87
+   ],
+   "end": 200.12
+  },
+  {
+   "first": "F",
+   "text": "F 12.34",
+   "separators": [
+    199.99
+   ],
+   "end": 215.24
+  },
+  {
+   "first": "G",
+   "text": "G 1.234,5",
+   "separators": [
+    200.03,
+    221.36
+   ],
+   "end": 230.61
+  },
+  {
+   "first": "Total",
+   "text": "Total 12",
+   "underline": [
+    [
+     0.0,
+     250.2
+    ]
+   ]
+  },
+  {
+   "first": "Name:",
+   "text": "Name:",
+   "underline": [
+    [
+     0.0,
+     250.2
+    ]
+   ]
+  },
+  {
+   "first": "Name:",
+   "text": "Name:",
+   "underline": [
+    [
+     32.4,
+     250.2
+    ]
+   ]
+  },
+  {
+   "first": "Word",
+   "text": "Word next",
+   "underline": [
+    [
+     0.0,
+     26.2
+    ],
+    [
+     250.2,
+     271.1
+    ]
+   ]
+  },
+  {
+   "first": "Dbl",
+   "text": "Dbl x",
+   "underline": [
+    [
+     0.0,
+     255.7
+    ]
+   ]
+  },
+  {
+   "first": "Lead",
+   "text": "Lead ...................................................................... 9",
+   "underline": [
+    [
+     0.0,
+     250.2
+    ]
+   ]
+  },
+  {
+   "first": "Def",
+   "text": "Def y",
+   "underline": [
+    [
+     0.0,
+     36.0
+    ]
+   ]
+  }
+ ]
+}

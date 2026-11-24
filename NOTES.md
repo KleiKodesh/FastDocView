@@ -3564,6 +3564,31 @@ holds: no whole-document layout, the HTML of a block is the same as before plus 
   (index format 25), so that group's '}' puts back the stops from before it, not the window's own. Harness: a window that
   starts past a span anchor inside the group (tab-stops-group-v2.rtf).
 
+
+### Tab layout: decimal symbol, underlined tabs (2026-11-25)
+
+- Decimal symbol (Word 16 probe, hidden Word, test-data/tab-stops/tab-stops-decimal-v1 from scripts/make-tab-stops-decimal-docx.py,
+  PDF by scripts/save-tab-stops-decimal.ps1): "12.34", "12,34" and "1.234,5" in en-US, de-DE and default-language runs, in
+  documents with en-US / de-DE defaults, with and without settings w:decimalSymbol "," / "." - every one aligned on '.' (the
+  system symbol here), "12,34" as on a right stop. Word reads the system's decimal symbol (Region settings), nothing in the file.
+  LibreOffice the same for a stop without its own character (editeng/source/items/paraitem.cxx:1008-1011 SvxTabStop::fillDecimal:
+  SvtSysLocale's separator; .docx import sets none, sw/source/writerfilter/dmapper/DomainMapper.cxx:5280-5297), and uses
+  w:decimalSymbol only for formula fields (DomainMapper_Impl.cxx:7257-7264). OpenDocument names it per stop: style:char,
+  ',' when missing (xmloff/source/style/xmltabi.cxx:54, :92-94).
+- `WordParagraphFormatting.SystemDecimalSymbol` (the host's current culture: on Windows the user's Region override; WASM '.')
+  and `WordTabStop.DecimalCharacter` (ODT style:char); data-tabs adds the character's UTF-16 code to a decimal stop only when it
+  is not '.' (`200 d  44`), so '.' systems get the same HTML as before. The page's pass looks for that character.
+- Underline (same fixture, Word's PDF rectangles): a tab in an underlined run is underlined across its whole width - a
+  trailing tab, a tab after plain text (only the tab), double, under a dot leader, at a default stop; w:u words leaves the tab
+  bare. A laid-out tab's width is end padding, which never carries a text decoration, so the pass marks the span
+  `data-underline` with the run's computed line style / colour / thickness (CSS variables) and the stylesheet draws them under
+  no-break spaces in an absolutely placed `::after` clipped to the span (`TabLeaders.Spaces`) - same font, so the same offset
+  and thickness as the run's own underline. A tab at a default stop is the browser's own tab and is underlined as text.
+- Verified live: vue-demo/playwright/tabDecimalUnderlineCheck.mjs - separators and text ends within 2 pt of Word's PDF, every
+  underline range within 2 pt, and a .fodt (written by the harness) whose ',', '.' and missing style:char stops each put their
+  own character on the 144 pt stop. Harness: TabStopsFidelityTest.RunDecimalAndUnderline (data-tabs with '.' and ',' system
+  symbols, style:char, tabs inside the underlined run, outside with w:u words).
+
 ### Picture effects: light rig and small soft edges (2026-11-17)
 
 - effects-light-{persp,ortho,extra,soft}-v1.docx / .pdf (make_light.py; Word 16 printed them from a hidden instance).

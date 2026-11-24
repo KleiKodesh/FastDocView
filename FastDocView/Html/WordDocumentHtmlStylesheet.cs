@@ -41,6 +41,7 @@ public static class WordDocumentHtmlStylesheet
             .word-document .tab-space[data-leader="u"]::before, .word-document .tab-space[data-leader="H"]::before { content: "{{TabLeaders.Underscores}}"; }
             .word-document .tab-space[data-leader="H"]::before { font-weight: bold; }
             .word-document .tab-space[data-leader="m"]::before { content: "{{TabLeaders.MiddleDots}}"; }
+            .word-document .tab-space[data-underline]::after { content: "{{TabLeaders.Spaces}}"; position: absolute; inset-inline: 0; top: 0; line-height: normal; overflow: hidden; white-space: pre; pointer-events: none; text-decoration-line: underline; text-decoration-style: var(--fdv-tab-underline-style, solid); text-decoration-color: var(--fdv-tab-underline-color, currentColor); text-decoration-thickness: var(--fdv-tab-underline-thickness, auto); }
             .word-document .tab-break::before { content: "\A"; white-space: pre; }
             .word-document .tab-bar { position: absolute; top: 0; bottom: 0; border-inline-start: 0.75pt solid currentColor; pointer-events: none; }
             .word-document .note-reference { font-size: 0.7em; line-height: 0; color: var(--fdv-link, #06c); cursor: pointer; padding: 0 1px; }
@@ -77,4 +78,8 @@ internal static class TabLeaders
     public static readonly string Hyphens = new('-', 400);
     public static readonly string Underscores = new('_', 400);
     public static readonly string MiddleDots = string.Concat(Enumerable.Repeat("\\0000B7", 400));    // CSS escapes (U+00B7)
+    /// <summary>The underline under a laid-out tab (data-underline): no-break spaces carry the run's underline, which an inline
+    /// box's padding never gets (Word 16 underlines a tab in an underlined run across its whole width, leaders included, but not
+    /// with w:u words: test-data/tab-stops/tab-stops-decimal-v1).</summary>
+    public static readonly string Spaces = string.Concat(Enumerable.Repeat("\\0000A0", 400));      // CSS escapes (U+00A0)
 }

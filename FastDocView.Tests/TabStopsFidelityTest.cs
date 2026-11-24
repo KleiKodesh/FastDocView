@@ -1,3 +1,7 @@
+using FastDocView.Html;
+using System.Text;
+using System.Text.RegularExpressions;
+
 namespace FastDocView.Tests;
 
 /// <summary>
@@ -20,6 +24,63 @@ public static class TabStopsFidelityTest
             if (!File.Exists(path)) { TestReport.Check(false, $"test-data/tab-stops/tab-stops-v2{extension} present"); continue; }
             Check(path, extension);
         }
+        RunDecimalAndUnderline(folder);
+    }
+
+    /// <summary>
+    /// Decimal stops align on the system's decimal symbol (Word 16: tab-stops-decimal-v1.pdf, a de-DE document with w:decimalSymbol
+    /// "," still aligns on '.' under a '.' system) - data-tabs names the character when it is not '.'; OpenDocument stops carry
+    /// their own (style:char; LibreOffice's ',' without one). Underlined tabs: the tab character stays inside its run's underlined
+    /// element, so the page's tab pass finds the underline (not for w:u words). Positions: vue-demo/playwright/tabDecimalUnderlineCheck.mjs.
+    /// </summary>
+    private static void RunDecimalAndUnderline(string folder)
+    {
+        string path = Path.GetFullPath(Path.Combine(folder, "tab-stops-decimal-v1.docx"));
+        if (!File.Exists(path)) { TestReport.Check(false, "test-data/tab-stops/tab-stops-decimal-v1.docx present"); return; }
+        char saved = WordParagraphFormatting.SystemDecimalSymbol;
+        try
+        {
+            foreach (char symbol in new[] { '.', ',' })
+            {
+                WordParagraphFormatting.SystemDecimalSymbol = symbol;
+                List<string> blocks = Render(path, "decimal-" + (symbol == '.' ? "point" : "comma"));
+                string expected = symbol == '.' ? ";200 d \"" : ";200 d  44\"";
+                int decimals = blocks.Take(7).Count(html => html.Contains(expected));
+                TestReport.Check(decimals == 7, $"decimal stops in a de-DE document with decimalSymbol \",\" follow the system symbol '{symbol}': {decimals} of 7 say [{expected}]");
+                if (symbol != '.') continue;
+                // the tab of an underlined run: inside the element that draws the underline; with w:u words outside every underlined one
+                bool InUnderline(string html) => Regex.IsMatch(html, "text-decoration:underline[^>]*>[^<]*\t");
+                TestReport.Check(InUnderline(blocks[7]) && InUnderline(blocks[8]) && InUnderline(blocks[9]) && InUnderline(blocks[11]) && InUnderline(blocks[12]) && InUnderline(blocks[13]),
+                                 "underlined tabs (single, trailing, after plain text, double, with a leader, at a default stop) sit inside the underlined run");
+                TestReport.Check(!InUnderline(blocks[10]), $"a tab in a w:u words run is outside the underlined words (got [{Shorten(blocks[10])}])");
+            }
+        }
+        finally { WordParagraphFormatting.SystemDecimalSymbol = saved; }
+
+        // OpenDocument: a char stop's own character (style:char), ',' without one (LibreOffice xmltabi.cxx:54)
+        string fodt = Path.Combine(TestReport.OutputDirectory, "tab-stops-decimal-char-v1.fodt");
+        string Stop(string character) => "<style:tab-stops><style:tab-stop style:position=\"2in\" style:type=\"char\"" + character + "/></style:tab-stops>";
+        File.WriteAllText(fodt, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+            + "xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+            + "xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" office:version=\"1.3\" office:mimetype=\"application/vnd.oasis.opendocument.text\">"
+            + "<office:automatic-styles>"
+            + "<style:style style:name=\"P1\" style:family=\"paragraph\"><style:paragraph-properties>" + Stop(" style:char=\",\"") + "</style:paragraph-properties></style:style>"
+            + "<style:style style:name=\"P2\" style:family=\"paragraph\"><style:paragraph-properties>" + Stop(" style:char=\".\"") + "</style:paragraph-properties></style:style>"
+            + "<style:style style:name=\"P3\" style:family=\"paragraph\"><style:paragraph-properties>" + Stop("") + "</style:paragraph-properties></style:style>"
+            + "</office:automatic-styles><office:body><office:text>"
+            + "<text:p text:style-name=\"P1\">Comma<text:tab/>12,34</text:p><text:p text:style-name=\"P2\">Point<text:tab/>12.34</text:p><text:p text:style-name=\"P3\">None<text:tab/>12,34</text:p>"
+            + "</office:text></office:body></office:document>", new UTF8Encoding(false));
+        List<string> odt = Render(fodt, "decimal-fodt");
+        string Tabs(string start) => Regex.Match(odt.FirstOrDefault(html => WordFieldsFidelityTest.Strip(html).Trim().StartsWith(start, StringComparison.Ordinal)) ?? "", "data-tabs=\"[^\"]*\"").Value;
+        TestReport.Check(Tabs("Comma").EndsWith(" d  44\"", StringComparison.Ordinal) && Tabs("Point").EndsWith(" d \"", StringComparison.Ordinal) && Tabs("None").EndsWith(" d  44\"", StringComparison.Ordinal),
+                         $".fodt: a char stop aligns on style:char, ',' without one (got [{Tabs("Comma")}] [{Tabs("Point")}] [{Tabs("None")}])");
+    }
+
+    private static List<string> Render(string path, string name)
+    {
+        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-tab-stops-" + name) };
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+        return document.RenderBlocks(0, document.BlockCount).Select(block => block.Html).ToList();
     }
 
     /// <summary>RTF tab stops are paragraph properties of the group state: a group's stops end with its '}' (as Word reads them).</summary>

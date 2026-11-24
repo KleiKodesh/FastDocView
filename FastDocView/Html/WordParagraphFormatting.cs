@@ -196,7 +196,8 @@ public sealed class WordParagraphFormatting
     /// What the client-side tab layout needs (the page's tab pass, fastDocViewTabs.ts): <c>data-tabs="D S F R;pos a l;..."</c> with
     /// D the default interval, S the start indent, F the first-line indent (pt), R 1 when stops count from the indent, then the
     /// stops by position (pt): a = l(eft) c(enter) r(ight) d(ecimal) b(ar), l = the leader: "" none, d dot, h hyphen, u underscore,
-    /// H heavy, m middle dot. Null when the browser's own tabs already land where Word puts them (no stops, no indent, the
+    /// H heavy, m middle dot; a decimal stop that aligns on another character than '.' adds its UTF-16 code ("200 d  44": a comma).
+    /// Null when the browser's own tabs already land where Word puts them (no stops, no indent, the
     /// default 36 pt interval: CSS tab-size 36pt counts from the same edge).
     /// </summary>
     public string? TabStopsAttribute
@@ -217,6 +218,8 @@ public sealed class WordParagraphFormatting
                 {
                     "dot" => "d", "hyphen" => "h", "underscore" => "u", "heavy" => "H", "middleDot" => "m", _ => "",
                 });
+                char decimalCharacter = stop.DecimalCharacter != '\0' ? stop.DecimalCharacter : SystemDecimalSymbol;
+                if (alignment == 'd' && decimalCharacter != '.') value.Append(' ').Append(((int)decimalCharacter).ToString(CultureInfo.InvariantCulture));
             }
             return value.Append('"').ToString();
         }
@@ -231,10 +234,24 @@ public sealed class WordParagraphFormatting
             (var language, var tabs) => language + " " + tabs,
         };
 
+    /// <summary>
+    /// The character Word's decimal stops align on: the system's decimal symbol (Windows Region settings), not the document's language
+    /// nor settings w:decimalSymbol (Word 16, 2026-11-25: "12.34" / "12,34" / "1.234,5" in en-US and de-DE runs, documents with
+    /// en-US / de-DE defaults and decimalSymbol "," / ".", all aligned on '.' under a '.' system symbol; test-data/tab-stops/
+    /// tab-stops-decimal-v1). LibreOffice does the same for a stop without its own character (editeng/source/items/paraitem.cxx:1008-1011,
+    /// SvxTabStop::fillDecimal: the system locale's separator). The host's current culture by default (on Windows it carries the
+    /// user's Region override; WASM's invariant culture gives '.'); a host may set it.
+    /// </summary>
+    public static char SystemDecimalSymbol { get; set; } = CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator is { Length: > 0 } symbol ? symbol[0] : '.';
+
     private static string TwipsToExactPt(int twips) => (twips / 20.0).ToString("0.##", CultureInfo.InvariantCulture);
 
     public static string TwipsToPt(int twips) => (twips / 20.0).ToString("0.#", CultureInfo.InvariantCulture);
 }
 
-/// <summary>A custom tab stop (ECMA-376 §17.3.1.37): position in twips, alignment (ST_TabJc: left, center, right, decimal, bar, num, start, end) and leader (ST_TabTlc).</summary>
-public readonly record struct WordTabStop(int PositionTwips, string Alignment, string Leader);
+/// <summary>
+/// A custom tab stop (ECMA-376 §17.3.1.37): position in twips, alignment (ST_TabJc: left, center, right, decimal, bar, num, start, end)
+/// and leader (ST_TabTlc). <paramref name="DecimalCharacter"/>: the character a decimal stop aligns on when the format names one
+/// (OpenDocument style:char); '\0' = the system's decimal symbol, as Word uses (<see cref="WordParagraphFormatting.SystemDecimalSymbol"/>).
+/// </summary>
+public readonly record struct WordTabStop(int PositionTwips, string Alignment, string Leader, char DecimalCharacter = '\0');

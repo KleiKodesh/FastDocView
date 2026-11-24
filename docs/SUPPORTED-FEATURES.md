@@ -80,6 +80,9 @@ separate paged view, which is not built yet.
    browser's text metrics and LibreOffice's rules (sw/source/core/text/txttab.cxx): the next custom stop, else the next default
    stop (from the margin; from the indent in ODT unless settings.xml TabsRelativeToIndent is false), the start indent as a stop
    inside a hanging indent, right / centre / decimal text against the stop, a non-left stop past the line's end at the end.
+   A decimal stop aligns on the system's decimal symbol, as Word does (not the document's language nor w:decimalSymbol); an
+   OpenDocument stop on its own style:char. A tab in an underlined run is underlined across its width, leaders included (not
+   with w:u words), as Word draws it (test-data/tab-stops/tab-stops-decimal-v1, vue-demo/playwright/tabDecimalUnderlineCheck.mjs).
    Leaders are drawn as dots, hyphens, underscores (heavy: bold), middle dots; bar stops as a vertical line (Word; LibreOffice
    drops them). Checked against Word's and LibreOffice's PDFs within 2 pt (vue-demo/playwright/tabStopsCheck.mjs). The text
    keeps its tab characters (search, copy, document text). List label tabs keep their own layout (WordListLabelHtml).
