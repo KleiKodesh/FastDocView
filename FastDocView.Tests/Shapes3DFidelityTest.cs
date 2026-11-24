@@ -193,12 +193,18 @@ public static class Shapes3DFidelityTest
         }
         all.Sort();
         Console.WriteLine($"   oval bevels, all presets: median {all[all.Count / 2]}, 90th percentile {all[all.Count * 9 / 10]}, 99th {all[all.Count * 99 / 100]}");
-        using (IWordWindowedDocument document = WordWindowedDocumentOpener.Open(docx))
+        // the best of five fresh opens (the first pays the JIT)
+        long bytes = 0, best = long.MaxValue;
+        for (int round = 0; round < 5; round++)
         {
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(docx);
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            long bytes = document.RenderBlocks(0, document.BlockCount).Sum(block => (long)block.Html.Length);
-            Console.WriteLine($"   oval bevels: {bytes / 1024} KB of HTML for 12 shapes, rendered in {watch.ElapsedMilliseconds} ms");
+            bytes = document.RenderBlocks(0, document.BlockCount).Sum(block => (long)block.Html.Length);
+            best = Math.Min(best, watch.ElapsedMilliseconds);
         }
+        Console.WriteLine($"   oval bevels: {bytes / 1024} KB of HTML for 12 shapes, rendered in {best} ms (best of 5 opens)");
+        // before the shaded bands (3404625) the flat bands came to 1,331 KB; per-edge gradients took it to 2,383 KB
+        TestReport.Check(bytes < 1000 * 1024, $"oval bevels: HTML stays below the flat bands' size ({bytes / 1024} KB < 1,000 KB)");
     }
 
     private static List<List<(List<(double X, double Y)> Ring, string Fill)>> Shapes(string path)

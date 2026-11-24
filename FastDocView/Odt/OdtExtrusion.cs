@@ -449,7 +449,11 @@ internal sealed class OdtExtrusion
                 outFace.Color = Lit(face.Normal, face.Material, flip);
                 if (face.Stops is { Count: > 1 } stops && Project2(face.StopsFrom) is { } from && Project2(face.StopsTo) is { } to)
                 {
-                    outFace.Gradient = stops.Select(stop => (stop.Offset, Lit(stop.Normal, face.Material, flip))).ToList();
+                    // a profile step's two stops share its normal: light it once
+                    var gradient = new List<(double Offset, string Color)>(stops.Count);
+                    for (int s = 0; s < stops.Count; s++)
+                        gradient.Add((stops[s].Offset, s > 0 && stops[s].Normal == stops[s - 1].Normal ? gradient[s - 1].Color : Lit(stops[s].Normal, face.Material, flip)));
+                    outFace.Gradient = gradient;
                     outFace.GradientFrom = (from.X + cx, -from.Y + cy);
                     outFace.GradientTo = (to.X + cx, -to.Y + cy);
                 }
@@ -498,6 +502,48 @@ internal sealed class OdtExtrusion
     private static (double X, double Y, double Z) Middle((double X, double Y, double Z) a, (double X, double Y, double Z) b)
         => ((a.X + b.X) / 2, (a.Y + b.Y) / 2, (a.Z + b.Z) / 2);
 
+    /// <summary>
+    /// Consecutive edges whose inward normals stay within <see cref="EdgeRunTurnDegrees"/> of the run's mean, drawn as one bevel strip
+    /// shaded along that mean: a curved outline's many short edges (an oval flattens to ~150) turn a few degrees each, too little
+    /// to change the light by more than a level or two, so a strip per edge only multiplies the faces. Corners (a turn past the
+    /// limit) always start a new run, so straight outlines keep one face per edge. Returns (first edge, edge count, mean inward normal).
+    /// </summary>
+    private static List<(int First, int Count, (double X, double Y) Across)> EdgeRuns((double X, double Y)[] inward)
+    {
+        int n = inward.Length;
+        double limit = Math.Cos(EdgeRunTurnDegrees * Math.PI / 180);
+        // start at a corner when there is one, so no run wraps across it
+        int start = 0;
+        for (int i = 0; i < n; i++)
+            if (inward[(i - 1 + n) % n].X * inward[i].X + inward[(i - 1 + n) % n].Y * inward[i].Y < limit) { start = i; break; }
+        var runs = new List<(int, int, (double, double))>();
+        int first = start, count = 0;
+        double sumX = 0, sumY = 0;
+        void Close()
+        {
+            double length = Math.Sqrt(sumX * sumX + sumY * sumY);
+            runs.Add((first % n, count, length < 1e-12 ? inward[first % n] : (sumX / length, sumY / length)));
+        }
+        for (int e = 0; e < n; e++)
+        {
+            var normal = inward[(start + e) % n];
+            if (count > 0)
+            {
+                // the run's mean with this edge added must stay within the limit of every edge in it: its two ends
+                double mx = sumX + normal.X, my = sumY + normal.Y, ml = Math.Sqrt(mx * mx + my * my);
+                var head = inward[first % n];
+                bool fits = ml > 1e-12 && (head.X * mx + head.Y * my) / ml >= limit && (normal.X * mx + normal.Y * my) / ml >= limit;
+                if (!fits) { Close(); first = start + e; count = 0; sumX = sumY = 0; }
+            }
+            sumX += normal.X; sumY += normal.Y; count++;
+        }
+        Close();
+        return runs;
+    }
+
+    /// <summary>How far an edge's inward normal may turn from its bevel strip's mean (see <see cref="EdgeRuns"/>).</summary>
+    private const double EdgeRunTurnDegrees = 3;
+
     private static List<(double X, double Y, double Z)>? Bevel(List<(double X, double Y)> ring, bool materialLeft, bool hole, double z, bool front, FastDocView.Html.WordShapeBevel bevel,
                                                               (double R, double G, double B) colour, List<Face> faces)
     {
@@ -537,6 +583,7 @@ internal sealed class OdtExtrusion
         // Word's profile in full on straight outlines; a curved one (many edges) gets fewer, merged bands to keep the faces few, each
         // shaded across its width step by step (a gradient with the normal of every profile step it covers), so the profile's
         // shading stays whole however few the faces
+        var edgeRuns = EdgeRuns(inward);
         var bands = bevel.BandsAtMost(Math.Max(2, 300 / n));
         IReadOnlyList<double> steps = bevel.StepDegrees();
         double sign = front ? 1 : -1;
@@ -569,19 +616,23 @@ internal sealed class OdtExtrusion
                     bandStops.Add(((s + 1 - firstStep) / span, stepSlope));
                 }
             }
-            for (int i = 0; i < n; i++)
+            foreach ((int first, int count, (double X, double Y) across) in edgeRuns)
             {
-                int j = (i + 1) % n;
-                var quad = new List<(double X, double Y, double Z)> { rings[k][i], rings[k][j], rings[k + 1][j], rings[k + 1][i] };
-                var normal = Normalized((-inward[i].X * slope, -inward[i].Y * slope, sign));
+                // the run's strip: its outline-side points forward, then its inner-side points back
+                var quad = new List<(double X, double Y, double Z)>(2 * count + 2);
+                for (int e = 0; e <= count; e++) quad.Add(rings[k][(first + e) % n]);
+                for (int e = count; e >= 0; e--) quad.Add(rings[k + 1][(first + e) % n]);
+                var normal = Normalized((-across.X * slope, -across.Y * slope, sign));
                 if (front != materialLeft) quad.Reverse();
                 var face = new Face { Kind = "bevel", Normal = normal, Material = colour, Facing = quad };
                 face.Rings.Add(quad);
                 if (bandStops is not null)
                 {
-                    face.Stops = bandStops.Select(stop => (stop.Offset, Normalized((-inward[i].X * stop.Slope, -inward[i].Y * stop.Slope, sign)))).ToList();
-                    face.StopsFrom = Middle(rings[k][i], rings[k][j]);
-                    face.StopsTo = Middle(rings[k + 1][i], rings[k + 1][j]);
+                    // gradient across the run's middle edge (an even run: across its middle vertex's two edges)
+                    int i = (first + count / 2) % n, j = (i + 1) % n;
+                    face.Stops = bandStops.Select(stop => (stop.Offset, Normalized((-across.X * stop.Slope, -across.Y * stop.Slope, sign)))).ToList();
+                    face.StopsFrom = count % 2 == 1 ? Middle(rings[k][i], rings[k][j]) : rings[k][i];
+                    face.StopsTo = count % 2 == 1 ? Middle(rings[k + 1][i], rings[k + 1][j]) : rings[k + 1][i];
                 }
                 faces.Add(face);
             }

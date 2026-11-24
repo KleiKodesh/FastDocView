@@ -3970,6 +3970,14 @@ make-shapes-3d-bevels-oval.ps1, sample_bevels_oval.py: 48 steps inward along the
 |---|---|---|---|---|---|
 | flat bands (before) | 6 | 26 | 54 | 1331 KB | 176 ms |
 | per-edge gradients | 4 | 11 | 27 | 2383 KB | 304 ms |
+| edge runs (2026-11-25, below) | 4 | 11 | 27 | 733 KB | 85-120 ms (best of 5 opens; flat bands 84-171 ms the same way) |
+
+Edge runs (2026-11-25): an oval flattens to ~150 edges that turn ~2.4 degrees each, and a strip per edge multiplied the faces and
+their gradients (3,648 gradients, 1.85 MB of the 2.4 MB). `OdtExtrusion.EdgeRuns` joins consecutive edges whose inward normals stay
+within 3 degrees of the run's mean into one strip (outline-side points forward, inner-side back), lit and shaded along that mean;
+a corner past the limit always starts a run, so straight outlines keep one face per edge. A step's two gradient stops share their
+normal and are lit once. Accuracy against Word is unchanged at 3 degrees (4 and 2 degrees: 90th 12 / 11 with 1.0-1.25 MB); more bands
+per run cost time without accuracy. Harness: the oval check now also keeps the HTML below 1,000 KB and times the best of five opens.
 
 Per preset (median / 90th): every preset within 5 / 13 (before 8-12 / 21-37 for the curved profiles). Harness:
 Shapes3DFidelityTest.OvalBevels (gradients evaluated as SVG does). Remaining: the worst points are Word's anti-aliased edge and
