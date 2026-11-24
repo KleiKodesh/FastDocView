@@ -99,7 +99,7 @@ public static class PageWidthTest
         ExpectMargins("fodt without any page layout: Word's 1 in", OpenText("odt-margins-no-layout", ".fodt", noLayout), (0, 1440, 1440));
         Expect("fodt without any page layout: Letter, 1 in (9360)", OpenText("odt-margins-no-layout", ".fodt", noLayout), (0, 9360));
         DocSepx();
-        ExpectMargins("text file: 1 in", OpenText("text-margins", ".txt", "a\r\n"), (0, 1440, 1440));
+        ExpectMargins("text file: no page, no margins", OpenText("text-margins", ".txt", "a\r\n"));
         string docSample = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "apache-poi", "47304.doc");
         if (File.Exists(docSample))
         {
@@ -241,7 +241,7 @@ public static class PageWidthTest
         Expect("rtf a \\sect inside a table row ends the section with the row",
                OpenText("rtf-row-sect", ".rtf", @"{\rtf1\ansi\paperw11906\margl1440\margr1440 \trowd\cellx1000\intbl a\cell\sect\row\pard\sectd\marglsxn1800\margrsxn1800\pgwsxn12240 b\par}"),
                (0, 9026), (1, 8640));
-        Expect("text file: Word default", OpenText("text", ".txt", "a\r\nb\r\n"), (0, 9360));
+        Expect("text file: no page width (the host sizes the column)", OpenText("text", ".txt", "a\r\nb\r\n"));
     }
 
     private const string OdfNamespaces =

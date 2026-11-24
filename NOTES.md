@@ -408,6 +408,10 @@ SEP, .odt page layout, .rtf paperw/margl/margr). No page setup (.txt etc.): Word
 document (verify in a source). Per section, like Word; computed at index time. Zoom scales the width
 so lines break at the same words.
 
+Update 2026-11-25: .txt and web archives (`MarkupWindowedDocument`) report NO sections (they have no page), so the
+host picks the width: the app gives them the book view's reading-column width (`--lines-content-max-width`, its
+setting) for the text and the notes pane. Word-family formats without page setup still report Word's default.
+
 Library side (branch work/page-width): `IWordWindowedDocument.Sections` - `WordDocumentSection(FirstBlockIndex,
 TextWidthTwips)` in block order, the first at block 0 (`WordDocumentPageSetup`). .docx: w:sectPr (pPr = ends the
 section at that paragraph; the body's own = the last section), pgSz w:w - pgMar left/right - gutter; index format 8.

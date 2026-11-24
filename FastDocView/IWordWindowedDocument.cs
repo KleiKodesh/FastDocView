@@ -92,9 +92,10 @@ public interface IWordWindowedDocument : IDisposable
     bool HasSourceChanged { get; }
 
     /// <summary>
-    /// The page text width per section (<see cref="WordDocumentSection"/>), in block order, at least one
-    /// entry, the first starting at block 0. While the index builds, the blocks past the known sections
-    /// belong to the last listed one. A document without page setup reports Word's default width.
+    /// The page text width per section (<see cref="WordDocumentSection"/>), in block order, the first starting
+    /// at block 0. While the index builds, the blocks past the known sections belong to the last listed one.
+    /// A Word-family document without page setup reports Word's default width; a format that has no page at all
+    /// (.txt, web archives) reports none, and the host picks the column width.
     /// Index-time data; no file access.
     /// </summary>
     IReadOnlyList<WordDocumentSection> Sections { get; }

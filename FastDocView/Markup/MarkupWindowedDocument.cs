@@ -70,7 +70,9 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
         return (query < 0 ? value : value.Substring(0, query)).ToLowerInvariant();
     }
 
-    public IReadOnlyList<WordDocumentSection> Sections => WordDocumentPageSetup.DefaultSections;
+    /// <summary>None: a text file or web archive has no page width of its own, so the host sizes the column itself
+    /// (the app: the book view's reading-column width) instead of a made-up Letter page.</summary>
+    public IReadOnlyList<WordDocumentSection> Sections => [];
 
     private const int ReadChunkBytes = 1 << 16;
 
