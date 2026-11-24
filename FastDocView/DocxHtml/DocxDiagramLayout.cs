@@ -1149,7 +1149,7 @@ internal static class DocxDiagramLayout
                 left = Math.Min(left, centres[k].X - width / 2); right = Math.Max(right, centres[k].X + width / 2);
                 top = Math.Min(top, centres[k].Y - height / 2); bottom = Math.Max(bottom, centres[k].Y + height / 2);
             }
-            double scale = right - left > 0 && bottom - top > 0 ? Math.Min(shape.Width / (right - left), shape.Height / (bottom - top)) : 1;
+            double scale = SteppedScale(right - left > 0 && bottom - top > 0 ? Math.Min(shape.Width / (right - left), shape.Height / (bottom - top)) : 1);
             double offsetX = (shape.Width - (right - left) * scale) / 2 - left * scale, offsetY = (shape.Height - (bottom - top) * scale) / 2 - top * scale;
             for (int k = 0; k < count; k++)
             {
@@ -1483,7 +1483,7 @@ internal static class DocxDiagramLayout
             // the row is scaled along the flow to fit; a size across that a child's own constraint derives from its length along
             // (h = 0.6 w) follows the scaled length, any other keeps its constrained size; both stay inside the shape
             string alongType = horizontal ? "w" : "h", acrossType = horizontal ? "h" : "w";
-            double scale = Math.Min(1, along > 0 ? alongRoom / along : 1);
+            double scale = SteppedScale(Math.Min(1, along > 0 ? alongRoom / along : 1));
             // where the row sits along its flow: horzAlign (fromL / fromR) or vertAlign (fromT / fromB), centred by default
             string alignment = horizontal ? algorithm.Parameter("horzAlign", "ctr") : algorithm.Parameter("vertAlign", "mid");
             double slack = alongRoom - along * scale;
@@ -1520,7 +1520,16 @@ internal static class DocxDiagramLayout
         /// columns as give the largest nodes at their constrained aspect ratio with the sp spacing between them; the grid centred
         /// in the shape and a short last row centred (off ctr).
         /// </summary>
-        private const double SnakeScaleSteps = 2048;
+        private const double ScaleSteps = 2048;
+
+        /// <summary>
+        /// Word 16 scales a snake, lin or cycle layout down in steps of 1/2048 of its constrained size: the largest step that
+        /// fits, so the frame is not quite filled when the exact fit is not a step (snake: a block list resaved in seven frames;
+        /// lin: chevron 731/2048 for 1/2.8, process 538/2048 for 1/3.8; cycle; all within 1 EMU of Word's drawing). A scale of
+        /// 1 or more is kept (lin never grows its row).
+        /// </summary>
+        internal static double SteppedScale(double scale)
+            => scale < 1 && Math.Floor(scale * ScaleSteps + 1e-9) / ScaleSteps is > 0 and var stepped ? stepped : scale;
 
         private static void Snake(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> own)
         {
@@ -1544,7 +1553,7 @@ internal static class DocxDiagramLayout
             // step): a 3-node block list resaved by Word in seven frames (2026-11-24; 2 columns height- or width-limited, 1 column,
             // 3 columns) has node widths floor(scale * 2048) / 2048 * the constrained width within 1 EMU (devanagari-block-list:
             // 2364168 EMU where the height allows 2366596)
-            double s = Math.Floor(best.scale * SnakeScaleSteps + 1e-9) / SnakeScaleSteps is > 0 and var stepped ? stepped : best.scale, width = nodeWidth * s, height = nodeHeight * s, space = gap * s;
+            double s = SteppedScale(best.scale), width = nodeWidth * s, height = nodeHeight * s, space = gap * s;
             double gridWidth = bestColumns * width + (bestColumns - 1) * space, gridHeight = bestRows * height + (bestRows - 1) * space;
             string gridDirection = algorithm.Parameter("grDir", "tL");
             bool fromRight = gridDirection is "tR" or "bR", fromBottom = gridDirection is "bL" or "bR";

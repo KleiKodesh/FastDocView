@@ -1865,7 +1865,11 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   floor(scale x 2048) / 2048 x the constrained width (2-column height- and width-limited, 1 column, 3 columns where 1/3.2 is a
   step and the frame is filled exactly), within 1 EMU; DocxDiagramLayout.Snake does the same. LibreOffice's snake picks its grid
   by an aspect-ratio heuristic and no steps (oox/source/drawingml/diagram/diagramlayoutatoms.cxx:756-905). The lin / cycle slack
-  (chevron 1545 EMU, process 4635) is another rule, not this one (0.999414 is not a 1/2048 step).
+  (chevron 1545 EMU, process 4635) is the same rule (found 2026-11-24): the step is on the scale against the constrained size,
+  not against the exact fit - chevron fits at 1/2.8 and Word takes 731/2048, process 1/3.8 -> 538/2048, cycle's node scale too.
+  DocxDiagramLayout.SteppedScale now serves snake, lin and cycle; --smartart checks every layout but cycle (connectors 1.1 pt),
+  the vertical lists and the hierarchies within 2.5 EMU of Word's drawing (44 layouts). LibreOffice's lin fit has no steps
+  (oox/source/drawingml/diagram/diagramlayoutatoms.cxx:11763, :13089; no 2048 anywhere in the file).
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
   pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns

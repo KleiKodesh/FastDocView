@@ -34,6 +34,13 @@ public static class SmartArtLayoutFidelityTest
                                                 "snake-frame-1", "snake-frame-2", "snake-frame-3", "snake-frame-4", "snake-frame-5", "snake-frame-6",
                                                 "sylfaen-block-list", "sylfaen-bold-block-list", "impact-block-list", "impact-bold-block-list"];
     private const double TolerancePoints = 4;
+    /// <summary>
+    /// The checked layouts Word's drawing is matched to within <see cref="ExactToleranceEmu"/> (Word writes whole EMUs): all but
+    /// these, which are matched within <see cref="TolerancePoints"/> only (cycle connectors 1.1 pt, vertical lists and the
+    /// hierarchies). The 1/2048 scale steps of snake, lin and cycle (DocxDiagramLayout.SteppedScale) are what make them exact.
+    /// </summary>
+    private static readonly string[] NotExactLayouts = ["cycle", "hebrew-vertical-list", "hierarchy", "org-chart", "vertical-list"];
+    private const double ExactToleranceEmu = 2.5;   // Word truncates offset and extent to whole EMUs: a far edge can be 2 EMU off
     private const double EmuPerPoint = 12700;
 
     public static void Run()
@@ -51,6 +58,8 @@ public static class SmartArtLayoutFidelityTest
             bool required = Layouts.Contains(name);
             string summary = $"{name}: {matched} of {expected} shapes laid out, worst edge {worst.ToString("0.0", CultureInfo.InvariantCulture)} pt";
             if (required) TestReport.Check(matched == expected && worst <= TolerancePoints, summary + (matched == expected && worst <= TolerancePoints ? "" : " " + detail));
+            if (required && !NotExactLayouts.Contains(name))
+                TestReport.Check(matched == expected && worst * EmuPerPoint <= ExactToleranceEmu, $"{name}: every edge within {ExactToleranceEmu} EMU of Word's ({(worst * EmuPerPoint).ToString("0.#", CultureInfo.InvariantCulture)})");
             else Console.WriteLine("   INFO  " + summary + " (not yet matched: " + detail + ")");
             string stripped = Path.Combine(folder, Path.GetFileNameWithoutExtension(path) + "-nodrawing.docx");
             if (required && File.Exists(stripped)) CheckDocument(stripped, name);
