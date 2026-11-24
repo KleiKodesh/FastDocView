@@ -112,7 +112,14 @@ public static class WordFieldEvaluator
         }
         switch (instruction.Name)
         {
-            case "EQ": return new(null, WordFieldRuby.ToHtml(EquationCode(instruction.Code)) ?? WordFieldEquation.ToHtml(EquationCode(instruction.Code)), false);
+            case "EQ":
+            {
+                // search text = what Word's Find matches: a phonetic guide's guide + base; any other EQ drawing has none in Word
+                // (Range.Text, Find and the plain-text save all skip it - WordFieldRuby.ToHtml)
+                string equationCode = EquationCode(instruction.Code);
+                if (WordFieldRuby.ToHtml(equationCode, out string? rubyText) is { } ruby) return new(rubyText, ruby, rubyText is { Length: > 0 });
+                return new(null, WordFieldEquation.ToHtml(equationCode), false);
+            }
             case "SYMBOL": return Symbol(instruction);
             case "FORMCHECKBOX":
                 return new(null, "<span class=\"form-checkbox\" role=\"img\" aria-label=\"" + (form?.IsChecked == true ? "checked" : "unchecked") + "\">"

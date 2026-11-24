@@ -208,7 +208,7 @@ public sealed class WordFieldStack
         {
             if (instruction.Name == WordFieldInstruction.NoTypeName) { field.SuppressesResult = true; return WordFieldOutput.None; }
             // the cached result (or a computed one at End) becomes part of the enclosing code
-            if (!hasResult && !field.IsLocked) return WordFieldEvaluator.Compute(instruction, Context, counted, field.Form) is { Text: { } t } ? new(t, null, true) : WordFieldOutput.None;
+            if (!hasResult && !field.IsLocked) return WordFieldEvaluator.Compute(instruction, Context, counted, field.Form) is { Text: { } t, Html: null } ? new(t, null, true) : WordFieldOutput.None;
             return WordFieldOutput.None;
         }
         field.LinkTag = LinkTagOf?.Invoke(code);

@@ -71,7 +71,7 @@ public static partial class DocxFidelityTest
         TestReport.Check(!html[0].Contains("movedaway") && html[1].Contains("movedhere"), "moveFrom hidden, moveTo shown");
         TestReport.Check(found["movedaway"] == 0 && found["movedhere"] == 1, $"search: moveFrom not found, moveTo found ({found["movedaway"]}, {found["movedhere"]})");
         TestReport.Check(html[0].Contains("<ruby>") && html[0].Contains("basetext") && html[0].Contains("<rt>") && html[0].Contains("guidetext"), "a ruby renders its base with its guide text (HTML ruby)");
-        TestReport.Check(found["basetext"] == 1 && found["kept basetext"] == 1 && found["guidetext"] == 0, $"search: the ruby base is found in line, the guide is not ({found["basetext"]}, {found["kept basetext"]}, {found["guidetext"]})");
+        TestReport.Check(found["basetext"] == 1 && found["kept basetext"] == 0 && found["guidetext"] == 1, $"search: the ruby reads guide then base, as Word's Find ({found["basetext"]}, {found["kept basetext"]}, {found["guidetext"]})");
         TestReport.Check(notes.Count == 1 && !notes[0].Contains("notemoved") && notes[0].Contains("<ruby>") && notes[0].Contains("noteguide"), "in a note: moveFrom hidden, ruby rendered");
         TestReport.Check(found["notemoved"] == 0 && found["notebase"] == 0 && found["noteguide"] == 0, $"search: a note's text is never a hit on the text ({found["notemoved"]}, {found["notebase"]}, {found["noteguide"]})");
         TestReport.Check(foundInNotes["notemoved"] == 0 && foundInNotes["notebase"] == 1 && foundInNotes["basetext"] == 0,

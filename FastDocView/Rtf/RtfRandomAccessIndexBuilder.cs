@@ -477,9 +477,17 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
     {
         _fields.Instruction(instruction);
         // XE / TA entries for a result-less INDEX / TOA (the full pass only; a field in another field's code is part of that code)
-        if (!_isSpanScan && _fields.Depth == 1 && WordFieldInstructionName(instruction) is "XE" or "TA")
-            _indexEntries.Add(Math.Max(0, _starts.Count).ToString(System.Globalization.CultureInfo.InvariantCulture) + "\u0001" + instruction);
+        // the code may come in pieces around a nested field: the entry is the field's whole code so far, replaced as it grows
+        if (_isSpanScan || _fields.Depth != 1 || _fields.Innermost is not { } field) return;
+        string code = field.Instruction.ToString();
+        if (WordFieldInstructionName(code) is not ("XE" or "TA")) return;
+        string entry = Math.Max(0, _starts.Count).ToString(System.Globalization.CultureInfo.InvariantCulture) + "\u0001" + code;
+        if (ReferenceEquals(_indexEntryField, field) && _indexEntries.Count > 0) _indexEntries[_indexEntries.Count - 1] = entry;
+        else _indexEntries.Add(entry);
+        _indexEntryField = field;
     }
+
+    private Fields.WordFieldStack.Field? _indexEntryField;
 
     private readonly List<string> _indexEntries = new();
 

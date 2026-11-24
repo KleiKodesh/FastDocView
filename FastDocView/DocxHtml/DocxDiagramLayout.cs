@@ -1113,7 +1113,11 @@ internal static class DocxDiagramLayout
         /// The cycle algorithm (ECMA-376 Part 1 21.4.2 "Cycle"; Word's drawing for the built-in cycles): the nodes on a circle
         /// from stAng (0 = top, clockwise) over spanAng, their centres one node width plus sibSp apart along the chord, so the
         /// radius is (w + sibSp) / (2 sin(step / 2)); the ring of nodes scaled to fit the shape and centred. A connector
-        /// (sibTrans) sits on the chord's middle between its node and the next, turned along it, sized by its constraints.
+        /// (sibTrans) lies on the chord between its node and the next, turned along it, as high as its constraints say. Along
+        /// the chord it draws part of connDist, the way between the two nodes' edges: its begPad / endPad of it left free, or,
+        /// when it states none, Word's 0.22 before and 0.25 after it (Word 16 drawings of cycle2 with 3 to 8 nodes in five
+        /// frames, every arrow 0.5300 of connDist from 0.2200 to 0.7500, 2026-11-24). LibreOffice leaves the same 0.47 free
+        /// but splits it evenly (oox/source/drawingml/diagram/diagramlayoutatoms.cxx:5554-5555, 0.235 at each end).
         /// </summary>
         private static void Cycle(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> own)
         {
@@ -1176,6 +1180,24 @@ internal static class DocxDiagramLayout
                 double connectorHeight = connectorWidth;
                 if (child.OwnConstraints.FirstOrDefault(c => c.Type == "h" && c.RefType == "w" && c.ForName.Length == 0 && c.For == "none") is { } derived) connectorHeight = connectorWidth * derived.Factor;
                 double middleX = offsetX + (from.X + to.X) / 2 * scale, middleY = offsetY + (from.Y + to.Y) / 2 * scale;
+                double chord = Math.Sqrt((to.X - from.X) * (to.X - from.X) + (to.Y - from.Y) * (to.Y - from.Y)) * scale;
+                if (chord > 0)
+                {
+                    double unitX = (to.X - from.X) * scale / chord, unitY = (to.Y - from.Y) * scale / chord;
+                    double fromReach = NodeReach(shape.Children[nodes[nodeIndex]], unitX, unitY);
+                    double connectorDistance = chord - fromReach - NodeReach(shape.Children[nodes[(nodeIndex + 1) % count]], unitX, unitY);
+                    if (connectorDistance > 0)
+                    {
+                        bool padsStated = child.OwnConstraints.Any(c => c.Type is "begPad" or "endPad");
+                        double beginPad = padsStated ? child.OwnConstraints.FirstOrDefault(c => c.Type == "begPad")?.Factor ?? 0 : 0.22;
+                        double endPad = padsStated ? child.OwnConstraints.FirstOrDefault(c => c.Type == "endPad")?.Factor ?? 0 : 0.25;
+                        connectorWidth = Math.Max(0, connectorDistance * (1 - beginPad - endPad));
+                        // the drawn part's middle, measured from the chord's middle
+                        double along = fromReach - chord / 2 + connectorDistance * beginPad + connectorWidth / 2;
+                        middleX += unitX * along;
+                        middleY += unitY * along;
+                    }
+                }
                 (child.Width, child.Height) = (connectorWidth, connectorHeight);
                 (child.X, child.Y) = (middleX - connectorWidth / 2, middleY - connectorHeight / 2);
                 child.Rotation = Math.Atan2(to.Y - from.Y, to.X - from.X) * 180 / Math.PI;
@@ -1184,6 +1206,18 @@ internal static class DocxDiagramLayout
         }
 
         private static bool IsConnector(DiagramShape shape) => shape.Preset == "conn" || shape.DataNodeType is "sibTrans" or "parTrans";
+
+        /// <summary>How far a node reaches from its centre along the unit direction: to its ellipse's edge, else its box's.</summary>
+        private static double NodeReach(DiagramShape node, double unitX, double unitY)
+        {
+            double halfWidth = node.Width / 2, halfHeight = node.Height / 2;
+            if (node.Preset == "ellipse")
+            {
+                double denominator = Math.Sqrt(unitX * unitX * halfHeight * halfHeight + unitY * unitY * halfWidth * halfWidth);
+                return denominator > 0 ? halfWidth * halfHeight / denominator : 0;
+            }
+            return Math.Min(Math.Abs(unitX) > 1e-12 ? halfWidth / Math.Abs(unitX) : double.MaxValue, Math.Abs(unitY) > 1e-12 ? halfHeight / Math.Abs(unitY) : double.MaxValue);
+        }
 
         /// <summary>
         /// hierRoot / hierChild (ECMA-376 Part 1 21.4.2 "Hierarchy Root" / "Hierarchy Child"; Word's drawings of the built-in org

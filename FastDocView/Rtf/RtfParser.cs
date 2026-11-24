@@ -37,6 +37,9 @@ internal sealed class RtfParser
     // contexts that end with their group
     private int _footnoteDepth = -1, _listTextDepth = -1, _unicodePairDepth = -1, _nestedTablePropertiesDepth = -1;
     private int _captureDepth = -1;                 // a {\*\fldinst} / {\*\bkmkstart} group whose text is captured
+    private RtfDestination _captureOuterDestination;  // the destination around the {\*\fldinst} being captured
+    // a {\field} inside a {\*\fldinst}: its group depth, and the outer instruction's capture it suspends until it closes
+    private readonly List<(int FieldDepth, int CaptureDepth, RtfDestination OuterDestination)> _nestedFieldCaptures = new();
     // a {\*\formfield} inside a field's code: its type, result, default, list entries and default text
     private int _formFieldDepth = -1, _formTextDepth = -1;
     private int _formType, _formResult = 25, _formDefault;
@@ -321,6 +324,7 @@ internal sealed class RtfParser
         _skipCount = 0;
         _textByteCount = 0;
         _captureDepth = -1;
+        _nestedFieldCaptures.Clear();
         IsNoteInFieldInstruction = false;
         _captured.Clear();
         _pendingCell = default;
@@ -511,6 +515,14 @@ internal sealed class RtfParser
             if (_stack[_depth].Destination == RtfDestination.BookmarkStart) { if (captured.Trim().Length > 0) _sink.BookmarkStart(captured.Trim()); }
             else if (_stack[_depth].Destination == RtfDestination.BookmarkEnd) { if (captured.Trim().Length > 0) _sink.BookmarkEnd(captured.Trim()); }
             else _sink.FieldInstruction(captured);
+        }
+        if (_nestedFieldCaptures.Count > 0 && _nestedFieldCaptures[_nestedFieldCaptures.Count - 1].FieldDepth == _depth)
+        {
+            // a nested field ended: the outer field's instruction capture resumes (its text after the nested field)
+            var resumed = _nestedFieldCaptures[_nestedFieldCaptures.Count - 1];
+            _nestedFieldCaptures.RemoveAt(_nestedFieldCaptures.Count - 1);
+            _captureDepth = resumed.CaptureDepth;
+            _captureOuterDestination = resumed.OuterDestination;
         }
         if (_shapes.Count > 0) CloseShapeGroup();
         if (_readsHeaderTables) CloseHeaderGroup();
@@ -917,7 +929,19 @@ internal sealed class RtfParser
             // Fields (RTF 1.5 spec "Fields": {\field {\*\fldinst ...} {\fldrslt ...}}): the result shows; the instruction is
             // captured for links (HYPERLINK, REF \h). Bookmarks (spec "Bookmarks": {\*\bkmkstart name}; \bkmkcolf / \bkmkcoll
             // are ignored) are captured as jump targets.
-            case RtfWord.Field: if (IsTextDestination(state)) _sink.FieldStart(_depth); return;
+            case RtfWord.Field:
+                // a {\field} inside a {\*\fldinst} is a nested field, as Word reads it (a field in a field's code: its own code
+                // and notes are its own, its result is part of the outer code - WordFieldStack): the outer code so far goes to
+                // the sink, the capture pauses, and the nested field's group reads like the text around the outer field
+                if (state.Destination == RtfDestination.FieldInstruction && _captureDepth >= 0 && _depth > _captureDepth && _formFieldDepth < 0)
+                {
+                    if (_captured.Length > 0) { _sink.FieldInstruction(_captured.ToString()); _captured.Clear(); }
+                    _nestedFieldCaptures.Add((_depth, _captureDepth, _captureOuterDestination));
+                    _captureDepth = -1;
+                    state.Destination = _captureOuterDestination;
+                }
+                if (IsTextDestination(state)) _sink.FieldStart(_depth);
+                return;
             case RtfWord.FieldResult: if (IsTextDestination(state)) _sink.FieldResultStart(); return;
             case RtfWord.FieldLock: case RtfWord.FieldPrivate: if (IsTextDestination(state)) _sink.FieldModifier(word); return;
             case RtfWord.FormField:
@@ -938,6 +962,7 @@ internal sealed class RtfParser
                 return;
             case RtfWord.FieldInstruction: case RtfWord.BookmarkStart: case RtfWord.BookmarkEnd:
                 if (_captureDepth >= 0 || state.Destination is not (RtfDestination.Body or RtfDestination.Footnote or RtfDestination.TextBox)) { SkipGroup(name); return; }
+                _captureOuterDestination = state.Destination;
                 state.Destination = word == RtfWord.BookmarkStart ? RtfDestination.BookmarkStart : word == RtfWord.BookmarkEnd ? RtfDestination.BookmarkEnd : RtfDestination.FieldInstruction;
                 _captureDepth = _depth;
                 _captured.Clear();
@@ -1077,6 +1102,8 @@ internal sealed class RtfParser
                 // passes would segment differently - e.g. a Shift-JIS trail byte '{' in a style name leaves the \par after it
                 // inside the style sheet (LibreOffice's tokenizer opens a group there too, rtftokenizer.cxx:2005)
                 if (state.Destination is >= RtfDestination.FontTable and <= RtfDestination.ListOverrideLevel) return;
+                // inside a nested field in a field's code: part of that code (dropped there before as all code text), never a block end
+                if (_nestedFieldCaptures.Count > 0 && state.Destination != RtfDestination.Footnote) return;
                 if (_shapes.Count > 0)
                 {
                     // inside a shape: a text box's paragraph / cell / row ends - its own tables; never the block's
@@ -1104,6 +1131,7 @@ internal sealed class RtfParser
                               | (parameter is >= 1 and <= 3 ? (RtfStateFlags)((uint)parameter << 28) : 0);
                 return;
             case RtfWord.Page: case RtfWord.Line: case RtfWord.Column:
+                if (_nestedFieldCaptures.Count > 0 && state.Destination != RtfDestination.Footnote) return;   // part of a field's code
                 if (IsTextDestination(state)) _sink.Break(word, state);
                 return;
             // \chftn also in a field code (the automatic mark of a note kept inside an EQ ruby's code)

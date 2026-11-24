@@ -51,6 +51,34 @@ public static class DocumentTextTest
         CheckWhileIndexing();
         CheckNoteInFieldKeyword(root);
         CheckFieldLeadingSwitch(root);
+        CheckEquationSearchText(root);
+    }
+
+    /// <summary>
+    /// test-data/word-fields/eq-search-text-v1 (.rtf / .docx / .doc, Word 16): the text Word itself gives an EQ field
+    /// (eq-search-text-v1.word-find.txt): Range.Text and Find skip every EQ drawing (fraction, root, overstrike, array, bracket,
+    /// script, box, integral, list), while a phonetic guide (Word saves it to .docx as w:ruby) is found as guide + base, one
+    /// run with the text around it ("gdbase", ": gd", "base tail"; never "basegd"). GetText and the search read exactly that.
+    /// </summary>
+    private static void CheckEquationSearchText(string root)
+    {
+        string[] cases = { "f", "r", "o", "a", "b", "s", "x", "i", "l" };
+        string expected = string.Join("\n", cases.Select(name => $"case {name}:  tail{name}").Append("case ruby: gdbase tailruby"));
+        foreach (string extension in new[] { "rtf", "docx", "doc" })
+        {
+            string name = "eq-search-text-v1." + extension;
+            string path = Path.Combine(root, "test-data", "word-fields", name);
+            string body = WordDocumentText.GetText(path);
+            TestReport.Check(body == expected, $"{name}: GetText = Word's text of every EQ exactly (got \"{Ascii(body.Replace('\n', '|'))}\")");
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+            CheckBlocks(name, document, body);
+            foreach ((string word, int count) in new[] { ("ab", 0), ("cd", 0), ("xy", 0), ("ef", 0), ("pq", 0), ("mn", 0), ("up", 0), ("bx", 0), ("ig", 0), ("l1", 0),
+                                                         ("gd", 1), ("base", 1), ("gdbase", 1), ("basegd", 0), (": gd", 1), ("base tail", 1) })
+            {
+                int found = SumCounts(from => document.Search(word, WordDocumentSearchOptions.Default, from, 1000));
+                TestReport.Check(found == count, $"{name}: search finds \"{word}\" {count} time(s), as Word's Find ({found})");
+            }
+        }
     }
 
     /// <summary>
@@ -80,11 +108,8 @@ public static class DocumentTextTest
             var renderWrong = Enumerable.Range(0, lines.Length).Where(i => i != eq && (i >= rendered.Count || rendered[i] != lines[i])).ToList();
             TestReport.Check(renderWrong.Count == 0, $"{name}: the rendered text of every case but the EQ is GetText's line{(renderWrong.Count > 0 && renderWrong[0] < rendered.Count ? $" (first: \"{Ascii(rendered[renderWrong[0]])}\")" : "")}");
             string eqHtml = eq < blocks.Count ? blocks[eq].Html : "";
-            // RTF: a {\field} nested in another field's {\*\fldinst} is not read as a field (its code and note are skipped, its
-            // result joins the outer code) - docs/UNSUPPORTED-FEATURES.md "Fields"; .docx / .doc follow Word
-            if (extension != "rtf")
-                TestReport.Check(Regex.Matches(eqHtml, "data-note-number=\"(\\d+)\"").Cast<Match>().Select(match => match.Groups[1].Value).SequenceEqual(new[] { "2" }),
-                    $"{name}: the EQ draws its own note's mark (2) and not the nested field's (1), as Word's PDF");
+            TestReport.Check(Regex.Matches(eqHtml, "data-note-number=\"(\\d+)\"").Cast<Match>().Select(match => match.Groups[1].Value).SequenceEqual(new[] { "2" }),
+                $"{name}: the EQ draws its own note's mark (2) and not the nested field's (1), as Word's PDF");
             foreach (string hidden in new[] { "resA", "resB", "resC", "resD", "resF", "resG", "resJ", "resK", "resL", "MERGEFORMAT" })
                 TestReport.Check(SumCounts(from => document.Search(hidden, WordDocumentSearchOptions.Default, from, 1000)) == 0, $"{name}: search finds no \"{hidden}\"");
         }

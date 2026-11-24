@@ -201,7 +201,15 @@ internal sealed class DocxSearchTextScanner
                     {
                         skipDepth = -1;
                         // a ruby's guide closed: its rest after a comma is drawn at the start of the base (DocxRubyText)
-                        if (rubyGuideStart >= 0) { rubyRest = DocxHtml.DocxRubyText.SearchRest(GuideText(xml.Slice(rubyGuideStart, nameStart - 2 - rubyGuideStart))); rubyGuideStart = -1; }
+                        // a plain guide is searched before its base, as Word's Find reads a phonetic guide (guide + base as one
+                        // run; WordFieldRuby.ToHtml for the .doc / RTF EQ form); a guide with a comma keeps only its rest
+                        if (rubyGuideStart >= 0)
+                        {
+                            string guide = GuideText(xml.Slice(rubyGuideStart, nameStart - 2 - rubyGuideStart));
+                            rubyRest = DocxHtml.DocxRubyText.SearchRest(guide);
+                            if (rubyRest is null) matcher.Feed(guide.Replace(")", "").AsSpan());
+                            rubyGuideStart = -1;
+                        }
                     }
                 }
                 else if (depth == textDepth) { textDepth = -1; dropsAlignment = false; }
@@ -323,7 +331,7 @@ internal sealed class DocxSearchTextScanner
                     case 3 when Is(local, "tab") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
                         if (MathKindAt(elementDepth - 1) != MathKind.Run) matcher.Feed(' ');      // a tab in an equation's run is not drawn
                         break;
-                    case 2 when Is(local, "rt") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:          // a ruby's guide text: shown above its base, not searched
+                    case 2 when Is(local, "rt") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:          // a ruby's guide text: shown above its base, searched when it closes
                         if (!isEmpty) { skipDepth = elementDepth; rubyGuideStart = position; }
                         break;
                     case 8 when Is(local, "rubyBase") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:

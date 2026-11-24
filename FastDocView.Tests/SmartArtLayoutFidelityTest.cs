@@ -20,7 +20,9 @@ namespace FastDocView.Tests;
 public static class SmartArtLayoutFidelityTest
 {
     /// <summary>The layouts the engine matches Word for (box edges within <see cref="TolerancePoints"/>); the others are reported, not checked.</summary>
-    private static readonly string[] Layouts = ["block-list", "process", "pyramid", "vertical-list", "chevron", "cycle", "hierarchy", "org-chart", "horizontal-list", "stacked-list", "pyramid-4-levels",
+    private static readonly string[] Layouts = ["block-list", "process", "pyramid", "vertical-list", "chevron", "cycle",
+                                                // cycle2 in other node counts and frames (Word 16; the connectors' 0.22 / 0.25 pads of connDist)
+                                                "cycle-3-nodes", "cycle-7-nodes", "cycle-8-nodes", "cycle-wide-frame", "hierarchy", "org-chart", "horizontal-list", "stacked-list", "pyramid-4-levels",
                                                 // Hebrew (Arial from the theme's Hebr font, niqqud without width), mixed Hebrew / English, a Times New Roman theme, a theme a:cs of David (Word still uses the Hebr font)
                                                 "hebrew-block-list", "hebrew-niqqud-block-list", "hebrew-vertical-list", "hebrew-process", "hebrew-horizontal-list", "mixed-block-list", "times-block-list", "hebrew-david-block-list",
                                                 // bold / italic faces, GPOS kerning (Latin, Hebrew), Arabic shaping, East Asian fonts and line height
@@ -36,10 +38,9 @@ public static class SmartArtLayoutFidelityTest
     private const double TolerancePoints = 4;
     /// <summary>
     /// The checked layouts Word's drawing is matched to within <see cref="ExactToleranceEmu"/> (Word writes whole EMUs): all but
-    /// these, which are matched within <see cref="TolerancePoints"/> only (cycle connectors 1.1 pt, vertical lists and the
-    /// hierarchies). The 1/2048 scale steps of snake, lin and cycle (DocxDiagramLayout.SteppedScale) are what make them exact.
+    /// these, which are matched within <see cref="TolerancePoints"/> only (vertical lists, the hierarchies, and cycle: its connectors follow Word but its node ring is up to 0.35 pt off Word in other node counts - 97 EMU at 5 nodes). The 1/2048 scale steps of snake, lin and cycle (DocxDiagramLayout.SteppedScale) are what make them exact.
     /// </summary>
-    private static readonly string[] NotExactLayouts = ["cycle", "hebrew-vertical-list", "hierarchy", "org-chart", "vertical-list"];
+    private static readonly string[] NotExactLayouts = ["cycle", "cycle-3-nodes", "cycle-7-nodes", "cycle-8-nodes", "cycle-wide-frame", "hebrew-vertical-list", "hierarchy", "org-chart", "vertical-list"];
     private const double ExactToleranceEmu = 2.5;   // Word truncates offset and extent to whole EMUs: a far edge can be 2 EMU off
     private const double EmuPerPoint = 12700;
 
@@ -59,7 +60,7 @@ public static class SmartArtLayoutFidelityTest
             string summary = $"{name}: {matched} of {expected} shapes laid out, worst edge {worst.ToString("0.0", CultureInfo.InvariantCulture)} pt";
             if (required) TestReport.Check(matched == expected && worst <= TolerancePoints, summary + (matched == expected && worst <= TolerancePoints ? "" : " " + detail));
             if (required && !NotExactLayouts.Contains(name))
-                TestReport.Check(matched == expected && worst * EmuPerPoint <= ExactToleranceEmu, $"{name}: every edge within {ExactToleranceEmu} EMU of Word's ({(worst * EmuPerPoint).ToString("0.#", CultureInfo.InvariantCulture)})");
+                TestReport.Check(matched == expected && worst * EmuPerPoint <= ExactToleranceEmu, $"{name}: every edge within {ExactToleranceEmu} EMU of Word's ({(worst * EmuPerPoint).ToString("0.#", CultureInfo.InvariantCulture)}){(worst * EmuPerPoint <= ExactToleranceEmu ? "" : " " + detail)}");
             else Console.WriteLine("   INFO  " + summary + " (not yet matched: " + detail + ")");
             string stripped = Path.Combine(folder, Path.GetFileNameWithoutExtension(path) + "-nodrawing.docx");
             if (required && File.Exists(stripped)) CheckDocument(stripped, name);
@@ -264,7 +265,7 @@ public static class SmartArtLayoutFidelityTest
             if (!ours.TryGetValue(id, out var mine)) { detail.Add("missing " + Shorten(id)); continue; }
             matched++;
             double difference = new[] { Math.Abs(mine.X - word.X), Math.Abs(mine.Y - word.Y), Math.Abs(mine.X + mine.W - word.X - word.W), Math.Abs(mine.Y + mine.H - word.Y - word.H) }.Max();
-            if (difference > TolerancePoints) detail.Add($"{Shorten(id)} ours {Box(mine)} word {Box(word)}");
+            if (difference > TolerancePoints || Environment.GetEnvironmentVariable("FDV_SMARTART_DETAIL") is not null && difference * EmuPerPoint > ExactToleranceEmu) detail.Add($"{Shorten(id)} ours {Box(mine)} word {Box(word)}");
             worst = Math.Max(worst, difference);
         }
         // the autofit font size: each shape's first run at Word's size (whole points); by text where Word writes a text shape's

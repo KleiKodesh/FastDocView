@@ -514,13 +514,16 @@ internal sealed class WordXmlSearchText
                             drawingRelationshipIds.Add(reader.GetAttribute("lo", RelationshipsNamespace) is { Length: > 0 } layout ? diagram + " " + layout : diagram);
                         if (drawingRelationshipIds is not null && reader.LocalName == "chart" && reader.NamespaceURI is ChartNamespace or ChartExNamespace && reader.GetAttribute("id", RelationshipsNamespace) is { } chart) drawingRelationshipIds.Add(chart);
                         if (!IsWordprocessing(reader.NamespaceURI)) break;
-                        // properties, the source of a tracked move (Word's final view hides it) and a ruby's guide text (shown above
-                        // its base, not searched - as text:ruby-text in .odt) are not text
+                        // properties, the source of a tracked move (Word's final view hides it) and a ruby's guide (read below:
+                        // searched before its base, as Word's Find) are not body text
                         if (reader.LocalName == "rt" && !reader.IsEmptyElement)
                         {
                             // only its rest after a comma is drawn - at the start of the base (DocxRubyText, as DocxSearchTextScanner)
                             var guide = (XElement)XNode.ReadFrom(reader);
-                            rubyRest = DocxHtml.DocxRubyText.SearchRest(string.Concat(guide.Descendants().Where(e => e.Name.LocalName == "t").Select(e => e.Value)));
+                            string guideText = string.Concat(guide.Descendants().Where(e => e.Name.LocalName == "t").Select(e => e.Value));
+                            rubyRest = DocxHtml.DocxRubyText.SearchRest(guideText);
+                            // a plain guide is searched before its base, as Word's Find reads a phonetic guide
+                            if (rubyRest is null) matcher.Feed(guideText.Replace(")", "").AsSpan());
                             skipped = true;
                             continue;
                         }

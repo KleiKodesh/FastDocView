@@ -79,7 +79,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | USERNAME / USERINITIALS / USERADDRESS without an argument | docx, doc, rtf | Word's user settings, not the document's | won't do |
 | STYLEREF page-relative search and \l | docx, doc, rtf | Flow view has no page | planned (paged view) |
 | Lookups during the first open (REF to a bookmark not indexed yet, TOC, INDEX) | docx, doc, rtf | Show nothing until the index completes, instead of Word's "not found" | won't do (by design) |
-| A field nested inside another field's code | rtf | The nested {\field} in a {\*\fldinst} is read as plain code text: its own code and notes are skipped and its cached result joins the outer code (Word evaluates it; .docx / .doc do) | deferred |
 | Fields | txt, mhtml | Format has none | n.a. |
 
 ## Links, bookmarks, TOC
@@ -117,6 +116,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Exact chart layout for Word-made charts | docx | Text widths come from the fonts' own advance widths (Calibri, Cambria, Times New Roman, Arial); measured: Word-made charts median 0.3 pt (x) / 0.6 pt (y) from Word's PDF (right-to-left names 0.9 / 0.6 pt), LibreOffice-written .docx 1.0 / 0.9 pt, ODT vs LibreOffice 0.4 / 0.3 pt | deferred |
 | chartex region map without a geography cache | docx | No map data; the saved fallback picture is shown | won't do |
 | Exact SmartArt font size without a saved drawing part in rarer font cases | docx | Text is measured in the font Word uses for each character (Latin, complex-script and East Asian slots of the theme; bold / italic faces; kern table or GPOS kerning; GSUB shaping for complex scripts; East Asian line breaks and line height) and every tested layout gets Word's size (test-data/smartart-layouts). GSUB reverse chaining (Nastaliq) and the Indic shaping engine (Devanagari ... Malayalam: reordering, reph / half / below-base / pre-base forms, GPOS 'dist') are applied and match HarfBuzz on Nirmala UI. Still approximate: a style a family doesn't ship is measured in the nearest face, advances unchanged, as Word measures a synthesized bold / italic (Word 16 fixtures from scripts/make-smartart-shaping-fixtures.py: Sylfaen and Impact bold, Gabriola italic and bold, Devanagari, Kannada and Telugu get Word's size; a synthesized bold of a face whose instructions may change advances and that has no hdmx table is narrowed by 1 / 1.02, as GDI does); no Nastaliq font is installed to check one against Word; Southeast Asian / USE scripts (Khmer, Myanmar, Sinhala, Tibetan ...) are not reordered; Japanese line breaking follows Word's default kinsoku characters only; a font that is not installed or cached by Office (or no font folder, as in WASM) falls back to built-in tables for Calibri / Cambria / Times New Roman / Arial (ASCII, Arial's Hebrew), other characters at the font's average width | deferred |
+| Highlighting a search match that spans a ruby's guide and base | docx, doc, rtf | Search counts and steps to it (Word's Find order: guide then base), but the page draws HTML ruby as base then guide, so the highlighter finds no mark for a match that crosses the two (a match inside either one is marked) | deferred |
 | OLE objects as live content (embedded sheets, media; MathType / Equation 3.0 equations) | all | Only the saved preview picture is shown (Office Math and LibreOffice formulas are drawn as MathML, see the supported list) | won't do |
 
 ## Tracked changes, comments, ruby, math
@@ -127,7 +127,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Comments | docx, doc, rtf, odt | Comments do not print (references skipped) | won't do (not printed) |
 | Equations: a stretched operator around content whose ink lands right at a variant boundary can take the next size (the 3-row brace in Cambria Math, 1.48 x Word's width; 29 of 30 test cases within 15%); a host without font files falls back to tables for Cambria Math and DejaVu Math TeX Gyre; heights of single-line equations read ~0.85 of Word's PDF by the measuring method | docx, doc, rtf | Ink is read from the browser's text metrics, not Word's own layout | deferred |
 | Equations in .doc saved without equationXML (Word 2003 and older) | doc | No OMML in the file; the saved picture is shown | won't do |
-| Search inside a ruby base | doc, rtf | Word stores the ruby as an EQ field: the base is field code, which search skips (the ruby is drawn) | deferred |
 
 ## Document level
 

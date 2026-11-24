@@ -1,0 +1,10 @@
+case f | Range.Text [case f:  tailf] | Find ab=0 cd=0 abcd=0
+case r | Range.Text [case r:  tailr] | Find xy=0 3xy=0
+case o | Range.Text [case o:  tailo] | Find ef=0 gh=0
+case a | Range.Text [case a:  taila] | Find pq=0 rs=0
+case b | Range.Text [case b:  tailb] | Find mn=0
+case s | Range.Text [case s:  tails] | Find up=0
+case x | Range.Text [case x:  tailx] | Find bx=0
+case i | Range.Text [case i:  taili] | Find lo=0 ig=0
+case l | Range.Text [case l:  taill] | Find l1=0 l2=0
+case ruby | Range.Text [case ruby:  tailruby] | Find gd=1 base=1 gdbase=1 basegd=0 : gd=1 base tail=1

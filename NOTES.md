@@ -1867,7 +1867,7 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   by an aspect-ratio heuristic and no steps (oox/source/drawingml/diagram/diagramlayoutatoms.cxx:756-905). The lin / cycle slack
   (chevron 1545 EMU, process 4635) is the same rule (found 2026-11-24): the step is on the scale against the constrained size,
   not against the exact fit - chevron fits at 1/2.8 and Word takes 731/2048, process 1/3.8 -> 538/2048, cycle's node scale too.
-  DocxDiagramLayout.SteppedScale now serves snake, lin and cycle; --smartart checks every layout but cycle (connectors 1.1 pt),
+  DocxDiagramLayout.SteppedScale now serves snake, lin and cycle; --smartart checks every layout but cycle (its node ring; connectors fixed 2026-11-24),
   the vertical lists and the hierarchies within 2.5 EMU of Word's drawing (44 layouts). LibreOffice's lin fit has no steps
   (oox/source/drawingml/diagram/diagramlayoutatoms.cxx:11763, :13089; no 2048 anywhere in the file).
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
@@ -2645,9 +2645,8 @@ both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Ch
   "\*MERGEFORMAT", "\M name") the field is type -1. A quoted keyword ("MERGEFIELD" in quotes) keeps its type. LibreOffice skips
   the leading backslash always and takes the first token as the type even when it is a switch (DomainMapper_Impl.cxx:6119-6128,
   :6143-6146): Word is the reference. A no-type field nested in a code adds nothing to it (case I, EQ \o({MERGEFIELD{note} n},b)
-  draws "b" with the EQ's own note ii; WordFieldStack.Route: Suppressed). RTF limit: a {\field} nested inside another field's
-  {\*\fldinst} is not read as a field (its code and note are skipped, its result joins the outer code) - case I draws "x" over
-  "b" and numbers the EQ's note 1 (docs/UNSUPPORTED-FEATURES.md).
+  draws "b" with the EQ's own note ii; WordFieldStack.Route: Suppressed). RTF (2026-11-24): a {\field} inside a {\*\fldinst} is a nested field (RtfParser: the outer code so far goes to the
+  sink, the capture pauses until the nested group closes; a \par there is no block end); case I matches Word in all three formats.
 - .doc (render time, no index change): sprmCPbiGrf 0x4888 bit 0 + sprmCPbiIBullet 0x6887 (4 bytes) in the LVL grpprlChpx (ww8par3.cxx:808-819,
   :839-845; writer wrtw8num.cxx:355-358) name picture N of the paragraph holding the "_PictureBullets" bookmark, counted from the bookmark start
   (ww8par.cxx:5302-5348); that paragraph's runs are read once per renderer, the id is the PICF offset as for any inline picture. Hidden (vanish)
@@ -3792,3 +3791,20 @@ latent styles, repeated style ids, Word 2003 files without notes, an element lef
 - Harness: RunScenePlacement (--charts / --fidelity) locks the walls of one chart per type (perspective 30 and 120, parallel,
   right-angled) and the 3-D pie of odt-charts-v5 (.odt, .docx) within 0.05 pt; the perspective label checks of RunCrossingsAndRows /
   RunSeriesAxes now lock our positions and state Word's.
+
+### EQ search text, RTF nested fields, SmartArt cycle connectors (2026-11-24)
+
+- EQ: hidden Word 16 (test-data/word-fields/make-eq-search-text-fixture.ps1, eq-search-text-v1.word-find.txt): Range.Text (codes
+  hidden), Find and the plain-text save give NO text for any EQ drawing (\f \r \o \a \b \s \x \i \l). A phonetic guide is the
+  exception: Word saves it to .docx as w:ruby, and Find matches guide + base as one run with the text around it ("gdbase",
+  ":gd", "base tail", never "basegd"). WordFieldRuby.ToHtml(code, out searchText) gives that text and WordFieldEvaluator's EQ
+  returns it searchable, so search and GetText (one path) read it in .doc / RTF; other EQs keep no text. A guide with a comma
+  before its ")" gets none (Word's Find matched only its parts one by one). LibreOffice Read_SubF_Ruby (sw/source/filter/ww8/
+  ww8par5.cxx:2746) imports it as ruby; no search rule there. .docx w:ruby: the scanner and the reference reader now feed a
+  plain guide (no comma) before its base too. DocumentTextTest: GetText exact + 16 Find words, all three formats.
+- SmartArt cycle2 connectors: Word 16 drawings of 3-8 nodes in five frames (test-data/smartart-layouts/cycle-*-v1) all draw the
+  arrow 0.5300 of connDist (the way between the two nodes' edges along the chord), from 0.2200 to 0.7500 of it; h stays 1.35 x
+  the stated w. LibreOffice leaves the same 0.47 free but evenly, 0.235 at each end (oox/source/drawingml/diagram/
+  diagramlayoutatoms.cxx:5554-5555). DocxDiagramLayout.Cycle uses Word's split (stated begPad / endPad win). The 1.1 pt is gone (cycle-v1: 97 EMU);
+  the node ring itself is still up to 0.35 pt off in other counts (cycle-8-nodes: nodes 49.1 pt for Word 49.2), so cycle stays
+  in the 4 pt tolerance set.

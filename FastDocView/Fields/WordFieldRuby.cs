@@ -28,8 +28,18 @@ public static class WordFieldRuby
     public static readonly string NoteMarkPlaceholderText = NoteMarkPlaceholder.ToString();
 
     /// <summary>The ruby HTML, or null when the code is not Word's phonetic-guide form.</summary>
-    public static string? ToHtml(string equationCode)
+    public static string? ToHtml(string equationCode) => ToHtml(equationCode, out _);
+
+    /// <summary>
+    /// The ruby HTML (null when the code is not Word's phonetic-guide form) and its search text: what Word 16's Find matches
+    /// in it - the guide, then the base, as one run between the text around the field ("A {EQ ...(gd),base} Z" finds "A gd",
+    /// "gdbase" and "base Z", not "basegd"; hidden-Word probe 2026-11-24). Word's Range.Text and its plain-text save give
+    /// nothing for any EQ; the search follows Find. A guide with a comma before its ")" (drawn split) has no search text:
+    /// Word's Find matches its parts only one by one there.
+    /// </summary>
+    public static string? ToHtml(string equationCode, out string? searchText)
     {
+        searchText = null;
         string code = equationCode.Trim();
         if (!code.StartsWith(@"\*", StringComparison.Ordinal)) return null;
         int justification = 0, halfPoints = 0;
@@ -106,6 +116,7 @@ public static class WordFieldRuby
             if (guideRest.Length + baseText.Length == 0) return null;
         }
 
+        if (guideRest.Length == 0) searchText = (guide + baseText).Replace(NoteMarkPlaceholderText, "");
         var font = new StringBuilder();
         if (halfPoints > 0) font.Append("font-size:").Append((halfPoints / 2m).ToString(CultureInfo.InvariantCulture)).Append("pt;");
         if (fontName.Length > 0) font.Append("font-family:'").Append(WordHtmlText.CssFontName(fontName)).Append("';");
