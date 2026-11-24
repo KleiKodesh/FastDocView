@@ -3,6 +3,7 @@
 #   this script, step 1                                     -> effects-com-v1.docx (Word's own effects through its object model)
 #   python make_variants.py effects-com-v1.docx effects-xml-v1.docx  -> XML-only variants added
 #   python make_3d.py effects-com-v1.docx effects-3d-v1.docx; this script -Step 3 -> effects-3d-v1.pdf
+#   this script -Step 4                                     -> effects-com-v1.doc / .rtf (Word's own .doc / RTF save), effects-float-v1.doc / .rtf (floating), their PDFs
 #   this script, step 2                                     -> effects-xml-v1.pdf / .mht, vml-shapes-v1.docx / .pdf / .mht / .mht.pdf
 param([int]$Step = 1)
 $d = $PSScriptRoot
@@ -11,7 +12,33 @@ $w = New-Object -ComObject Word.Application
 $w.DisplayAlerts = 0; $w.Visible = $false
 $mine = @(Get-Process WINWORD | Where-Object { $before -notcontains $_.Id } | ForEach-Object Id)
 try {
-    if ($Step -eq 3) {
+    if ($Step -eq 4) {
+        $doc = $w.Documents.Open("$d\effects-com-v1.docx", $false, $true)
+        $doc.SaveAs2("$d\effects-com-v1.doc", 0)
+        $doc.SaveAs2("$d\effects-com-v1.rtf", 6)
+        $doc.Close([ref]0)
+        # floating pictures (OfficeArt shapes anchored to a paragraph): grey, black and white, washout
+        $doc = $w.Documents.Add()
+        $doc.Content.Text = 'Floating pictures with effects.'
+        $a = $doc.Paragraphs.First.Range
+        $types = 2, 3, 4
+        for ($i = 0; $i -lt 3; $i++) {
+            $s = $doc.Shapes.AddPicture("$d\swatch-v1.png", $false, $true, 72, 100 + 130 * $i, 180, 120, $a)
+            $s.WrapFormat.Type = 4
+            $s.PictureFormat.ColorType = $types[$i]
+        }
+        $doc.SaveAs2("$d\effects-float-v1.doc", 0)
+        $doc.SaveAs2("$d\effects-float-v1.rtf", 6)
+        $doc.Close([ref]0)
+        foreach ($name in 'effects-com-v1', 'effects-float-v1') {
+            foreach ($ext in 'doc', 'rtf') {
+                $doc = $w.Documents.Open("$d\$name.$ext", $false, $true)
+                $doc.ActiveWindow.View.Type = 3
+                $doc.SaveAs2("$d\$name-$ext.pdf", 17)
+                $doc.Close([ref]0)
+            }
+        }
+    } elseif ($Step -eq 3) {
         $doc = $w.Documents.Open("$d\effects-3d-v1.docx", $false, $true)
         $doc.ActiveWindow.View.Type = 3
         $doc.SaveAs2("$d\effects-3d-v1.pdf", 17)

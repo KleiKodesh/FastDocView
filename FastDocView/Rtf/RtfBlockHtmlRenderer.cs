@@ -623,7 +623,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         }
         WordPictureLayout layout = new(picture.WidthTwips / 20.0, picture.HeightTwips / 20.0, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0);
         if (picture.Placement is { } shape) layout = ShapeLayout(shape, layout.WidthPt, layout.HeightPt);
-        WordPictureHtml.Append(_listTextTarget ?? _flow.Inline, layout with { Crop = picture.Crop }, pictureId);
+        WordPictureHtml.Append(_listTextTarget ?? _flow.Inline, layout with { Crop = picture.Crop, Effects = picture.Effects ?? picture.Placement?.PictureEffects }, pictureId);
         _flow.HasInline = true;
     }
 

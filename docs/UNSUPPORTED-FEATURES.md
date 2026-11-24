@@ -94,13 +94,13 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Through wrap (text over holes) | all | Holes cannot be laid out in CSS; drawn as tight | won't do |
 | Page / margin-relative vertical position | all | No page | planned (paged view) |
 | Picture effects: a preset camera's own rotation (used without a:rot), the light rig across a perspective picture (a few levels) and with both axes turned past 45 degrees (the grid's edge is used), other a:blip children (alphaBiLevel, alphaCeiling / Floor, alphaRepl, blur, clrRepl, fillOverlay, hsl, tint) | docx | Preset rotations not known here (drawn flat); Word's two-axis lighting is measured on a grid up to 45 degrees (LibreOffice draws an orthographic picture flat, unlit); Word's UI does not write the other blip children | deferred |
-| Picture effects (grey, black and white, washout, VML gain / blacklevel) | doc, rtf | Not read | deferred |
+| Picture effects: duotone, colour change, transparency, soft edges, 3-D rotation (DrawingML-only effects) | doc, rtf | Word keeps them only in the .docx; its .doc / RTF save drops them (grey, black and white, brightness / contrast are drawn) | won't do |
+| Picture colour effects on pictures inside a drawing group and on picture bullets | doc, rtf | Not read there (single inline / floating pictures are) | deferred |
 
 ## Shapes, WordArt, text boxes
 
 | Feature | Formats | Reason | Status |
 |---|---|---|---|
-| 3-D shapes: bevel bands on curved outlines | docx | Each band is flat (one shade); on an outline of many edges, profile steps of similar slope are merged into one band to keep the faces few, so a point at a band edge can be off by up to about 60 levels (medians 2-5 levels against Word) | deferred |
 | Connector routing (glue points) | docx, doc, rtf | Drawn as their saved geometry only | won't do |
 | Half-transparent picture fill in a darken / lighten path | docx | The darkening layer is scaled by the picture's opacity (exact only for an opaque picture) | won't do |
 | Shapes in web archives: the VML drawing itself | mhtml | Shown as a browser shows the archive: Word's HTML fallback (table cells and pictures of the shapes); the fallback is what a browser prints | won't do |

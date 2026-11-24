@@ -86,7 +86,7 @@ internal abstract class RtfSink
 /// <summary>A picture: shown size in twips (0 = unknown), the blip type's file extension ("" = a type a browser cannot show),
 /// its bytes when the sink asked for them, for a floating shape its placement, and its crop (\piccrop*).</summary>
 internal readonly record struct RtfPicture(int WidthTwips, int HeightTwips, string Extension, byte[]? Data, RtfShapePlacement? Placement = null,
-                                           FastDocView.Html.WordPictureCrop Crop = default);
+                                           FastDocView.Html.WordPictureCrop Crop = default, FastDocView.Html.WordPictureEffects? Effects = null);
 
 /// <summary>
 /// A {\shp} or {\shpgrp} as the parser read it ("Word 97 RTF for Drawing Objects (Shapes)", techshelps.github.io/MSDN/SPECS/
@@ -95,6 +95,11 @@ internal readonly record struct RtfPicture(int WidthTwips, int HeightTwips, stri
 /// </summary>
 internal sealed class RtfShapePlacement
 {
+    /// <summary>The picture colour effects among the shape's {\sp} (pictureContrast, pictureBrightness, pictureGray, pictureBiLevel; RtfParser.PictureProperty).</summary>
+    public long? PictureContrast, PictureBrightness;
+    public bool PictureGray, PictureBiLevel;
+    public FastDocView.Html.WordPictureEffects? PictureEffects => FastDocView.Html.WordPictureEffects.FromOfficeArt(PictureContrast, PictureBrightness, PictureGray, PictureBiLevel);
+
     public int Left, Top, Right, Bottom;
     /// <summary>\shpwr (0 = not given).</summary>
     public int Wrap;
@@ -211,6 +216,11 @@ internal sealed class RtfShapePlacement
                 flags = threeD != 0 ? flags | (1u << bit) : flags & ~(1u << bit);
                 ThreeD[group] = flags;
             }
+            return;
+        }
+        if (name is "pictureContrast" or "pictureBrightness" or "pictureGray" or "pictureBiLevel")
+        {
+            RtfParser.PictureProperty(name, value, ref PictureContrast, ref PictureBrightness, ref PictureGray, ref PictureBiLevel);
             return;
         }
         if (name == "gtextFont") { WordArtFont = value; return; }

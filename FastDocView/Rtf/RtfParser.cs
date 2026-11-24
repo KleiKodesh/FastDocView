@@ -1454,12 +1454,25 @@ internal sealed class RtfParser
         bool isClosed = false;
         string extension = "";
         MemoryStream? data = keepsData ? new MemoryStream() : null;
+        // {\*\picprop {\sp {\sn name}{\sv value}}}: the picture's own shape properties (only the colour effects are read)
+        int capture = 0;                         // 1: inside {\sn}, 2: inside {\sv}
+        var captured = new System.Text.StringBuilder();
+        string propertyName = "";
+        long? contrast = null, brightness = null;
+        bool isGray = false, isBiLevel = false;
         while (true)
         {
             int b = ReadByte();
             if (b < 0) break;
             if (b == '{') { depth++; continue; }
-            if (b == '}') { if (--depth == 0) { isClosed = true; break; } continue; }
+            if (b == '}')
+            {
+                if (capture == 1) propertyName = captured.ToString().Trim();
+                else if (capture == 2) PictureProperty(propertyName, captured.ToString().Trim(), ref contrast, ref brightness, ref isGray, ref isBiLevel);
+                capture = 0;
+                if (--depth == 0) { isClosed = true; break; }
+                continue;
+            }
             if (b == '\\')
             {
                 int c = ReadByte();
@@ -1473,6 +1486,7 @@ internal sealed class RtfParser
                 while (c >= '0' && c <= '9') { if (parameter < int.MaxValue) parameter = parameter * 10 + (c - '0'); c = ReadByte(); }
                 if (c >= 0 && c != ' ') _position--;
                 bool isBinary = length == 3 && _word[0] == 'b' && _word[1] == 'i' && _word[2] == 'n';
+                if (depth > 1 && length == 2 && _word[0] == 's' && (_word[1] == 'n' || _word[1] == 'v')) { capture = _word[1] == 'n' ? 1 : 2; captured.Clear(); continue; }
                 if (depth != 1) { if (isBinary && parameter > 0) SkipBytes(parameter); continue; }
                 string word = System.Text.Encoding.ASCII.GetString(_word, 0, Math.Min(length, MaxWordLength));
                 int value = (int)Math.Min(int.MaxValue, negative ? -parameter : parameter);
@@ -1496,6 +1510,7 @@ internal sealed class RtfParser
                 }
                 continue;
             }
+            if (capture != 0) { if (captured.Length < 64) captured.Append((char)b); continue; }
             if (depth != 1 || data is null) continue;
             int digit = HexValue(b);
             if (digit < 0) continue;                                  // white space between the digits
@@ -1509,7 +1524,26 @@ internal sealed class RtfParser
         int shownWidth = goalWidth > 0 ? (int)((long)Math.Max(1, goalWidth - cropLeft - cropRight) * scaleX / 100) : 0;
         int shownHeight = goalHeight > 0 ? (int)((long)Math.Max(1, goalHeight - cropTop - cropBottom) * scaleY / 100) : 0;
         var crop = Html.WordPictureCrop.FromLengths(cropLeft, cropTop, cropRight, cropBottom, goalWidth, goalHeight);
-        return (new RtfPicture(shownWidth, shownHeight, extension, data?.ToArray(), Crop: crop), isClosed);
+        return (new RtfPicture(shownWidth, shownHeight, extension, data?.ToArray(), Crop: crop,
+                               Effects: Html.WordPictureEffects.FromOfficeArt(contrast, brightness, isGray, isBiLevel)), isClosed);
+    }
+
+    /// <summary>
+    /// One picture property of a {\*\picprop} or a picture shape's {\sp}: pictureContrast, pictureBrightness, pictureGray,
+    /// pictureBiLevel (the OfficeArt properties by name, "Word 97 RTF for Drawing Objects (Shapes)"; LibreOffice reads the
+    /// first two, rtfsdrimport.cxx:892-910). Word 16 writes them for its grey / black and white / washout / brightness and
+    /// contrast pictures (test-data/word-picture-effects/effects-com-v1.rtf). Drawn by <see cref="Html.WordPictureEffects.FromOfficeArt"/>.
+    /// </summary>
+    internal static void PictureProperty(string name, string value, ref long? contrast, ref long? brightness, ref bool isGray, ref bool isBiLevel)
+    {
+        if (!long.TryParse(value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out long number)) return;
+        switch (name)
+        {
+            case "pictureContrast": contrast = number; break;
+            case "pictureBrightness": brightness = number; break;
+            case "pictureGray": isGray = number != 0; break;
+            case "pictureBiLevel": isBiLevel = number != 0; break;
+        }
     }
 
     /// <summary>

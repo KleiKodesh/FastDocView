@@ -1123,7 +1123,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
             return;
         }
         if (Pictures.Locate(location) is { } picture)
-            WordPictureHtml.Append(html, new WordPictureLayout(picture.widthPt, picture.heightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0, Crop: picture.crop),
+            WordPictureHtml.Append(html, new WordPictureLayout(picture.widthPt, picture.heightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0, Crop: picture.crop,
+                                                         Effects: Pictures.Effects(location)),
                                    WordPictureHtml.ContentTypeOf(picture.extension) is null ? null    // a Word 6 / 2 metafile: its box at its size
                                    : location.ToString(System.Globalization.CultureInfo.InvariantCulture));
         else html.Append("<span class=\"unsupported\">[image]</span>");

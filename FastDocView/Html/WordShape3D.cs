@@ -468,6 +468,7 @@ internal static class WordShape3D
         foreach (OdtExtrusionFace face in faces)
         {
             var path = new WordShapePath { Fill = face.OutlineOnly ? WordShapePathFill.None : WordShapePathFill.Normal, Stroke = face.OutlineOnly, SolidFill = face.OutlineOnly ? null : face.Color };
+            if (!face.OutlineOnly && face.Gradient is { Count: > 1 } stops) (path.SolidFill, path.SolidFillDefinitions) = BandGradient(face, stops);
             foreach (var ring in face.Rings)
             {
                 if (ring.Count == 0) continue;
@@ -495,4 +496,52 @@ internal static class WordShape3D
         shape.RotationDegrees = 0;
         shape.FlipHorizontal = shape.FlipVertical = false;
     }
+
+    /// <summary>
+    /// A bevel band's step-by-step shading as an SVG linear gradient across it (user space, the band's outline side to its inner
+    /// side). <paramref name="stops"/> come in pairs, one pair per profile step; the gradient keeps one stop at each step's middle and
+    /// drops every stop its neighbours already give within <see cref="BandStopTolerance"/> levels (linear interpolation in sRGB, as
+    /// SVG draws it), so a curved outline of many edges stays small. The id hashes the gradient.
+    /// </summary>
+    private static (string Paint, string Definitions) BandGradient(OdtExtrusionFace face, List<(double Offset, string Color)> stops)
+    {
+        static string N(double v) => Math.Round(v, 3).ToString("0.###", CultureInfo.InvariantCulture);
+        static (int R, int G, int B) Rgb(string hex) => (Convert.ToInt32(hex.Substring(1, 2), 16), Convert.ToInt32(hex.Substring(3, 2), 16), Convert.ToInt32(hex.Substring(5, 2), 16));
+        var middles = new List<(double Offset, string Color, (int R, int G, int B) Rgb)>();
+        for (int i = 0; i + 1 < stops.Count; i += 2)
+            middles.Add(((stops[i].Offset + stops[i + 1].Offset) / 2, stops[i].Color, Rgb(stops[i].Color)));
+        var keep = new bool[middles.Count];
+        keep[0] = keep[keep.Length - 1] = true;
+        // Douglas-Peucker over the colours: keep the stop farthest from the straight mix of the kept ends while it is off by more than the tolerance
+        var spans = new Stack<(int First, int Last)>();
+        spans.Push((0, middles.Count - 1));
+        while (spans.Count > 0)
+        {
+            (int first, int last) = spans.Pop();
+            if (last - first < 2) continue;
+            int worst = -1; double worstOff = BandStopTolerance;
+            for (int k = first + 1; k < last; k++)
+            {
+                double t = (middles[k].Offset - middles[first].Offset) / Math.Max(1e-9, middles[last].Offset - middles[first].Offset);
+                var a = middles[first].Rgb; var b = middles[last].Rgb; var c = middles[k].Rgb;
+                double off = Math.Max(Math.Abs(a.R + (b.R - a.R) * t - c.R), Math.Max(Math.Abs(a.G + (b.G - a.G) * t - c.G), Math.Abs(a.B + (b.B - a.B) * t - c.B)));
+                if (off > worstOff) { worstOff = off; worst = k; }
+            }
+            if (worst < 0) continue;
+            keep[worst] = true;
+            spans.Push((first, worst));
+            spans.Push((worst, last));
+        }
+        var body = new System.Text.StringBuilder();
+        body.Append(" gradientUnits=\"userSpaceOnUse\" x1=\"").Append(N(face.GradientFrom.X)).Append("\" y1=\"").Append(N(face.GradientFrom.Y))
+            .Append("\" x2=\"").Append(N(face.GradientTo.X)).Append("\" y2=\"").Append(N(face.GradientTo.Y)).Append("\">");
+        for (int k = 0; k < middles.Count; k++)
+            if (keep[k]) body.Append("<stop offset=\"").Append(N(Math.Max(0, Math.Min(1, middles[k].Offset)))).Append("\" stop-color=\"").Append(middles[k].Color).Append("\"/>");
+        body.Append("</linearGradient>");
+        string id = "fdv-bevel-" + WordPictureEffects.Hash(body.ToString()).ToString("x8", CultureInfo.InvariantCulture);
+        return ("url(#" + id + ")", "<linearGradient id=\"" + id + "\"" + body);
+    }
+
+    /// <summary>How far (colour levels, any channel) a dropped gradient stop may be from what its kept neighbours mix to.</summary>
+    private const double BandStopTolerance = 6;
 }

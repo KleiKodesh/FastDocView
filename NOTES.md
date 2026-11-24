@@ -3940,3 +3940,37 @@ latent styles, repeated style ids, Word 2003 files without notes, an element lef
   (Line3D Deep unchanged), label anchors off the floor edge, a wider fit rectangle or aspect width, a scaled eye distance.
 - appCheck.mjs counted a document as shown only once a row had text; a charts-only file (types-003.docx: 25 blocks, 24 charts,
   no text) never qualified though the page had drawn everything. It now also accepts a row with a drawing (svg / img).
+
+## Picture colour effects in .doc / RTF (2026-11-25)
+
+Word 16 saves its grey / black and white / washout / brightness-contrast pictures to .doc and RTF as the OfficeArt picture
+properties pictureContrast (0x0108), pictureBrightness (0x0109) and the Blip Boolean flags (0x013F: fPictureBiLevel bit 1,
+fPictureGray bit 2, use bits 16 higher; Word writes 0x60004 grey, 0x60006 black and white); RTF names them in {\*\picprop}
+(inline) or the shape's {\sp} (floating). Measured: Word prints the same pixels for one picture saved as .docx, .doc and RTF
+(effects-com-v1-doc.pdf / -rtf.pdf against effects-xml-v1.pdf, within 1-2 levels), so `WordPictureEffects.FromOfficeArt`
+maps them onto the .docx effects (contrast below 0x10000 = raw / 0x10000 - 1, above = 1 - 0x10000 / raw; brightness / 32768;
+grey + bilevel = black and white at 50 %), as LibreOffice reads them (msdffimp.cxx:3906-3962; RTF rtfsdrimport.cxx:892-910,
+contrast and brightness only). Harness: PictureEffectsFidelityTest.DocAndRtf - every .doc / RTF picture carries the very
+same SVG filter as its .docx twin (inline and floating). Not read: pictures inside a drawing group, picture bullets.
+
+## 3-D shapes: bevel bands on curved outlines shaded per edge (2026-11-25)
+
+Before: an outline of many edges (an oval: hundreds) got at most max(6, 1200 / edges) bands, profile steps of similar slope merged
+into one flat shade, so a point inside a merged band could be off by up to ~60-100 levels. Now each edge's band carries the lit
+colour of every profile step it covers (`Face.Stops`, lit by the same `Lit` as the face: Word's Shader or LibreOffice's lighting)
+as an SVG linear gradient across the band (user space, outline-side edge middle to inner-side edge middle, `WordShape3D.BandGradient`;
+one stop per step middle, stops the neighbours already give within 6 levels dropped, Douglas-Peucker over sRGB as SVG mixes it).
+Only bands merged past the straight-outline tolerance (3 degrees) get one, so rectangles are unchanged. With the shading carried by
+the gradient the geometry needs fewer bands: max(2, 300 / edges) (heights between band edges are straight).
+LibreOffice has nothing to compare (it draws no bevels: oox shape3dproperties.cxx:287-369 only keeps bevelT / bevelB as grab-bag);
+Word 16 is the reference: shapes-3d-bevels-oval-v1.docx (every preset on a 150 x 110 pt oval, 24 pt bevel, threePt rig;
+make-shapes-3d-bevels-oval.ps1, sample_bevels_oval.py: 48 steps inward along the normal at 8 directions).
+
+| | median | 90th percentile | 99th | HTML (12 ovals) | render |
+|---|---|---|---|---|---|
+| flat bands (before) | 6 | 26 | 54 | 1331 KB | 176 ms |
+| per-edge gradients | 4 | 11 | 27 | 2383 KB | 304 ms |
+
+Per preset (median / 90th): every preset within 5 / 13 (before 8-12 / 21-37 for the curved profiles). Harness:
+Shapes3DFidelityTest.OvalBevels (gradients evaluated as SVG does). Remaining: the worst points are Word's anti-aliased edge and
+profile corners (as on rectangles).

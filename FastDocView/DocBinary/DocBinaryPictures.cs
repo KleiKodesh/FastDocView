@@ -192,6 +192,59 @@ internal sealed class DocBinaryPictures
         return null;
     }
 
+    /// <summary>The colour effects of an inline picture: its OfficeArt shape's FOPT (<see cref="ShapeEffects"/>); null: none, or no shape (a Word 6 / 2 picture).</summary>
+    public WordPictureEffects? Effects(uint pictureLocation)
+    {
+        Stream? data = _dataStream;
+        if (data is null || _isLegacy || pictureLocation + 0x44L > data.Length) return null;
+        byte[] header = Read(data, pictureLocation, 0x44);
+        if (header.Length < 0x44) return null;
+        uint lcb = BitConverter.ToUInt32(header, 0);
+        int cbHeader = BitConverter.ToUInt16(header, 4);
+        int mm = BitConverter.ToUInt16(header, 6);
+        if (lcb < PicfMinimumLength || cbHeader < 0x44 || cbHeader > lcb || pictureLocation + (long)lcb > data.Length || mm is not (0x64 or 0x66)) return null;
+        long position = pictureLocation + cbHeader;
+        if (mm == 0x66)
+        {
+            byte[] nameLength = Read(data, position, 1);
+            if (nameLength.Length < 1) return null;
+            position += 1 + nameLength[0];
+        }
+        if (RecordHeader(data, position) is not { Type: 0xF004 } shape) return null;
+        return ShapeEffects(data, position + 8, Math.Min(pictureLocation + (long)lcb, position + 8 + shape.Length));
+    }
+
+    /// <summary>
+    /// The picture colour effects of the FOPT in the SpContainer body [<paramref name="start"/>, <paramref name="end"/>):
+    /// pictureContrast 0x0108, pictureBrightness 0x0109 and the Blip Boolean properties 0x013F (fPictureBiLevel bit 1,
+    /// fPictureGray bit 2 - read without their use bits, as LibreOffice reads (flags & 6), MS-ODRAW 2.3.23; Word 16 writes 0x60004 for grey, 0x60006 for black
+    /// and white). LibreOffice reads the same (msdffimp.cxx:3906-3962); drawn by <see cref="WordPictureEffects.FromOfficeArt"/>.
+    /// </summary>
+    internal static WordPictureEffects? ShapeEffects(Stream data, long start, long end)
+    {
+        for (long position = start; position + 8 <= end;)
+        {
+            if (RecordHeader(data, position) is not { } record) return null;
+            if (record.Type == 0xF00B)
+            {
+                byte[] table = Read(data, position + 8, (int)Math.Min(record.Length, (long)record.Instance * 6));
+                long? contrast = null, brightness = null;
+                uint flags = 0;
+                for (int i = 0; i + 6 <= table.Length; i += 6)
+                {
+                    int property = BitConverter.ToUInt16(table, i) & 0x3FFF;
+                    uint value = BitConverter.ToUInt32(table, i + 2);
+                    if (property == 0x0108) contrast = value;
+                    else if (property == 0x0109) brightness = (int)value;
+                    else if (property == 0x013F) flags = value;
+                }
+                return WordPictureEffects.FromOfficeArt(contrast, brightness, (flags & 4) != 0, (flags & 2) != 0);
+            }
+            position += 8 + record.Length;
+        }
+        return null;
+    }
+
     /// <summary>
     /// The cropFromTop / Bottom / Left / Right properties (msdffdef.hxx:131-134, ids 256-259: signed 16.16 fractions of the
     /// picture) of the FOPT in the SpContainer body [<paramref name="start"/>, <paramref name="end"/>); null when it sets none.

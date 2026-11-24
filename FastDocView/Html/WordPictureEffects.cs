@@ -75,6 +75,28 @@ public sealed class WordPictureEffects
 
     public bool IsEmpty => ColorEffects.Count == 0 && Opacity >= 1 && SoftEdgePt <= 0 && Rotation == default && !HasScene;
 
+    /// <summary>
+    /// The colour effects of an OfficeArt picture (.doc FOPT, RTF picture / shape properties; MS-ODRAW 2.3.23 Blip properties):
+    /// pictureContrast (0x0108, 16.16, 0x10000 = none), pictureBrightness (0x0109, 1/32768 of the full range, signed) and the
+    /// Blip Boolean flags fPictureGray / fPictureBiLevel (0x013F bits 2 / 1). Read as LibreOffice does (msdffimp.cxx:3906-3962
+    /// SvxMSDffManager::ImportGraphic: contrast below 0x10000 = raw / 0x10000 - 1, above = Word's x % stored as 50 / (100 - x)
+    /// x 0x10000; brightness / 327 percent; (flags &amp; 6) 4 = greys, 6 = mono; RTF the same names, rtfsdrimport.cxx:892-910)
+    /// and drawn as the .docx a:lum / a:grayscl / a:biLevel (thresh 50 %) they are in Word: Word 16 prints the same pixels for
+    /// one picture saved as .docx, .doc and RTF (test-data/word-picture-effects/effects-com-v1*, within 1-2 levels). Washout
+    /// is contrast 0x4CCD with brightness 0x599A (c -70 %, b 70 %). The brightness and contrast come first, then the grey,
+    /// as LibreOffice converts them (Adjust, then Convert). Null when the picture has none.
+    /// </summary>
+    public static WordPictureEffects? FromOfficeArt(long? contrast, long? brightness, bool isGray, bool isBiLevel)
+    {
+        var colorEffects = new List<WordPictureColorEffect>();
+        double contrastFraction = contrast is not { } raw || raw == 0x10000 || raw < 0 ? 0 : raw < 0x10000 ? raw / 65536.0 - 1 : 1 - 65536.0 / raw;
+        double brightnessFraction = brightness is { } light ? Math.Max(-1, Math.Min(1, (int)light / 32768.0)) : 0;
+        if (contrastFraction != 0 || brightnessFraction != 0) colorEffects.Add(new WordPictureColorEffect.Luminance(brightnessFraction, contrastFraction));
+        if (isGray && isBiLevel) colorEffects.Add(new WordPictureColorEffect.BiLevel(0.5));
+        else if (isGray) colorEffects.Add(new WordPictureColorEffect.Grayscale());
+        return colorEffects.Count == 0 ? null : new WordPictureEffects { ColorEffects = colorEffects };
+    }
+
     private const double RedLuminance = 0.2126, GreenLuminance = 0.7152, BlueLuminance = 0.0722;
 
     /// <summary>The SVG filter's id and markup (a zero-size svg holding it), or null when no colour operation is set.</summary>
@@ -311,7 +333,7 @@ public sealed class WordPictureEffects
              + "<feMerge><feMergeNode in=\"" + name + "t\"/><feMergeNode in=\"" + name + "k\"/></feMerge>";
     }
 
-    private static uint Hash(string text)
+    internal static uint Hash(string text)
     {
         uint hash = 2166136261;
         foreach (char c in text) { hash ^= c; hash *= 16777619; }

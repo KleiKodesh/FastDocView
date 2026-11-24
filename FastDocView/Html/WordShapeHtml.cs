@@ -37,6 +37,8 @@ public sealed class WordShapePath
     internal bool IsFillCopy;
     /// <summary>A solid colour this path is filled with instead of the shape's fill (an extruded face's lit colour, OdtExtrusion); null = the shape's fill.</summary>
     internal string? SolidFill;
+    /// <summary>The paint server <see cref="SolidFill"/> names (url(#id)) when it is not a colour: a bevel band's gradient, written before the path.</summary>
+    internal string? SolidFillDefinitions;
 }
 
 /// <summary>A line end (DrawingML a:headEnd / a:tailEnd, ST_LineEndType) with its width and length (0 small, 1 medium, 2 large).</summary>
@@ -543,6 +545,7 @@ public static class WordShapeHtml
             if (path.LuminancePercent != 0) brightness = WordShapeColor.LuminanceMarker(path.LuminancePercent);
             if (path.Fill != WordShapePathFill.None && path.SolidFill is { } solid)
             {
+                if (path.SolidFillDefinitions is { } solidDefinitions) html.Append("<defs>").Append(solidDefinitions).Append("</defs>");
                 html.Append("<path d=\"").Append(PathData(path.Subpaths, closeAll: true)).Append("\" fill-rule=\"evenodd\" fill=\"").Append(solid).Append('"');
                 if (shape.FillOpacity < 1) html.Append(" fill-opacity=\"").Append(Opacity(shape.FillOpacity)).Append('"');
                 html.Append(" stroke=\"none\"/>");

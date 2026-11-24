@@ -46,6 +46,7 @@ internal sealed class DocBinaryFloatingPictures
     private Dictionary<uint, (long start, long end, bool isGroup)>? _containerBySpid;
     private HashSet<uint>? _textBoxSpids;
     private Dictionary<uint, WordPictureCrop>? _cropBySpid;
+    private Dictionary<uint, WordPictureEffects>? _effectsBySpid;
     private readonly DocBinaryTextBoxStories _stories;
 
     /// <param name="isHeader">
@@ -165,7 +166,8 @@ internal sealed class DocBinaryFloatingPictures
         bool located = _containerBySpid!.TryGetValue(fspa.spid, out var container);
         if (located && container.isGroup) return null;                                                        // a group is a drawing
         if (_textBoxSpids!.Contains(fspa.spid)) return null;                                                  // a picture with a text box too
-        WordPictureLayout layout = LayoutOf(fspa) with { Crop = _cropBySpid!.TryGetValue(fspa.spid, out WordPictureCrop crop) ? crop : default };
+        WordPictureLayout layout = LayoutOf(fspa) with { Crop = _cropBySpid!.TryGetValue(fspa.spid, out WordPictureCrop crop) ? crop : default,
+                                                         Effects = _effectsBySpid!.TryGetValue(fspa.spid, out WordPictureEffects? effects) ? effects : null };
         return (located ? WithContour(layout, fspa.flags, fspa.yaTop, container, null) : layout, IdPrefix + fspa.spid.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
@@ -259,6 +261,7 @@ internal sealed class DocBinaryFloatingPictures
         _containerBySpid = [];
         _textBoxSpids = [];
         _cropBySpid = [];
+        _effectsBySpid = [];
         (uint offset, uint length) = _drawing;
         Stream table = _tableStream;
         long end = Math.Min(table.Length, offset + (long)length);
@@ -340,7 +343,7 @@ internal sealed class DocBinaryFloatingPictures
     /// <summary>
     /// One SpContainer: its spid, pib, crop and whether it has a text box (lTxid 128); returns the spid. The crop is
     /// <see cref="DocBinaryPictures.ShapeCrop"/>, as LibreOffice reads it for a floating picture (msdffimp.cxx:5607-5614,
-    /// ww8graf.cxx:2166-2221 lcl_ConvertCrop).
+    /// ww8graf.cxx:2166-2221 lcl_ConvertCrop); its colour effects <see cref="DocBinaryPictures.ShapeEffects"/> (msdffimp.cxx:3906-3962).
     /// </summary>
     private uint? ReadShape(long position, long end)
     {
@@ -370,6 +373,7 @@ internal sealed class DocBinaryFloatingPictures
         if (spid is { } shapeId && pib is { } blipIndex) _pibBySpid![shapeId] = blipIndex;
         if (spid is { } textShape && hasText) _textBoxSpids!.Add(textShape);
         if (spid is { } croppedShape && pib is not null && DocBinaryPictures.ShapeCrop(_tableStream, start, end) is { IsDrawable: true } shapeCrop) _cropBySpid![croppedShape] = shapeCrop;
+        if (spid is { } effectShape && pib is not null && DocBinaryPictures.ShapeEffects(_tableStream, start, end) is { } shapeEffects) _effectsBySpid![effectShape] = shapeEffects;
         return spid;
     }
 }

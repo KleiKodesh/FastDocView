@@ -19,6 +19,7 @@ public static class PictureEffectsFidelityTest
     {
         TestReport.Step("Picture effects: .docx against Word's PDF; shapes in web archives");
         Docx();
+        DocAndRtf();
         Cameras();
         LightAndSmallSoftEdges();
         WebArchive();
@@ -46,6 +47,44 @@ public static class PictureEffectsFidelityTest
         TestReport.Check(pictures[8].Contains("perspective(1557.1677pt) rotateX(0deg) rotateY(-30deg)") && pictures[10].Contains("perspective(645pt)"),
                          "perspective cameras: fov 45 and 90 at Word's distances");
         TestReport.Check(pictures[11].Contains("transform:rotateX(0deg) rotateY(-40deg) rotateZ(0deg)"), "orthographic camera: no perspective");
+    }
+
+    /// <summary>
+    /// The same pictures saved by Word as .doc and RTF (make-effects-fixture.ps1 -Step 4): OfficeArt pictureGray / pictureBiLevel /
+    /// pictureContrast / pictureBrightness. Word prints them with the .docx pixels (effects-com-v1-doc.pdf / -rtf.pdf against
+    /// effects-xml-v1.pdf: within 1-2 levels), so each must carry the same SVG filter (the filter id hashes its contents) as the
+    /// .docx picture. Floating pictures (effects-float-v1: grey, black and white, washout) through the shape properties.
+    /// </summary>
+    private static void DocAndRtf()
+    {
+        string reference = Path.Combine(Folder, "effects-com-v1.docx");
+        if (!File.Exists(reference)) { TestReport.Check(false, "test-data/word-picture-effects/effects-com-v1.docx present"); return; }
+        string?[] expected = Filters(reference);
+        foreach (string extension in new[] { ".doc", ".rtf" })
+        {
+            string path = Path.Combine(Folder, "effects-com-v1" + extension);
+            if (!File.Exists(path)) { TestReport.Check(false, $"effects-com-v1{extension} present"); continue; }
+            string?[] actual = Filters(path);
+            TestReport.Check(actual.Length >= 6 && expected.Length >= 6, $"{extension}: pictures ({actual.Length})");
+            if (actual.Length < 6 || expected.Length < 6) continue;
+            TestReport.Check(actual[0] is null, $"{extension}: no effect on the plain picture");
+            for (int index = 1; index <= 5; index++)
+                TestReport.Check(actual[index] is not null && actual[index] == expected[index], $"{extension} picture {index}: the .docx picture's filter ({actual[index]} / {expected[index]})");
+            string floating = Path.Combine(Folder, "effects-float-v1" + extension);
+            if (!File.Exists(floating)) { TestReport.Check(false, $"effects-float-v1{extension} present"); continue; }
+            string?[] floats = Filters(floating);
+            TestReport.Check(floats.Length == 3 && floats[0] == expected[1] && floats[1] == expected[2] && floats[2] == expected[3],
+                             $"{extension} floating: grey, black and white, washout as in .docx ({string.Join(", ", floats)})");
+        }
+    }
+
+    /// <summary>Each picture's SVG filter id in document order (null: none).</summary>
+    private static string?[] Filters(string path)
+    {
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+        string html = string.Concat(document.RenderBlocks(0, document.BlockCount).Select(block => block.Html));
+        return Regex.Matches(html, "<img[^>]*>").Cast<Match>()
+            .Select(image => Regex.Match(image.Value, @"filter:url\(#([^)]+)\)") is { Success: true } filter ? filter.Groups[1].Value : null).ToArray();
     }
 
     private static void Docx()

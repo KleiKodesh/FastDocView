@@ -52,6 +52,13 @@ internal sealed record WordShapeBevel(double Width, double Height, string Preset
         }
     }
 
+    /// <summary>The profile's slope per step (degrees for a bevel as wide as high), 48 steps from the outline in; angle: one step of 45.</summary>
+    public IReadOnlyList<double> StepDegrees()
+    {
+        string key = Measured.ContainsKey(Preset) || Preset == "angle" ? Preset : "circle";
+        return key == "angle" ? [45.0] : Parse(Measured[key].Degrees);
+    }
+
     private static List<WordShapeBevelBand> Merge((string Degrees, string Heights) table, int tolerance)
     {
         double[] degrees = Parse(table.Degrees), heights = Parse(table.Heights);

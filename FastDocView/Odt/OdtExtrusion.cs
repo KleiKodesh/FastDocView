@@ -23,6 +23,10 @@ internal sealed class OdtExtrusionFace
     public bool OutlineOnly;
     public double Depth;
     public string Kind = "";
+    /// <summary>A bevel band drawn with the profile's own shading across it: colour stops (0 = the outline side, 1 = the inner side)
+    /// along <see cref="GradientFrom"/> -> <see cref="GradientTo"/> (drawing coordinates); null = the flat <see cref="Color"/>.</summary>
+    public List<(double Offset, string Color)>? Gradient;
+    public (double X, double Y) GradientFrom, GradientTo;
 }
 
 /// <summary>
@@ -231,6 +235,10 @@ internal sealed class OdtExtrusion
         public bool DoubleSided, Textured;
         /// <summary>Drawn before every other face (Word's contour: the grown solid shows only as a rim round the shape).</summary>
         public bool Behind;
+        /// <summary>A merged bevel band: the normal of each profile step it covers (offsets across the band, 0 = outline side), shaded
+        /// one by one between <see cref="StopsFrom"/> and <see cref="StopsTo"/> (object coordinates) instead of one flat colour.</summary>
+        public List<(double Offset, (double X, double Y, double Z) Normal)>? Stops;
+        public (double X, double Y, double Z) StopsFrom, StopsTo;
     }
 
     /// <summary>
@@ -398,6 +406,23 @@ internal sealed class OdtExtrusion
         // lights (:822-1080)
         var lights = Lights(mirrorX != mirrorY, out double ambient, out (double R, double G, double B) specularColour, out int specularIntensity);
 
+        // one face normal lit as the scene lights it (the Shader for Word's rigs, else LibreOffice's lighting)
+        string Lit((double X, double Y, double Z) faceNormal, (double R, double G, double B) faceMaterial, bool flip)
+        {
+            var normal = m.Vector(faceNormal);
+            if (flip) normal = (-normal.X, -normal.Y, -normal.Z);
+            if (Shader is not null)
+            {
+                // the shader's frames are y down (the shape's own), the scene's y up
+                (double X, double Y, double Z) own = flip ? (-faceNormal.X, -faceNormal.Y, -faceNormal.Z) : faceNormal;
+                var eye = Normalized(turn.Vector(own));
+                return Hex(Shader((own.X, -own.Y, own.Z), (eye.X, -eye.Y, eye.Z), faceMaterial));
+            }
+            var material = DiffusedMaterial(faceMaterial);
+            var specular = MetalMicrosoftCompatible && Metal ? MetalSpecular(faceMaterial) : specularColour;
+            return Hex(Solve(normal, material, specular, specularIntensity, ambient, lights));
+        }
+
         foreach (Face face in faces)
         {
             var projectedFacing = face.Facing.Select(Project2).OfType<(double X, double Y)>().ToList();
@@ -420,21 +445,14 @@ internal sealed class OdtExtrusion
             else if (face.Textured) outFace.Color = null;
             else
             {
-                var normal = m.Vector(face.Normal);
-                if (twoSidedLighting && !facesViewer) normal = (-normal.X, -normal.Y, -normal.Z);
-                if (Shader is not null)
+                bool flip = twoSidedLighting && !facesViewer;
+                outFace.Color = Lit(face.Normal, face.Material, flip);
+                if (face.Stops is { Count: > 1 } stops && Project2(face.StopsFrom) is { } from && Project2(face.StopsTo) is { } to)
                 {
-                    // the shader's frames are y down (the shape's own), the scene's y up
-                    var own = face.Normal;
-                    if (twoSidedLighting && !facesViewer) own = (-own.X, -own.Y, -own.Z);
-                    var eye = Normalized(turn.Vector(own));
-                    outFace.Color = Hex(Shader((own.X, -own.Y, own.Z), (eye.X, -eye.Y, eye.Z), face.Material));
-                    result.Add(outFace);
-                    continue;
+                    outFace.Gradient = stops.Select(stop => (stop.Offset, Lit(stop.Normal, face.Material, flip))).ToList();
+                    outFace.GradientFrom = (from.X + cx, -from.Y + cy);
+                    outFace.GradientTo = (to.X + cx, -to.Y + cy);
                 }
-                var material = DiffusedMaterial(face.Material);
-                var specular = MetalMicrosoftCompatible && Metal ? MetalSpecular(face.Material) : specularColour;
-                outFace.Color = Hex(Solve(normal, material, specular, specularIntensity, ambient, lights));
             }
             result.Add(outFace);
         }
@@ -477,6 +495,9 @@ internal sealed class OdtExtrusion
     /// bevel's full height (the cap, object coordinates), or null when the ring cannot be bevelled. The width is kept to half the
     /// ring's smaller extent (the bands meet in the middle).
     /// </summary>
+    private static (double X, double Y, double Z) Middle((double X, double Y, double Z) a, (double X, double Y, double Z) b)
+        => ((a.X + b.X) / 2, (a.Y + b.Y) / 2, (a.Z + b.Z) / 2);
+
     private static List<(double X, double Y, double Z)>? Bevel(List<(double X, double Y)> ring, bool materialLeft, bool hole, double z, bool front, FastDocView.Html.WordShapeBevel bevel,
                                                               (double R, double G, double B) colour, List<Face> faces)
     {
@@ -513,8 +534,11 @@ internal sealed class OdtExtrusion
             double scale = Math.Min(4, 1 / Math.Max(cos, 0.25));
             miter[i] = (mx * scale, my * scale);
         }
-        // Word's profile in full on straight outlines; a curved one (many edges) gets fewer, merged bands to keep the faces few
-        var bands = bevel.BandsAtMost(Math.Max(6, 1200 / n));
+        // Word's profile in full on straight outlines; a curved one (many edges) gets fewer, merged bands to keep the faces few, each
+        // shaded across its width step by step (a gradient with the normal of every profile step it covers), so the profile's
+        // shading stays whole however few the faces
+        var bands = bevel.BandsAtMost(Math.Max(2, 300 / n));
+        IReadOnlyList<double> steps = bevel.StepDegrees();
         double sign = front ? 1 : -1;
         // one ring per band boundary, inset by the band's width and raised (front) or lowered (back) to the profile's height there
         var rings = new List<List<(double X, double Y, double Z)>>();
@@ -530,6 +554,21 @@ internal sealed class OdtExtrusion
         {
             // shaded along the profile's own normal (Word's slope for the band, scaled to this bevel's height / width), not the chord's
             double slope = Math.Tan(bands[k].Degrees * Math.PI / 180) * bevel.Height / width;
+            // the profile steps under this band, each as two stops at its ends - only a band merged past the 3 degree tolerance of a
+            // straight outline's full profile (BandsAtMost) needs them
+            List<(double Offset, double Slope)>? bandStops = null;
+            int firstStep = (int)Math.Round(bands[k].From * steps.Count), endStep = (int)Math.Round(bands[k].To * steps.Count);
+            if (endStep - firstStep > 1 && Enumerable.Range(firstStep, endStep - firstStep).Any(s => Math.Abs(steps[s] - steps[firstStep]) > 3))
+            {
+                bandStops = new List<(double, double)>();
+                double span = endStep - firstStep;
+                for (int s = firstStep; s < endStep; s++)
+                {
+                    double stepSlope = Math.Tan(steps[s] * Math.PI / 180) * bevel.Height / width;
+                    bandStops.Add(((s - firstStep) / span, stepSlope));
+                    bandStops.Add(((s + 1 - firstStep) / span, stepSlope));
+                }
+            }
             for (int i = 0; i < n; i++)
             {
                 int j = (i + 1) % n;
@@ -538,6 +577,12 @@ internal sealed class OdtExtrusion
                 if (front != materialLeft) quad.Reverse();
                 var face = new Face { Kind = "bevel", Normal = normal, Material = colour, Facing = quad };
                 face.Rings.Add(quad);
+                if (bandStops is not null)
+                {
+                    face.Stops = bandStops.Select(stop => (stop.Offset, Normalized((-inward[i].X * stop.Slope, -inward[i].Y * stop.Slope, sign)))).ToList();
+                    face.StopsFrom = Middle(rings[k][i], rings[k][j]);
+                    face.StopsTo = Middle(rings[k + 1][i], rings[k + 1][j]);
+                }
                 faces.Add(face);
             }
         }

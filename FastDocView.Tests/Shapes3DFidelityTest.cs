@@ -80,6 +80,7 @@ public static class Shapes3DFidelityTest
         var flat = Shapes(doc);
         TestReport.Check(flat.Count == 12 && flat.All(f => f.Count <= 2), ".doc with f3D off: flat shapes, as Word prints them");
         BevelPresets();
+        OvalBevels();
         Parts();
     }
 
@@ -107,7 +108,7 @@ public static class Shapes3DFidelityTest
             (double l, double t, double r, double b) = Extent(shapes[i], boxes[i]);
             double off = new[] { Math.Abs(l - word[i].L), Math.Abs(t - word[i].T), Math.Abs(r - word[i].R), Math.Abs(b - word[i].B) }.Max();
             // the contour is 202020 under the scene's light: every face no channel of which passes 0x60 (the shapes are light blue)
-            int contour = shapes[i].Count(f => Enumerable.Range(0, 3).All(c => int.Parse(f.Fill.Substring(c * 2, 2), NumberStyles.HexNumber) < 0x60));
+            int contour = shapes[i].Count(f => !f.Fill.StartsWith("g ", StringComparison.Ordinal) && Enumerable.Range(0, 3).All(c => int.Parse(f.Fill.Substring(c * 2, 2), NumberStyles.HexNumber) < 0x60));
             TestReport.Check(off <= 1.5, $"parts {names[i]}: extent within 1.5 pt of Word's ({off:0.00} pt: {l:0.0} {t:0.0} {r:0.0} {b:0.0}; {shapes[i].Count} faces, {contour} contour)");
             if (i is < 4 or 7) TestReport.Check(contour > 0, $"parts {names[i]}: contour drawn ({contour} faces)");
             else if (i == 5)
@@ -155,6 +156,51 @@ public static class Shapes3DFidelityTest
         }
     }
 
+    /// <summary>
+    /// Every bevel preset on an oval (shapes-3d-bevels-oval-v1.docx: 150 x 110 pt ovals, bevel 24 x 24 pt, threePt rig; a curved
+    /// outline of many edges) against Word's colours (shapes-3d-bevels-oval-v1-word-samples.txt, sample_bevels_oval.py: 48 steps
+    /// inward along the outline's normal at 8 directions). The first point (Word's anti-aliased edge) is not judged.
+    /// </summary>
+    private static void OvalBevels()
+    {
+        string docx = Path.Combine(Folder, "shapes-3d-bevels-oval-v1.docx"), samples = Path.Combine(Folder, "shapes-3d-bevels-oval-v1-word-samples.txt");
+        if (!File.Exists(docx) || !File.Exists(samples)) { TestReport.Check(false, "shapes-3d-bevels-oval-v1 fixtures present"); return; }
+        var shapes = Shapes(docx);
+        string[] names = ["relaxedInset", "circle", "slope", "cross", "angle", "softRound", "convex", "coolSlant", "divot", "riblet", "hardEdge", "artDeco"];
+        TestReport.Check(shapes.Count == 12, $"oval bevels: 12 shapes ({shapes.Count})");
+        if (shapes.Count != 12) return;
+        var lines = File.ReadAllLines(samples).Select(l => l.Split(' ')).ToList();
+        var all = new List<int>();
+        for (int s = 0; s < 12; s++)
+        {
+            var rows = lines.Where(p => p[0] == names[s]).ToList();
+            var levels = new List<int>();
+            for (int k = 1; k < rows.Count; k++)
+            {
+                double d = (k + 0.5) / 2;
+                for (int j = 0; j < 8; j++)
+                {
+                    double t = j * Math.PI / 4, ex = 75 + 75 * Math.Cos(t), ey = 55 + 55 * Math.Sin(t);
+                    double nx = -Math.Cos(t) / 75, ny = -Math.Sin(t) / 55, length = Math.Sqrt(nx * nx + ny * ny);
+                    string? ours = ColourAt(shapes[s], ex + nx / length * d, ey + ny / length * d);
+                    levels.Add(ours is null ? 999 : Levels(ours, rows[k][2 + j]));
+                }
+            }
+            levels.Sort();
+            all.AddRange(levels);
+            int median = levels[levels.Count / 2], p90 = levels[levels.Count * 9 / 10];
+            TestReport.Check(median <= 6 && p90 <= 14, $"oval bevel {names[s]}: colours against Word's, median {median} levels, 90th percentile {p90}, worst {levels[^1]}");
+        }
+        all.Sort();
+        Console.WriteLine($"   oval bevels, all presets: median {all[all.Count / 2]}, 90th percentile {all[all.Count * 9 / 10]}, 99th {all[all.Count * 99 / 100]}");
+        using (IWordWindowedDocument document = WordWindowedDocumentOpener.Open(docx))
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            long bytes = document.RenderBlocks(0, document.BlockCount).Sum(block => (long)block.Html.Length);
+            Console.WriteLine($"   oval bevels: {bytes / 1024} KB of HTML for 12 shapes, rendered in {watch.ElapsedMilliseconds} ms");
+        }
+    }
+
     private static List<List<(List<(double X, double Y)> Ring, string Fill)>> Shapes(string path)
     {
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
@@ -168,11 +214,17 @@ public static class Shapes3DFidelityTest
                 foreach (Match t in Regex.Matches(g.Groups[1].Value, @"translate\(([-\d.]+) ([-\d.]+)\)"))
                 { tx += Number(t.Groups[1].Value); ty += Number(t.Groups[2].Value); }
             var faces = new List<(List<(double X, double Y)>, string)>();
-            foreach (Match p in Regex.Matches(svg.Value, "<path d=\"([^\"]*)\"[^>]*fill=\"#([0-9a-fA-F]{6})\""))
+            // a bevel band's gradient: "g x1 y1 x2 y2 offset:colour ..." in the shape's own points (ColourAt evaluates it)
+            var gradients = new Dictionary<string, string>();
+            foreach (Match gradient in Regex.Matches(svg.Value, "<linearGradient id=\"([^\"]+)\" gradientUnits=\"userSpaceOnUse\" x1=\"([-0-9.]+)\" y1=\"([-0-9.]+)\" x2=\"([-0-9.]+)\" y2=\"([-0-9.]+)\">(.*?)</linearGradient>"))
+                gradients[gradient.Groups[1].Value] = FormattableString.Invariant($"g {Number(gradient.Groups[2].Value) + tx} {Number(gradient.Groups[3].Value) + ty} {Number(gradient.Groups[4].Value) + tx} {Number(gradient.Groups[5].Value) + ty} ")
+                    + string.Join(" ", Regex.Matches(gradient.Groups[6].Value, "offset=\"([0-9.]+)\" stop-color=\"#([0-9a-fA-F]{6})\"").Cast<Match>().Select(stop => stop.Groups[1].Value + ":" + stop.Groups[2].Value.ToLowerInvariant()));
+            foreach (Match p in Regex.Matches(svg.Value, "<path d=\"([^\"]*)\"[^>]*fill=\"(?:#([0-9a-fA-F]{6})|url[(]#([^)]+)[)])\""))
                 foreach (Match sub in Regex.Matches(p.Groups[1].Value, "M[^M]*"))
                 {
                     var ring = Regex.Matches(sub.Value, @"([-\d.]+) ([-\d.]+)").Cast<Match>().Select(m => (Number(m.Groups[1].Value) + tx, Number(m.Groups[2].Value) + ty)).ToList();
-                    faces.Add((ring, p.Groups[2].Value.ToLowerInvariant()));
+                    if (p.Groups[2].Success) faces.Add((ring, p.Groups[2].Value.ToLowerInvariant()));
+                    else if (gradients.TryGetValue(p.Groups[3].Value, out string? paint)) faces.Add((ring, paint));
                 }
             result.Add(faces);
         }
@@ -199,7 +251,24 @@ public static class Shapes3DFidelityTest
                 if ((ring[i].Y > y) != (ring[j].Y > y) && x < (ring[j].X - ring[i].X) * (y - ring[i].Y) / (ring[j].Y - ring[i].Y) + ring[i].X) inside = !inside;
             if (inside) found = fill;
         }
-        return found;
+        if (found is null || !found.StartsWith("g ", StringComparison.Ordinal)) return found;
+        // a gradient: the colour at the point's place along x1,y1 -> x2,y2, mixed linearly between the stops around it (as SVG draws it)
+        string[] parts = found.Split(' ');
+        double x1 = Number(parts[1]), y1 = Number(parts[2]), x2 = Number(parts[3]), y2 = Number(parts[4]);
+        double dx = x2 - x1, dy = y2 - y1, t = ((x - x1) * dx + (y - y1) * dy) / Math.Max(1e-9, dx * dx + dy * dy);
+        var stops = parts.Skip(5).Select(part => part.Split(':')).Select(stop => (Offset: Number(stop[0]), Colour: stop[1])).ToList();
+        if (t <= stops[0].Offset) return stops[0].Colour;
+        for (int i = 1; i < stops.Count; i++)
+            if (t <= stops[i].Offset)
+            {
+                double f = (t - stops[i - 1].Offset) / Math.Max(1e-9, stops[i].Offset - stops[i - 1].Offset);
+                return string.Concat(Enumerable.Range(0, 3).Select(c =>
+                {
+                    int a = int.Parse(stops[i - 1].Colour.Substring(c * 2, 2), NumberStyles.HexNumber), b = int.Parse(stops[i].Colour.Substring(c * 2, 2), NumberStyles.HexNumber);
+                    return ((int)Math.Round(a + (b - a) * f)).ToString("x2", CultureInfo.InvariantCulture);
+                }));
+            }
+        return stops[^1].Colour;
     }
 
     private static int Levels(string a, string b)
