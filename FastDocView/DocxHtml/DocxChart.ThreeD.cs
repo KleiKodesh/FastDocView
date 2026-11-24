@@ -62,12 +62,18 @@ internal sealed partial class DocxChart
     private sealed class Projection
     {
         private readonly View3D _view;
-        private readonly double _cx, _cy, _cz, _distance, _sinX, _cosX, _sinY, _cosY, _obliqueX;
+        private readonly double _cx, _cy, _cz, _sinX, _cosX, _sinY, _cosY, _obliqueX, _diagonal;
+        private readonly bool _wordScene;
+        /// <summary>The scene is in Word's bare plot rectangle (DocxChart._barePlot): fitted 5.4 / 3.3 pt inside it.</summary>
+        public bool Bare;
+        private double _distance;
         private double _scale = 1, _offsetX, _offsetY;
 
-        public Projection(View3D view, double width, double height, double depth, bool seriesRows = false)
+        public Projection(View3D view, double width, double height, double depth, bool seriesRows = false, bool wordScene = false)
         {
             _view = view;
+            _wordScene = wordScene;
+            _diagonal = Math.Sqrt(width * width + height * height + depth * depth);
             // LibreOffice turns the scene about the centre of its volume (VDiagram.cxx:552-555: translate by -volume / 2, rotate) and puts
             // the eye on the axis through that centre (svx scene3d.cxx:209-229: camera at (0, 0, distance) looking at the origin)
             (_cx, _cy, _cz) = (width / 2, height / 2, depth / 2);
@@ -138,6 +144,31 @@ internal sealed partial class DocxChart
         /// </summary>
         public void Fit(double width, double height, double depth, double left, double top, double right, double bottom)
         {
+            double plotHeight = bottom - top;
+            if (_wordScene && Bare && !_view.RightAngled)
+            {
+                // Word fits its scene box 5.4 pt inside the bare plot's sides and 3.3 pt inside its top and bottom (its PDFs of the
+                // parallel probes of word-charts-scene-grid: the box centred and touching that rectangle, 0.4 pt median). Plots with axes
+                // keep the rectangle their labels were calibrated with (Word's 3-D plot already 2.8 / 7.15 pt in, DrawAxes): an inset
+                // there moved the perspective fixtures' labels 2-6 pt away from Word
+                left += 5.4; right -= 5.4; top += 3.3; bottom -= 3.3;
+                if (right <= left) right = left + 1e-3;
+                if (bottom <= top) bottom = top + 1e-3;
+            }
+            if (_wordScene && !double.IsInfinity(_distance))
+            {
+                // Word's camera (NOTES.md 2026-11-16): eye distance = plot height / 2 / tan(c:perspective / 4) in points, taken here at the
+                // parallel fit's scale and put on the axis through the box centre, so LibreOffice's fit below places its image. It holds
+                // while the box's bounding sphere stays inside a 60-degree cone from the eye (eye distance >= the box's diagonal, sphere
+                // radius half of it: asin(1/2) = 30 degrees each side); closer than that the image is too strongly distorted (Word pushes
+                // its box back by a rule not found) and LibreOffice's whole pipeline, its own camera distance, is used instead
+                double libreOffice = _distance;
+                _distance = double.PositiveInfinity;
+                var parallel = Extent(width, height, depth);
+                double scale = Math.Min((right - left) / Math.Max(1e-9, parallel.Width), (bottom - top) / Math.Max(1e-9, parallel.Height));
+                double eye = plotHeight / 2 / Math.Tan(Math.Max(1e-3, _view.Perspective) / 4 * Math.PI / 180) / Math.Max(1e-12, scale);
+                _distance = eye >= _diagonal ? eye : libreOffice;
+            }
             double minX = double.MaxValue, maxX = double.MinValue, minY = double.MaxValue, maxY = double.MinValue;
             foreach (double x in new[] { 0, width })
                 foreach (double y in new[] { 0, height })
@@ -202,12 +233,13 @@ internal sealed partial class DocxChart
     /// <summary>The scene box with its walls, floor, gridlines and axis labels; returns the projection and the scene's size for the data.</summary>
     private (Projection Projection, double Width, double Height, double Depth, double Slot, double RowDepth) Draw3DFrame(StringBuilder svg, int categoryCount, int rows, bool horizontal,
         double left, double top, double right, double bottom, Func<double, double> valueToAxis, List<(double Value, string Text)> valueLabels, List<string> categories,
-        bool showCategories, string textColor, string gridColor, string? plotFill, double labelSize, bool midCategory = false, bool seriesRows = false)
+        bool showCategories, string textColor, string gridColor, string? plotFill, double labelSize, bool midCategory = false, bool seriesRows = false, bool oneRow = false)
     {
         View3D view = _view3D ?? new View3D();
-        double width = 1, height = SceneHeight(view, categoryCount, rows, seriesRows, left, top, right, bottom);
+        double width = 1, height = SceneHeight(view, categoryCount, rows, seriesRows && !oneRow, left, top, right, bottom);
         double slot = (horizontal ? height : width) / categoryCount, rowDepth = slot * view.DepthPercent / 100, depth = rowDepth * rows;
-        var projection = new Projection(view, width, height, depth, seriesRows);
+        var projection = new Projection(view, width, height, depth, seriesRows, !_libreOfficeLayout);
+        projection.Bare = _bare3D;
         projection.Fit(width, height, depth, left, top, right, bottom);
         string wallFill = PropertiesFill(_backWallProperties, plotFill) ?? "none", floorFill = PropertiesFill(_floorProperties, plotFill) ?? "none";
         string sideFill = PropertiesFill(_sideWallProperties, plotFill) ?? "none";
@@ -288,14 +320,16 @@ internal sealed partial class DocxChart
         for (int step = 0; step < 8; step++)
         {
             double h = SceneHeight(view, categoryCount, rows, true, left, top, edge, bottom);
-            var trial = new Projection(view, 1, h, depth, true);
+            var trial = new Projection(view, 1, h, depth, true, !_libreOfficeLayout);
+            trial.Bare = _bare3D;
             trial.Fit(1, h, depth, left, top, edge, bottom);
             double next = Math.Max(left + 1, Math.Min(right, edge - (Reach(trial) - right)));
             if (Math.Abs(next - edge) < 0.01) { edge = next; break; }
             edge = next;
         }
         double height = SceneHeight(view, categoryCount, rows, true, left, top, edge, bottom);
-        var projection = new Projection(view, 1, height, depth, true);
+        var projection = new Projection(view, 1, height, depth, true, !_libreOfficeLayout);
+        projection.Bare = _bare3D;
         projection.Fit(1, height, depth, left, top, edge, bottom);
         double sceneLeft = double.MaxValue, sceneRight = double.MinValue;
         foreach (double x in new[] { 0.0, 1.0 })
@@ -338,11 +372,22 @@ internal sealed partial class DocxChart
     private double Rows3DFrontHeight(int categoryCount, int rows, double left, double top, double right, double bottom)
     {
         View3D view = _view3D ?? new View3D();
-        double height = SceneHeight(view, categoryCount, rows, true, left, top, right, bottom), depth = view.DepthPercent / 100 / categoryCount * rows;
-        var projection = new Projection(view, 1, height, depth, true);
+        bool oneRow = StackedArea3D();
+        if (oneRow) rows = 1;
+        double height = SceneHeight(view, categoryCount, rows, !oneRow, left, top, right, bottom), depth = view.DepthPercent / 100 / categoryCount * rows;
+        var projection = new Projection(view, 1, height, depth, true, !_libreOfficeLayout);
+        projection.Bare = _bare3D;
         projection.Fit(1, height, depth, left, top, right, bottom);
         return Math.Abs(projection.Point(0, 0, 0).Y - projection.Point(0, height, 0).Y);
     }
+
+    /// <summary>
+    /// Stacked and percent-stacked 3-D areas: Word draws them in ONE depth row, the series stacked on each other, with the box sized as
+    /// its clustered columns (depth = depthPercent / categories, height = the plot's proportions) - its PDFs of the 2026-11-24 type
+    /// probes (word-charts-scene-types area-stacked: walls fit within 1 pt with that box). LibreOffice also stacks them in one row
+    /// (AreaChart: a stacked series group shares its z slot).
+    /// </summary>
+    private bool StackedArea3D() => _groups.Count == 1 && _groups[0].Kind == Kind.Area && _groups[0].Grouping is "stacked" or "percentStacked";
 
     /// <summary>One flat-shaded scene face, culled when it faces away from the camera.</summary>
     private static void Face(StringBuilder svg, View3D view, Projection projection, (double X, double Y, double Z) normal, (double X, double Y, double Z)[] corners, string baseColor, string className)
@@ -419,28 +464,48 @@ internal sealed partial class DocxChart
     {
         View3D view = _view3D ?? new View3D();
         Group group = _groups[0];
-        int rows = group.Series.Count, totalSeries = rows;
-        bool area = group.Kind == Kind.Area;
-        var (projection, _, height, _, slot, rowDepth) = Draw3DFrame(svg, categoryCount, rows, false, left, top, right, bottom, valueToAxis, valueLabels, categories, showCategories, textColor, gridColor, plotFill, labelSize, MidCategory(), seriesRows: true);
+        int totalSeries = group.Series.Count;
+        bool area = group.Kind == Kind.Area, stacked = StackedArea3D(), percent = group.Grouping == "percentStacked";
+        int rows = stacked ? 1 : totalSeries;
+        var (projection, _, height, _, slot, rowDepth) = Draw3DFrame(svg, categoryCount, rows, false, left, top, right, bottom, valueToAxis, valueLabels, categories, showCategories, textColor, gridColor, plotFill, labelSize, MidCategory(), seriesRows: true, oneRow: stacked);
         double thickness = rowDepth / (1 + view.GapDepth / 100);
-        for (int s = rows - 1; s >= 0; s--)
+        // stacked: each series' running total per category (missing values count as 0, as Word stacks them)
+        var below = new double[categoryCount];
+        double[] totals = Enumerable.Range(0, categoryCount).Select(i => group.Series.Sum(x => Math.Abs(i < x.Values.Count ? x.Values[i] ?? 0 : 0))).ToArray();
+        double X(int i) => MidCategory() ? (categoryCount == 1 ? 0.5 * slot : i * slot * categoryCount / (categoryCount - 1)) : (i + 0.5) * slot;
+        double Y(double value) => Math.Max(0, Math.Min(1, valueToAxis(value))) * height;
+        // one row per series: the back series first; stacked in one row: the lowest series first, each laid on the ones below it
+        for (int order = 0; order < totalSeries; order++)
         {
+            int s = stacked ? order : totalSeries - 1 - order;
             Series series = group.Series[s];
             string color = area ? FillOf(group, series, -1, totalSeries).Css : LineOf(series, totalSeries).Css is { } line && line != "none" ? line : AutomaticColor(series.Index, totalSeries);
-            double z0 = s * rowDepth + (rowDepth - thickness) / 2, z1 = z0 + thickness;
+            double z0 = (stacked ? 0 : s) * rowDepth + (rowDepth - thickness) / 2, z1 = z0 + thickness;
             var points = new List<(double X, double Y)>();
+            var bases = new List<(double X, double Y)>();
             for (int i = 0; i < categoryCount && i < series.Values.Count; i++)
-                if (series.Values[i] is { } value)
-                    points.Add((MidCategory() ? (categoryCount == 1 ? 0.5 * slot : i * slot * categoryCount / (categoryCount - 1)) : (i + 0.5) * slot, Math.Max(0, Math.Min(1, valueToAxis(value))) * height));
+            {
+                if (stacked)
+                {
+                    double value = series.Values[i] ?? 0, scale = percent ? (totals[i] == 0 ? 0 : 1 / totals[i]) : 1;
+                    bases.Add((X(i), Y(below[i] * scale)));
+                    below[i] += value;
+                    points.Add((X(i), Y(below[i] * scale)));
+                }
+                else if (series.Values[i] is { } value) points.Add((X(i), Y(value)));
+            }
             if (points.Count == 0) continue;
             if (area)
             {
-                var front = new List<(double, double, double)> { (points[0].X, 0, z0) };
+                var front = new List<(double, double, double)>();
+                if (stacked) front.AddRange(Enumerable.Reverse(bases).Select(p => (p.X, p.Y, z0)));
+                else front.Add((points[0].X, 0, z0));
                 front.AddRange(points.Select(p => (p.X, p.Y, z0)));
-                front.Add((points[points.Count - 1].X, 0, z0));
+                if (!stacked) front.Add((points[points.Count - 1].X, 0, z0));
                 Face(svg, view, projection, (0, 0, -1), front.ToArray(), color, "word-chart-area3d");
-                Face(svg, view, projection, (-1, 0, 0), new[] { (points[0].X, 0.0, z0), (points[0].X, 0.0, z1), (points[0].X, points[0].Y, z1), (points[0].X, points[0].Y, z0) }, color, "word-chart-area3d");
-                Face(svg, view, projection, (1, 0, 0), new[] { (points[points.Count - 1].X, 0.0, z0), (points[points.Count - 1].X, 0.0, z1), (points[points.Count - 1].X, points[points.Count - 1].Y, z1), (points[points.Count - 1].X, points[points.Count - 1].Y, z0) }, color, "word-chart-area3d");
+                double firstBase = stacked ? bases[0].Y : 0, lastBase = stacked ? bases[bases.Count - 1].Y : 0;
+                Face(svg, view, projection, (-1, 0, 0), new[] { (points[0].X, firstBase, z0), (points[0].X, firstBase, z1), (points[0].X, points[0].Y, z1), (points[0].X, points[0].Y, z0) }, color, "word-chart-area3d");
+                Face(svg, view, projection, (1, 0, 0), new[] { (points[points.Count - 1].X, lastBase, z0), (points[points.Count - 1].X, lastBase, z1), (points[points.Count - 1].X, points[points.Count - 1].Y, z1), (points[points.Count - 1].X, points[points.Count - 1].Y, z0) }, color, "word-chart-area3d");
             }
             for (int k = 0; k + 1 < points.Count; k++)
             {
@@ -508,7 +573,8 @@ internal sealed partial class DocxChart
         // in its x-y plane turned about x by rotX - 90
         var scene = new View3D { RotX = Math.Max(0, Math.Min(90, view.RotX)), RotY = 0, Perspective = view.Perspective, Ambient = view.Ambient, Light = view.Light, LightDirection = view.LightDirection, Smooth = view.Smooth };
         const double diameter = 1, thickness = 0.1, radius = diameter / 2;
-        var projection = new Projection(scene, diameter, thickness, diameter);
+        var projection = new Projection(scene, diameter, thickness, diameter, false, !_libreOfficeLayout);
+        projection.Bare = _bare3D;
         projection.Fit(diameter, thickness, diameter, left, top, right, bottom);
         int count = series.Values.Count;
         var slices = new List<(double Start, double Sweep, string Color, int Index)>();

@@ -87,6 +87,15 @@ internal sealed partial class DocxChart
     private string? _titleColor;
     private string? _legendColor;
     private string? _legendPosition;
+    /// <summary>
+    /// Word's plot rectangle for a 3-D chart with nothing around it (no title, legend, saved layout, axis labels or axis titles): 11 pt
+    /// inside the chart's left edge, 10.8 pt below its top and 11.1 pt inside its right and bottom edges - the scene picture's bounds in
+    /// Word 16's PDFs of the 2026-11-24 probes (word-charts-scene-grid / -scene-types: 415 x 242, 300 x 300, 415 x 150 and 250 x 350 pt
+    /// charts, every type, within 0.1 pt). LibreOffice has no such rule for a Word chart (it takes the oox plot area), so Word's is used.
+    /// Null when the chart has something around its plot.
+    /// </summary>
+    private (double Left, double Top, double Right, double Bottom)? _barePlot;
+    private bool _bare3D;
     private bool _bottomLegendRow;   // set by Svg: Word's legend row below the plot (DrawAxes keeps Word's room above it)
     private readonly HashSet<int> _deletedLegendEntries = new();
     private int _style = 2;
@@ -532,6 +541,7 @@ internal sealed partial class DocxChart
         string? chartLine = _chartSpaceProperties?.Element("ln") is { } chartLn && chartLn.Element("noFill") is null && chartLn.Element("solidFill") is { } chartLineFill ? DocxDrawingColor.Css(chartLineFill, _theme) : null;
         svg.Append("<rect width=\"").Append(N(width)).Append("\" height=\"").Append(N(height)).Append("\" fill=\"").Append(chartFill).Append('"')
            .Append(chartLine is null ? " stroke=\"none\"" : " stroke=\"" + chartLine + "\" stroke-width=\"0.75\"").Append("/>");
+        _barePlot = null; _bare3D = false;
         string textColor = DocxDrawingColor.Css(new XElement("c", new XElement("schemeClr", new XAttribute("val", "tx1"), new XElement("lumMod", new XAttribute("val", "65000")), new XElement("lumOff", new XAttribute("val", "35000")))), _theme) ?? "#595959";
         double top = 6, bottom = height - (_libreOfficeLayout ? 6 : 10.8), left = 6, right = width - 6;   // Word: 10.8 pt to the bottom edge (measured)
         if (_title is not null)
@@ -602,7 +612,12 @@ internal sealed partial class DocxChart
         if (main.Kind is Kind.Pie && _is3D) Draw3DPie(svg, main, left, top, right, bottom, textColor);
         else if (main.Kind is Kind.Pie or Kind.Doughnut) DrawPie(svg, main, left, top, right, bottom, textColor);
         else if (main.Kind == Kind.Radar) DrawRadar(svg, main, left, top, right, bottom, textColor);
-        else DrawAxes(svg, left, top, right, bottom, textColor);
+        else
+        {
+            // the plot rectangle Word's 3-D scene of a bare chart (no title, legend, saved layout or axis labels) takes: see Bare3DPlot
+            _barePlot = !_libreOfficeLayout && left == 6 && top == 6 && right == width - 6 && bottom == height - 10.8 ? (11.0, 10.8, width - 11.1, height - 11.1) : null;
+            DrawAxes(svg, left, top, right, bottom, textColor);
+        }
         svg.Append("</svg>");
         return svg.ToString();
     }
@@ -905,6 +920,10 @@ internal sealed partial class DocxChart
         double plotWidth = Math.Max(1, right - left), plotHeight = Math.Max(1, bottom - top);
         string gridColor = DocxDrawingColor.Css(new XElement("c", new XElement("schemeClr", new XAttribute("val", "tx1"), new XElement("lumMod", new XAttribute("val", "15000")), new XElement("lumOff", new XAttribute("val", "85000")))), _theme) ?? "#D9D9D9";
         string? plotFill = PropertiesFill(_plotAreaProperties, null);
+        bool bare3D = _is3D && _barePlot is not null && valueAxis is null or { NoLabels: true } or { Deleted: true } && categoryAxis is null or { NoLabels: true } or { Deleted: true }
+                      && valueAxis?.Title is null && categoryAxis?.Title is null && secondaryAxis is null;
+        _bare3D = bare3D;
+        if (bare3D && _barePlot is { } bare) (left, top, right, bottom) = bare;
         if (_is3D && !xy && _groups.Count == 1 && _groups[0].Kind == Kind.Bar && !(!horizontal && _groups[0].Grouping == "standard"))
         {
             Draw3DColumns(svg, categoryCount, horizontal, left, top, right, bottom, ValueToAxisOf(valueAxis, vMin, vMax), valueLabels, categories, categoryAxis is not { NoLabels: true }, textColor, gridColor, plotFill, labelSize);
@@ -931,7 +950,7 @@ internal sealed partial class DocxChart
             // Word's 3-D line / area plot sits 2.8 pt further in at the left and 7.15 pt at the right than its 2-D plot (a last category
             // label on the right edge: 2.35 pt beyond the 2-D rule) - its PDFs of the 2026-11-13 probes, where the scene's picture fills
             // the same rectangle with right-angled axes and with perspective
-            if (!_libreOfficeLayout && _plotLayout is null)
+            if (!_libreOfficeLayout && _plotLayout is null && !bare3D)
             {
                 left = Math.Min(right - 1, left + 2.8);
                 right = Math.Max(left + 1, right - (MidCategory() && categoryAxis is not { NoLabels: true } ? 2.35 : 7.15));

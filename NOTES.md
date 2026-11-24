@@ -3808,3 +3808,42 @@ latent styles, repeated style ids, Word 2003 files without notes, an element lef
   diagramlayoutatoms.cxx:5554-5555). DocxDiagramLayout.Cycle uses Word's split (stated begPad / endPad win). The 1.1 pt is gone (cycle-v1: 97 EMU);
   the node ring itself is still up to 0.35 pt off in other counts (cycle-8-nodes: nodes 49.1 pt for Word 49.2), so cycle stays
   in the 4 pt tolerance set.
+
+## 3-D chart scene: Word's camera with LibreOffice's placement, bare plot, stacked areas in one row (2026-11-24)
+
+- Decision (user, 2026-11-24, after 11fca6c): ship the mix - Word's camera (eye distance = plot height / 2 / tan(c:perspective / 4)
+  points, NOTES 2026-11-16) taken at the parallel fit's scale and put on the axis through the box centre, with LibreOffice's
+  placement on top (projected 8-corner box scaled and centred, VDiagram.cxx:409-423). Switch, by geometry only: Word's camera while
+  its eye distance is at least the box's diagonal, i.e. the box's bounding sphere (radius half the diagonal) stays inside a 60-degree
+  cone from the eye (asin(1/2) = 30 degrees each side); nearer than that the image is too strongly distorted (Word pushes its box back
+  by a rule not found) and LibreOffice's whole pipeline is used (its own camera distance, 11fca6c). Tried and rejected: the switch at
+  the eye in front of every corner (perspective-120 p90 61 pt vs 46) and at the bounding sphere itself (p90 57).
+- Bare plot (Word's rule, found): a 3-D chart with no title, legend, saved layout, axis labels or axis titles has its plot - Word's
+  scene picture - 11.0 pt inside the chart's left edge, 10.8 below the top, 11.1 inside the right and bottom edges (word-charts-scene-
+  grid / -scene-types, four chart sizes, every type, within 0.1 pt), and the scene box fitted 5.4 / 3.3 pt inside it (parallel probes,
+  0.4 pt median). Ours was the 2-D margin (6 pt, plus the 3-D line 2.8 / 7.15 pt shifts): 7.6 pt wider per side. Charts with axes keep
+  their calibrated rectangle with no inset: an inset there moved the perspective fixtures' labels 2-6 pt away from Word.
+- Stacked / percent-stacked 3-D areas: one depth row (box as clustered columns: depth = depthPercent / categories, height = the plot's
+  proportions), each series a slab laid on the ones below (running totals; percent: of each category's total). Word's PDFs of the
+  area-stacked type probes; LibreOffice stacks them in one z slot too.
+- Before (bfc11f4) / 11fca6c (LibreOffice) / now, walls rms in pt (scripts/chart3d_walls_vs_word.py, our full output):
+
+  | probes                         | median bfc11f4 / 11fca6c / now | p90                 | max                 |
+  |--------------------------------|--------------------------------|---------------------|---------------------|
+  | grid perspective 30 (170)      | 8.2 / 10.4 / 2.5               | 13.9 / 15.3 / 13.0  | 33 / 48 / 20        |
+  | grid perspective 60 (205)      | 15.0 / 14.4 / 5.7              | 38.5 / 26.8 / 24.4  | 61 / 67 / 63        |
+  | grid perspective 120 (205)     | 112 / 29.2 / 25.4              | 189 / 50.5 / 45.7   | 216 / 89 / 83       |
+  | grid parallel (36)             | 6.9 / 6.9 / 0.42               | 8.4 / 8.4 / 0.54    | 8.9 / 8.9 / 1.2     |
+  | types perspective (134)        | 23.8 / 16.0 / 10.8             | 204 / 47.2 / 41.8   | 215 / 75 / 53       |
+  | types stacked areas, persp (18)| 73.4 / 37.6 / 12.4             |                     |                     |
+  | types parallel (14)            | 7.0 / 7.0 / 0.48               |                     | 32 / 32 / 1.3       |
+  | types right-angled (70)        | 4.6 / 4.6 / 2.8                |                     | 10.4 / 10.4 / 7.6   |
+
+- Labels vs Word's PDFs (scripts/chart3d_fixture_check.py, median dx / dy, max dx / dy), bfc11f4 -> now: Line3D Persp 3.5 / 1.5 ->
+  0.2 / 0.5 (max 3.9 / 2.9 -> 0.6 / 1.1); Area3D Persp 3.2 / 0.8 -> 0.3 / 0.6 (max 4.6 / 3.0 -> 7.5 / 2.5); Line3D SerAx 2.1 / 2.3 ->
+  0.5 / 0.5; Line3D Deep 8.6 / 19.8 -> 14.7 / 10.8; Col3D SerAx P .docx 3.5 / 0.8 -> 1.7 / 0.8 (max 4.8 -> 8.9), .doc / .rtf 3.9 / 1.1
+  -> 2.5 / 1.4 (max 5.5 -> 8.6); Area3D SerAx P .docx 5.0 / 0.8 -> 3.0 / 0.9 (max 6.0 -> 14.0), .doc / .rtf 5.0 / 1.1 -> 3.7 / 1.5
+  (max 6.8 -> 13.5). Right-angled and 2-D charts identical. Left: the category labels of perspective scenes spread 3 % narrower than
+  Word's (the last one 7-14 pt short), the cause of the larger maxima.
+- Harness: RunScenePlacement locks the walls per type (now including stacked areas in one row) and the 3-D pie; label checks re-locked
+  (Line3D SerAx back within 1.5 pt of Word).
