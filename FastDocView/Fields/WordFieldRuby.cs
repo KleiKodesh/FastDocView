@@ -123,7 +123,15 @@ public static class WordFieldRuby
             if (guideRest.Length + baseText.Length == 0) return null;
         }
 
-        searchText = (guideRest.Length == 0 ? guide + baseText : guide + "," + guideRest).Replace(NoteMarkPlaceholderText, "");
+        // Word's Find reads a plain base only up to its first ")" (a hand-written base with a ")" in it: hidden Word 16 Find,
+        // 2026-11-24, "g0ab" found, "abc" not), though the whole base, every ")" dropped, is drawn
+        string searchBase = baseText;
+        if (guideRest.Length == 0)
+        {
+            int baseClose = part.IndexOf(')', comma + 1);
+            searchBase = part.Substring(comma + 1, baseClose - comma - 1);
+        }
+        searchText = (guideRest.Length == 0 ? guide + searchBase : guide + "," + guideRest).Replace(NoteMarkPlaceholderText, "");
         var font = new StringBuilder();
         if (halfPoints > 0) font.Append("font-size:").Append((halfPoints / 2m).ToString(CultureInfo.InvariantCulture)).Append("pt;");
         if (fontName.Length > 0) font.Append("font-family:'").Append(WordHtmlText.CssFontName(fontName)).Append("';");

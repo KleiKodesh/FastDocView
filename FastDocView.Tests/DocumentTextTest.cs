@@ -52,6 +52,31 @@ public static class DocumentTextTest
         CheckNoteInFieldKeyword(root);
         CheckFieldLeadingSwitch(root);
         CheckEquationSearchText(root);
+        CheckRubyBaseBracket(root);
+    }
+
+    /// <summary>
+    /// test-data/word-ruby/ruby-edges-v1 (.doc / .rtf saved by Word from the hand-written .docx): a plain guide whose base holds a
+    /// ")" ("ab)c"). Word 16's Find (hidden-Word probe 2026-11-24) stops the base at its first ")": "g0ab" found, "abc" not. GetText
+    /// and the search (one path, WordFieldRuby's search text) read exactly that; the drawing keeps the whole base.
+    /// </summary>
+    private static void CheckRubyBaseBracket(string root)
+    {
+        foreach (string extension in new[] { "doc", "rtf" })
+        {
+            string name = "ruby-edges-v1." + extension;
+            string path = Path.Combine(root, "test-data", "word-ruby", name);
+            string body = WordDocumentText.GetText(path);
+            TestReport.Check(body.Contains("g0ab") && body.Contains("g1ab") && body.Contains("g2ab") && body.Contains("g5end of line") && !body.Contains("abc") && !body.Contains("linex"),
+                $"{name}: GetText reads a plain base up to its first \")\" as Word's Find");
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+            CheckBlocks(name, document, body);
+            foreach ((string word, int count) in new[] { ("g0ab", 1), ("g2ab", 1), ("g5end of line", 1), ("abc", 0), ("g2abcy", 0), ("linex", 0) })
+            {
+                int found = SumCounts(from => document.Search(word, WordDocumentSearchOptions.Default, from, 1000));
+                TestReport.Check(found == count, $"{name}: search finds \"{word}\" {count} time(s), as Word's Find ({found})");
+            }
+        }
     }
 
     /// <summary>

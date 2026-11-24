@@ -3857,8 +3857,14 @@ latent styles, repeated style ids, Word 2003 files without notes, an element lef
 - Ruby search, hidden Word 16 Find (2026-11-24, ruby-edges-v1 and ruby-docx-commas-v1, .docx / .doc / .rtf alike, codes hidden):
   a guide with a comma is read as written - "g,3", "before g,3", "g,3 after", "g,1,2" found; "base", ",base", "3,base", "g3"
   not (the base, its note mark included, is skipped). DocxRubyText.SearchText and WordFieldRuby.ToHtml's search text follow it
-  in all three formats (before: .doc / RTF had no text for such a ruby, .docx read "3,base"). Still as drawn, not as Word: a ")"
-  inside a plain base (hand-written forms only; Word's Find stops the base at its first ")": "g0ab" found, "abc" not).
+  in all three formats (before: .doc / RTF had no text for such a ruby, .docx read "3,base"). A ")" inside a plain base
+  (hand-written forms only): Word's Find stops the base at its first ")" ("g0ab" found, "abc" not); WordFieldRuby's search text
+  does the same in .doc / RTF (search and GetText, one path; DocumentTextTest.CheckRubyBaseBracket), the drawing keeps the whole
+  base. .docx w:rubyBase is read whole.
+- searchCheck "each Enter advances exactly one match" (both samples): the app's WindowedScroller reported the browser's
+  scrollend of its own anchor hold (rows mounting after a search landing re-wrapped the content above) as moveend('reader'),
+  which re-armed the search's first step, so the next Enter re-anchored onto the same match. The scroller now reports a
+  scrollend only when a scroll that was not its own hold came first (app WindowedScroller.vue, hasMovedSinceMoveEnd).
 - The guide's rest after its comma is now a span.ruby-guide-rest (WordFieldRuby.GuideRestClass) in all three formats, so the
   app can read it. The app's highlighter (vue-frontend fast-doc-view/fastDocViewSearchHighlight.ts) lays each ruby out in
   reading order (guide, then base - or guide, comma, rest for a comma guide, the base hidden), finds the matches with the shared

@@ -185,7 +185,11 @@ public static class RubyAndBulletFontFidelityTest
         {
             var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-ruby-edges-search-" + file.Replace('.', '-')) };
             using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(Path.Combine(root, "word-ruby", file), policy);
-            foreach (string query in new[] { "g2abcy", "g5end of linex", "g,3", "before g,3", "g,3 after", "g,4 after" })
+            // .doc / .rtf hold the hand-written base in the EQ code, where Word's Find stops the base at its first ")"
+            // (DocumentTextTest.CheckRubyBaseBracket); the .docx w:rubyBase is read whole
+            bool isCode = !file.EndsWith(".docx", StringComparison.Ordinal);
+            foreach (string query in isCode ? new[] { "g2ab", "g5end of line", "g,3", "before g,3", "g,3 after", "g,4 after" }
+                                            : new[] { "g2abcy", "g5end of linex", "g,3", "before g,3", "g,3 after", "g,4 after" })
             {
                 WordDocumentSearchBatch hits = document.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount);
                 TestReport.Check(hits.HitBlocks.Length == 1, $"{file}: search finds \"{query}\" as Word's Find ({hits.HitBlocks.Length} block(s))");
@@ -194,7 +198,7 @@ public static class RubyAndBulletFontFidelityTest
                 TestReport.Check(document.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0,
                                  $"{file}: search does not find \"{query}\" (Word's Find does not)");
             string text = WordDocumentText.GetText(document);
-            TestReport.Check(text.Contains("g,3 after") && text.Contains("g2abcy") && !text.Contains("ab)c") && !text.Contains("3,base"), $"{file}: GetText reads the rubies as search does");
+            TestReport.Check(text.Contains("g,3 after") && text.Contains(isCode ? "g2ab" : "g2abcy") && (!isCode || !text.Contains("abc")) && !text.Contains("ab)c") && !text.Contains("3,base"), $"{file}: GetText reads the rubies as search does");
         }
     }
 
