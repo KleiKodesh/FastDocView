@@ -199,15 +199,21 @@ internal sealed partial class DocxChart
         var projection = new Projection(view, width, height, depth, seriesRows);
         projection.Fit(width, height, depth, left, top, right, bottom);
         string wallFill = PropertiesFill(_backWallProperties, plotFill) ?? "none", floorFill = PropertiesFill(_floorProperties, plotFill) ?? "none";
-        Polygon(svg, new[] { projection.Point(0, 0, depth), projection.Point(width, 0, depth), projection.Point(width, height, depth), projection.Point(0, height, depth) }, wallFill, gridColor, "word-chart-wall");
-        Polygon(svg, new[] { projection.Point(0, 0, 0), projection.Point(0, 0, depth), projection.Point(0, height, depth), projection.Point(0, height, 0) }, wallFill, gridColor, "word-chart-wall");
-        Polygon(svg, new[] { projection.Point(0, 0, 0), projection.Point(width, 0, 0), projection.Point(width, 0, depth), projection.Point(0, 0, depth) }, floorFill, gridColor, "word-chart-floor");
+        string sideFill = PropertiesFill(_sideWallProperties, plotFill) ?? "none";
+        // the back wall stands on the far edge of the floor: Word moves it to the front edge (z 0) once rotY reaches 90 (its PDFs of
+        // the 2026-11-24 scene grid at rotY 90: back wall at z 0 within 0.3-3.8 pt, at the depth 25-80 pt off)
+        double back = BackWallAtFront(view) ? 0 : depth, front = depth - back;
+        Polygon(svg, new[] { projection.Point(0, 0, back), projection.Point(width, 0, back), projection.Point(width, height, back), projection.Point(0, height, back) }, wallFill, gridColor, "word-chart-wall");
+        // horizontal bars: Word paints the floor's fill on the face under the bars' bases (x 0) and the side wall's on the bottom face
+        // (its PDFs of the 2026-11-24 type probes: floor red on the left face, side wall blue underneath)
+        Polygon(svg, new[] { projection.Point(0, 0, 0), projection.Point(0, 0, depth), projection.Point(0, height, depth), projection.Point(0, height, 0) }, horizontal ? floorFill : sideFill, gridColor, horizontal ? "word-chart-floor" : "word-chart-wall");
+        Polygon(svg, new[] { projection.Point(0, 0, 0), projection.Point(width, 0, 0), projection.Point(width, 0, depth), projection.Point(0, 0, depth) }, horizontal ? sideFill : floorFill, gridColor, horizontal ? "word-chart-wall" : "word-chart-floor");
         foreach ((double value, string text) in valueLabels)
         {
             double t = valueToAxis(value);
             (double X, double Y) a, b, c;
-            if (horizontal) { a = projection.Point(t * width, 0, 0); b = projection.Point(t * width, 0, depth); c = projection.Point(t * width, height, depth); }
-            else { a = projection.Point(0, t * height, 0); b = projection.Point(0, t * height, depth); c = projection.Point(width, t * height, depth); }
+            if (horizontal) { a = projection.Point(t * width, 0, front); b = projection.Point(t * width, 0, back); c = projection.Point(t * width, height, back); }
+            else { a = projection.Point(0, t * height, front); b = projection.Point(0, t * height, back); c = projection.Point(width, t * height, back); }
             svg.Append("<path d=\"M").Append(N(a.X)).Append(' ').Append(N(a.Y)).Append('L').Append(N(b.X)).Append(' ').Append(N(b.Y)).Append('L').Append(N(c.X)).Append(' ').Append(N(c.Y))
                .Append("\" fill=\"none\" stroke=\"").Append(gridColor).Append("\" stroke-width=\"0.75\"/>");
             if (horizontal) Text(svg, a.X, a.Y + labelSize + 2, text, labelSize, ValueAxis()?.LabelColor ?? textColor, "middle");
@@ -236,6 +242,13 @@ internal sealed partial class DocxChart
                 Text(svg, p.X + SeriesLabelGap, p.Y + seriesAxis.LabelSize / 3, _groups[0].Series[s].Name ?? "", seriesAxis.LabelSize, seriesAxis.LabelColor ?? textColor, "start");
             }
         return (projection, width, height, depth, slot, rowDepth);
+    }
+
+    /// <summary>Whether the back wall stands on the floor's front edge: rotY 90 up to 270, where that edge is the far one.</summary>
+    private static bool BackWallAtFront(View3D view)
+    {
+        double rotY = ((view.RotY % 360) + 360) % 360;
+        return !view.RightAngled && rotY >= 90 && rotY < 270;
     }
 
     // Word 16's PDFs of word-charts-seraxis-v1 (right-angled and perspective columns and areas): the names start 10 pt right of the floor edge

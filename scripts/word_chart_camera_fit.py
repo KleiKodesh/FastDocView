@@ -4,6 +4,13 @@ FACES = {
     'back': [(0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)],
     'side': [(0, 0, 0), (0, 0, 1), (0, 1, 1), (0, 1, 0)],
 }
+def walls_for(rotY):
+    """Word moves the back wall to the front edge once rotY reaches 90 (the 2026-11-24 grid at rotY 90: back wall at z = 0
+    fits 0.3-3.8 pt, at z = 1 25-80 pt); the side wall stays at x = 0 there."""
+    if 90 <= rotY % 360 < 270:
+        return dict(FACES, back=[(x, y, 0) for x, y, _ in FACES['back']])
+    return FACES
+
 def load(path): return json.load(open(path))
 
 def turn(p, rotX, rotY):
@@ -32,11 +39,13 @@ def match(model, meas):
         if best is None or e < best[0]: best = (e, m)
     return best[1]
 
-def residuals(probe, raw_fn, sim=None):
-    """raw_fn(unit corners)-> raw 2-D. sim = (s, tx, ty) maps raw (y up) to page; None = least-squares similarity."""
+def residuals(probe, raw_fn, sim=None, thin=0.0, faces=None):
+    """raw_fn(unit corners)-> raw 2-D. sim = (s, tx, ty) maps raw (y up) to page; None = least-squares similarity.
+    faces: the unit-corner faces to use (default FACES; see walls_for).
+    thin > 0: faces thinner than that (page units) are matched by outline distance instead of corner order."""
     models, meas = [], []
     for name, q in probe['faces'].items():
-        models.append(raw_fn(FACES[name])); meas.append(np.array(q))
+        models.append(raw_fn((faces or FACES)[name])); meas.append(np.array(q))
     if not models: return None
     # first, a rough similarity for matching: least squares on centroid order-independent scale
     M = np.concatenate(models);
@@ -57,8 +66,35 @@ def residuals(probe, raw_fn, sim=None):
             sim0 = fit_sim(M, Q)
         sim = sim0
     P = [np.stack([sim[0] * m[:, 0] + sim[1], -sim[0] * m[:, 1] + sim[2]], 1) for m in models]
-    Q = np.concatenate([match(p, q) for p, q in zip(P, meas)])
-    return (np.concatenate(P) - Q).ravel(), sim
+    if thin <= 0:
+        Q = np.concatenate([match(p, q) for p, q in zip(P, meas)])
+        return (np.concatenate(P) - Q).ravel(), sim
+    # faces seen nearly edge-on (rotX 0 floor, rotY 90 walls): the measured quadrilateral of a sliver has its corners anywhere
+    # along the long edges and can miss a thin tip (the measuring drops nearly collinear outline points), so such a face is
+    # compared one way only: each measured corner's distance to the model face's outline
+    out = []
+    for p, q in zip(P, meas):
+        if thickness(q) >= thin:  # by the measured face only, so the residual count stays fixed while fitting
+            out.append((p - match(p, q)).ravel()); continue
+        d = [outline_distance(b, p) for b in q]
+        out.append(np.repeat(np.array(d) / math.sqrt(2), 2))  # two entries per corner, as the corner residuals
+    return np.concatenate(out), sim
+
+def thickness(quad):
+    """A quadrilateral's area over its longest side: about its width across, in the same units."""
+    x, y = quad[:, 0], quad[:, 1]
+    area = abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))) / 2
+    side = max(np.hypot(*(quad[i] - quad[i - 1])) for i in range(len(quad)))
+    return area / max(side, 1e-9)
+
+def outline_distance(a, quad):
+    """Distance from point a to the closed outline through the quadrilateral's corners."""
+    best = float('inf')
+    for i in range(len(quad)):
+        b, c = quad[i - 1], quad[i]; e = c - b; L = e @ e
+        t = 0.0 if L < 1e-12 else min(1.0, max(0.0, (a - b) @ e / L))
+        best = min(best, float(np.hypot(*(a - b - t * e))))
+    return best
 
 def lm(f, x0, iters=60, step=1e-5):
     x = np.array(x0, float); lam = 1e-3

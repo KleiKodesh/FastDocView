@@ -1,0 +1,3776 @@
+[
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x10_y20_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x10_y20_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x10_y50_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x10_y50_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x10_y80_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x10_y80_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x30_y20_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x30_y20_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x30_y50_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x30_y50_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x30_y80_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x30_y80_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x50_y20_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x50_y20_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x50_y50_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x50_y50_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x50_y80_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x50_y80_p120_r0"
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x15_y20_p0_r0"
+},
+{
+"rotX": 40,
+"rotY": 60,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-clustered",
+"name": "col-clustered_x40_y60_p0_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x10_y20_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x10_y20_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x10_y50_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x10_y50_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x10_y80_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x10_y80_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x30_y20_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x30_y20_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x30_y50_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x30_y50_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x30_y80_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x30_y80_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x50_y20_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x50_y20_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x50_y50_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x50_y50_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x50_y80_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x50_y80_p120_r0"
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x15_y20_p0_r0"
+},
+{
+"rotX": 40,
+"rotY": 60,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "stacked",
+"series": 2,
+"type": "col-stacked",
+"name": "col-stacked_x40_y60_p0_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x10_y20_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x10_y20_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x10_y50_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x10_y50_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x10_y80_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x10_y80_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x30_y20_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x30_y20_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x30_y50_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x30_y50_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x30_y80_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x30_y80_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x50_y20_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x50_y20_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x50_y50_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x50_y50_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x50_y80_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x50_y80_p120_r0"
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x15_y20_p0_r0"
+},
+{
+"rotX": 40,
+"rotY": 60,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "standard",
+"series": 2,
+"type": "col-standard",
+"name": "col-standard_x40_y60_p0_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x10_y20_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x10_y20_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x10_y50_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x10_y50_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x10_y80_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x10_y80_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x30_y20_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x30_y20_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x30_y50_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x30_y50_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x30_y80_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x30_y80_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x50_y20_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x50_y20_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x50_y50_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x50_y50_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x50_y80_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x50_y80_p120_r0"
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x15_y20_p0_r0"
+},
+{
+"rotX": 40,
+"rotY": 60,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "standard",
+"series": 2,
+"type": "area-standard",
+"name": "area-standard_x40_y60_p0_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x10_y20_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x10_y20_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x10_y50_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x10_y50_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x10_y80_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x10_y80_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x30_y20_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x30_y20_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x30_y50_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x30_y50_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x30_y80_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x30_y80_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x50_y20_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x50_y20_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x50_y50_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x50_y50_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x50_y80_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x50_y80_p120_r0"
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x15_y20_p0_r0"
+},
+{
+"rotX": 40,
+"rotY": 60,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "area3D",
+"grouping": "stacked",
+"series": 2,
+"type": "area-stacked",
+"name": "area-stacked_x40_y60_p0_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x10_y20_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x10_y20_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x10_y50_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x10_y50_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x10_y80_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x10_y80_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x30_y20_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x30_y20_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x30_y50_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x30_y50_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x30_y80_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x30_y80_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x50_y20_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x50_y20_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x50_y50_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x50_y50_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x50_y80_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x50_y80_p120_r0"
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x15_y20_p0_r0"
+},
+{
+"rotX": 40,
+"rotY": 60,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "surface3D",
+"series": 2,
+"type": "surface",
+"name": "surface_x40_y60_p0_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x10_y20_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x10_y20_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x10_y50_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x10_y50_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x10_y80_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x10_y80_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x30_y20_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x30_y20_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x30_y50_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x30_y50_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x30_y80_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x30_y80_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x50_y20_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x50_y20_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x50_y50_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 50,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x50_y50_p120_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x50_y80_p30_r0"
+},
+{
+"rotX": 50,
+"rotY": 80,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x50_y80_p120_r0"
+},
+{
+"rotX": 15,
+"rotY": 20,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x15_y20_p0_r0"
+},
+{
+"rotX": 40,
+"rotY": 60,
+"perspective": 0,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "line3D",
+"grouping": "standard",
+"series": 2,
+"type": "line-standard",
+"name": "line-standard_x40_y60_p0_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "bar",
+"grouping": "clustered",
+"series": 1,
+"type": "bar-clustered",
+"name": "bar-clustered_x10_y20_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "bar",
+"grouping": "clustered",
+"series": 1,
+"type": "bar-clustered",
+"name": "bar-clustered_x10_y20_p120_r0"
+},
+{
+"rotX": 10,
+"rotY": 40,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "bar",
+"grouping": "clustered",
+"series": 1,
+"type": "bar-clustered",
+"name": "bar-clustered_x10_y40_p30_r0"
+},
+{
+"rotX": 10,
+"rotY": 40,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "bar",
+"grouping": "clustered",
+"series": 1,
+"type": "bar-clustered",
+"name": "bar-clustered_x10_y40_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "bar",
+"grouping": "clustered",
+"series": 1,
+"type": "bar-clustered",
+"name": "bar-clustered_x30_y20_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "bar",
+"grouping": "clustered",
+"series": 1,
+"type": "bar-clustered",
+"name": "bar-clustered_x30_y20_p120_r0"
+},
+{
+"rotX": 30,
+"rotY": 40,
+"perspective": 30,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "bar",
+"grouping": "clustered",
+"series": 1,
+"type": "bar-clustered",
+"name": "bar-clustered_x30_y40_p30_r0"
+},
+{
+"rotX": 30,
+"rotY": 40,
+"perspective": 120,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"rAngAx": 0,
+"kind": "bar3D",
+"barDir": "bar",
+"grouping": "clustered",
+"series": 1,
+"type": "bar-clustered",
+"name": "bar-clustered_x30_y40_p120_r0"
+},
+{
+"rotX": 0,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x0_y0_p30_r1"
+},
+{
+"rotX": 0,
+"rotY": 15,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x0_y15_p30_r1"
+},
+{
+"rotX": 0,
+"rotY": 30,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x0_y30_p30_r1"
+},
+{
+"rotX": 0,
+"rotY": 45,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x0_y45_p30_r1"
+},
+{
+"rotX": 0,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x0_y60_p30_r1"
+},
+{
+"rotX": 5,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x5_y0_p30_r1"
+},
+{
+"rotX": 5,
+"rotY": 15,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x5_y15_p30_r1"
+},
+{
+"rotX": 5,
+"rotY": 30,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x5_y30_p30_r1"
+},
+{
+"rotX": 5,
+"rotY": 45,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x5_y45_p30_r1"
+},
+{
+"rotX": 5,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x5_y60_p30_r1"
+},
+{
+"rotX": 10,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x10_y0_p30_r1"
+},
+{
+"rotX": 10,
+"rotY": 15,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x10_y15_p30_r1"
+},
+{
+"rotX": 10,
+"rotY": 30,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x10_y30_p30_r1"
+},
+{
+"rotX": 10,
+"rotY": 45,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x10_y45_p30_r1"
+},
+{
+"rotX": 10,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x10_y60_p30_r1"
+},
+{
+"rotX": 15,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x15_y0_p30_r1"
+},
+{
+"rotX": 15,
+"rotY": 15,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x15_y15_p30_r1"
+},
+{
+"rotX": 15,
+"rotY": 30,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x15_y30_p30_r1"
+},
+{
+"rotX": 15,
+"rotY": 45,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x15_y45_p30_r1"
+},
+{
+"rotX": 15,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x15_y60_p30_r1"
+},
+{
+"rotX": 20,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x20_y0_p30_r1"
+},
+{
+"rotX": 20,
+"rotY": 15,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x20_y15_p30_r1"
+},
+{
+"rotX": 20,
+"rotY": 30,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x20_y30_p30_r1"
+},
+{
+"rotX": 20,
+"rotY": 45,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x20_y45_p30_r1"
+},
+{
+"rotX": 20,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x20_y60_p30_r1"
+},
+{
+"rotX": 25,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x25_y0_p30_r1"
+},
+{
+"rotX": 25,
+"rotY": 15,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x25_y15_p30_r1"
+},
+{
+"rotX": 25,
+"rotY": 30,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x25_y30_p30_r1"
+},
+{
+"rotX": 25,
+"rotY": 45,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x25_y45_p30_r1"
+},
+{
+"rotX": 25,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x25_y60_p30_r1"
+},
+{
+"rotX": 30,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x30_y0_p30_r1"
+},
+{
+"rotX": 30,
+"rotY": 15,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x30_y15_p30_r1"
+},
+{
+"rotX": 30,
+"rotY": 30,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x30_y30_p30_r1"
+},
+{
+"rotX": 30,
+"rotY": 45,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x30_y45_p30_r1"
+},
+{
+"rotX": 30,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x30_y60_p30_r1"
+},
+{
+"rotX": 35,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x35_y0_p30_r1"
+},
+{
+"rotX": 35,
+"rotY": 15,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x35_y15_p30_r1"
+},
+{
+"rotX": 35,
+"rotY": 30,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x35_y30_p30_r1"
+},
+{
+"rotX": 35,
+"rotY": 45,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x35_y45_p30_r1"
+},
+{
+"rotX": 35,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x35_y60_p30_r1"
+},
+{
+"rotX": 40,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x40_y0_p30_r1"
+},
+{
+"rotX": 40,
+"rotY": 15,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x40_y15_p30_r1"
+},
+{
+"rotX": 40,
+"rotY": 30,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x40_y30_p30_r1"
+},
+{
+"rotX": 40,
+"rotY": 45,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x40_y45_p30_r1"
+},
+{
+"rotX": 40,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x40_y60_p30_r1"
+},
+{
+"rotX": 45,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x45_y0_p30_r1"
+},
+{
+"rotX": 45,
+"rotY": 15,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x45_y15_p30_r1"
+},
+{
+"rotX": 45,
+"rotY": 30,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x45_y30_p30_r1"
+},
+{
+"rotX": 45,
+"rotY": 45,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x45_y45_p30_r1"
+},
+{
+"rotX": 45,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "line3D",
+"grouping": "standard",
+"series": 1,
+"type": "line-ra",
+"name": "line-ra_x45_y60_p30_r1"
+},
+{
+"rotX": 0,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x0_y0_p30_r1"
+},
+{
+"rotX": 0,
+"rotY": 20,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x0_y20_p30_r1"
+},
+{
+"rotX": 0,
+"rotY": 40,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x0_y40_p30_r1"
+},
+{
+"rotX": 0,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x0_y60_p30_r1"
+},
+{
+"rotX": 10,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x10_y0_p30_r1"
+},
+{
+"rotX": 10,
+"rotY": 20,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x10_y20_p30_r1"
+},
+{
+"rotX": 10,
+"rotY": 40,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x10_y40_p30_r1"
+},
+{
+"rotX": 10,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x10_y60_p30_r1"
+},
+{
+"rotX": 20,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x20_y0_p30_r1"
+},
+{
+"rotX": 20,
+"rotY": 20,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x20_y20_p30_r1"
+},
+{
+"rotX": 20,
+"rotY": 40,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x20_y40_p30_r1"
+},
+{
+"rotX": 20,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x20_y60_p30_r1"
+},
+{
+"rotX": 30,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x30_y0_p30_r1"
+},
+{
+"rotX": 30,
+"rotY": 20,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x30_y20_p30_r1"
+},
+{
+"rotX": 30,
+"rotY": 40,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x30_y40_p30_r1"
+},
+{
+"rotX": 30,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x30_y60_p30_r1"
+},
+{
+"rotX": 40,
+"rotY": 0,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x40_y0_p30_r1"
+},
+{
+"rotX": 40,
+"rotY": 20,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x40_y20_p30_r1"
+},
+{
+"rotX": 40,
+"rotY": 40,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x40_y40_p30_r1"
+},
+{
+"rotX": 40,
+"rotY": 60,
+"perspective": 30,
+"rAngAx": 1,
+"size": [
+415,
+242
+],
+"depth": 100,
+"h": null,
+"kind": "bar3D",
+"barDir": "col",
+"grouping": "clustered",
+"series": 1,
+"type": "col-ra",
+"name": "col-ra_x40_y60_p30_r1"
+}
+]

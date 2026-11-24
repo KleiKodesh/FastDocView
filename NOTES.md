@@ -3689,3 +3689,37 @@ latent styles, repeated style ids, Word 2003 files without notes, an element lef
   aspect at :261-375. That is the centred-bbox rule Word does not follow.
 - Renderer unchanged (no rule improves every probe and fixture); the gate of 1 pt is not met. Next: fit the placement as a
   function of the camera-space box extents per limiting direction on the grid data already measured.
+
+## 3-D chart scene round 3: types, right-angled walls, rotY 90, placement still open (2026-11-24)
+
+- Specs read: [MS-XLS] 2.4.46 Chart3d (pcDist = field of view, pcHeight / pcDepth = height / depth as a percentage of the 3-D
+  plot area's WIDTH, f3DScaling = automatic height, fWalls2D); [MS-OI29500] 2.1.1572 view3D, 21.2.2.41 depthPercent and
+  21.2.2.83 hPercent (percent of the 3-D plot area width; automatic height = plot height / width), 21.2.2.136 perspective
+  (Office writes twice the angle; 0 means 0.1 degrees), 21.2.2.206 thickness (percent of min(height, width) of the 3-D chart),
+  21.2.2.155 rAngAx. None of them says where the box is placed.
+- Corner matcher (scripts/word_chart_camera_fit.py): faces thinner than 12 pt are matched one way (each measured corner's distance
+  to the model outline), and at rotY 90 Word moves the BACK WALL to the floor's front edge (z 0; walls_for). Grid probes rotY 90 /
+  rotX 0 within 1 pt: 20 -> 74 of 78 (the last four 1.0-1.1 pt). Renderer: back wall (and its gridlines) at the front for rotY
+  90..270 (not for right-angled axes).
+- Per type (test-data/word-charts-scene-types, scripts/make-word-charts-scene-types.py / word_chart_scene_types_fit.py, 218
+  probes): Word's camera with the parallel scale and a free box offset fits every wall-box type: columns clustered / stacked
+  (depth = depthPercent / categories, height = plot aspect), standard columns, areas standard / stacked, surface, lines: 138 of
+  140 within 1 pt (the two misses are perspective 0, 1.27 pt). Horizontal bars: depth = depthPercent / categories x height, and
+  Word paints the FLOOR fill on the x 0 face (under the bars' bases) and the side wall's fill underneath: 8 of 8 within 0.7 pt.
+  Renderer: horizontal bars swap the two fills; c:sideWall spPr is now read (falls back to c:backWall). Pie not probed.
+- Right-angled (rAngAx 1; 50 line + 20 clustered column probes, rotX 0-45, rotY 0-60): the oblique is exact: depth across =
+  sinY, up = sinX (0.99-1.01), for columns too (the renderer keeps sinY |cos rotX| for columns: the Depth Column Chart fixture
+  measured worse with sinY, 0.86 -> 1.34 pt). Front size: the box fits as if its depth were 1.04 x (or the extent +3.3 pt x sin):
+  front width 389.0 / 364.5 / 344.2 / 328.6 / 317.5 pt at rotY 0 / 15 / 30 / 45 / 60 for any rotX. Tried in the renderer
+  (depth x 1.04 in the fit): R 30 20 3.05 -> 1.15 pt, C 25 35 S 3.97 -> 2.33, but R 20 30 S dy 0.18 -> 0.80, Col3D SerAx R dy
+  0.26 -> 0.94, R 15 40 max dx 0.9 -> 2.3; constant +0.0085: smaller gains, still mixed. Not shipped (the gate: no fixture worse).
+  Word's right-angled scene picture is cropped to the drawn faces, so its aspect is not the plot's.
+- Placement (perspective, grid data): with the box centre on the screen plane (eye distance E from it) and the parallel scale,
+  height-limited scenes are centred vertically and their horizontal offset is X = V / E with V a function of the rotation only
+  (rotX 30: -8.5 / -12.4 / -15.5 / -18.1 thousand pt^2 at rotY 30-60, the same at perspective 30 and 60; e.g. rotX 30 rotY 40
+  -1.24 / -1.24 / -1.27 at 30 / 60 / 120). It is not bbox centring of any corner subset (best 5.7 pt median), not V = first-order
+  shift of the x-extreme corners (ratio 1.1-3.2), not the plot aspect; at perspective 120 with rotY 70+ it breaks from V / E. An
+  8-term quadratic in corner products fits the perspective-30 rows to 0.1 pt median but is an overfit, not a rule. Renderer
+  placement unchanged; 1 pt gate not met for perspective scenes (Line3D Deep 8.6 / 19.8 pt median, Persp rows 3.2-5.0 pt dx).
+- Harness: scripts/chart3d_fixture_check.py (per-chart text medians vs Word's PDF for the 3-D fixtures); live check
+  vue-demo/playwright/chart3dWallsCheck.mjs. All fixtures unchanged by this round's renderer edits (identical medians).

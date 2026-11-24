@@ -2,7 +2,8 @@
 # tan(perspective / 4)), box at the parallel scale, free box offset (x, y, z). Probe(p).fit() / robust_fit(P); rms in pt.
 import sys, json, math, numpy as np
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
-from word_chart_camera_fit import turn, residuals, lm
+from word_chart_camera_fit import turn, residuals, lm, walls_for
+THIN = 12.0  # faces thinner than this (pt) are matched by outline distance (edge-on floor / side wall)
 CORN = np.array([(x,y,z) for x in (0,1) for y in (0,1) for z in (0,1)], float)
 def dims(p, iw, ih):
     cats, ser = p.get('cats',4), p.get('series',1)
@@ -32,15 +33,15 @@ class Probe:
         return np.stack([q[...,0]*f, q[...,1]*f], -1)
     def raw(s_, unit, o): return s_.proj(s_.cam(unit, o))
     def fit(s_):
-        f = lambda o: residuals(s_.p, lambda u: s_.raw(u, o), sim=(1.0, s_.c[0], s_.c[1]))[0]
+        f = lambda o: residuals(s_.p, lambda u: s_.raw(u, o), sim=(1.0, s_.c[0], s_.c[1]), thin=THIN, faces=walls_for(s_.p['rotY']))[0]
         o, r = lm(f, [0,0,0]); s_.o = o; s_.rms = math.sqrt((r@r)/len(r)*2); return o
     def err(s_, o):
-        r = residuals(s_.p, lambda u: s_.raw(u, o), sim=(1.0, s_.c[0], s_.c[1]))[0]
+        r = residuals(s_.p, lambda u: s_.raw(u, o), sim=(1.0, s_.c[0], s_.c[1]), thin=THIN, faces=walls_for(s_.p['rotY']))[0]
         return math.sqrt((r@r)/len(r)*2), np.abs(r).max()
 def robust_fit(P):
     best = None
-    for st in ([0,0,0],[0.1,0,0],[-0.1,0,0],[0,0.1,0],[0,-0.1,0],[0,0,0.3],[0,0,-0.3],[-0.1,0.1,0.2]):
-        f = lambda o: residuals(P.p, lambda u: P.raw(u, o), sim=(1.0, P.c[0], P.c[1]))[0]
+    for st in ([0,0,0],[0.1,0,0],[-0.1,0,0],[0,0.1,0],[0,-0.1,0],[0,0,0.3],[0,0,-0.3],[-0.1,0.1,0.2],[-0.3,0,0],[-0.5,0,0]):
+        f = lambda o: residuals(P.p, lambda u: P.raw(u, o), sim=(1.0, P.c[0], P.c[1]), thin=THIN, faces=walls_for(P.p['rotY']))[0]
         try:
             o, r = lm(f, st, iters=80)
         except Exception: continue

@@ -101,7 +101,7 @@ internal sealed partial class DocxChart
     private bool _is3D;
     /// <summary>The value where the category axis crosses (c:crosses / c:crossesAt of the category axis): bars and areas grow from it.</summary>
     private double _categoryCross;
-    private XElement? _floorProperties, _backWallProperties;
+    private XElement? _floorProperties, _backWallProperties, _sideWallProperties;
     private readonly DocxTheme? _theme;
 
     private DocxChart(DocxTheme? theme) => _theme = theme;
@@ -142,11 +142,14 @@ internal sealed partial class DocxChart
             // c:layoutTarget (21.2.2.101): inner = the plot rectangle without tick labels; outer (the default) = with them
             model._plotLayoutInner = Value(manual.Element("layoutTarget")) == "inner";
         }
-        // 3-D: c:view3D, c:floor, c:backWall (21.2.2.228, 21.2.2.69, 21.2.2.11)
+        // 3-D: c:view3D, c:floor, c:backWall, c:sideWall (21.2.2.228, 21.2.2.69, 21.2.2.11, 21.2.2.191)
         model._is3D = plotArea?.Elements().Any(e => e.Name.LocalName.EndsWith("3DChart", StringComparison.Ordinal)) == true;   // c:view3D alone is written for 2-D charts too
         model._floorProperties = chart.Element("floor")?.Element("spPr");
         if (model._is3D) model._view3D = ReadView3D(chart.Element("view3D"), plotArea?.Element("pie3DChart") is not null);
         model._backWallProperties = chart.Element("backWall")?.Element("spPr");
+        // the side wall has its own fill in Word (the 2026-11-24 probes: blue side wall beside a green back wall); a chart without
+        // one (ODT and binary charts come with a single wall) paints it like the back wall
+        model._sideWallProperties = chart.Element("sideWall")?.Element("spPr") ?? model._backWallProperties;
         foreach (XElement element in plotArea?.Elements() ?? [])
         {
             string name = element.Name.LocalName;
