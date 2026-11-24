@@ -89,7 +89,7 @@ public sealed class WordFieldStack
         field.IsSeparated = true;
         field.Parsed = WordFieldInstruction.Parse(field.Instruction.ToString());
         field.IsInsideInstruction = IsInsideInstruction(_fields.Count - 1);
-        if (field.IsInsideInstruction) return;
+        if (field.IsInsideInstruction) { field.SuppressesResult = field.Parsed.Name == WordFieldInstruction.NoTypeName; return; }
         // as Finish decided at the separator: a placeholder / hidden field, or one drawn from its code, replaced its cached result
         field.SuppressesResult = WordFieldEvaluator.DisplayOf(field.Parsed.Name) != WordFieldDisplay.Result
                                  || WordFieldEvaluator.IsDrawnFromCode(field.Parsed.Name) && field.Parsed.Name != "SYMBOL";
@@ -109,11 +109,16 @@ public sealed class WordFieldStack
     public WordFieldTextRoute Route(string? text = null)
     {
         for (int i = _fields.Count - 1; i >= 0; i--)
+        {
             if (!_fields[i].IsSeparated)
             {
                 if (text is not null) _fields[i].Instruction.Append(text);
                 return WordFieldTextRoute.Instruction;
             }
+            // the result of a field with no type inside another field's code adds nothing to that code (Word 16:
+            // field-leading-switch-v1 case I, "EQ \o({MERGEFIELD{note} n},b)" draws only "b")
+            if (_fields[i] is { IsInsideInstruction: true, SuppressesResult: true }) return WordFieldTextRoute.Suppressed;
+        }
         foreach (Field field in _fields) if (field.SuppressesResult) return WordFieldTextRoute.Suppressed;
         return WordFieldTextRoute.Visible;
     }
@@ -201,6 +206,7 @@ public sealed class WordFieldStack
         if (Counters is not null && !field.IsInsideInstruction && WordFieldEvaluator.IsCounted(instruction.Name)) counted = WordFieldEvaluator.Count(instruction, Counters);
         if (field.IsInsideInstruction)
         {
+            if (instruction.Name == WordFieldInstruction.NoTypeName) { field.SuppressesResult = true; return WordFieldOutput.None; }
             // the cached result (or a computed one at End) becomes part of the enclosing code
             if (!hasResult && !field.IsLocked) return WordFieldEvaluator.Compute(instruction, Context, counted, field.Form) is { Text: { } t } ? new(t, null, true) : WordFieldOutput.None;
             return WordFieldOutput.None;

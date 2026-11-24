@@ -118,14 +118,25 @@ public sealed class WordFieldInstruction
         }
         var tokens = new List<WordFieldToken>();
         int index = 0;
-        // DomainMapper_Impl.cxx:6024-6031: a field may start with a stray backslash ("\REF ..."); Word skips it
-        if (code.Length >= 2 && code.TrimStart() is { Length: >= 2 } trimmed && trimmed[0] == '\\' && trimmed[1] != '\\' && !char.IsWhiteSpace(trimmed[1]))
+        // a code that starts with a backslash (not an escaped one): Word 16 (2026-11-24, test-data/word-ruby/field-leading-switch-v1,
+        // Field.Type in .rtf / .docx / .doc) skips it before a field keyword ("\MERGEFIELD name": type 59, as LibreOffice
+        // DomainMapper_Impl.cxx:6119-6128 always does); before anything else - a switch ("\* MERGEFORMAT", "\h REF bm") or a
+        // non-keyword ("\hREF bm", "\M name") - the field has no type (-1) and shows nothing, locked or not. (LibreOffice takes
+        // the first token as the type even when it is a switch, :6143-6146; Word is the reference.)
+        if (code.TrimStart() is { Length: >= 2 } trimmed && trimmed[0] == '\\' && trimmed[1] != '\\')
+        {
+            int keywordEnd = 1;
+            while (keywordEnd < trimmed.Length && !char.IsWhiteSpace(trimmed[keywordEnd])) keywordEnd++;
+            if (!WordFieldEvaluator.IsFieldKeyword(trimmed.Substring(1, keywordEnd - 1))) return new WordFieldInstruction(code, NoTypeName, [], [], []);
             index = code.IndexOf('\\') + 1;
+        }
         string name = "";
         while (index < code.Length)
         {
             if (ExtractToken(code, ref index, out bool isSwitch, out bool isQuoted) is not { } token) continue;
             if (name.Length == 0 && tokens.Count == 0 && !isSwitch) { name = token == "=" ? "=" : token.ToUpperInvariant(); continue; }
+            // a switch before any keyword (" \# "0" = 1+2"): no type, as after a leading backslash above (Word 16, field-leading-switch-v1)
+            if (name.Length == 0 && tokens.Count == 0) return new WordFieldInstruction(code, NoTypeName, [], [], []);
             tokens.Add(new WordFieldToken(token, isSwitch, isQuoted));
         }
         ArgumentSwitches.TryGetValue(name, out string[]? takesArgument);

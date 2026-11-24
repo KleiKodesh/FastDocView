@@ -96,6 +96,10 @@ public sealed class DocxBlockHtmlRenderer
         // on into this block stays a link, a code that runs on stays hidden, a SEQ without a result counts on from there.
         _fields = NewFieldStack(counts: true);
         _fields.Restore(neighbours.OpenFields);
+        // code notes per open field, as the RTF renderer: a restored field past its separator has none left, one in its code starts empty
+        _instructionNoteReferences.Clear();
+        _instructionNoteStarts.Clear();
+        for (int i = 0; i < _fields.Depth; i++) _instructionNoteStarts.Push(_fields.Fields[i].IsSeparated ? int.MaxValue : 0);
         Run(RenderBlock(block, html));
         _blockNeighbours = default;
         _activeLinkOpenTag = null;
@@ -881,6 +885,14 @@ public sealed class DocxBlockHtmlRenderer
                             Fields.WordFieldOutput output = _fields.Separate();
                             // shown when the fields around it show (the field itself now suppresses its cached result)
                             if (!output.IsEmpty && FieldOutputShows()) AppendFieldOutput(html, output, _fields.CurrentFieldLink);
+                            // the code is complete: its notes the output did not place are not drawn (Word draws none); notes met
+                            // from here on (in a result inside an outer code) are the outer field's, so its end takes none
+                            if (_instructionNoteStarts.Count > 0)
+                            {
+                                int own = _instructionNoteStarts.Pop();
+                                if (own < _instructionNoteReferences.Count) _instructionNoteReferences.RemoveRange(own, _instructionNoteReferences.Count - own);
+                                _instructionNoteStarts.Push(int.MaxValue);
+                            }
                             break;
                         }
                         case "end":

@@ -79,6 +79,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | USERNAME / USERINITIALS / USERADDRESS without an argument | docx, doc, rtf | Word's user settings, not the document's | won't do |
 | STYLEREF page-relative search and \l | docx, doc, rtf | Flow view has no page | planned (paged view) |
 | Lookups during the first open (REF to a bookmark not indexed yet, TOC, INDEX) | docx, doc, rtf | Show nothing until the index completes, instead of Word's "not found" | won't do (by design) |
+| A field nested inside another field's code | rtf | The nested {\field} in a {\*\fldinst} is read as plain code text: its own code and notes are skipped and its cached result joins the outer code (Word evaluates it; .docx / .doc do) | deferred |
 | Fields | txt, mhtml | Format has none | n.a. |
 
 ## Links, bookmarks, TOC

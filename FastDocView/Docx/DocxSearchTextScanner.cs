@@ -316,7 +316,9 @@ internal sealed class DocxSearchTextScanner
                         else matcher.Separator();
                         break;
                     case 16 or 17 when (Is(local, "footnoteReference") || Is(local, "endnoteReference")) && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
-                        matcher.Separator();                                  // the note's mark is drawn here: a match never crosses it
+                        // the note's mark is drawn here: a match never crosses it. In a field's code it is a placeholder in that
+                        // code (the field-type rule of WordFieldInstruction reads it, as the renderer does) and no mark is drawn
+                        if (fields is null || fields.Shows(FastDocView.Fields.WordFieldRuby.NoteMarkPlaceholderText)) matcher.Separator();
                         break;
                     case 3 when Is(local, "tab") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
                         if (MathKindAt(elementDepth - 1) != MathKind.Run) matcher.Feed(' ');      // a tab in an equation's run is not drawn

@@ -2623,6 +2623,27 @@ both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Ch
   type and draws the result: Word is the reference. appCheck: the note-jump checks follow the clicked reference's own note (a note
   whose reference is in a field code has no mark in the text by design) and accept a note near the end that lands as high as the
   pane can scroll.
+  Follow-up 2026-11-24 (search / GetText = what shows, one field-type decision): the search readers now route a note reference
+  in a field code exactly as the renderer does - a placeholder in that code (DocxSearchTextScanner, the reference XmlReader
+  WordXmlSearchText, DocxBodyBlockScanner's open-field record; .doc and RTF already put one there) - so WordFieldInstruction
+  decides the type once for rendering, search and GetText; such a note is no separator in the search text (it draws no mark).
+  Before, .docx search read "resA" of a field Word hides and RTF / .docx GetText split a line at every code note.
+  DocumentTextTest checks GetText, the search and the rendered text against Word's PDFs of note-in-field-keyword-v1 in
+  .rtf / .docx / .doc exactly (EQ case P: the overstrike is drawn but an EQ drawing is not search text, as before).
+  .docx index format 24 (the open-field record carries the placeholder). Code-note marks are now per field in every format:
+  a field's own code notes (those met between its begin and its separator) go to its output and the unplaced ones are dropped
+  at its separator / end; notes met in a nested result inside a code belong to the outer code (.doc used one queue cleared at
+  the outermost end, RTF too; .docx dropped an outer code's notes at a nested field's end).
+  Codes that start with a switch (2026-11-24, test-data/word-ruby/field-leading-switch-v1.rtf from
+  scripts/make-field-leading-switch-fixture.py, Word 16 Field.Type of .rtf / .docx / .doc and their PDFs): "\* MERGEFORMAT",
+  "\* MERGEFORMAT MERGEFIELD name", "\h REF bm", "\@ "d MMMM" DATE", " \# "0" = 1+2" are type -1 and show nothing, locked or
+  not. A backslash right before a keyword is skipped ("\MERGEFIELD name": 59, result shown); before a non-keyword ("\hREF bm",
+  "\*MERGEFORMAT", "\M name") the field is type -1. A quoted keyword ("MERGEFIELD" in quotes) keeps its type. LibreOffice skips
+  the leading backslash always and takes the first token as the type even when it is a switch (DomainMapper_Impl.cxx:6119-6128,
+  :6143-6146): Word is the reference. A no-type field nested in a code adds nothing to it (case I, EQ \o({MERGEFIELD{note} n},b)
+  draws "b" with the EQ's own note ii; WordFieldStack.Route: Suppressed). RTF limit: a {\field} nested inside another field's
+  {\*\fldinst} is not read as a field (its code and note are skipped, its result joins the outer code) - case I draws "x" over
+  "b" and numbers the EQ's note 1 (docs/UNSUPPORTED-FEATURES.md).
 - .doc (render time, no index change): sprmCPbiGrf 0x4888 bit 0 + sprmCPbiIBullet 0x6887 (4 bytes) in the LVL grpprlChpx (ww8par3.cxx:808-819,
   :839-845; writer wrtw8num.cxx:355-358) name picture N of the paragraph holding the "_PictureBullets" bookmark, counted from the bookmark start
   (ww8par.cxx:5302-5348); that paragraph's runs are read once per renderer, the id is the PICF offset as for any inline picture. Hidden (vanish)

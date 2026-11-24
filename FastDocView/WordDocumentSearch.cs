@@ -574,7 +574,11 @@ internal sealed class WordXmlSearchText
                         if (reader.LocalName == "t" && !reader.IsEmptyElement) textDepth = reader.Depth;
                         else if (reader.LocalName == "tab") { if (fields is null || fields.Shows("\t")) matcher.Feed(' '); }
                         else if (reader.LocalName is "br" or "cr") { if (fields is null || fields.Shows(null)) matcher.Separator(); }
-                        else if (reader.LocalName is "footnoteReference" or "endnoteReference" && IsWordprocessing(reader.NamespaceURI)) matcher.Separator();   // the note's mark: a match never crosses it
+                        else if (reader.LocalName is "footnoteReference" or "endnoteReference" && IsWordprocessing(reader.NamespaceURI))
+                        {
+                            // the note's mark: a match never crosses it (in a field's code: a placeholder in the code, no mark)
+                            if (fields is null || fields.Shows(FastDocView.Fields.WordFieldRuby.NoteMarkPlaceholderText)) matcher.Separator();
+                        }
                         else if (reader.LocalName == "p" && reader.IsEmptyElement) matcher.Separator();
                         break;
                     case XmlNodeType.EndElement:

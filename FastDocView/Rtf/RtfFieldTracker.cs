@@ -24,6 +24,12 @@ internal sealed class RtfFieldTracker
     }
 
     public int Depth => _stack.Depth;
+
+    /// <summary>During <see cref="GroupClosed"/>'s callback: the index (0 = outermost) the ended field had in the stack.</summary>
+    public int EndedFieldIndex { get; private set; } = -1;
+
+    /// <summary>Whether the open field at <paramref name="index"/> (0 = outermost) is past its separator.</summary>
+    public bool IsSeparatedAt(int index) => _stack.Fields[index].IsSeparated;
     public bool IsIdle => _stack.Depth == 0;
     public string? ActiveLink => _stack.ActiveLink;
     public WordFieldStack.Field? Innermost => _stack.Depth > 0 ? _stack.Fields[_stack.Depth - 1] : null;
@@ -54,6 +60,7 @@ internal sealed class RtfFieldTracker
         {
             _depths.RemoveAt(_depths.Count - 1);
             WordFieldOutput ended = _stack.End(out string? link);
+            EndedFieldIndex = _stack.Depth;
             if (!ended.IsEmpty && _stack.Route() == WordFieldTextRoute.Visible) output(ended, link);
         }
     }

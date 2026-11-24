@@ -77,9 +77,10 @@ internal sealed class RtfSearchTextSink : RtfSink
     public override void CellEnd(in RtfGroupState state, bool isNested) => _matcher!.Separator();
     public override void RowEnd(in RtfGroupState state, bool isNested) => _matcher!.Separator();
     public override void Break(RtfWord word, in RtfGroupState state) => _matcher!.Separator();
-    public override void FootnoteStart() => _matcher!.Separator();
+    // a note in a field's code draws no mark in the text (Word draws none; an EQ places it inside its drawing): no separator
+    public override void FootnoteStart() { if (!_parser.IsNoteInFieldInstruction) _matcher!.Separator(); }
     public override void ShapeStart(in RtfGroupState state) => _matcher!.Separator();
     public override void ShapeEnd(RtfShapePlacement shape, in RtfGroupState state) => _matcher!.Separator();
     public override void TextBoxParagraphEnd(in RtfGroupState state) => _matcher!.Separator();
-    public override void FootnoteEnd(bool isEndnote) => _matcher!.Separator();
+    public override void FootnoteEnd(bool isEndnote) { if (!_parser.IsNoteInFieldInstruction) _matcher!.Separator(); }
 }

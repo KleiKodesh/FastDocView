@@ -166,7 +166,7 @@ Headers / footers, columns and page layout are not shown (flow view): see UNSUPP
 | Separator notes dropped | yes | yes | yes | n.a. | n.a. | n.a. |
 | Search inside notes (own notes search, apart from the main text) | yes | yes | yes | yes | n.a. | n.a. |
 | Notes inside table cells | yes | yes | yes | yes | n.a. | n.a. |
-| Notes inside fields: in a field's result, in an EQ field's code (mark in place), in another field's code (no mark, as Word; the note keeps its number); a note before or touching the field's keyword, or an empty code, shows no result (as Word) | yes (N5) | yes (N5) | yes (N5) | n.a. | n.a. | n.a. |
+| Notes inside fields: in a field's result, in an EQ field's code (mark in place), in another field's code (no mark, as Word; the note keeps its number); a note before or touching the field's keyword, an empty code, or a code that starts with a switch shows no result (as Word); search and GetText read the same | yes (N5) | yes (N5) | yes (N5) | n.a. | n.a. | n.a. |
 | Notes inside text boxes, nested frames and shape text (mark in the body, pane, search, numbered in document order) | yes (N3) | n.a. (N3) | n.a. (N3) | yes (N4) | n.a. | n.a. |
 | Notes pane (app: one windowed scroller of all notes, click lands the note), hover tooltip (book view's link tooltip) | yes | yes | yes | yes | yes | partial (17) |
 
@@ -183,7 +183,8 @@ N5. RTF: test-data/word-ruby/note-in-field-v1.rtf (hand-written, `--ruby`); Libr
     \fldinst (rtfdispatchdestination.cxx:265-317). Word 16's PDFs of it and of note-in-field-code-v1.rtf / Word's .docx of it draw no
     mark for a note in a non-EQ field's code (the note is still numbered and listed). test-data/word-ruby/note-in-field-keyword-v1 (.rtf from
     scripts/make-note-in-field-keyword-fixture.py; Word 16's .docx / .doc and PDFs of all three): a note before or touching the keyword leaves
-    the field without a type and Word shows nothing, locked or not; "=" is a keyword by itself; .doc checked too.
+    the field without a type and Word shows nothing, locked or not; "=" is a keyword by itself; .doc checked too. test-data/word-ruby/field-leading-switch-v1:
+    a code starting with a switch, or a backslash before a non-keyword, has no type either (DocumentTextTest).
 N2. The citation text LibreOffice wrote is shown; without one, num-format, start-value and start-numbering-at="chapter" are followed.
 16. Torat Emet note lines only.
 17. Word's own HTML note links and texts are passed through.

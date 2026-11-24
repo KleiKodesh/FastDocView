@@ -668,8 +668,21 @@ internal sealed class DocxBodyBlockScanner
             return;
         }
         if (_tag is KnownTag.FootnoteReference or KnownTag.EndnoteReference)
+        {
+            // a note reference in a field's code is a placeholder in that code, as the renderer and the search route it
+            // (WordFieldStack.Route): WordFieldInstruction reads it for Word's field-type rule (a broken keyword: no type)
+            for (int i = _openFields.Count - 1; i >= 0; i--)
+            {
+                if (!_openFields[i].isSeparated) { foreach (byte b in NoteMarkPlaceholderUtf8) _openFields[i].instruction.WriteByte(b); break; }
+                // the result of a no-type field inside a code adds nothing to that code (WordFieldStack.Route: Suppressed)
+                MemoryStream code = _openFields[i].instruction;
+                if (Fields.WordFieldInstruction.Parse(System.Net.WebUtility.HtmlDecode(Encoding.UTF8.GetString(code.GetBuffer(), 0, (int)code.Length))).Name == Fields.WordFieldInstruction.NoTypeName) break;
+            }
             OnNoteReference(_tag == KnownTag.FootnoteReference ? WordDocumentNoteKind.Footnote : WordDocumentNoteKind.Endnote, attributes);
+        }
     }
+
+    private static readonly byte[] NoteMarkPlaceholderUtf8 = Encoding.UTF8.GetBytes(Fields.WordFieldRuby.NoteMarkPlaceholderText);
 
     /// <summary>
     /// Word numbers notes in reference order, separately per kind; a reference with

@@ -772,13 +772,13 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void FootnoteStart()
     {
-        if (IsSearching) _search!.Separator();
+        if (IsSearching && !_parser.IsNoteInFieldInstruction) _search!.Separator();   // a note in a field code draws no mark (as RtfSearchTextSink)
         _hasContent = true;
     }
 
     public override void FootnoteEnd(bool isEndnote)
     {
-        if (IsSearching) _search!.Separator();
+        if (IsSearching && !_parser.IsNoteInFieldInstruction) _search!.Separator();
         WordDocumentNoteKind kind = isEndnote ? WordDocumentNoteKind.Endnote : WordDocumentNoteKind.Footnote;
         int number = 0;
         string label = "*";

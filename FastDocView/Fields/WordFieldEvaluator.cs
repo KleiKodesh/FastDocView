@@ -231,10 +231,10 @@ public static class WordFieldEvaluator
         "NOTEREF", "NUMCHARS", "NUMPAGES", "NUMWORDS", "PAGE", "PAGEREF", "PRINT", "PRINTDATE", "PRIVATE", "QUOTE", "RD", "REF", "REVNUM",
         "SAVEDATE", "SECTION", "SECTIONPAGES", "SEQ", "SET", "SKIPIF", "STYLEREF", "SUBJECT", "SYMBOL", "TA", "TC", "TEMPLATE", "TIME", "TITLE",
         "TOA", "TOC", "USERADDRESS", "USERINITIALS", "USERNAME", "XE", "SHAPE", "EMBED", "ADDIN", "BIDIOUTLINE", "CONTROL", "DDE", "DDEAUTO",
-        "FORMULA", "GLOSSARY", "IMPORT", "OCX", "HTMLCONTROL",
+        "FORMULA", "GLOSSARY", "IMPORT", "OCX", "HTMLCONTROL", "DISPLAYBARCODE", "MERGEBARCODE",
     };
 
-    private static bool IsFieldKeyword(string name) => FieldKeywords.Contains(name);
+    internal static bool IsFieldKeyword(string name) => FieldKeywords.Contains(name);
 
     /// <summary>Word 16's STYLEREF text when no paragraph has the style (Hebrew UI, as written on the dev machine).</summary>
     public static string StyleNotFound(string style) => "שגיאה! השתמש בכרטיסיה בית כדי להחיל " + style + " על הטקסט שברצונך שיופיע כאן.";

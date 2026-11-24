@@ -49,6 +49,78 @@ public static class DocumentTextTest
         catch (OperationCanceledException) { stopped = true; }
         TestReport.Check(stopped, "a cancelled token stops GetText");
         CheckWhileIndexing();
+        CheckNoteInFieldKeyword(root);
+        CheckFieldLeadingSwitch(root);
+    }
+
+    /// <summary>
+    /// test-data/word-ruby/field-leading-switch-v1 (.rtf and Word's own .docx / .doc): a code that starts with a switch or with
+    /// a backslash before a non-keyword has no type in Word (Field.Type -1) and shows nothing; a backslash before a keyword is
+    /// skipped. GetText, the search and the rendered text all read Word's printed text (field-leading-switch-v1.*.pdf). Case I
+    /// nests a MERGEFIELD with a note in its broken keyword inside an EQ with a note of its own: the EQ draws ITS note (ii),
+    /// the inner field's note keeps its number and draws nothing (each field's code notes are its own, .doc as .docx).
+    /// </summary>
+    private static void CheckFieldLeadingSwitch(string root)
+    {
+        const string order = "ABCDEFGHJKLI";
+        var shown = new Dictionary<char, string> { ['E'] = "resE", ['H'] = "resH" };
+        string[] lines = order.Select(letter => $"case {letter}: {(shown.TryGetValue(letter, out string? result) ? result : "")} tail{letter}").ToArray();
+        foreach (string extension in new[] { "rtf", "docx", "doc" })
+        {
+            string name = "field-leading-switch-v1." + extension;
+            string path = Path.Combine(root, "test-data", "word-ruby", name);
+            string body = WordDocumentText.GetText(path);
+            string firstDiff = string.Join(" | ", body.Split('\n').Zip(lines, (got, want) => (got, want)).Where(pair => pair.got != pair.want).Take(3).Select(pair => $"got \"{Ascii(pair.got)}\" want \"{Ascii(pair.want)}\""));
+            TestReport.Check(body == string.Join("\n", lines), $"{name}: GetText = Word's printed text exactly {firstDiff}");
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+            CheckBlocks(name, document, body);
+            IReadOnlyList<WordDocumentBlockHtml> blocks = document.RenderBlocks(0, lines.Length);
+            List<string> rendered = blocks.Select(block => System.Net.WebUtility.HtmlDecode(Regex.Replace(block.Html, "<[^>]+>", ""))).ToList();
+            int eq = order.IndexOf('I');
+            var renderWrong = Enumerable.Range(0, lines.Length).Where(i => i != eq && (i >= rendered.Count || rendered[i] != lines[i])).ToList();
+            TestReport.Check(renderWrong.Count == 0, $"{name}: the rendered text of every case but the EQ is GetText's line{(renderWrong.Count > 0 && renderWrong[0] < rendered.Count ? $" (first: \"{Ascii(rendered[renderWrong[0]])}\")" : "")}");
+            string eqHtml = eq < blocks.Count ? blocks[eq].Html : "";
+            // RTF: a {\field} nested in another field's {\*\fldinst} is not read as a field (its code and note are skipped, its
+            // result joins the outer code) - docs/UNSUPPORTED-FEATURES.md "Fields"; .docx / .doc follow Word
+            if (extension != "rtf")
+                TestReport.Check(Regex.Matches(eqHtml, "data-note-number=\"(\\d+)\"").Cast<Match>().Select(match => match.Groups[1].Value).SequenceEqual(new[] { "2" }),
+                    $"{name}: the EQ draws its own note's mark (2) and not the nested field's (1), as Word's PDF");
+            foreach (string hidden in new[] { "resA", "resB", "resC", "resD", "resF", "resG", "resJ", "resK", "resL", "MERGEFORMAT" })
+                TestReport.Check(SumCounts(from => document.Search(hidden, WordDocumentSearchOptions.Default, from, 1000)) == 0, $"{name}: search finds no \"{hidden}\"");
+        }
+    }
+
+    /// <summary>
+    /// test-data/word-ruby/note-in-field-keyword-v1 (.rtf and Word's own .docx / .doc): a field whose keyword a note reference
+    /// breaks has no type in Word and shows nothing; GetText (and so the search) reads exactly the text Word prints in its PDFs
+    /// (note-in-field-keyword-v1.*.pdf) - no hidden result, no code.
+    /// </summary>
+    private static void CheckNoteInFieldKeyword(string root)
+    {
+        // the cases whose result Word prints (the PDFs of all three formats); every other case shows nothing between its label and
+        // tail (case P, an EQ overstrike, is drawn but an EQ's drawing is not search text in any format - WordFieldEvaluator EQ)
+        var shown = new Dictionary<char, string> { ['B'] = "resB", ['E'] = "resE", ['J'] = "resJ", ['M'] = "resM", ['R'] = "resR", ['S'] = "resS" };
+        string expected = string.Join("\n", "ABCDEFGHIJKLMNOPQRS".Select(letter => $"case {letter}: {(shown.TryGetValue(letter, out string? result) ? result : "")} tail{letter}"));
+        string[] expectedNotes = "ABCDFGHILNOPRS".Select(letter => $"note {letter}").ToArray();
+        foreach (string extension in new[] { "rtf", "docx", "doc" })
+        {
+            string path = Path.Combine(root, "test-data", "word-ruby", "note-in-field-keyword-v1." + extension);
+            string body = WordDocumentText.GetText(path);
+            string firstDiff = string.Join(" | ", body.Split('\n').Zip(expected.Split('\n'), (got, want) => (got, want)).Where(pair => pair.got != pair.want).Take(3).Select(pair => $"got \"{Ascii(pair.got)}\" want \"{Ascii(pair.want)}\""));
+            TestReport.Check(body == expected, $"note-in-field-keyword-v1.{extension}: GetText = Word's printed text exactly {firstDiff}");
+            string[] notes = WordDocumentText.GetNotes(path).Split('\n').Select(line => line.Trim()).ToArray();
+            TestReport.Check(notes.Length == expectedNotes.Length && notes.Zip(expectedNotes, (got, want) => got.EndsWith(want, StringComparison.Ordinal)).All(ok => ok),
+                $"note-in-field-keyword-v1.{extension}: GetNotes reads the {expectedNotes.Length} notes Word numbers ({notes.Length})");
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+            CheckBlocks("note-in-field-keyword-v1." + extension, document, body);
+            // what renders (tags dropped) is the same text, case by case - the EQ case P draws its overstrike and note mark
+            string[] lines = expected.Split('\n');
+            List<string> rendered = document.RenderBlocks(0, lines.Length).Select(block => System.Net.WebUtility.HtmlDecode(Regex.Replace(block.Html, "<[^>]+>", ""))).ToList();
+            var renderWrong = Enumerable.Range(0, lines.Length).Where(i => i != 'P' - 'A' && (i >= rendered.Count || rendered[i] != lines[i])).ToList();
+            TestReport.Check(renderWrong.Count == 0, $"note-in-field-keyword-v1.{extension}: the rendered text of every case but the EQ is GetText's line{(renderWrong.Count > 0 && renderWrong[0] < rendered.Count ? $" (first: \"{Ascii(rendered[renderWrong[0]])}\")" : "")}");
+            foreach (string hidden in new[] { "resA", "resD", "resF", "resH", "resL", "MERGEFIELD", "name" })
+                TestReport.Check(SumCounts(from => document.Search(hidden, WordDocumentSearchOptions.Default, from, 1000)) == 0, $"note-in-field-keyword-v1.{extension}: search finds no \"{hidden}\"");
+        }
     }
 
     /// <summary>

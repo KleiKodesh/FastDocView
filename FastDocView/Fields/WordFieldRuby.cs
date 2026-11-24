@@ -24,6 +24,8 @@ public static class WordFieldRuby
     /// code, the renderers swap it for the note's mark in the field's HTML (a private-use character, never document text here).
     /// </summary>
     public const char NoteMarkPlaceholder = '';
+    /// <summary><see cref="NoteMarkPlaceholder"/> as a string (what a reader routes for a note reference inside fields).</summary>
+    public static readonly string NoteMarkPlaceholderText = NoteMarkPlaceholder.ToString();
 
     /// <summary>The ruby HTML, or null when the code is not Word's phonetic-guide form.</summary>
     public static string? ToHtml(string equationCode)

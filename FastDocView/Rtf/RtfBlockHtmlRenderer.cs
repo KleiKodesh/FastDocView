@@ -51,7 +51,10 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     // marks of notes met inside a field code, until the field's HTML places them (an EQ code's placeholders); the rest are dropped
     // when the field ends: Word 16 draws no mark for a note in a non-EQ field's code, though the note keeps its number and text
     // (test-data/word-ruby/note-in-field-code-v1.rtf.pdf and note-in-field-v1.rtf.pdf, case C)
-    private readonly Queue<string> _instructionNoteMarks = new();
+    /// <summary>The marks of notes met inside open field codes, in order (each a placeholder in its code).</summary>
+    private readonly List<string> _instructionNoteMarks = new();
+    /// <summary>Per open field (0 = outermost): where its own code notes start in <see cref="_instructionNoteMarks"/>; past its separator: none (int.MaxValue).</summary>
+    private readonly List<int> _instructionNoteStarts = new();
     private int _nextNote;
     private List<WordDocumentNoteHtml>? _renderedNotes;
     private string? _indexListLabel;
@@ -113,6 +116,8 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         _fields.Restore(table.FieldStateOf(blockIndex));
         _fieldLinks.Clear();
         for (int i = 0; i < _fields.Depth; i++) _fieldLinks.Add((0, null));
+        _instructionNoteStarts.Clear();
+        for (int i = 0; i < _fields.Depth; i++) _instructionNoteStarts.Add(_fields.IsSeparatedAt(i) ? int.MaxValue : 0);
         // a link field whose result runs in from an earlier block stays a link here
         if (_fields.ActiveLink is { } runningLink && _fieldLinks.Count > 0) { _flow.OpenLink = runningLink; _flow.Inline.Append(runningLink); _fieldLinks[_fieldLinks.Count - 1] = (0, _flow); }
         _textBoxOuterFlow = null;
@@ -793,6 +798,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     {
         _fields.Start(depth);
         _fieldLinks.Add((depth, null));
+        _instructionNoteStarts.Add(_instructionNoteMarks.Count);
     }
 
     public override void FieldModifier(RtfWord word)
@@ -810,7 +816,17 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     private double _baselineShift;
     private string BaselineShiftCss => _baselineShift == 0 ? "" : "position:relative;top:" + (-_baselineShift).ToString(System.Globalization.CultureInfo.InvariantCulture) + "pt;";
 
-    private void AppendFieldOutput(Fields.WordFieldOutput output, string? link)
+    /// <summary>
+    /// A field's output with its own code notes (the marks from <paramref name="noteStart"/> on) at its placeholders; the rest
+    /// of them are dropped (Word draws none). int.MaxValue: the field has no code notes left (past its separator).
+    /// </summary>
+    private void AppendFieldOutput(Fields.WordFieldOutput output, string? link, int noteStart)
+    {
+        AppendFieldMarkup(output, link, noteStart);
+        if (noteStart < _instructionNoteMarks.Count) _instructionNoteMarks.RemoveRange(noteStart, _instructionNoteMarks.Count - noteStart);
+    }
+
+    private void AppendFieldMarkup(Fields.WordFieldOutput output, string? link, int noteStart)
     {
         if (output.IsEmpty || _listTextTarget is not null) return;
         FlushRun();
@@ -825,7 +841,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
                 foreach (char c in markup)
                 {
                     if (c != Fields.WordFieldRuby.NoteMarkPlaceholder) _flow.Inline.Append(c);
-                    else if (_instructionNoteMarks.TryDequeue(out string? mark)) _flow.Inline.Append(mark);
+                    else if (noteStart < _instructionNoteMarks.Count) { _flow.Inline.Append(_instructionNoteMarks[noteStart]); _instructionNoteMarks.RemoveAt(noteStart); }
                 }
             else _flow.Inline.Append(markup);
         }
@@ -848,7 +864,10 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     {
         if (_fields.Depth == 0) return;
         Fields.WordFieldOutput output = _fields.ResultStart(out string? link);
-        AppendFieldOutput(output, link);
+        // the code is complete: its notes go to this output (or nowhere); notes met from here on are an outer code's
+        int own = _instructionNoteStarts.Count >= _fields.Depth ? _instructionNoteStarts[_fields.Depth - 1] : int.MaxValue;
+        AppendFieldOutput(output, link, own);
+        if (_instructionNoteStarts.Count >= _fields.Depth) _instructionNoteStarts[_fields.Depth - 1] = int.MaxValue;
         if (_listTextTarget is not null || _flow.OpenLink is not null || _fields.Innermost is not { SuppressesResult: false, IsInsideInstruction: false, LinkTag: { } tag }) return;
         if (!_fields.Shows(default)) return;
         FlushRun();
@@ -861,8 +880,11 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     {
         if (_fields.IsIdle) return;
         int before = _fields.Depth;
-        var outputs = new List<(Fields.WordFieldOutput output, string? link)>();
-        _fields.GroupClosed(depth, (output, link) => outputs.Add((output, link)));
+        var outputs = new List<(Fields.WordFieldOutput output, string? link, int noteStart)>();
+        _fields.GroupClosed(depth, (output, link) => outputs.Add((output, link, _fields.EndedFieldIndex < _instructionNoteStarts.Count ? _instructionNoteStarts[_fields.EndedFieldIndex] : int.MaxValue)));
+        // each ended field's own code notes (those after its start) end with it, placed by its output or dropped
+        int lowestStart = int.MaxValue;
+        for (int i = _fields.Depth; i < _instructionNoteStarts.Count; i++) lowestStart = Math.Min(lowestStart, _instructionNoteStarts[i]);
         for (int ended = before - _fields.Depth; ended > 0 && _fieldLinks.Count > 0; ended--)
         {
             Flow? linkFlow = _fieldLinks[_fieldLinks.Count - 1].linkFlow;
@@ -872,9 +894,9 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             linkFlow.Inline.Append("</a>");
             linkFlow.OpenLink = null;
         }
-        foreach ((Fields.WordFieldOutput output, string? link) in outputs) AppendFieldOutput(output, link);
-        // dropped once the outermost field ended: an outer EQ code's placeholders may still take marks queued before an inner field
-        if (_fields.Depth < before && _fields.Depth == 0) _instructionNoteMarks.Clear();
+        foreach ((Fields.WordFieldOutput output, string? link, int noteStart) in outputs) AppendFieldOutput(output, link, noteStart);
+        if (lowestStart < _instructionNoteMarks.Count) _instructionNoteMarks.RemoveRange(lowestStart, _instructionNoteMarks.Count - lowestStart);
+        if (_instructionNoteStarts.Count > _fields.Depth) _instructionNoteStarts.RemoveRange(_fields.Depth, _instructionNoteStarts.Count - _fields.Depth);
     }
 
     /// <summary>{\*\bkmkend name}: an empty marker where the bookmark ends (REF without a result reads up to it).</summary>
@@ -1178,7 +1200,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         string mark = "<sup class=\"note-reference\" data-note-kind=\"" + kindName + "\" data-note-number=\""
                       + number.ToString(CultureInfo.InvariantCulture) + "\">" + (number > 0 ? WordHtmlText.Encode(label) : "") + "</sup>";
         // a note inside a field code: its mark goes where the code's placeholder lands in the field's HTML (AppendFieldOutput)
-        if (_parser.IsNoteInFieldInstruction) _instructionNoteMarks.Enqueue(mark);
+        if (_parser.IsNoteInFieldInstruction) _instructionNoteMarks.Add(mark);
         else
         {
             _flow.Inline.Append(mark);

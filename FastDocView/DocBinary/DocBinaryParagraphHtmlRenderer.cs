@@ -924,13 +924,12 @@ public sealed class DocBinaryParagraphHtmlRenderer
                 {
                     // a computed result or placeholder, in the run's formatting, in the field's link when no link is open
                     if (step.OutputLink is { } outputLink) { Flush(); html.Append(outputLink); }
-                    if (step.Output.Html is { } markup) { Flush(); html.Append(WithNoteMarks(markup, fieldState)); }
+                    if (step.Output.Html is { } markup) { Flush(); html.Append(WithNoteMarks(markup, step.OutputNoteCps)); }
                     else visible.Append(WordHtmlText.Encode(step.Output.Text!));
                     if (step.OutputLink is not null) { Flush(); html.Append("</a>"); }
                 }
                 // marks of notes in a field code the field's HTML did not place (any field but an EQ): Word 16 draws none
-                // (note-in-field-keyword-v1.doc.pdf), so they are dropped when the outermost field ends; the notes keep their numbers
-                if (c == '\u0015' && fieldState.Depth == 0) fieldState.InstructionNoteCps.Clear();
+                // (note-in-field-keyword-v1.doc.pdf); each field's own come with its step and the rest are dropped, numbers kept
                 continue;
             }
             switch (c)
@@ -1122,16 +1121,17 @@ public sealed class DocBinaryParagraphHtmlRenderer
 
     /// <summary>
     /// A field's HTML with each note-reference placeholder of its code (<see cref="WordFieldRuby.NoteMarkPlaceholder"/>) as that
-    /// note's mark, in code order (an EQ ruby's base in Word's PDF: "abc" then the mark). Marks it does not place are drawn after it (the 0x14 / 0x15 step).
+    /// note's mark, in code order (an EQ ruby's base in Word's PDF: "abc" then the mark). Marks it does not place are not drawn (Word draws none).
     /// </summary>
-    private string WithNoteMarks(string markup, DocBinaryFieldReader fields)
+    private string WithNoteMarks(string markup, IReadOnlyList<int>? noteCps)
     {
         if (markup.IndexOf(Fields.WordFieldRuby.NoteMarkPlaceholder) < 0) return markup;
         var result = new StringBuilder(markup.Length + 64);
+        int next = 0;
         foreach (char c in markup)
         {
             if (c != Fields.WordFieldRuby.NoteMarkPlaceholder) { result.Append(c); continue; }
-            if (fields.InstructionNoteCps.TryDequeue(out int cp)) AppendNoteMark(result, cp, null);
+            if (noteCps is not null && next < noteCps.Count) AppendNoteMark(result, noteCps[next++], null);
         }
         return result.ToString();
     }

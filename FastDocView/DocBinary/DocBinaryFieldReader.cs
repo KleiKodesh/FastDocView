@@ -13,12 +13,15 @@ namespace FastDocView.DocBinary;
 internal sealed class DocBinaryFieldReader
 {
     /// <summary>What a character does.</summary>
-    public readonly record struct Step(bool IsConsumed, WordFieldOutput Output, string? LinkOpen, bool LinkClose, string? OutputLink);
+    /// <param name="OutputNoteCps">The note references (CPs) of the code of the field this step separated or ended, in code
+    /// order: the field's HTML places them at its placeholders; the ones it does not place are not drawn (Word draws none).</param>
+    public readonly record struct Step(bool IsConsumed, WordFieldOutput Output, string? LinkOpen, bool LinkClose, string? OutputLink, IReadOnlyList<int>? OutputNoteCps = null);
 
     private readonly WordFieldStack _stack;
     private readonly DocBinaryFields _table;
     private readonly Func<int, WordFieldSequenceCounters>? _countersBefore;
     private readonly List<int> _beginCps = new();      // per open field: its begin CP
+    private readonly List<int> _noteStarts = new();    // per open field: where its own code notes start in _instructionNoteCps
     private int _linkDepth = -1;                        // the stack depth of the field whose link is open (-1: none)
     private bool _countersLoaded;
 
@@ -78,8 +81,20 @@ internal sealed class DocBinaryFieldReader
         return true;
     }
 
-    /// <summary>The note references (their CPs) met inside field codes, in order, each a <see cref="WordFieldRuby.NoteMarkPlaceholder"/> in the code.</summary>
-    public Queue<int> InstructionNoteCps { get; } = new();
+    /// <summary>The note references (their CPs) met inside open field codes, in order, each a <see cref="WordFieldRuby.NoteMarkPlaceholder"/> in the code.</summary>
+    private readonly List<int> _instructionNoteCps = new();
+
+    /// <summary>
+    /// Takes the code notes of the innermost field (it separates, or ends without a separator: its code is complete). Per field,
+    /// as the .docx renderer: a note in a nested field's code is that field's; one in a nested result inside a code is the outer code's.
+    /// </summary>
+    private IReadOnlyList<int>? TakeOwnNotes(int start)
+    {
+        if (start >= _instructionNoteCps.Count) return null;
+        List<int> own = _instructionNoteCps.GetRange(start, _instructionNoteCps.Count - start);
+        _instructionNoteCps.RemoveRange(start, own.Count);
+        return own;
+    }
 
     public Step Consume(char c, int cp, uint? picture, bool quiet = false)
     {
@@ -91,6 +106,7 @@ internal sealed class DocBinaryFieldReader
                 _stack.Begin(dirty, locked);
                 if (isPrivate) _stack.Fields[_stack.Depth - 1].IsPrivateResult = true;
                 _beginCps.Add(cp);
+                _noteStarts.Add(_instructionNoteCps.Count);
                 return new(true, WordFieldOutput.None, null, false, null);
             }
             case '\u0014':
@@ -98,23 +114,29 @@ internal sealed class DocBinaryFieldReader
                 if (_stack.Depth == 0 || _stack.Fields[_stack.Depth - 1].IsSeparated) return new(true, WordFieldOutput.None, null, false, null);
                 LoadCountersFor(_stack.Depth - 1);
                 WordFieldOutput output = _stack.Separate();
+                IReadOnlyList<int>? notes = TakeOwnNotes(_noteStarts[_noteStarts.Count - 1]);
                 if (quiet) return new(true, WordFieldOutput.None, null, false, null);
                 bool shows = _stack.OutputShows;
                 string? linkOpen = null;
                 WordFieldStack.Field field = _stack.Fields[_stack.Depth - 1];
                 if (shows && field.LinkTag is { } tag && _linkDepth < 0 && !field.SuppressesResult) { _linkDepth = _stack.Depth - 1; linkOpen = tag; }
-                return new(true, shows ? output : WordFieldOutput.None, linkOpen, false, shows && _linkDepth < 0 ? field.LinkTag : null);
+                return new(true, shows ? output : WordFieldOutput.None, linkOpen, false, shows && _linkDepth < 0 ? field.LinkTag : null, notes);
             }
             case '\u0015':
             {
                 if (_stack.Depth == 0) return new(true, WordFieldOutput.None, null, false, null);
-                if (!_stack.Fields[_stack.Depth - 1].IsSeparated) LoadCountersFor(_stack.Depth - 1);
+                bool wasSeparated = _stack.Fields[_stack.Depth - 1].IsSeparated;
+                if (!wasSeparated) LoadCountersFor(_stack.Depth - 1);
+                // a field ended without a separator: its code's notes are its own; a separated one gave its notes at the separator
+                // (the ones met since are in an outer code - a result inside that code)
+                IReadOnlyList<int>? notes = wasSeparated ? null : TakeOwnNotes(_noteStarts[_noteStarts.Count - 1]);
+                _noteStarts.RemoveAt(_noteStarts.Count - 1);
                 bool closesLink = _linkDepth == _stack.Depth - 1;
                 if (closesLink) _linkDepth = -1;
                 WordFieldOutput output = _stack.End(out string? linkTag);
                 _beginCps.RemoveAt(_beginCps.Count - 1);
                 bool shows = _stack.Route() == WordFieldTextRoute.Visible;
-                return new(true, shows && !quiet ? output : WordFieldOutput.None, null, closesLink && !quiet, shows && _linkDepth < 0 ? linkTag : null);
+                return new(true, shows && !quiet ? output : WordFieldOutput.None, null, closesLink && !quiet, shows && _linkDepth < 0 ? linkTag : null, notes);
             }
         }
         if (_stack.Depth == 0) return new(false, WordFieldOutput.None, null, false, null);
@@ -128,7 +150,7 @@ internal sealed class DocBinaryFieldReader
         // in the code is drawn where the code puts it: a placeholder the renderer swaps for the note's mark (InstructionNoteCps)
         string text = c == '\t' ? "\t" : c == '\u0002' ? WordFieldRuby.NoteMarkPlaceholder.ToString() : c < ' ' ? " " : c.ToString();
         WordFieldTextRoute route = _stack.Route(text);
-        if (c == '\u0002' && route == WordFieldTextRoute.Instruction && !quiet) InstructionNoteCps.Enqueue(cp);
+        if (c == '\u0002' && route == WordFieldTextRoute.Instruction && !quiet) _instructionNoteCps.Add(cp);
         return new(route != WordFieldTextRoute.Visible, WordFieldOutput.None, null, false, null);
     }
 
