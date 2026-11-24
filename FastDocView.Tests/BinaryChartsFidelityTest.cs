@@ -170,9 +170,12 @@ public static class BinaryChartsFidelityTest
         var flat = ChartTexts(html, "Area3D Flat");
         TestReport.Check(Near(flat, "Q1", -186.0, 178.7, 2) && Near(flat, "Q4", 161.7, 178.7, 2), "right-angled 3-D area, depth 60 %: Word's scene");
         var perspective = ChartTexts(html, "Area3D Persp");
-        TestReport.Check(Near(perspective, "Q1", -153.7, 150.2, 5) && Near(perspective, "Q4", 136.4, 187.6, 5) && !perspective.Any(t => t.Text == "0.5"), "3-D area with perspective: Word's scene within 5 pt, ticks by 1");
+        // perspective scenes are placed as LibreOffice places them (NOTES.md 2026-11-24, LibreOffice's 3-D scene): locked at our positions;
+        // Word's PDF has Q1 at (-153.7, 150.2) and Q4 at (136.4, 187.6), 7.6 / 9.9 and 22.8 / 2.5 pt away
+        TestReport.Check(Near(perspective, "Q1", -160.0, 157.8, 1) && Near(perspective, "Q4", 113.6, 190.1, 1) && !perspective.Any(t => t.Text == "0.5"), "3-D area with perspective: LibreOffice's scene placement, ticks by 1");
         var seriesAxis = ChartTexts(html, "Line3D SerAx");
-        TestReport.Check(Near(seriesAxis, "0", -170.8, 140.6, 4) && Near(seriesAxis, "5", -177.1, 48.1, 4), "3-D line with a shown series axis: Word's room for the series names on the right (value labels within 4 pt)");
+        // (Word's PDF: "0" at (-170.8, 140.6), "5" at (-177.1, 48.1); the scene placed as LibreOffice places it sits 5-8 pt lower)
+        TestReport.Check(Near(seriesAxis, "0", -175.7, 147.9, 1) && Near(seriesAxis, "5", -179.4, 56.6, 1), "3-D line with a shown series axis: Word's room for the series names on the right, LibreOffice's scene placement");
         html = Render(crosses);
         var columnMax = ChartTexts(html, "Col CrossMax");
         TestReport.Check(Near(columnMax, "Q1", null, 19.3, 1.5), "category axis at the maximum: its labels above the plot");
@@ -232,8 +235,11 @@ public static class BinaryChartsFidelityTest
             List<string> html = Render(path);
             bool Start(string title, string text, double x, double y) => ChartTexts(html, title).Any(t => t.Text == text && t.Anchor == "start" && Math.Abs(t.X - x) <= 6 && Math.Abs(t.Y - y) <= 4);
             TestReport.Check(Start("Col3D SerAx R", "North", 121.4, 164.7) && Start("Col3D SerAx R", "West", 170.1, 127.8), extension + ": right-angled 3-D columns, one row per series: the series names beside the rows (within 6 pt)");
-            TestReport.Check(Start("Col3D SerAx P", "North", 136.1, 161.8) && Start("Col3D SerAx P", "West", 153.5, 119.4), extension + ": 3-D columns with perspective: the series names (within 6 pt)");
-            TestReport.Check(Start("Area3D SerAx P", "North", 135.9, 161.8) && Start("Area3D SerAx P", "West", 153.4, 119.4), extension + ": 3-D area with perspective: the series names (within 6 pt)");
+            // perspective: the scene placed as LibreOffice places it (NOTES.md 2026-11-24), locked at our positions within 1.5 pt; Word's PDF
+            // has North at (136.1, 161.8) / West at (153.5, 119.4), 18 / 6 and 3 / 9 pt away
+            bool Ours(string title, string text, double x, double y) => ChartTexts(html, title).Any(t => t.Text == text && t.Anchor == "start" && Math.Abs(t.X - x) <= 1.5 && Math.Abs(t.Y - y) <= 1.5);
+            TestReport.Check(Ours("Col3D SerAx P", "North", 118.3, 167.7) && Ours("Col3D SerAx P", "West", 150.5, 128.0), extension + ": 3-D columns with perspective: the series names, LibreOffice's scene placement");
+            TestReport.Check(Ours("Area3D SerAx P", "North", 114.7, 167.8) && Ours("Area3D SerAx P", "West", 146.6, 128.4), extension + ": 3-D area with perspective: the series names, LibreOffice's scene placement");
             string colours = Regex.Match(string.Concat(html), "<svg class=\"word-chart\"(?:(?!</svg>).)*>Col Colors<.*?</svg>", RegexOptions.Singleline).Value;
             string colours3D = Regex.Match(string.Concat(html), "<svg class=\"word-chart\"(?:(?!</svg>).)*>Col3D Colors<.*?</svg>", RegexOptions.Singleline).Value;
             bool TextIn(string svg, string text, string fill) => Regex.IsMatch(svg, "<text[^>]*fill=\"#" + fill + "\"[^>]*>" + Regex.Escape(text) + "<", RegexOptions.IgnoreCase);
@@ -263,6 +269,79 @@ public static class BinaryChartsFidelityTest
                 TestReport.Check(TextIn(deep, "Theme Text 3D", "5D4037") && TextIn(deep, "Q1", "1D2556") && Regex.Matches(deep, "<text[^>]*fill=\"#1D2556\"[^>]*>(North|South|West)<").Count == 3 && Regex.Matches(deep, "<text[^>]*fill=\"#C2185B\"[^>]*>(North|South|West)<").Count == 3,
                                  extension + ": 3-D title (tx2), axis and series axis labels (accent5 50 %) and legend (accent4) in theme colours");
             }
+        }
+    }
+
+    /// <summary>
+    /// The 3-D scene placed and sized as LibreOffice does it (VDiagram.cxx:409-423 adjustPosAndSize_3d: the projected scene box scaled
+    /// keeping its aspect and centred in the plot; the camera distance of ThreeDHelper.cxx:635-645; the eye on the axis through the
+    /// scene's centre), one chart per type from test-data/word-charts-scene-types (Word's box sizes, perspective 30 / 120, parallel,
+    /// right-angled) and the 3-D pie of odt-charts-v5 (LibreOffice's 1 x 1 x 0.1 pie volume, PieChart.cxx:252-257): each wall's corners
+    /// locked within 0.05 pt. Word's residuals per type are in NOTES.md (scripts/chart3d_walls_vs_word.py).
+    /// </summary>
+    public static void RunScenePlacement()
+    {
+        TestReport.Step("Charts: 3-D scenes placed and sized as LibreOffice places them (VDiagram adjustPosAndSize_3d), every type");
+        string folder = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-charts-scene-types");
+        (string Name, int Index, string Back, string Side, string Floor)[] expected =
+        [
+            ("col-clustered_x10_y20_p30_r0", 0, "68.81,184.03 382.24,210.42 386.51,18.12 65.77,6", "32.54,201.71 68.81,184.03 65.77,6 28.49,14.11", "32.54,201.71 361.49,231.2 382.24,210.42 68.81,184.03"),
+            ("col-clustered_x10_y20_p120_r0", 1, "89.37,159.69 357.98,194.01 372.09,12.17 82.3,17.65", "45.85,181.38 89.37,159.69 82.3,17.65 33.99,14.21", "45.85,181.38 362.71,231.2 357.98,194.01 89.37,159.69"),
+            ("col-clustered_x15_y20_p0_r0", 18, "67.92,182.4 375.02,211.33 375.02,34.93 67.92,6", "39.98,202.27 67.92,182.4 67.92,6 39.98,25.87", "39.98,202.27 347.08,231.2 375.02,211.33 67.92,182.4"),
+            ("col-stacked_x10_y20_p30_r0", 20, "68.81,184.03 382.24,210.42 386.51,18.12 65.77,6", "32.54,201.71 68.81,184.03 65.77,6 28.49,14.11", "32.54,201.71 361.49,231.2 382.24,210.42 68.81,184.03"),
+            ("col-stacked_x10_y20_p120_r0", 21, "89.37,159.69 357.98,194.01 372.09,12.17 82.3,17.65", "45.85,181.38 89.37,159.69 82.3,17.65 33.99,14.21", "45.85,181.38 362.71,231.2 357.98,194.01 89.37,159.69"),
+            ("col-stacked_x15_y20_p0_r0", 38, "67.92,182.4 375.02,211.33 375.02,34.93 67.92,6", "39.98,202.27 67.92,182.4 67.92,6 39.98,25.87", "39.98,202.27 347.08,231.2 375.02,211.33 67.92,182.4"),
+            ("col-standard_x10_y20_p30_r0", 40, "86.52,154.57 398.43,178.46 401.85,32.25 84.49,18.93", "12.43,188.4 86.52,154.57 84.49,18.93 8.8,37.8", "12.43,188.4 356.08,218.27 398.43,178.46 86.52,154.57"),
+            ("col-standard_x10_y20_p120_r0", 41, "113.96,122.89 373.82,149.46 383.86,17.79 109.6,18", "21.14,163.24 113.96,122.89 109.6,18 8.8,17.68", "21.14,163.24 384.83,220 373.82,149.46 113.96,122.89"),
+            ("col-standard_x15_y20_p0_r0", 58, "69.32,154.86 401.85,186.19 401.85,39.3 69.32,7.98", "8.8,197.9 69.32,154.86 69.32,7.98 8.8,51.01", "8.8,197.9 341.33,229.22 401.85,186.19 69.32,154.86"),
+            ("area-standard_x10_y20_p30_r0", 60, "86.52,154.57 398.43,178.46 401.85,32.25 84.49,18.93", "12.43,188.4 86.52,154.57 84.49,18.93 8.8,37.8", "12.43,188.4 356.08,218.27 398.43,178.46 86.52,154.57"),
+            ("area-standard_x10_y20_p120_r0", 61, "113.96,122.89 373.82,149.46 383.86,17.79 109.6,18", "21.14,163.24 113.96,122.89 109.6,18 8.8,17.68", "21.14,163.24 384.83,220 373.82,149.46 113.96,122.89"),
+            ("area-standard_x15_y20_p0_r0", 78, "69.32,154.86 401.85,186.19 401.85,39.3 69.32,7.98", "8.8,197.9 69.32,154.86 69.32,7.98 8.8,51.01", "8.8,197.9 341.33,229.22 401.85,186.19 69.32,154.86"),
+            ("area-stacked_x10_y20_p30_r0", 80, "86.52,154.57 398.43,178.46 401.85,32.25 84.49,18.93", "12.43,188.4 86.52,154.57 84.49,18.93 8.8,37.8", "12.43,188.4 356.08,218.27 398.43,178.46 86.52,154.57"),
+            ("area-stacked_x10_y20_p120_r0", 81, "113.96,122.89 373.82,149.46 383.86,17.79 109.6,18", "21.14,163.24 113.96,122.89 109.6,18 8.8,17.68", "21.14,163.24 384.83,220 373.82,149.46 113.96,122.89"),
+            ("area-stacked_x15_y20_p0_r0", 98, "69.32,154.86 401.85,186.19 401.85,39.3 69.32,7.98", "8.8,197.9 69.32,154.86 69.32,7.98 8.8,51.01", "8.8,197.9 341.33,229.22 401.85,186.19 69.32,154.86"),
+            ("surface_x10_y20_p30_r0", 100, "86.52,154.57 398.43,178.46 401.85,32.25 84.49,18.93", "12.43,188.4 86.52,154.57 84.49,18.93 8.8,37.8", "12.43,188.4 356.08,218.27 398.43,178.46 86.52,154.57"),
+            ("surface_x10_y20_p120_r0", 101, "113.96,122.89 373.82,149.46 383.86,17.79 109.6,18", "21.14,163.24 113.96,122.89 109.6,18 8.8,17.68", "21.14,163.24 384.83,220 373.82,149.46 113.96,122.89"),
+            ("surface_x15_y20_p0_r0", 118, "69.32,154.86 401.85,186.19 401.85,39.3 69.32,7.98", "8.8,197.9 69.32,154.86 69.32,7.98 8.8,51.01", "8.8,197.9 341.33,229.22 401.85,186.19 69.32,154.86"),
+            ("line-standard_x10_y20_p30_r0", 120, "86.52,154.57 398.43,178.46 401.85,32.25 84.49,18.93", "12.43,188.4 86.52,154.57 84.49,18.93 8.8,37.8", "12.43,188.4 356.08,218.27 398.43,178.46 86.52,154.57"),
+            ("line-standard_x10_y20_p120_r0", 121, "113.96,122.89 373.82,149.46 383.86,17.79 109.6,18", "21.14,163.24 113.96,122.89 109.6,18 8.8,17.68", "21.14,163.24 384.83,220 373.82,149.46 113.96,122.89"),
+            ("line-standard_x15_y20_p0_r0", 138, "69.32,154.86 401.85,186.19 401.85,39.3 69.32,7.98", "8.8,197.9 69.32,154.86 69.32,7.98 8.8,51.01", "8.8,197.9 341.33,229.22 401.85,186.19 69.32,154.86"),
+            ("bar-clustered_x10_y20_p30_r0", 140, "54.64,191.42 380.8,219.25 385.14,18.79 51.3,6", "33.78,201.58 368.86,231.2 380.8,219.25 54.64,191.42", "33.78,201.58 54.64,191.42 51.3,6 29.86,10.67"),
+            ("bar-clustered_x10_y20_p120_r0", 141, "69.1,170.5 361.66,209.49 377.3,9.6 60.77,15.86", "43.61,183.2 364.42,231.2 361.66,209.49 69.1,170.5", "43.61,183.2 69.1,170.5 60.77,15.86 32.49,13.85"),
+            ("line-ra_x20_y30_p30_r1", 170, "52.47,153.71 401.85,153.71 401.85,53.62 52.47,53.62", "8.8,183.58 52.47,153.71 52.47,53.62 8.8,83.49", "8.8,183.58 358.18,183.58 401.85,153.71 52.47,153.71"),
+            ("col-ra_x20_y40_p30_r1", 208, "59.13,201.31 408.65,201.31 408.65,6 59.13,6", "6.35,231.2 59.13,201.31 59.13,6 6.35,35.89", "6.35,231.2 355.87,231.2 408.65,201.31 59.13,201.31")
+        ];
+        var documents = new Dictionary<int, List<string>>();
+        foreach (var probe in expected)
+        {
+            string path = Path.Combine(folder, "types-" + (probe.Index / 24).ToString("000", System.Globalization.CultureInfo.InvariantCulture) + ".docx");
+            if (!File.Exists(path)) { TestReport.Check(false, probe.Name + ": fixture exists"); continue; }
+            if (!documents.TryGetValue(probe.Index / 24, out var svgs))
+                documents[probe.Index / 24] = svgs = Regex.Matches(string.Concat(Render(path)), "<svg class=\"word-chart\".*?</svg>", RegexOptions.Singleline).Select(m => m.Value).ToList();
+            string svg = probe.Index % 24 < svgs.Count ? svgs[probe.Index % 24] : "";
+            // the probes paint the floor red, the back wall green and the side wall blue
+            string Face(string fill) => string.Join(" ", Regex.Matches(Regex.Match(svg, "<path class=\"word-chart-(?:wall|floor)\" d=\"([^\"]+)\" fill=\"" + fill + "\"", RegexOptions.IgnoreCase).Groups[1].Value, "[ML]([-0-9.]+) ([-0-9.]+)")
+                .Select(m => m.Groups[1].Value + "," + m.Groups[2].Value));
+            bool Same(string actual, string wanted)
+            {
+                double[] Numbers(string text) => text.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries).Select(v => double.Parse(v, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+                double[] a = Numbers(actual), w = Numbers(wanted);
+                return a.Length == w.Length && a.Zip(w, (x, y) => Math.Abs(x - y)).All(d => d <= 0.05);
+            }
+            TestReport.Check(Same(Face("#00FF00"), probe.Back) && Same(Face("#0000FF"), probe.Side) && Same(Face("#FF0000"), probe.Floor), probe.Name + ": walls where LibreOffice's placement puts them (0.05 pt)");
+        }
+        // the 3-D pie: LibreOffice's volume fitted and centred - the slice tops' box and the rim's lowest point
+        foreach ((string extension, double minX, double minY, double maxX, double maxY, double rim) in new[] { ("odt", 30.89, 46.60, 261.62, 160.31, 181.85), ("docx", 13.23, 34.15, 275.35, 164.24, 187.65) })
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "odt-charts", "odt-charts-v5." + extension);
+            if (!File.Exists(path)) { TestReport.Check(false, "3-D pie fixture exists: " + extension); continue; }
+            string pie = Regex.Matches(string.Concat(Render(path)), "<svg class=\"word-chart\".*?</svg>", RegexOptions.Singleline).Select(m => m.Value).FirstOrDefault(v => v.Contains(">Pie Depth<")) ?? "";
+            List<(double X, double Y)> Points(string pattern) => Regex.Matches(pie, pattern).SelectMany(m => Regex.Matches(m.Groups[1].Value, "[ML]([-0-9.]+) ([-0-9.]+)").Select(p => (double.Parse(p.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), double.Parse(p.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture)))).ToList();
+            var tops = Points("<path class=\"word-chart-pie-top\" d=\"([^\"]+)\"");
+            var sides = Points("class=\"word-chart-pie-side[^\"]*\" d=\"([^\"]+)\"");
+            bool near(double a, double b) => Math.Abs(a - b) <= 0.05;
+            TestReport.Check(tops.Count > 0 && sides.Count > 0 && near(tops.Min(p => p.X), minX) && near(tops.Min(p => p.Y), minY) && near(tops.Max(p => p.X), maxX) && near(tops.Max(p => p.Y), maxY) && near(sides.Max(p => p.Y), rim),
+                             extension + ": 3-D pie as LibreOffice's 1 x 1 x 0.1 volume, fitted and centred (0.05 pt)");
         }
     }
 

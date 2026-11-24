@@ -14,7 +14,8 @@ namespace FastDocView.DocxHtml;
 /// distance range 0.75..20 scene volumes, perspective = a / distance + b). The scene is turned by rotY about the vertical axis, then by
 /// rotX about the horizontal one, and projected (parallel, or a pinhole at the camera distance); right-angled axes (Word's default for
 /// columns) keep the front faces flat and draw the depth obliquely (the axes stay at right angles, ThreeDHelper.cxx:598-602 clips the
-/// angles for it). Faces turned away are not drawn and each face takes one colour (ambient + light x max(0, n . l)), as the extruded
+/// angles for it). The scene turns about its centre with the eye on the axis through it, and its projected box is scaled and centred
+/// in the plot (LibreOffice's VDiagram.cxx:409-423, see Projection.Fit). Faces turned away are not drawn and each face takes one colour (ambient + light x max(0, n . l)), as the extruded
 /// shapes in Odt/OdtExtrusion.cs do (drawinglayer defaultprocessor3d.cxx:348-431). The whole scene is fitted into the plot rectangle;
 /// boxes are painted far to near. 3-D line and area charts keep the flat wall-and-floor drawing.
 /// </summary>
@@ -67,24 +68,29 @@ internal sealed partial class DocxChart
         public Projection(View3D view, double width, double height, double depth, bool seriesRows = false)
         {
             _view = view;
-            (_cx, _cy, _cz) = (width / 2, height / 2, seriesRows ? depth / 4 : depth / 2);
+            // LibreOffice turns the scene about the centre of its volume (VDiagram.cxx:552-555: translate by -volume / 2, rotate) and puts
+            // the eye on the axis through that centre (svx scene3d.cxx:209-229: camera at (0, 0, distance) looking at the origin)
+            (_cx, _cy, _cz) = (width / 2, height / 2, depth / 2);
             double x = view.RotX * Math.PI / 180, y = view.RotY * Math.PI / 180;
             (_sinX, _cosX, _sinY, _cosY) = (Math.Sin(x), Math.Cos(x), Math.Sin(y), Math.Cos(y));
             // Word's right-angled 3-D lines / areas draw the depth sin(rotY) across and sin(rotX) up (its PDFs of the 2026-11-13 probes:
             // the same across with rotX 0 and 15, x / y in the ratio of the two sines); its columns keep the |cos rotX| (measured before)
             _obliqueX = seriesRows ? _sinY : _sinY * Math.Abs(_cosX);
-            // ThreeDHelper.cxx:635-645 PerspectiveToCameraDistance, in scene volumes (the scene's largest extent)
-            double perspective = Math.Max(0, Math.Min(100, view.Perspective / 2));
+            // the camera distance: oox halves c:perspective to 0..100 (plotareaconverter.cxx:305), ThreeDHelper.cxx:635-645
+            // PerspectiveToCameraDistance turns it into a distance between 0.75 and 20 scene volumes (ThreeDHelper.cxx:605-609), the
+            // volume being the scene's largest extent (VDiagram.cxx:271-277 and 377-383 normalise the aspect to a maximum of 1), set as
+            // the scene distance (VDiagram.cxx:526-531); parallel when right-angled or perspective 0 (plotareaconverter.cxx:307-308)
+            double perspective = Math.Max(0, Math.Min(100, Math.Floor(view.Perspective / 2)));
             const double minimum = 0.75, maximum = 20;
             double a = 100 * maximum * minimum / (maximum - minimum), b = -a / maximum;
             _distance = view.RightAngled || perspective <= 0 ? double.PositiveInfinity : a / (perspective - b) * Math.Max(width, Math.Max(height, depth));
-            // never inside the scene (OOXML perspective goes to 240, past LibreOffice's 100): at least the scene's diagonal away
-            _distance = Math.Max(_distance, 1.5 * Math.Sqrt(width * width + height * height + depth * depth) / 2);
-            // Word's 3-D lines / areas: c:perspective as a field of view in degrees over the scene's width, the eye aimed a quarter of
-            // the depth in (fitted to Word 16's PDFs of 14 perspective probes, 2026-11-13: labels median about 2.4 pt for perspective
-            // 10..60; LibreOffice's camera distance above was 20+ pt off)
-            if (seriesRows && !view.RightAngled && view.Perspective > 0)
-                _distance = 0.5 * width / Math.Tan(Math.Min(179, view.Perspective) / 2 * Math.PI / 180);
+            // (not LibreOffice: its nearest distance, 0.75 volumes, can reach into a long, flat box seen corner on - keep the eye in front of
+            // every corner so no point is projected from behind it)
+            if (!double.IsInfinity(_distance))
+                foreach (double cornerX in new[] { 0, width })
+                    foreach (double cornerY in new[] { 0, height })
+                        foreach (double cornerZ in new[] { 0, depth })
+                            _distance = Math.Max(_distance, 1.05 * Turn((cornerX - _cx, cornerY - _cy, cornerZ - _cz)).Z);
         }
 
         /// <summary>A direction turned by the scene rotation (z toward the viewer): visibility and shading of a face.</summary>
@@ -124,7 +130,12 @@ internal sealed partial class DocxChart
             return (maxX - minX, maxY - minY);
         }
 
-        /// <summary>Fits the projected scene box into the rectangle (uniform scale, centred).</summary>
+        /// <summary>
+        /// Fits the projected scene box into the rectangle as LibreOffice places its 3-D scene (VDiagram.cxx:409-423 adjustPosAndSize_3d):
+        /// the 2-D box of all eight projected corners (perspective included; E3DModifySceneSnapRectUpdater, VDiagram.cxx:395-401) scaled
+        /// keeping its aspect to fit, and centred. Word's own placement of a perspective scene (off the centre) was not found in three
+        /// rounds of probes (NOTES.md, 2026-11-24), so LibreOffice's is used for every 3-D scene.
+        /// </summary>
         public void Fit(double width, double height, double depth, double left, double top, double right, double bottom)
         {
             double minX = double.MaxValue, maxX = double.MinValue, minY = double.MaxValue, maxY = double.MinValue;
@@ -479,9 +490,13 @@ internal sealed partial class DocxChart
     }
 
     /// <summary>
-    /// A 3-D pie: the slices as a tilted disc of some thickness - the elevation from rotX (plotareaconverter.cxx:275-279: rotX 0..90 to
-    /// rotX - 90, so 90 looks straight down and 0 edge on), the first slice from rotY; the visible rim below each slice darker, the tops
-    /// lit, drawn rim first (front half only) then the tops.
+    /// A 3-D pie as LibreOffice builds its scene: a disc filling a 1 x 1 x 0.1 volume (PieChart.cxx:252-257 preferred aspect (1, 1,
+    /// 0.10); the pie's unit circle spans the volume's width), turned by the elevation alone (plotareaconverter.cxx:274-279: rotX 0..90
+    /// becomes rotX - 90, so 90 looks straight down and 0 edge on; rotY is the first slice angle), seen from the camera of the other 3-D
+    /// charts (c:perspective halved, ThreeDHelper.cxx:635-645) and fitted into the plot like them: the whole volume's projected box, its
+    /// invisible walls included (VDiagram.cxx:483-489 keeps them "as dummy object for correct scene dimensions"), scaled keeping its
+    /// aspect and centred (VDiagram.cxx:409-423). The visible rim below each slice darker, the tops lit, drawn rim first (front half only)
+    /// then the tops.
     /// </summary>
     private void Draw3DPie(StringBuilder svg, Group group, double left, double top, double right, double bottom, string textColor)
     {
@@ -489,11 +504,12 @@ internal sealed partial class DocxChart
         Series series = group.Series[0];
         double total = series.Values.Sum(v => Math.Abs(v ?? 0));
         if (total <= 0) return;
-        double tilt = Math.Max(0.15, Math.Sin(Math.Max(0, Math.Min(90, view.RotX)) * Math.PI / 180));
-        double thicknessRatio = 0.12 * Math.Cos(Math.Max(0, Math.Min(90, view.RotX)) * Math.PI / 180);
-        double rx = Math.Max(1, Math.Min((right - left) / 2 - 4, ((bottom - top) / 2 - 4) / (tilt + thicknessRatio)));
-        double ry = rx * tilt, thickness = rx * thicknessRatio;
-        double cx = (left + right) / 2, cy = (top + bottom) / 2 - thickness / 2;
+        // the disc lies flat (x across, z into the page, its thickness up) and is seen at the elevation: the same as LibreOffice's disc
+        // in its x-y plane turned about x by rotX - 90
+        var scene = new View3D { RotX = Math.Max(0, Math.Min(90, view.RotX)), RotY = 0, Perspective = view.Perspective, Ambient = view.Ambient, Light = view.Light, LightDirection = view.LightDirection, Smooth = view.Smooth };
+        const double diameter = 1, thickness = 0.1, radius = diameter / 2;
+        var projection = new Projection(scene, diameter, thickness, diameter);
+        projection.Fit(diameter, thickness, diameter, left, top, right, bottom);
         int count = series.Values.Count;
         var slices = new List<(double Start, double Sweep, string Color, int Index)>();
         double start = view.RotY != 0 ? view.RotY : group.FirstSliceAngle;
@@ -506,9 +522,14 @@ internal sealed partial class DocxChart
             slices.Add((angle, sweep, FillOf(group, series, group.VaryColors ? i : -1, count).Css, i));
             angle += sweep;
         }
-        (double X, double Y) At(double degrees, double dy) { double r = degrees * Math.PI / 180; return (cx + rx * Math.Cos(r), cy + ry * Math.Sin(r) + dy); }
+        // a point of the rim at a screen angle (clockwise from the right; -90 is the back, sin > 0 the front half) and a height
+        (double X, double Y) At(double degrees, double height, double fraction = 1)
+        {
+            double r = degrees * Math.PI / 180;
+            return projection.Point(radius + radius * fraction * Math.Cos(r), height, radius - radius * fraction * Math.Sin(r));
+        }
         double sideLight = view.Ambient + view.Light * 0.2, topLight = view.Ambient + view.Light;
-        // rims: the part of each slice's arc on the front half (sin > 0), as a band down by the thickness
+        // rims: the part of each slice's arc on the front half (sin > 0), as a band from the top face down to the bottom one
         foreach (var slice in slices)
         {
             double to = slice.Start + slice.Sweep;
@@ -518,8 +539,8 @@ internal sealed partial class DocxChart
                 if (frontTo > frontFrom)
                 {
                     var band = new List<(double X, double Y)>();
-                    for (int k = 0; k <= 24; k++) band.Add(At(frontFrom + (frontTo - frontFrom) * k / 24, 0));
-                    for (int k = 24; k >= 0; k--) band.Add(At(frontFrom + (frontTo - frontFrom) * k / 24, thickness));
+                    for (int k = 0; k <= 24; k++) band.Add(At(frontFrom + (frontTo - frontFrom) * k / 24, thickness));
+                    for (int k = 24; k >= 0; k--) band.Add(At(frontFrom + (frontTo - frontFrom) * k / 24, 0));
                     string rim = Shade(slice.Color, sideLight);
                     if (view.Smooth) SmoothRim(svg, view, band, frontFrom, frontTo, slice.Color, rim);
                     else Polygon(svg, band, rim, rim, "word-chart-pie-side");
@@ -527,17 +548,18 @@ internal sealed partial class DocxChart
                 a0 = turn + 360;
             }
         }
+        var centre = projection.Point(radius, thickness, radius);
         foreach (var slice in slices)
         {
-            var outline = new List<(double X, double Y)> { (cx, cy) };
+            var outline = new List<(double X, double Y)> { centre };
             int steps = Math.Max(2, (int)Math.Ceiling(slice.Sweep / 5));
-            for (int k = 0; k <= steps; k++) outline.Add(At(slice.Start + slice.Sweep * k / steps, 0));
+            for (int k = 0; k <= steps; k++) outline.Add(At(slice.Start + slice.Sweep * k / steps, thickness));
             string lit = Shade(slice.Color, Math.Min(1, topLight));
             Polygon(svg, outline, lit, "#FFFFFF", "word-chart-pie-top");
             if (LabelText(group, series, slice.Index) is { } label)
             {
-                var p = At(slice.Start + slice.Sweep / 2, 0);
-                Text(svg, cx + (p.X - cx) * 0.65, cy + (p.Y - cy) * 0.65 + 3, label, _dataLabelSize, textColor, "middle");
+                var p = At(slice.Start + slice.Sweep / 2, thickness, 0.65);
+                Text(svg, p.X, p.Y + 3, label, _dataLabelSize, textColor, "middle");
             }
         }
     }

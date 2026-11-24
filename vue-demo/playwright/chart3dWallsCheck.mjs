@@ -34,8 +34,9 @@ check(bars.every(f => f[1].minX < f[2].minX && f[1].minX < f[0].minX), 'horizont
 // grid-008: probes 192..215; rotY 90 ones are back wall left of the floor
 await open(gridFile)
 all = await faces()
-const rot90 = all.filter(f => f.length === 3 && f[0].fill.toUpperCase().includes('#00FF00'))
-  .filter(f => f[0].maxX - f[0].minX < (f[2].maxX - f[2].minX) * 0.6)   // the back wall seen nearly edge-on
+// probes 207..209 (charts 15..17) are rotY 90 (grid.json); picked by index - since the scene is placed as LibreOffice places it,
+// rotY 80 back walls are nearly edge-on too, so a width test no longer singles out rotY 90
+const rot90 = [15, 16, 17].map(i => all[i]).filter(f => f && f.length === 3 && f[0].fill.toUpperCase().includes('#00FF00'))
 check(rot90.length > 0 && rot90.every(f => f[0].minX <= f[2].minX + 1), `rotY 90: back wall on the floor's front (left) edge (${rot90.length} charts)`)
 check(errors.length === 0, `no console errors ${errors.join(' | ')}`)
 await browser.close()

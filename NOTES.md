@@ -3748,3 +3748,47 @@ latent styles, repeated style ids, Word 2003 files without notes, an element lef
   placement unchanged; 1 pt gate not met for perspective scenes (Line3D Deep 8.6 / 19.8 pt median, Persp rows 3.2-5.0 pt dx).
 - Harness: scripts/chart3d_fixture_check.py (per-chart text medians vs Word's PDF for the 3-D fixtures); live check
   vue-demo/playwright/chart3dWallsCheck.mjs. All fixtures unchanged by this round's renderer edits (identical medians).
+
+## 3-D chart scene: LibreOffice's placement and camera (2026-11-24)
+
+- Decision (user, 2026-11-24): where Word's rule cannot be found, use LibreOffice's. Three rounds found neither Word's placement of
+  a perspective scene nor its right-angled front size, so the renderer now places every 3-D scene as LibreOffice does; Word's
+  measured box sizes (width 1, height / depth per type, NOTES 2026-11-13 / 2026-11-24) stay, because they are Word's rule.
+- LibreOffice's pipeline, read from source (chart2 master): oox maps c:view3D (plotareaconverter.cxx:262-323: perspective / 2 into
+  0..100, parallel when rAngAx or 0); the scene turns about its volume centre (VDiagram.cxx:552-555) and the camera sits on the axis
+  through it at (0, 0, distance) (svx scene3d.cxx:209-229, camera3d.cxx); distance = PerspectiveToCameraDistance (ThreeDHelper.cxx:
+  635-645, 0.75..20 volumes, :605-609) in units of the largest box extent (aspect normalised to max 1, VDiagram.cxx:271-277,
+  377-383); the projection is a frustum over the content range (viewcontactofe3dscene.cxx:179-221), i.e. a pinhole; the 2-D box of
+  the eight projected corners (E3DModifySceneSnapRectUpdater, VDiagram.cxx:395-401) is scaled keeping its aspect and centred in the
+  plot (adjustPosAndSize_3d, VDiagram.cxx:409-423). Right-angled axes: shearXY(rotY rad, -rotX rad) (VDiagram.cxx:556-557,
+  b3dhommatrix.cxx:218-230), angles clipped to 90 / 45 degrees (ThreeDHelper.cxx:598-602, ThreeDHelper.hxx:59-60), and an automatic
+  height from the oblique (VDiagram.cxx:290-330); otherwise the automatic height uses the Z angle of the elevation / rotation
+  conversion (VDiagram.cxx:331-374, ThreeDHelper.cxx:105-280). Pie: preferred volume 1 x 1 x 0.10 (PieChart.cxx:252-257), elevation
+  rotX - 90, the invisible walls kept "as dummy object for correct scene dimensions" (VDiagram.cxx:483-489), so the whole volume is fitted.
+- Word's camera on top of LibreOffice's placement was tried first (eye distance plot height / 2 / tan(perspective / 4) points at the
+  parallel scale, eye on the axis through the box centre, then LibreOffice's fit): grid medians 2.5 / 5.6 / 19.0 pt at perspective
+  30 / 60 / 120 (LibreOffice's camera 7.2 / 12.1 / 25.4), but at strong perspective Word's eye falls inside wide boxes (Word pushes
+  its box back, the unknown rule), which needs a guard and leaves 130 pt misses. Not consistent, so LibreOffice's whole pipeline is
+  taken (camera distance included). Scene-only numbers (Word's plot rectangle, its 5.4 / 3.3 pt parallel inset; scratch evaluation of
+  the grid / types corners): old renderer camera 4.4 / 12.8 / 107 pt, LibreOffice 7.2 / 12.1 / 25.4 pt median rms at perspective
+  30 / 60 / 120 (max 280 -> 83).
+- Rejected from LibreOffice (measured worse than Word's found rules, so Word's stay): its automatic box sizes (bars Z = rows /
+  categories, lines / areas Z = 0.2 x rows, height from the Z angle): parallel walls 36 pt median vs 0.4 with Word's sizes; its
+  right-angled shear in radians: 3.8-4.0 pt vs 2.5-3.1 with Word's sinY / sinX; its right-angled automatic height: 40 pt vs 3.
+  Right-angled scenes therefore change nothing (Word's oblique, LibreOffice's centred fit as before).
+- Renderer (DocxChart.ThreeD.cs Projection): rotation about the box centre for every type (3-D lines / areas / standard columns
+  aimed a quarter of the depth in and Word's fitted field of view are gone), LibreOffice's camera distance for every perspective
+  scene (a corner guard keeps the eye in front of the box: not in LibreOffice); 3-D pie drawn as LibreOffice's volume through the
+  same projection and fit (was a tilted ellipse with a 12 % rim). Shared by .docx, .odt (OdtChart) and .doc / RTF (ExcelBinaryChart).
+- Residuals vs Word, walls end to end (scripts/chart3d_walls_vs_word.py on word-charts-scene-grid / -scene-types, our plot rectangle
+  included: for these axis-less probes it is about 7.6 pt wider per side than Word's 11 pt-inset picture, so parallel probes are
+  already 6.9 pt rms): grid median rms before -> after 8.2 -> 10.4 (perspective 30), 15.0 -> 14.4 (60), 112 -> 29 (120); max 216 -> 89.
+  Types, perspective median: columns clustered / stacked 14.6 (unchanged; they had LibreOffice's camera), horizontal bars 17.1
+  (unchanged), standard columns / lines / areas / surface 58 -> 13.4, stacked areas 73 -> 38 (Word draws them in one row, we in
+  one row per series); right-angled unchanged (lines 4.4, columns 9.0). Labels (scripts/chart3d_fixture_check.py): right-angled
+  and 2-D charts identical; perspective charts worse: Line3D Persp 3.5 / 1.5 -> 4.8 / 8.4, Area3D Persp 3.2 / 0.8 -> 5.1 / 7.6,
+  Line3D Deep 8.6 / 19.8 -> 21.7 / 20.9, Line3D SerAx 2.1 / 2.3 -> 3.6 / 7.5, SerAx P (.docx / .doc / .rtf) 3.5-5.0 / 0.8-1.2 ->
+  6.2-8.2 / 7.6-8.3 pt. 3-D pie: no Word probe.
+- Harness: RunScenePlacement (--charts / --fidelity) locks the walls of one chart per type (perspective 30 and 120, parallel,
+  right-angled) and the 3-D pie of odt-charts-v5 (.odt, .docx) within 0.05 pt; the perspective label checks of RunCrossingsAndRows /
+  RunSeriesAxes now lock our positions and state Word's.
