@@ -11,6 +11,14 @@ public static class DocBinaryWord2Properties
 {
     private const byte Fixed = 0, Variable = 1, Variable2 = 2;
 
+    /// <summary>
+    /// The Word 6 id this class writes for Word 2's chp.fBiDi (sprm 86 / the CHPX bit): Word 6 has no right-to-left run sprm
+    /// (its 111-116 set only the complex-script bold, italic, font, language, colour and size), so a Word 2 file's run
+    /// direction travels on an id no Word 6 file uses (unlisted in GetWW6SprmSearcher: one length byte) and
+    /// <see cref="DocBinaryWord6Sprms"/> turns it into sprmCFBiDi (0x085A) for Word 2 files only.
+    /// </summary>
+    public const byte RightToLeftRun = 250;
+
     /// <summary>Per Word 2 sprm id: (operand length or extra length, variant), from GetWW2SprmSearcher; unlisted ids are
     /// variable (wwSprmParser::GetSprmInfo falls back to a length byte).</summary>
     private static readonly (byte length, byte variant)[] Sizes = BuildSizes();
@@ -83,7 +91,16 @@ public static class DocBinaryWord2Properties
         switch (id)
         {
             case 2: output.AddRange([2, grpprl[at], 0]); return;               // sprmPIstd: a one-byte style code (ww8par.cxx Read_StyleCode, eWW2)
-            case 3: case 12: case 13: case 18: case 20: return;                 // dropped: 3 / 18 no handler, 12 / 13 one-byte Word 2 forms of the Word 6 numbering sprms, 20 Read_LineSpace needs 3 bytes for eWW2
+            case 3: case 12: case 13: case 18: case 87: return;                 // dropped: 3 / 18 no handler, 12 / 13 one-byte Word 2 forms of the Word 6 numbering sprms, 87 the diacritics' colour flag (not drawn)
+            case 20:                                                            // sprmPDyaLine: Word 2 stores only dyaLine (the Word 6 LSPD adds fMultLinespace)
+                output.AddRange([20, grpprl[at], grpprl[at + 1], 0, 0]);         // -> LSPD { dyaLine, fMultLinespace 0 }: > 0 at least, < 0 exactly, in twips
+                return;
+            case 50: output.AddRange([64, 1, grpprl[at]]); return;              // sprmPFBiDi (GetWW2SprmSearcher) -> the Word 6 right-to-left paragraph
+            case 80: case 81: output.AddRange([(byte)(id + 31), 1, grpprl[at]]); return;   // sprmCFBoldBi / sprmCFItalicBi -> v6 111 / 112
+            case 84: output.AddRange([98, grpprl[at]]); return;                 // sprmCIcoBi: the text colour (ww8par6.cxx:5765 Read_TextColor) -> v6 sprmCIco
+            case 82: case 83: output.AddRange([(byte)(id + 31), 2, grpprl[at], grpprl[at + 1]]); return;   // sprmCFtcBi / sprmClidBi -> v6 113 / 114
+            case 85: output.AddRange([116, 2, grpprl[at], 0]); return;          // sprmCHpsBi: one byte, as sprmCHps -> v6 116
+            case 86: output.AddRange([RightToLeftRun, 1, grpprl[at]]); return;  // sprmCFBiDi
             case 15: case 23:                                                   // tabs: the same operand, with its length byte
                 for (int i = sprmAt; i < at + length; i++) output.Add(grpprl[i]);
                 return;
@@ -116,8 +133,8 @@ public static class DocBinaryWord2Properties
     /// <summary>
     /// A Word 1/2 CHPX (the first <paramref name="length"/> bytes of a Word2CHPX; the rest stays zero) as Word 6 sprms, as
     /// ww8par2.cxx ChpxToSprms: the bold .. vanish bits as toggles (128 + bit: 128 = as the style, 129 = its opposite), and
-    /// the font, underline, language, colour, size and position only when their fs flag is set. The right-to-left values are
-    /// dropped (FastDocView reads no Word 2 right-to-left text); fSpec and its picture location are kept for the special
+    /// the font, underline, language, colour, size and position only when their fs flag is set; the right-to-left values the
+    /// same way (below); fSpec and its picture location are kept for the special
     /// characters (ReadWord2Chpx reads fSpec and fcPic).
     /// </summary>
     public static byte[] CharacterPropertiesToWord6(byte[] bytes, int start, int length)
@@ -143,6 +160,17 @@ public static class DocBinaryWord2Properties
         if ((present & 0x01) != 0) output.AddRange([98, (byte)(chpx[9] & 0x1F)]);              // fsIco: ico
         if ((present & 0x04) != 0) output.AddRange([99, chpx[6], chpx[7]]);                    // fsHps: hps (a word in the CHPX)
         if ((present & 0x10) != 0) output.AddRange([101, chpx[10], (byte)((sbyte)chpx[10] < 0 ? 0xFF : 0)]);   // fsPos: hpsPos
+        // right-to-left values (Word2CHPX, ww8par2.cxx:4181-4183, 4200, 4209-4211, 4246-4262 ReadWord2Chpx): fBoldBi / fItalicBi as
+        // toggles like fBold, fBiDi, and icoBi / ftcBi / hpsBi / lidBi when their fs flag is set. LibreOffice's ChpxToSprms
+        // (ww8par2.cxx:4090-4127) writes the flag fsFtcBi instead of ftcBi and two bytes for the one-byte sprm 85; read right here.
+        output.AddRange([111, 1, (byte)(128 + ((flags1 >> 4) & 1))]);                         // fBoldBi
+        output.AddRange([112, 1, (byte)(128 + ((flags1 >> 5) & 1))]);                         // fItalicBi
+        if ((flags1 & 0x40) != 0) output.AddRange([RightToLeftRun, 1, 1]);                     // fBiDi
+        byte presentBi = chpx[3];
+        if ((present & 0x80) != 0 && (flags1 & 0x40) != 0) output.AddRange([98, (byte)(chpx[11] & 0x1F)]);    // fsIcoBi: icoBi, the colour of a right-to-left run (Word 97 has one colour; LibreOffice reads sprm 84 as the colour, ww8par6.cxx:5765)
+        if ((presentBi & 0x01) != 0) output.AddRange([113, 2, chpx[14], chpx[15]]);            // fsFtcBi: ftcBi
+        if ((presentBi & 0x02) != 0) output.AddRange([116, 2, chpx[16], chpx[17]]);            // fsHpsBi: hpsBi
+        if ((presentBi & 0x04) != 0) output.AddRange([114, 2, chpx[18], chpx[19]]);            // fsLidBi: lidBi
         if ((flags1 & 0x02) != 0)
         {
             output.AddRange([117, 1]);                                                          // fSpec

@@ -340,7 +340,11 @@ public sealed class DocBinaryParagraphHtmlRenderer
                                    _textBoxDepth > 0 ? "text-box-paragraph" : null, formatting.IsRightToLeft, formatting.ParagraphAttributes);
         _isParagraphRightToLeft = formatting.IsRightToLeft;
         WordRunFormatting styleBase = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
-        if (listLabel is { Length: > 0 }) AppendListLabel(html, listLabel, formatting, ParagraphMarkFormatting(cpEnd, formatting.RunFormatting, styleBase));
+        if (listLabel is { Length: > 0 })
+        {
+            if (IsWord6) AppendWord6ListLabel(html, listLabel, formatting, ParagraphMarkFormatting(cpEnd, formatting.RunFormatting, styleBase), cpStart);
+            else AppendListLabel(html, listLabel, formatting, ParagraphMarkFormatting(cpEnd, formatting.RunFormatting, styleBase));
+        }
         if (dropCapParagraph is { } dropCap) AppendDropCap(html, dropCap.cpStart, dropCap.cpEnd, formatting.RunFormatting, noteLabel);
         DocBinaryFieldReader fields = _fields ??= NewFieldReader(cpStart, restore: _textBoxDepth == 0);
         _baselineShift = 0;
@@ -387,6 +391,30 @@ public sealed class DocBinaryParagraphHtmlRenderer
         WordListLabelSuffix suffix = level?.FollowCharacter switch { 1 => WordListLabelSuffix.Space, 2 => WordListLabelSuffix.Nothing, _ => WordListLabelSuffix.Tab };
         WordListLabelAlignment alignment = level?.Justification switch { 1 => WordListLabelAlignment.Center, 2 => WordListLabelAlignment.End, _ => WordListLabelAlignment.Start };
         WordListLabelHtml.Append(html, label, css, suffix, formatting, DefaultTabStopTwips, alignment, legacy: level?.Legacy);
+    }
+
+    /// <summary>
+    /// A Word 6 / 95 label (<see cref="DocBinaryWord6Numbering"/>): the paragraph mark's character formatting under the ANLV's
+    /// own (bold, italic, caps, strike, underline, colour, font, size), placed by its dxaIndent / dxaSpace / fHang.
+    /// </summary>
+    private void AppendWord6ListLabel(StringBuilder html, string label, WordParagraphFormatting formatting, WordRunFormatting markFormatting, int cpStart)
+    {
+        WordRunFormatting labelFormatting = markFormatting;
+        WordListLabelLegacy? spacing = null;
+        if (DocBinaryWord6Numbering.LabelLevelOf(formatting.Word6NumberingLevel, formatting.Word6Numbering, Word6OutlineAt?.Invoke(cpStart)) is { } anlv)
+        {
+            byte[] sprms = DocBinaryWord6Numbering.LabelCharacterSprms(anlv.source, anlv.at, _styles.Fonts.Count);
+            if (sprms.Length > 0)
+            {
+                labelFormatting = markFormatting.Clone();
+                DocBinaryPropertyModifiers.ApplyCharacterSprms(labelFormatting, sprms, 0, sprms.Length, fonts: _styles.Fonts);
+            }
+            spacing = DocBinaryWord6Numbering.LabelSpacing(anlv.source, anlv.at);
+        }
+        labelFormatting = WordListLabelScript.WithScript(labelFormatting, WordListLabelScript.UsesComplexScript(label, formatting.IsRightToLeft));
+        string? css = ReferenceEquals(labelFormatting, formatting.RunFormatting) ? null : labelFormatting.ToCss(formatting.RunFormatting);
+        if (css is { Length: 0 }) css = null;
+        WordListLabelHtml.Append(html, label, css, WordListLabelSuffix.Tab, formatting, DefaultTabStopTwips, legacy: spacing);
     }
 
     /// <summary>
@@ -1096,7 +1124,8 @@ public sealed class DocBinaryParagraphHtmlRenderer
         }
         if (Pictures.Locate(location) is { } picture)
             WordPictureHtml.Append(html, new WordPictureLayout(picture.widthPt, picture.heightPt, WordPictureWrap.Inline, WordPictureSide.Left, 0, 0, 0, 0, Crop: picture.crop),
-                                   location.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                                   WordPictureHtml.ContentTypeOf(picture.extension) is null ? null    // a Word 6 / 2 metafile: its box at its size
+                                   : location.ToString(System.Globalization.CultureInfo.InvariantCulture));
         else html.Append("<span class=\"unsupported\">[image]</span>");
     }
 

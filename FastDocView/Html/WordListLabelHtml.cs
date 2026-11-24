@@ -17,7 +17,8 @@ public enum WordListLabelAlignment : byte { Start, Center, End }
 /// so Word 16 is the reference (make-legacy-lists-fixture.ps1): no tab after the label - the text starts at the furthest of the start
 /// indent, label start + IndentTwips, label end + SpaceTwips.
 /// </summary>
-public readonly record struct WordListLabelLegacy(int SpaceTwips, int IndentTwips);
+/// Hangs = false (a Word 6 ANLD without fHang): the paragraph's hanging indent does not place the text.
+public readonly record struct WordListLabelLegacy(int SpaceTwips, int IndentTwips, bool Hangs = true);
 
 /// <summary>
 /// Draws a list label where Word puts it. The label starts at the first-line position (start indent + first-line
@@ -41,7 +42,7 @@ public static class WordListLabelHtml
         string css = labelCss ?? "";
         if (legacy is { } word6)
         {
-            int hanging = Math.Max(0, -paragraph.FirstLineIndentTwips);
+            int hanging = word6.Hangs ? Math.Max(0, -paragraph.FirstLineIndentTwips) : 0;
             int reach = Math.Max(hanging, word6.IndentTwips);
             if (reach > 0) css += "min-width:" + WordParagraphFormatting.TwipsToPt(reach) + "pt;";
             html.Append(" style=\"").Append(css).Append("\"><span");

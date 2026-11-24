@@ -105,8 +105,61 @@ internal static class DocBinaryWord6Numbering
         }
         int nfc = anlvSource[anlvAt];
         string ordinal = nfc is 5 or 7 ? "." : "";
-        return Text(0, before) + NumberText(nfc, number) + ordinal + Text(before, after);
+        string prefixSpace = (anlvSource[anlvAt + 4] & 0x04) != 0 ? " " : "";     // fPrevSpace: "a single prefixing space character"
+        return prefixSpace + Text(0, before) + NumberText(nfc, number) + ordinal + Text(before, after);
     }
+
+    /// <summary>
+    /// Where the ANLV that draws a paragraph's label lies (render time; the label text itself is counted at index time): the
+    /// section's OLST level for outline levels 1-9 when the section has one, else the paragraph's ANLD - the same choice as
+    /// <see cref="Next"/>. Null: no numbering.
+    /// </summary>
+    public static (byte[] source, int at)? LabelLevelOf(int levelType, byte[]? anld, byte[]? olst)
+    {
+        if (levelType is >= 1 and <= 9 && olst is { Length: >= OlstLength }) return (olst, (levelType - 1) * 16);
+        if (levelType is >= 1 and <= 11 && anld is { Length: >= AnldLength }) return (anld, 0);
+        return null;
+    }
+
+    /// <summary>
+    /// The label's character formatting from its ANLV as Word 97 sprms (Microsoft "Word for Windows 6.0 Binary File Format",
+    /// ANLD: fSetBold / fSetItalic / fSetSmallCaps / fSetCaps / fSetStrike / fSetKul say that fBold / fItalic / fSmallCaps /
+    /// fCaps / fStrike / kul decide; ico "color of autonumber" (0 = auto: the paragraph's colour); ftc "font code of
+    /// autonumber" (Word writes 0xFFFF / 0x8001 when the number has no font of its own: only a font in the table is applied);
+    /// hps "font half point size (or 0=auto)"). LibreOffice reads only the font, for symbol bullets (ww8par2.cxx:577-578
+    /// SetAnlvStrings). Bold / italic / font / size set both the Latin and the complex-script values: the label is drawn in
+    /// one of them by its characters (<see cref="WordListLabelScript"/>).
+    /// </summary>
+    public static byte[] LabelCharacterSprms(byte[] source, int at, int fontCount)
+    {
+        byte flags1 = source[at + 3], flags2 = source[at + 4], flags3 = source[at + 5];
+        var sprms = new List<byte>(40);
+        void Toggle(ushort opcode, bool on) => sprms.AddRange([(byte)opcode, (byte)(opcode >> 8), on ? (byte)1 : (byte)0]);
+        void Word(ushort opcode, int value) => sprms.AddRange([(byte)opcode, (byte)(opcode >> 8), (byte)value, (byte)(value >> 8)]);
+        if ((flags1 & 0x10) != 0) { Toggle(0x0835, (flags2 & 0x08) != 0); Toggle(0x085C, (flags2 & 0x08) != 0); }   // fSetBold: fBold
+        if ((flags1 & 0x20) != 0) { Toggle(0x0836, (flags2 & 0x10) != 0); Toggle(0x085D, (flags2 & 0x10) != 0); }   // fSetItalic: fItalic
+        if ((flags1 & 0x40) != 0) Toggle(0x083A, (flags2 & 0x20) != 0);                                              // fSetSmallCaps: fSmallCaps
+        if ((flags1 & 0x80) != 0) Toggle(0x083B, (flags2 & 0x40) != 0);                                              // fSetCaps: fCaps
+        if ((flags2 & 0x01) != 0) Toggle(0x0837, (flags2 & 0x80) != 0);                                              // fSetStrike: fStrike
+        if ((flags2 & 0x02) != 0) sprms.AddRange([0x3E, 0x2A, (byte)(flags3 & 0x07)]);                                // fSetKul: kul
+        int color = flags3 >> 3;
+        if (color != 0) sprms.AddRange([0x42, 0x2A, (byte)color]);                                                   // ico
+        int font = BitConverter.ToUInt16(source, at + 6);
+        if (font < fontCount) { Word(0x4A4F, font); Word(0x4A5E, font); }                                            // ftc
+        int size = BitConverter.ToUInt16(source, at + 8);
+        if (size != 0) { Word(0x4A43, size); Word(0x4A61, size); }                                                   // hps
+        return sprms.ToArray();
+    }
+
+    /// <summary>
+    /// The label's spacing from its ANLV: dxaIndent "width of prefix text (same as indent)" and dxaSpace "minimum space between
+    /// number and paragraph" (Word 6 binary format, ANLD) - the Word 6 level that Word 97's LVL keeps as fWord6 dxaIndent /
+    /// dxaSpace (<see cref="WordListLabelLegacy"/>). fHang "number will be displayed using a hanging indent": without it the
+    /// paragraph's hanging indent does not place the text (LibreOffice ww8par2.cxx:546-554 SetBaseAnlv: with fHang the label
+    /// hangs by |dxaIndent|, without it dxaIndent is only the distance to the text).
+    /// </summary>
+    public static WordListLabelLegacy LabelSpacing(byte[] source, int at)
+        => new(Math.Max(0, (int)BitConverter.ToInt16(source, at + 14)), Math.Abs((int)BitConverter.ToInt16(source, at + 12)), Hangs: (source[at + 3] & 0x08) != 0);
 
     private static string NumberText(int nfc, int number) => nfc switch
     {

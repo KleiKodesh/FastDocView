@@ -940,7 +940,7 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
     numbering (tdf150197: 1. 2. 2.1 .. 4.2; LibreOffice shows 4.1 there and its test says it should be 2.1).
   - Checked: `Word6DocumentsTest` (in --fidelity); text equals LibreOffice's text export on Word95, 57843, Word6_sections2,
     Bug50955 (Cyrillic, 74,814 words). Bug51944 (0xA699, fExtChar) needed the UTF-16 rule. The fuzz files crash-7 and
-    ofz21168-1 fail with the piece-table error. Open: drawing objects, ANLD label spacing / fonts, a real right-to-left Word 6 file to check sprms 64 / 111-116.
+    ofz21168-1 fail with the piece-table error. Open: drawing objects, a real right-to-left Word 6 file to check sprms 64 / 111-116 (ANLD label spacing / fonts: done 2026-11-24, see Word 1.x / 2.0 below).
 - **Word 6.0 / 95 Asian double-byte text (2026-11-18).** LibreOffice ww8par.cxx ReadPlainChars (bVer67): a Far East
   build's file sets fExtChar and stores 16-bit units; a unit >= 0x3000 is a double-byte character (high byte lead, low byte
   trail) in the run's CJK code page (GetCurrentCJKCharSet: run / style font, else language), any other unit its low byte in
@@ -964,11 +964,51 @@ RTF is plain bytes, so like .fodt the file itself is the random-access view: no 
     ico / hps / hpsPos only when their fs flag is set (plus fSpec and fcPic, which ChpxToSprms drops).
   - Sprms: GetWW2SprmSearcher sizes; `DocBinaryWord2Properties` rewrites them as Word 6 ones (paragraph ids kept, PIstd
     widened, character 60-77 +25, section 115-145 +25, table 146-164 +36 = ww8par2.cxx:1706-1730), then the Word 6 path
-    makes them Word 97. Dropped as LibreOffice drops them: 12 / 13 / 18, the right-to-left 80-87, the picture 94-99, and
-    20 (line spacing: Read_LineSpace needs 3 bytes for eWW2 and the sprm has 2, so LibreOffice never applies it).
+    makes them Word 97. Dropped as LibreOffice drops them: 12 / 13 / 18 and the picture 94-99. Since 2026-11-24 also read
+    (below): the right-to-left 80-86, 50 and 20.
   - Style sheet (ImportOldFormatStyles): cstcStd, then names / CHPXs / PAPXs by slot, then iMac (next, base) pairs; slot n
     is style code (n - cstcStd) & 255 and a paragraph's istd is that code; base 222 = none; built-in ids from
     GetCanonicalStiFromStc (254 .. 246 = Heading 1 .. 9). Fonts (WW8Fonts, eVersion <= eWW2): cbFfnM1, weight, chs, name.
+  - Right-to-left Word 2 (2026-11-24). Word2CHPX (ww8struc.hxx:59-102; ReadWord2Chpx ww8par2.cxx:4132-4274): byte 1 bits
+    0x10 fBoldBi, 0x20 fItalicBi, 0x40 fBiDi; byte 2 bit 0x80 fsIcoBi; byte 3 bits 1 / 2 / 4 fsFtcBi / fsHpsBi / fsLidBi;
+    icoBi at 11, ftcBi 14, hpsBi 16, lidBi 18. They become Word 6 111 / 112 (toggles like fBold), 113 / 116 / 114, and the
+    run's colour for icoBi when the run is right to left (Word 97 has one colour). LibreOffice's ChpxToSprms
+    (ww8par2.cxx:4090-4127) writes fsFtcBi (the flag) as the font and two bytes for the one-byte sprm 85 - not copied.
+    fBiDi has no Word 6 sprm: `DocBinaryWord2Properties.RightToLeftRun` (250, unused by Word 6) carries it to sprmCFBiDi
+    for Word 2 files only. Sprms 80-86 (GetWW2SprmSearcher ww8scan.cxx:164-171, GetWW2SprmDispatcher ww8par6.cxx:5761-5767):
+    80 / 81 / 82 / 83 / 85 the same way, 84 the text colour (LibreOffice Read_TextColor), 86 sprmCFBiDi, 87 (diacritics'
+    colour) dropped. Paragraph sprm 50 is "sprmPFBiDi pap.fBiDi" in GetWW2SprmSearcher (ww8scan.cxx:137; the dispatcher's
+    comment says sprmPFLocked, copied from Word 6, and reads nothing) -> the Word 6 right-to-left paragraph (64).
+    A right-to-left run's 8-bit text is decoded in the code page of its ftcBi font, else of lidBi, before the Latin font
+    rule (a Hebrew Word 2 run keeps its Latin ftc). LibreOffice decodes it by the Latin font (GetCurrentCharSet).
+  - Word 2 line spacing (sprm 20, 2 bytes: GetWW2SprmSearcher ww8scan.cxx:107; antiword prop2.c iGet2InfoLength gives it 1,
+    which cannot hold a twips value). The Word 6 binary format document (Microsoft, 09/03/94, "sprmPDyaLine (opcode 20)
+    moves a 4 byte LSPD ... lspd.dyaLine and lspd.fMultLinespace ... When lspd.fMultLinespace is 0 ... positive AT LEAST
+    ... negative EXACTLY"): Word 2 stores only dyaLine (Word 2's choices were auto / at least / exactly; multiple spacing
+    came with Word 6), so it becomes LSPD { dyaLine, 0 }. LibreOffice never applies it (ww8par6.cxx:4568 wants 3 bytes for
+    eWW2, then would treat it as a multiple). No Word 2 file in test-data has sprm 20 (FKPs and style sheets scanned).
+  - Pictures, Word 2 and Word 6 (2026-11-24): the PIC (Word 6 binary format document, Picture Descriptor; ww8graf2.cxx:445
+    "Only the first 0x2e bytes are the same between version 6/7 and 8+") then the data at cbHeader in the WordDocument
+    stream (Word 2: the file). mm 99 = a bitmap (bm = Windows BITMAP at 0xE): one plane at 1 or 24 bits per pixel is served
+    as a .bmp (rows flipped, padded to 4 bytes; 1 bit black on white); LibreOffice skips every mm 99 picture
+    (ww8graf2.cxx:413). mm 94 / 98 name a linked file (ww8graf2.cxx:245-257): "[image]". Any other mm is a Windows metafile
+    (LibreOffice ReadWindowMetafile, ww8graf2.cxx:268): its box at (dxaGoal - crops) x mx and (dyaGoal - crops) x my, as a
+    WMF blip keeps its box in every format here.
+  - Word 6 / 95 ANLD labels (2026-11-24; ANLV = ww8struc.hxx:620-651 WW8_ANLV, the Word 6 binary format document's ANLD
+    table): fSetBold / fSetItalic / fSetSmallCaps / fSetCaps (byte 3 bits 0x10..0x80) say fBold / fItalic / fSmallCaps /
+    fCaps (byte 4 bits 0x08..0x40) decide; fSetStrike / fSetKul (byte 4 bits 1 / 2) for fStrike (0x80) / kul (byte 5 low 3
+    bits); ico (byte 5 high 5 bits, 0 = auto: the mark's colour); ftc at 6 (0xFFFF / 0x8001 in every real file = none: only
+    a font in the table applies); hps at 8 (0 = auto); fPrevSpace (byte 4 bit 4) = one space before the label. Spacing:
+    dxaIndent (12) "width of prefix text", dxaSpace (14) "minimum space between number and paragraph" -> the Word 6 legacy
+    level layout already used for Word 97 fWord6 levels and w:legacy (`WordListLabelLegacy`); without fHang (byte 3 bit 8)
+    the paragraph's hanging indent does not place the text (LibreOffice SetBaseAnlv ww8par2.cxx:546-554: fHang hangs the
+    label by |dxaIndent|, else dxaIndent is only the label-to-text distance). LibreOffice applies none of the label's
+    character formatting (only ftc, for symbol bullets: ww8par2.cxx:577-578). The ANLV is the section OLST level for
+    outline levels when there is one, else the ANLD - the same one that counts (`DocBinaryWord6Numbering.LabelLevelOf`).
+  - Word 16 is no reference here: it refuses to open Word 2 and Word 6 files on this machine (File Block, 0x800A18A0),
+    and saves neither. Fixtures are patched copies of word2.doc and tdf150197 (`OldWordFormattingTest`, in --word6 /
+    --fidelity). word2.doc's lcbSttbfFfn is 0 (LibreOffice: "font table is broken", ww8scan.cxx:7222): its fonts are read
+    by neither reader; the fixture gives the table its 40 bytes.
   - Checked: `Word6DocumentsTest.RunWord2` (in --fidelity and --word6): text equals LibreOffice's text export on word2.doc,
     ooo2535-1-WW2.doc, ooo40683-1-WW1.doc; bold / italic runs as in its .fodt (ooo2535: 43 bold spans here, 41 there - the
     same text split differently); the damaged ww5/pass files open or fail as damaged.

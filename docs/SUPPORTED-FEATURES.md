@@ -331,13 +331,18 @@ not indexed yet shows nothing and the block is fetched again once the index is c
    table entries, incomplete bin tables rebuilt), fast-saved piece tables, footnotes, endnotes, fields and tables (10-byte
    Word 6 TCs and 2-byte borders). Text matches LibreOffice's text export word for word on the test-data files compared (Word95, 57843, Word6_sections2, Bug50955).
    Word 6 numbering: numbered, bulleted and outline paragraphs (sprmPNLvlAnm, the ANLD, the section's OLST) counted at index
-   time, outline levels nested under a numbering. Not yet: drawing objects and Asian double-byte text
-   (UNSUPPORTED-FEATURES.md, Document level).
+   time, outline levels nested under a numbering; each label drawn in its ANLV's formatting (fSetBold / fBold, italic, small
+   caps, caps, strike, underline, colour, font, size; fPrevSpace) and spacing (dxaIndent, dxaSpace, fHang). Pictures: a
+   bitmap after the PIC (mm 99, one plane, 1 or 24 bits per pixel) is shown; a Windows metafile keeps its box at its size.
+   Not yet: drawing objects (UNSUPPORTED-FEATURES.md, Document level).
 5. Word for Windows 1.x / 2.0, as LibreOffice's eWW1 / eWW2 branches read them: the file itself is the WordDocument stream;
    the FIB's 2-byte lcbs (Word 1 without fcPrDrvr / fcPrEnvLand), the 2-byte Pcdt length, one-byte-offset PAPX entries
    (style code + PHE in the PAPX), CHPX runs that are a CHP prefix (Word2CHPX: bold .. vanish as toggles, font, size,
    underline, colour, position, language), the Word 2 sprm ids (paragraph, section and table properties), the old-format
    style sheet (names, CHPXs and PAPXs by style code; 254 .. 246 = Heading 1 .. 9), the short font entries, 6-byte section
    descriptors with a one-byte Sepx length. Text matches LibreOffice's text export word for word on word2.doc,
-   ooo2535-1-WW2.doc and ooo40683-1-WW1.doc; their bold and italic runs match its .fodt. Not yet: right-to-left runs, line
-   spacing, pictures (UNSUPPORTED-FEATURES.md).
+   ooo2535-1-WW2.doc and ooo40683-1-WW1.doc; their bold and italic runs match its .fodt. Right-to-left (Hebrew / Arabic)
+   Word 2: the CHPX's fBiDi, fBoldBi, fItalicBi, ftcBi, hpsBi, lidBi, icoBi and sprms 80-86, the right-to-left paragraph
+   (sprm 50), each right-to-left run's 8-bit text decoded in its ftcBi font's code page (else lidBi's). Line spacing (sprm 20:
+   dyaLine in twips, positive at least, negative exactly). Pictures as for Word 6 (4). Checked on fixtures built from
+   word2.doc (OldWordFormattingTest): no public Hebrew Word 2 file exists and Word 16 opens no Word 2 file here.

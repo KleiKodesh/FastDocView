@@ -290,7 +290,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
         _renderer.FieldContext = FieldContext(displayPath);
         _renderer.FormFieldData = FormFieldData;
         _renderer.HeadingPositions = () => _index is null || _table is null ? [] : Headings.Select(heading => (_table.BlockStartCp(heading.BlockIndex), heading.Level));
-        _renderer.Pictures = new DocBinaryPictures(_dataStream);
+        _renderer.Pictures = new DocBinaryPictures(_dataStream, isLegacy: FileInformationBlock.IsWord6);
         _renderer.Charts = ReadChart;
         _renderer.FloatingPictures = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock);
         HeaderDrawings = new DocBinaryFloatingPictures(_tableStream, _wordDocument, _dataStream, FileInformationBlock, isHeader: true);
@@ -362,14 +362,22 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
             if (run is { } own && !(own.FcStart <= fc && own.FcEnd > fc)) run = null;
             uint runStart = run?.FcStart ?? uint.MaxValue;
             if (cache.TryGetValue((runStart, styleIndex), out (char[]? half, int doubleByte, int cjk) cached)) return (runEnd, cached.half, cached.doubleByte, cached.cjk);
-            int font = -1, language = -1;
+            int font = -1, language = -1, bidiFont = -1, bidiLanguage = -1;
+            bool isRightToLeft = false;
             if (run is { GrpprlLength: > 0 } direct)
                 foreach ((ushort opcode, int at, int length) in DocBinaryPropertyModifiers.Sprms(direct.Page, direct.GrpprlStart, direct.GrpprlLength))
                 {
                     if (opcode == 0x4A4F && length >= 2) font = BitConverter.ToUInt16(direct.Page, at);
                     else if (opcode == 0x486D && length >= 2) language = BitConverter.ToUInt16(direct.Page, at);
+                    else if (opcode == 0x4A5E && length >= 2) bidiFont = BitConverter.ToUInt16(direct.Page, at);
+                    else if (opcode == 0x485F && length >= 2) bidiLanguage = BitConverter.ToUInt16(direct.Page, at);
+                    else if (opcode == 0x085A && length >= 1) isRightToLeft = direct.Page[at] != 0;
                 }
-            int codePage = CodePageOfFont(font);
+            // a right-to-left run (Word 2's chp.fBiDi) is typed in its right-to-left font and language (ftcBi / lidBi): their
+            // code page first (a Hebrew Word 2 run keeps a Latin ftc and the Hebrew font in ftcBi)
+            int codePage = isRightToLeft ? CodePageOfFont(bidiFont) : -1;
+            if (codePage <= 0 && isRightToLeft && bidiLanguage > 0) codePage = DocBinaryTextDecoder.CodePageOfLanguage(bidiLanguage);
+            if (codePage <= 0) codePage = CodePageOfFont(font);
             WordRunFormatting style = _styles.ResolveParagraphStyle(styleIndex).RunFormatting;
             int styleCodePage = style.FontName is { } styleFont ? CodePageOfFont(fonts.IndexOf(styleFont)) : -1;
             if (codePage < 0) codePage = styleCodePage;

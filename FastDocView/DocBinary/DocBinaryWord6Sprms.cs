@@ -214,6 +214,9 @@ public sealed class DocBinaryWord6Sprms
             case 114: if (length >= 2) Emit(output, 0x485F, grpprl, at, 2, false); break;   // sprmCLidBi
             case 115: if (length >= 1) Emit(output, 0x4A60, [grpprl[at], 0], 0, 2, false); break;   // sprmCIcoBi
             case 116: if (length >= 2) Emit(output, 0x4A61, grpprl, at, 2, false); break;   // sprmCHpsBi
+            case DocBinaryWord2Properties.RightToLeftRun when IsWord2:            // Word 2's chp.fBiDi -> sprmCFBiDi
+                if (length >= 1) output.AddRange([0x5A, 0x08, grpprl[at]]);
+                break;
             case 133: EmitVariable(output, 0xD202, grpprl, at, length); break;     // sprmSOlstAnm (Word 6 outline numbering)
             case 187:                                                              // sprmTTableBorders: six Word 6 BRCs -> six Brc80
                 if (length >= 12)

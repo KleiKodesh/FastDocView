@@ -14,7 +14,7 @@ namespace FastDocView.DocBinary;
 public sealed class DocBinaryBlockIndex
 {
     private const string Magic = "KHDOCIDX";
-    private const int FormatVersion = 11;       // 11: Word 6/95 ANLD / OLST numbering labels and per-run code pages; 10: rows merged down (vertically merged cells); 9: list labels in every Word number format + raw symbol-font bullets; 8: gutter placement (right-to-left / at top) in section widths; 5: compact per-block tables; 6: no per-block tables — span anchors + list counter state, Elias-Fano lists; 7: section first blocks
+    private const int FormatVersion = 12;       // 12: ANLV fPrevSpace in labels, Word 2 right-to-left runs decoded in their ftcBi / lidBi code page; 11: Word 6/95 ANLD / OLST numbering labels and per-run code pages; 10: rows merged down (vertically merged cells); 9: list labels in every Word number format + raw symbol-font bullets; 8: gutter placement (right-to-left / at top) in section widths; 5: compact per-block tables; 6: no per-block tables — span anchors + list counter state, Elias-Fano lists; 7: section first blocks
     /// <summary>Characters between span anchors (256 KB of UTF-16 text): a random block rescans at most this much of the piece text.</summary>
     public const int AnchorSpanCharacters = 128 << 10;
 
