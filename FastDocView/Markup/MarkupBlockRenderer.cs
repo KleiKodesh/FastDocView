@@ -246,10 +246,17 @@ public static class MarkupBlockRenderer
     /// attributes), whitespace and controls removed, then the scheme checked: http(s), mailto, file, ftp,
     /// cid, mid and data:image (not svg) pass, as does any value without a URL scheme; anything else is dropped.
     /// </summary>
+    private static readonly char[] PathStarts = ['/', '?', '#'];
+
     private static bool IsSafeValue(string value)
     {
         string decoded = System.Net.WebUtility.HtmlDecode(value);
         string compact = new string(decoded.Where(ch => !char.IsWhiteSpace(ch) && !char.IsControl(ch)).ToArray()).ToLowerInvariant();
+        // A character reference the decoder left alone before the path / query / fragment may still be one to a browser:
+        // HTML5 named references (&colon; &Tab; &NewLine;) and numeric ones without ';' (&#58) hide the scheme's ':' or split
+        // its letters (WHATWG HTML 13.2.5.72-80: attribute values decode the full named table and unterminated numerics).
+        int pathStart = compact.IndexOfAny(PathStarts);
+        if (compact.IndexOf('&') is int ampersand && ampersand >= 0 && (pathStart < 0 || ampersand < pathStart)) return false;
         int colon = compact.IndexOf(':');
         if (colon <= 0) return true;
         string scheme = compact.Substring(0, colon);

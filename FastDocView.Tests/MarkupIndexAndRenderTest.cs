@@ -79,9 +79,14 @@ public static class MarkupIndexAndRenderTest
     {
         TestReport.Step("Markup edge cases");
         string safe = MarkupBlockRenderer.Render("", "<a href=\"java&#115;cript:alert(1)\">x</a><a href=\"javascript&#58;y\">y</a><a href=\" JaVa\tscript:z\">z</a>"
+                                                    + "<a href=\"javascript&colon;h5\">a</a><a href=\"java&Tab;script:t\">b</a><a href=\"javascript&#58n\">c</a><a href=\"&#x6A;avascript&#x3A;e\">d</a>"
+                                                    + "<a href=\"vbscript:v\">e</a><a href=\"data:text/html,dd\">f</a><a href=\"javascript&colon;//%0a\">g</a><img src=\"data:image/svg+xml,s\">"
+                                                    + "<a href=\"page.htm?a=1&amp;b=2\">rel</a>"
                                                     + "<a href=\"https://e.org/a:b\">ok</a><span style=\"mso-font:x; color:red\">s</span><img src=x onerror=alert(1)><b onmouseover=x>b</b>");
-        TestReport.Check(!safe.Contains("script") && !safe.Contains("onerror") && !safe.Contains("onmouseover") && safe.Contains("https://e.org/a:b")
-                         && safe.Contains("mso-font:x; color:red"), "sanitizer: entity-hidden javascript: URLs and handlers removed, http links and styles kept");
+        TestReport.Check(!safe.Contains("script") && !safe.Contains("onerror") && !safe.Contains("onmouseover") && !safe.Contains("&colon;") && !safe.Contains("&Tab;")
+                         && !safe.Contains("&#58") && !safe.Contains("data:") && !safe.Contains("svg") && safe.Contains("https://e.org/a:b") && safe.Contains("page.htm?a=1&amp;b=2")
+                         && safe.Contains("style=\"color:red;\""),
+                         "sanitizer: entity-hidden (HTML5 named, unterminated numeric, hex) script / vbscript / data URLs and handlers removed, http and relative links kept, styles through the sheet's checks: " + safe);
 
         string text = "<ul><li><p>a\n<li><p>b\n<li><p>c\n" + new string('x', 300_000) + "\nx <b " + new string('y', 2100) + "\n<i>i</i>\nend\n"
                       + string.Concat(Enumerable.Repeat("<div>", 40)) + "deep\n" + string.Concat(Enumerable.Repeat("</div>", 40)) + "\nafter\n";

@@ -531,3 +531,9 @@ are a cheap exact oracle for shaped totals. Nirmala UI's Indic widths are the hm
 GPOS 'dist' moves them (Kannada below-base forms, Gujarati vowel signs) - same glyphs, different total, so compare glyph
 ids before blaming the reordering. A reverse chaining rule can look ahead to glyphs no character sequence produces; search
 with the shaper before building a fixture around one.
+
+Sanitizer (2026-11-25): System.Net.WebUtility.HtmlDecode knows only the HTML 4 entity table and needs the ';' - a
+browser decodes HTML5 named references (&colon; &Tab; &NewLine;) and unterminated numerics (&#58) in attribute values,
+so "javascript&colon;x" passed the .txt / MHTML URL check as a scheme-less value and ran as javascript: in the page.
+Any '&' left after decoding, before the path / query / fragment, now makes the URL unsafe. The --text check had been
+failing on a stale style expectation, which hid that it never covered these forms.
