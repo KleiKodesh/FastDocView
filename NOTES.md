@@ -3880,3 +3880,19 @@ latent styles, repeated style ids, Word 2003 files without notes, an element lef
   is further from Word on cycle-v1 (node 267 EMU) than ours (0), so cycle keeps our model and stays in the 4 pt set.
 - appCheck "text shown in under 2 s wall": 255-368 ms in four cold opens (both samples, twice) on the rig, with another
   session's runaway `find /` using a core; the earlier failure was load, not the code.
+
+## 3-D chart: Word's perspective plot rectangle; series-depth probes; charts-only live check (2026-11-24)
+
+- Perspective scenes with axes: Word's scene picture (its plot) in its PDFs of word-charts-3d-rows-v1 / word-charts-seraxis-v1 starts
+  0.84 pt right of the 2-D plot's left edge and ends 11.1 pt inside the chart's right edge (as a bare plot), less half the last
+  category label when labels sit on the ticks (areas, 16.4 pt) and less the widest series name + 5.75 pt with a series axis; it
+  matches the picture within 0.1 pt on four of five charts (Col3D SerAx P 4.9 pt short). Right-angled charts keep their rectangle.
+- Series-depth probes (test-data/word-charts-scene-series, make-word-charts-scene-series.py, 32 wall-box line3D charts, 1 / 2 / 3 / 5
+  series, perspective 30 / 60, rotX 15 rotY 20 and 30 / 40, depth 100 / 200, printed by a hidden Word 16): with Word's camera and
+  LibreOffice's placement the walls are 1.7-9.5 pt rms at perspective 30 and up to 34 pt at perspective 60 with deep scenes
+  (rotX 15 rotY 20). Per probe the best eye-distance factor (0.9-1.35) and box-centre shift (-0.35..+0.35 depth) scatter with no
+  rule in series count or depth, so nothing is applied; Word's perspective placement of deep scenes stays open. Also rejected:
+  the eye a quarter depth nearer (bare grid perspective 60 median 5.7 -> 11.0 pt), the scene top-aligned when width-limited
+  (Line3D Deep unchanged), label anchors off the floor edge, a wider fit rectangle or aspect width, a scaled eye distance.
+- appCheck.mjs counted a document as shown only once a row had text; a charts-only file (types-003.docx: 25 blocks, 24 charts,
+  no text) never qualified though the page had drawn everything. It now also accepts a row with a drawing (svg / img).

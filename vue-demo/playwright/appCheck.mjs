@@ -39,7 +39,9 @@ await waitFor(() => !!window.__fastDocViewDemo, null, 120_000)
 step(`cold first open (index rebuilt) ${filePath}`)
 const openStarted = Date.now()
 await page.evaluate(path => window.__fastDocViewDemo.open(path, { rebuildIndex: true, forceSidecar: true }), filePath)
-await waitFor(() => [...document.querySelectorAll('.windowed-scroller-viewport [data-index]')].some(row => (row.textContent ?? '').trim().length > 0), null, 120_000)
+// content shown: a row with text, or with a drawing (a document of charts or pictures only has rows with no text at all - waiting for
+// text there timed out although the page had drawn every chart)
+await waitFor(() => [...document.querySelectorAll('.windowed-scroller-viewport [data-index]')].some(row => (row.textContent ?? '').trim().length > 0 || !!row.querySelector('svg, img')), null, 120_000)
 const textShown = Date.now() - openStarted
 const opened = await state()
 console.log(`  text shown after ${textShown} ms; count ${opened?.blockCount}, complete ${opened?.isIndexComplete}`)

@@ -96,6 +96,7 @@ internal sealed partial class DocxChart
     /// </summary>
     private (double Left, double Top, double Right, double Bottom)? _barePlot;
     private bool _bare3D;
+    private double _chartWidth;
     private bool _bottomLegendRow;   // set by Svg: Word's legend row below the plot (DrawAxes keeps Word's room above it)
     private readonly HashSet<int> _deletedLegendEntries = new();
     private int _style = 2;
@@ -541,7 +542,7 @@ internal sealed partial class DocxChart
         string? chartLine = _chartSpaceProperties?.Element("ln") is { } chartLn && chartLn.Element("noFill") is null && chartLn.Element("solidFill") is { } chartLineFill ? DocxDrawingColor.Css(chartLineFill, _theme) : null;
         svg.Append("<rect width=\"").Append(N(width)).Append("\" height=\"").Append(N(height)).Append("\" fill=\"").Append(chartFill).Append('"')
            .Append(chartLine is null ? " stroke=\"none\"" : " stroke=\"" + chartLine + "\" stroke-width=\"0.75\"").Append("/>");
-        _barePlot = null; _bare3D = false;
+        _barePlot = null; _bare3D = false; _chartWidth = width;
         string textColor = DocxDrawingColor.Css(new XElement("c", new XElement("schemeClr", new XAttribute("val", "tx1"), new XElement("lumMod", new XAttribute("val", "65000")), new XElement("lumOff", new XAttribute("val", "35000")))), _theme) ?? "#595959";
         double top = 6, bottom = height - (_libreOfficeLayout ? 6 : 10.8), left = 6, right = width - 6;   // Word: 10.8 pt to the bottom edge (measured)
         if (_title is not null)
@@ -950,7 +951,23 @@ internal sealed partial class DocxChart
             // Word's 3-D line / area plot sits 2.8 pt further in at the left and 7.15 pt at the right than its 2-D plot (a last category
             // label on the right edge: 2.35 pt beyond the 2-D rule) - its PDFs of the 2026-11-13 probes, where the scene's picture fills
             // the same rectangle with right-angled axes and with perspective
-            if (!_libreOfficeLayout && _plotLayout is null && !bare3D)
+            View3D rowsView = _view3D ?? new View3D();
+            if (!_libreOfficeLayout && _plotLayout is null && !bare3D && !rowsView.RightAngled && rowsView.Perspective > 0 && _chartWidth > 0
+                && _legendPosition is not ("r" or "tr") && secondaryAxis is null)
+            {
+                // perspective (Word's camera): Word's scene picture - its plot - in its PDFs of word-charts-3d-rows-v1 and
+                // word-charts-seraxis-v1 (Line3D / Area3D Persp, Line3D SerAx, Col3D / Area3D SerAx P) starts 0.84 pt right of the 2-D
+                // plot's left edge and ends 11.1 pt inside the chart's right edge (as a bare plot), less half the last category label
+                // when the labels sit on the ticks (areas: 16.4 pt) and less the widest series name + 5.75 pt for a shown series axis
+                // (33.4 / 45.4 pt); within 0.1 pt on all five charts
+                left = Math.Min(right - 1, left + 0.84);
+                // (a right legend or secondary axis: not probed, the 2-D rules below stay)
+                double edge = _chartWidth - 11.1;
+                if (MidCategory() && categoryAxis is not { NoLabels: true } && categories.Count > 0) edge -= TextWidth(categories[categories.Count - 1], labelSize) / 2;
+                if (SeriesAxis() is { } perspectiveSeriesAxis) edge -= _groups[0].Series.Max(x => TextWidth(x.Name ?? "", perspectiveSeriesAxis.LabelSize)) + SeriesAxisGap;
+                right = Math.Max(left + 1, edge);
+            }
+            else if (!_libreOfficeLayout && _plotLayout is null && !bare3D)
             {
                 left = Math.Min(right - 1, left + 2.8);
                 right = Math.Max(left + 1, right - (MidCategory() && categoryAxis is not { NoLabels: true } ? 2.35 : 7.15));
