@@ -3629,3 +3629,33 @@ latent styles, repeated style ids, Word 2003 files without notes, an element lef
   further in, both ends). Tried depth across sinY cosX, sinY / cosX, sinY / cosY and depth up tan X, sinX cosY, sinX / cosY: each
   helps one chart and costs others (sinY cosX: R 30 20 3.05 -> 0.9 pt, C 25 35 S 4.0 -> 0.8, but R 20 30 max 1.1 -> 5.6), so the
   oblique stays sinY / sinX; more probes are needed.
+
+## 3-D chart scene: dense Word probe grid, placement still open (2026-11-24)
+
+- Fixture test-data/word-charts-scene-grid (scripts/make-word-charts-scene-grid.py writes the .docx directly, no Excel;
+  scripts/save-word-charts-scene-grid.ps1 prints each with a hidden Word 16, one Word per file because a second Open in the same
+  hidden instance hung): 616 wall-box line3D probes (floor red, back green, side blue), rotX 0-80 by 5 x rotY 0-90 by 10 x
+  perspective 30 / 60 / 120 at 415 x 242 pt, perspective 0 on rotX by 10 x rotY 0/30/60/90, plot aspects 300 x 300, 415 x 150,
+  250 x 350 (rotX 10/30/50, rotY 20/50/80, perspective 60/120), depth 200 and hPercent 200. Corners by
+  measure-word-chart-perspective-walls.py (third argument grid), camera fit by scripts/word_chart_scene_grid_fit.py.
+- The 2026-11-16 camera holds on the grid: 539 of 616 probes fit within 1 pt rms (421 within 0.5) with only the box offset free
+  (parallel-fit scale, eye distance = plot height / 2 / tan(perspective / 4) in points). Misses: rotY 90 (side wall edge-on, the
+  face matcher fails) and rotX 0 with small rotY (floor nearly edge-on, 2-3 pt).
+- The principal point is the plot centre (a free principal point stays within 0.3-1.6 pt of it on strong-perspective probes), and
+  the box is really off the axis: an on-axis perspective image fitted in 2-D (LibreOffice's way, see below) misses by 4-22 pt rms.
+  So Word places the box in 3-D, off-centre; the offset is well determined (0.2-0.7 pt for 0.3 pt corner noise).
+- Scale and depth are nearly interchangeable (a free scale moves 0.82-1.09 at the same rms), so "parallel scale" is a gauge,
+  not a finding. In that gauge: height-limited scenes with weak perspective keep the box centre on the screen plane; with stronger
+  perspective it is pushed back by an amount that depends on rotX and perspective but not on rotY (rotX 10: -82 pt at 60, -169 at
+  120); eye distance / box half-diagonal clusters near 3.0 / 2.0 / 1.45 at perspective 30 / 60 / 120 on the 415 x 242 rows, but over
+  the whole grid it spreads 3.3-4.5 / 1.9-2.5 / 1.2-1.6, so it is not the rule. The lateral offset at the screen plane goes as
+  1 / eye distance (rotX 0 rotY 40: offset x eye distance -18.6 / -18.2 / -19.7 thousand pt^2 at 30 / 60 / 120) but its constant
+  is not bbox centring (ratio 0.7-1.9 across probes).
+- Rules tried and rejected on the grid: fixed anchor point on the camera axis (best, the back-wall centre, median 4.2 / max 16.6 pt),
+  per-axis plane anchors, hidden wall thickness around the box (3.2 pt rms of the free centre), stretched fit box, a separate
+  fitting eye distance, one-step centring, camera-aligned 3-D bounding box front face, mean of corners, face-subset bboxes.
+- LibreOffice (chart2/source/view/diagram/VDiagram.cxx:409-423 adjustPosAndSize_3d): the scene's 2-D snap rectangle (perspective
+  included, via E3DModifySceneSnapRectUpdater, :394-400) is scaled keeping its aspect and centred in the plot; automatic 3-D
+  aspect at :261-375. That is the centred-bbox rule Word does not follow.
+- Renderer unchanged (no rule improves every probe and fixture); the gate of 1 pt is not met. Next: fit the placement as a
+  function of the camera-space box extents per limiting direction on the grid data already measured.

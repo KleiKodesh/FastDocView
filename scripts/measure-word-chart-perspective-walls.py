@@ -1,6 +1,8 @@
 import fitz, numpy as np, json, sys, glob, os
 folder = sys.argv[1]
-probes = json.load(open(os.path.join(folder, 'word-charts-perspective-v1.json')))
+# optional third argument: the probe set's name prefix (default word-charts-perspective-v1; the scene grid uses grid)
+prefix = sys.argv[3] if len(sys.argv) > 3 else 'word-charts-perspective-v1'
+probes = json.load(open(os.path.join(folder, prefix + '.json')))
 out = []
 def hull(pts):
     pts = sorted(set(map(tuple, pts)))
@@ -45,7 +47,7 @@ def quad(mask):
     H = [H[t] for t in best[1]]
     return [list(map(float, h)) for h in H]
 k = 0
-for f in sorted(glob.glob(os.path.join(folder, 'word-charts-perspective-v1-*.pdf'))):
+for f in sorted(glob.glob(os.path.join(folder, prefix + '-*.pdf'))):
     d = fitz.open(f)
     for page in d:
         infos = sorted(page.get_image_info(xrefs=True), key=lambda i: i['bbox'][1])
