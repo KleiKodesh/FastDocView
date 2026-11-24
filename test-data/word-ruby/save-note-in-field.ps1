@@ -1,7 +1,8 @@
 # Opens note-in-field-v1.rtf (or -Name note-in-field-code-v1: locked fields, so their results stay) in Word 16 (COM, hidden, no alerts, no field update), saves Word's PDF of it (<name>.rtf.pdf)
 # and Word's own .docx (<name>.docx), then reopens that .docx and saves its PDF (<name>.docx.pdf): where Word
 # draws a note mark whose reference sits in a field's code. Run from this folder: powershell -File save-note-in-field.ps1
-param([string]$Name = 'note-in-field-v1')
+# -Doc also saves Word's .doc (<name>.doc) and its PDF (<name>.doc.pdf), and lists each field's Type / Locked / Result (Word's view).
+param([string]$Name = 'note-in-field-v1', [switch]$Doc)
 $ErrorActionPreference = 'Stop'
 $base = Join-Path $PSScriptRoot $Name
 $before = @(Get-Process WINWORD -ErrorAction SilentlyContinue | ForEach-Object Id)
@@ -16,11 +17,16 @@ try {
     $d.ActiveWindow.View.Type = 3
     $d.SaveAs2($base + '.rtf.pdf', 17)
     $d.SaveAs2($base + '.docx', 16)
+    if ($Doc) { $d.SaveAs2($base + '.doc', 0) }
     $d.Close(0)
-    $d = $w.Documents.Open($base + '.docx', $false, $true, $false)
-    $d.ActiveWindow.View.Type = 3
-    $d.SaveAs2($base + '.docx.pdf', 17)
-    $d.Close(0)
+    $kinds = @('.docx'); if ($Doc) { $kinds += '.doc' }
+    foreach ($kind in $kinds) {
+        $d = $w.Documents.Open($base + $kind, $false, $true, $false)
+        $d.ActiveWindow.View.Type = 3
+        if ($Doc) { foreach ($f in $d.Fields) { Write-Output ("$kind type=$($f.Type) locked=$($f.Locked) result=[$($f.Result.Text)]") } }
+        $d.SaveAs2($base + $kind + '.pdf', 17)
+        $d.Close(0)
+    }
     Write-Output 'saved'
 }
 finally {

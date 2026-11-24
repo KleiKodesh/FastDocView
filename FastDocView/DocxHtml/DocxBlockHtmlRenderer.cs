@@ -531,9 +531,31 @@ public sealed class DocxBlockHtmlRenderer
         // (at a separator the field itself is the innermost: only a link around it counts as open)
         bool wrap = linkTag is not null && _activeLinkOpenTag is null && (_fields.Depth > 0 && _fields.Fields[_fields.Depth - 1].LinkTag == linkTag ? _fields.OuterActiveLink : ActiveFieldLink()) is null;
         if (wrap) html.Append(linkTag);
-        if (output.Html is { } markup) html.Append(markup);
+        if (output.Html is { } markup) AppendWithNoteMarks(html, markup);
         else html.Append(WordHtmlText.Encode(output.Text!));
         if (wrap) html.Append("</a>");
+    }
+
+    private static readonly string NoteMarkPlaceholderText = Fields.WordFieldRuby.NoteMarkPlaceholder.ToString();
+    private static bool IsNoteReference(string name) => name is "footnoteReference" or "endnoteReference";
+
+    /// <summary>The note references met inside field codes, in order; each is a placeholder in its code (as for .doc and RTF).</summary>
+    private readonly List<XElement> _instructionNoteReferences = new();
+    /// <summary>Where each open field's own code notes start in <see cref="_instructionNoteReferences"/> (dropped when it ends).</summary>
+    private readonly Stack<int> _instructionNoteStarts = new();
+
+    /// <summary>A field's HTML with each note placeholder of its code swapped for that note's mark (an EQ draws them in place).</summary>
+    private void AppendWithNoteMarks(StringBuilder html, string markup)
+    {
+        foreach (char c in markup)
+        {
+            if (c != Fields.WordFieldRuby.NoteMarkPlaceholder) { html.Append(c); continue; }
+            int start = _instructionNoteStarts.Count > 0 ? Math.Min(_instructionNoteStarts.Peek(), _instructionNoteReferences.Count) : 0;
+            if (start >= _instructionNoteReferences.Count) continue;
+            XElement reference = _instructionNoteReferences[start];
+            _instructionNoteReferences.RemoveAt(start);
+            AppendNoteReference(html, reference.Name.LocalName == "footnoteReference" ? WordDocumentNoteKind.Footnote : WordDocumentNoteKind.Endnote, reference);
+        }
     }
 
     /// <summary>w:ffData of a form field's w:fldChar begin (17.16.17): checkbox state, drop-down entries and selection, text default.</summary>
@@ -777,8 +799,13 @@ public sealed class DocxBlockHtmlRenderer
             // inside a field's code (a nested field's result there is part of the code) or a result replaced by a placeholder /
             // computed text: nothing shows
             if (_fields.Depth > 0 && childName is not ("fldChar" or "instrText" or "rPr" or "AlternateContent")
-                && _fields.Route(childName is "t" ? child.Value : childName is "tab" or "ptab" ? "\t" : null) != Fields.WordFieldTextRoute.Visible)
+                && _fields.Route(childName is "t" ? child.Value : childName is "tab" or "ptab" ? "\t" : IsNoteReference(childName) ? NoteMarkPlaceholderText : null) is var route
+                && route != Fields.WordFieldTextRoute.Visible)
+            {
+                // a note reference in a field's code: a placeholder in the code (the keyword rule and an EQ's drawn mark need its place)
+                if (route == Fields.WordFieldTextRoute.Instruction && IsNoteReference(childName)) _instructionNoteReferences.Add(child);
                 continue;
+            }
             switch (childName)
             {
                 case "t": case "delText": AppendRunText(html, child, formatting); break;
@@ -848,7 +875,7 @@ public sealed class DocxBlockHtmlRenderer
                 case "fldChar":
                     switch ((string?)child.Attribute(W + "fldCharType"))
                     {
-                        case "begin": _fields.Begin(IsOn(child.Attribute(W + "dirty")), IsOn(child.Attribute(W + "fldLock")), FormFieldState(child)); break;
+                        case "begin": _instructionNoteStarts.Push(_instructionNoteReferences.Count); _fields.Begin(IsOn(child.Attribute(W + "dirty")), IsOn(child.Attribute(W + "fldLock")), FormFieldState(child)); break;
                         case "separate":
                         {
                             Fields.WordFieldOutput output = _fields.Separate();
@@ -860,6 +887,10 @@ public sealed class DocxBlockHtmlRenderer
                         {
                             Fields.WordFieldOutput output = _fields.End(out string? linkTag);
                             if (_fields.Route() == Fields.WordFieldTextRoute.Visible) AppendFieldOutput(html, output, linkTag);
+                            // the notes of this field's code its output did not place are not drawn (Word draws none)
+                            if (_instructionNoteStarts.Count > 0 && _instructionNoteStarts.Pop() is var own && own < _instructionNoteReferences.Count)
+                                _instructionNoteReferences.RemoveRange(own, _instructionNoteReferences.Count - own);
+                            if (_fields.Depth == 0) { _instructionNoteReferences.Clear(); _instructionNoteStarts.Clear(); }
                             break;
                         }
                     }

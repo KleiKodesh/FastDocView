@@ -48,6 +48,9 @@ public static class WordFieldEvaluator
         "PAGE" or "PAGEREF" or "NUMPAGES" or "SECTION" or "SECTIONPAGES" => WordFieldDisplay.PagePlaceholder,
         // index / authority / contents entries, document data, mail-merge control and prompts with no visible result
         "XE" or "TC" or "TA" or "RD" or "SET" or "ASK" or "PRIVATE" or "NEXT" or "NEXTIF" or "SKIPIF" or "PRINT" => WordFieldDisplay.Hidden,
+        // no keyword (an empty code, or one whose keyword a note reference broke): Word 16 gives the field no type (Field.Type -1)
+        // and shows nothing, locked or not (checked 2026-11-24 in .rtf / .docx / .doc)
+        WordFieldInstruction.NoTypeName => WordFieldDisplay.Hidden,
         _ => WordFieldDisplay.Result,
     };
 

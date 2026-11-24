@@ -928,13 +928,9 @@ public sealed class DocBinaryParagraphHtmlRenderer
                     else visible.Append(WordHtmlText.Encode(step.Output.Text!));
                     if (step.OutputLink is not null) { Flush(); html.Append("</a>"); }
                 }
-                // marks of notes in a field code the field's HTML did not place (any field but an EQ ruby): drawn where the
-                // code ends (0x14) or the field ends (0x15), so every note keeps its mark in the text
-                if (c is '\u0014' or '\u0015' && fieldState.InstructionNoteCps.Count > 0)
-                {
-                    Flush();
-                    while (fieldState.InstructionNoteCps.TryDequeue(out int noteCp)) AppendNoteMark(html, noteCp, null);
-                }
+                // marks of notes in a field code the field's HTML did not place (any field but an EQ): Word 16 draws none
+                // (note-in-field-keyword-v1.doc.pdf), so they are dropped when the outermost field ends; the notes keep their numbers
+                if (c == '\u0015' && fieldState.Depth == 0) fieldState.InstructionNoteCps.Clear();
                 continue;
             }
             switch (c)

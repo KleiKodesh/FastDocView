@@ -100,12 +100,22 @@ public sealed class WordFieldInstruction
         ["SET"] = [],
     };
 
+    /// <summary>The name of a field Word gives no type (Field.Type -1): an empty code or a keyword a note reference broke. Never a token (a space).</summary>
+    public const string NoTypeName = " ";
+
     public static WordFieldInstruction Parse(string code)
     {
+        if (string.IsNullOrWhiteSpace(code)) return new WordFieldInstruction(code, NoTypeName, [], [], []);
         // a note reference inside the code (WordFieldRuby.NoteMarkPlaceholder) is only drawn by an EQ ruby; for any other field it
         // separates tokens as the space it was read as before (its mark is drawn after the field's result)
-        if (code.IndexOf(WordFieldRuby.NoteMarkPlaceholder) >= 0 && !code.TrimStart().StartsWith("EQ", StringComparison.OrdinalIgnoreCase))
-            code = code.Replace(WordFieldRuby.NoteMarkPlaceholder, ' ');
+        if (code.IndexOf(WordFieldRuby.NoteMarkPlaceholder) >= 0)
+        {
+            // Word 16 (2026-11-24, test-data/word-ruby/note-in-field-keyword-v1.rtf / .docx / .doc): a note reference before the
+            // field's keyword or touching its end ("MERGEFIELD{note} name", "{note}MERGEFIELD") leaves the field without a type
+            // (Field.Type -1): it shows nothing, locked or not, and no mark. "=" is a keyword by itself ("={note} 1+2" computes).
+            if (IsKeywordBrokenByNote(code)) return new WordFieldInstruction(code.Replace(WordFieldRuby.NoteMarkPlaceholder.ToString(), ""), NoTypeName, [], [], []);
+            if (!code.TrimStart().StartsWith("EQ", StringComparison.OrdinalIgnoreCase)) code = code.Replace(WordFieldRuby.NoteMarkPlaceholder, ' ');
+        }
         var tokens = new List<WordFieldToken>();
         int index = 0;
         // DomainMapper_Impl.cxx:6024-6031: a field may start with a stray backslash ("\REF ..."); Word skips it
@@ -131,6 +141,18 @@ public sealed class WordFieldInstruction
             else switches.Add((token.Text, null));
         }
         return new WordFieldInstruction(code, name, tokens, arguments, switches);
+    }
+
+    /// <summary>Whether a note reference (its placeholder) comes before the code's first token or right after it, with no space between.</summary>
+    private static bool IsKeywordBrokenByNote(string code)
+    {
+        int index = 0;
+        while (index < code.Length && char.IsWhiteSpace(code[index])) index++;
+        if (index == code.Length) return false;
+        if (code[index] == '=') return false;
+        for (; index < code.Length && !char.IsWhiteSpace(code[index]); index++)
+            if (code[index] == WordFieldRuby.NoteMarkPlaceholder) return true;
+        return false;
     }
 
     /// <summary>DomainMapper_Impl.cxx:5918 lcl_ExtractToken, with any whitespace as a separator.</summary>

@@ -151,13 +151,27 @@ internal sealed class WordFontMetrics
         try
         {
             if (WordFontFile.Find(family, bold, italic) is { } file)
-                using (FileStream stream = WordFontFile.Open(file.Path)) metrics = Read(family, stream, file.Face);
+            {
+                // no bold face: Word (GDI) synthesizes the bold from the regular / italic face
+                bool synthesizedBold = bold && WordFontFile.Find(family, false, italic) is { } plain && plain == file;
+                using (FileStream stream = WordFontFile.Open(file.Path)) metrics = Read(family, stream, file.Face, synthesizedBold);
+            }
         }
         catch (Exception exception) when (WordFontFile.IsUnreadable(exception)) { metrics = null; }
         return metrics ?? Embedded(family);
     }
 
-    private static WordFontMetrics? Read(string family, Stream stream, int face)
+    /// <summary>
+    /// GDI's synthesized bold of a face whose head.flags bit 4 says instructions may change advance widths and that has no hdmx
+    /// table narrows every advance by 1 / 1.02 (Word 16 measures with it: gabriola-bold-block-list draws its advances ~1.5 %
+    /// narrower than the regular face's). Measured 2026-11-24 with GDI GetTextExtentPoint32W / GetCharWidth32W at 4096 - 16384
+    /// px, weight 700 against 400: Gabriola, MV Boli, Javanese Text, Mongolian Baiti, Microsoft Himalaya, Microsoft Yi Baiti,
+    /// Segoe UI Historic, Segoe UI Emoji, Cambria Math 0.9804 (= 1 / 1.02); faces with an hdmx table (Sylfaen, Impact, Lucida
+    /// Sans Unicode, Segoe UI Symbol, Webdings) or without bit 4 (Lucida Console, Ink Free) 1.0003 (the regular advances).
+    /// </summary>
+    internal const double SynthesizedBoldNarrowing = 1 / 1.02;
+
+    private static WordFontMetrics? Read(string family, Stream stream, int face, bool synthesizedBold = false)
     {
         var tables = WordFontFile.Tables(stream, WordFontFile.FaceOffsets(stream)[face]);
         if (!tables.TryGetValue("head", out var headAt) || !tables.TryGetValue("hhea", out var hheaAt) || !tables.TryGetValue("hmtx", out var hmtxAt) || !tables.TryGetValue("cmap", out var cmapAt)) return null;
@@ -168,6 +182,8 @@ internal sealed class WordFontMetrics
         if (metricCount == 0) return null;
         var advances = new double[Math.Min(metricCount, hmtx.Length / 4)];
         for (int i = 0; i < advances.Length; i++) advances[i] = WordFontFile.U16(hmtx, i * 4) / unitsPerEm;
+        if (synthesizedBold && (WordFontFile.U16(head, 16) & 0x10) != 0 && !tables.ContainsKey("hdmx"))
+            for (int i = 0; i < advances.Length; i++) advances[i] *= SynthesizedBoldNarrowing;
         if (advances.Length == 0) return null;
         // line height: hhea ascender - descender + line gap (what Word gives a line of DrawingML text: Calibri 1.2207, Arial 1.1499)
         double lineHeight = (WordFontFile.S16(hhea, 4) - WordFontFile.S16(hhea, 6) + WordFontFile.S16(hhea, 8)) / unitsPerEm;

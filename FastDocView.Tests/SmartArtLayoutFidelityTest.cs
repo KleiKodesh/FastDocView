@@ -29,7 +29,9 @@ public static class SmartArtLayoutFidelityTest
                                                 "yugothic-lines-block-list", "msgothic-lines-block-list", "malgun-lines-block-list", "simsun-lines-block-list", "korean-ea-block-list",
                                                 // Indic shaping in Nirmala UI (Kannada below-base forms and 'dist', Telugu conjuncts); families with no bold / italic
                                                 // face, whose synthesized style Word measures with the regular advances (Sylfaen, Impact bold; Gabriola italic)
-                                                "kannada-block-list", "telugu-block-list", "gabriola-block-list", "gabriola-italic-block-list",
+                                                "kannada-block-list", "telugu-block-list", "gabriola-block-list", "gabriola-italic-block-list", "gabriola-bold-block-list", "devanagari-block-list",
+                                                // the devanagari block list resaved by Word in other frames: snake scale in steps of 1/2048
+                                                "snake-frame-1", "snake-frame-2", "snake-frame-3", "snake-frame-4", "snake-frame-5", "snake-frame-6",
                                                 "sylfaen-block-list", "sylfaen-bold-block-list", "impact-block-list", "impact-bold-block-list"];
     private const double TolerancePoints = 4;
     private const double EmuPerPoint = 12700;

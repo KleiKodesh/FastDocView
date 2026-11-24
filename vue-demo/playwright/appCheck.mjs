@@ -82,18 +82,25 @@ if (complete.footnoteCount + complete.endnoteCount > 0) {
   const references = await page.evaluate(async id => (await fetch(`/api/documents/${id}/note-references`)).json(), complete.documentId)
   console.log(`  ${references.length} note references; first in block ${references[0]?.blockIndex}`)
   let found = false
-  if (references.length > 0) {
-    await scrollToBlock(references[0].blockIndex)
-    found = await page.waitForSelector('.windowed-scroller-viewport .note-reference[data-note-kind]', { timeout: 30_000 }).then(Boolean, () => false)
+  // a note whose reference sits in a field code has no mark in the text by design (Word draws none): try the referencing blocks
+  // in order until one draws a mark
+  const blocks = [...new Set(references.map(reference => reference.blockIndex))]
+  let markSelector = '.fast-doc-view-content .note-reference[data-note-kind]'
+  for (let i = 0; i < blocks.length && !found; i++) {
+    await scrollToBlock(blocks[i])
+    const selector = `.windowed-scroller-viewport [data-index="${blocks[i]}"] .note-reference[data-note-kind]`
+    found = await page.waitForSelector(selector, { state: 'attached', timeout: i === 0 ? 30_000 : 5_000 }).then(Boolean, () => false)
+    if (found) markSelector = selector
   }
   check(found, 'a note reference is rendered in the text')
   if (found) {
     // What the page does (FastDocViewPage openNoteFromReference + FastDocViewNotesPane landNote): a click on a reference
     // opens the notes pane and LANDS its note at the pane's top (no highlight class); the note's label / own mark jumps
     // the text back to the reference and flashes it (.note-reference--current).
-    const reference = await page.$('.fast-doc-view-content .note-reference[data-note-kind]')
+    const reference = await page.$(markSelector)
     const referenceLabel = ((await reference.textContent()) ?? '').trim()
-    await reference.click()
+    // a DOM click: a mark inside an EQ (MathML) may have no box Playwright counts as clickable
+    await reference.evaluate(element => element.click())
     // wait for the page's own outcome - the pane open and the reference's note landed at its top - never a fixed delay:
     // (a reference clicked before the note list caught up once found no note - the page now waits for it, useFastDocViewNotes)
     await page.waitForFunction(label => {
@@ -102,25 +109,30 @@ if (complete.footnoteCount + complete.endnoteCount > 0) {
       const top = viewport.getBoundingClientRect().top
       return [...viewport.querySelectorAll('.fast-doc-view-note')].some(row => {
         const mark = row.querySelector('.note-label') ?? row.querySelector('.note-mark')
-        return (mark?.textContent ?? '').trim() === label && Math.abs(row.getBoundingClientRect().top - top) <= 12
+        const atEnd = viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 2
+        const offset = row.getBoundingClientRect().top - top
+        return (mark?.textContent ?? '').trim() === label && (Math.abs(offset) <= 12 || atEnd && offset >= -4 && offset < viewport.clientHeight)
       })
     }, referenceLabel, { timeout: 60000 }).catch(() => {})
-    const landed = await page.evaluate(() => {
+    // the clicked reference's own note (not just the pane's top row: notes whose reference sits in a field code have no mark in
+    // the text by design - Word draws none - so only a note with a mark is a valid jump target). A note near the end lands as high
+    // as the pane can scroll: at the top, or anywhere visible with the pane scrolled to its end.
+    const landed = await page.evaluate(label => {
       const viewport = document.querySelector('.fast-doc-view-notes-pane .notes-scroller')
       if (!viewport) return null
       const top = viewport.getBoundingClientRect().top
-      const rows = [...viewport.querySelectorAll('.fast-doc-view-note')]
-        .map(row => ({ row, offset: row.getBoundingClientRect().top - top }))
-        .filter(entry => entry.offset > -4)
-        .sort((a, b) => a.offset - b.offset)
-      const first = rows[0]
-      if (!first) return null
-      const mark = first.row.querySelector('.note-label') ?? first.row.querySelector('.note-mark')
-      return { index: Number(first.row.dataset.noteIndex), offset: Math.round(first.offset), label: (mark?.textContent ?? '').trim() }
-    })
+      const atEnd = viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 2
+      const row = [...viewport.querySelectorAll('.fast-doc-view-note')].find(candidate => {
+        const mark = candidate.querySelector('.note-label') ?? candidate.querySelector('.note-mark')
+        return (mark?.textContent ?? '').trim() === label
+      })
+      if (!row) return null
+      const offset = Math.round(row.getBoundingClientRect().top - top)
+      return { index: Number(row.dataset.noteIndex), offset, label, atTop: Math.abs(offset) <= 12 || atEnd && offset >= -4 && offset < viewport.clientHeight }
+    }, referenceLabel)
     console.log(`  reference "${referenceLabel}" -> note pane top: ${JSON.stringify(landed)}`)
     check((await state()).notesPaneOpen && !!landed, 'clicking a reference opens the notes pane')
-    check(!!landed && landed.label === referenceLabel && Math.abs(landed.offset) <= 12,
+    check(!!landed && landed.atTop,
           "the clicked reference's note lands at the notes pane's top")
     if (landed) {
       // sync off first: with it on, the notes pane rightly follows the text to the end, and a document with notes

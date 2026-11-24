@@ -1520,6 +1520,8 @@ internal static class DocxDiagramLayout
         /// columns as give the largest nodes at their constrained aspect ratio with the sp spacing between them; the grid centred
         /// in the shape and a short last row centred (off ctr).
         /// </summary>
+        private const double SnakeScaleSteps = 2048;
+
         private static void Snake(AlgorithmAtom algorithm, DiagramShape shape, List<Constraint> own)
         {
             shape.Children.RemoveAll(c => c.IsGroup && c.Children.Count == 0);
@@ -1538,7 +1540,11 @@ internal static class DocxDiagramLayout
                 if (scale > best.scale + 1e-9) best = (columns, scale);
             }
             int bestColumns = best.columns, bestRows = (count + bestColumns - 1) / bestColumns;
-            double s = best.scale, width = nodeWidth * s, height = nodeHeight * s, space = gap * s;
+            // Word 16 takes the largest scale in steps of 1/2048 that fits (the frame never quite filled when the fit is not a
+            // step): a 3-node block list resaved by Word in seven frames (2026-11-24; 2 columns height- or width-limited, 1 column,
+            // 3 columns) has node widths floor(scale * 2048) / 2048 * the constrained width within 1 EMU (devanagari-block-list:
+            // 2364168 EMU where the height allows 2366596)
+            double s = Math.Floor(best.scale * SnakeScaleSteps + 1e-9) / SnakeScaleSteps is > 0 and var stepped ? stepped : best.scale, width = nodeWidth * s, height = nodeHeight * s, space = gap * s;
             double gridWidth = bestColumns * width + (bestColumns - 1) * space, gridHeight = bestRows * height + (bestRows - 1) * space;
             string gridDirection = algorithm.Parameter("grDir", "tL");
             bool fromRight = gridDirection is "tR" or "bR", fromBottom = gridDirection is "bL" or "bR";

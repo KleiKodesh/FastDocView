@@ -24,6 +24,7 @@ public static class RubyAndBulletFontFidelityTest
         Edges(root);
         NoteInField(root);
         NoteInFieldCode(root);
+        NoteInFieldKeyword(root);
         foreach (string extension in new[] { ".fodt", ".odt" })
         {
             string path = Path.Combine(root, "odt-bullet-fonts", "bullet-font-name-v1" + extension);
@@ -211,8 +212,9 @@ public static class RubyAndBulletFontFidelityTest
         TestReport.Check(numerator >= 0 && markA > numerator && markA < denominator, $"{file}: a note in a plain EQ field's code keeps its mark in place (the fraction's numerator)");
         TestReport.Check(b.Contains("res<sup", StringComparison.Ordinal) && b.Contains(Mark(2) + "ult", StringComparison.Ordinal), $"{file}: a note in a field's result is drawn between the result's runs");
         // Word 16 draws no mark for it (note-in-field-v1.rtf.pdf: "case C:  tailC", note ii still listed)
-        TestReport.Check(c.Contains("merged", StringComparison.Ordinal) && !c.Contains("note-reference", StringComparison.Ordinal) && !c.Contains("name", StringComparison.Ordinal),
-                         $"{file}: a note in a non-EQ field's code draws no mark (as Word); the code stays hidden");
+        // its note touches the keyword ("MERGEFIELD{note} name"): Word shows no result either (note-in-field-keyword-v1)
+        TestReport.Check(!c.Contains("merged", StringComparison.Ordinal) && !c.Contains("note-reference", StringComparison.Ordinal) && !c.Contains("name", StringComparison.Ordinal),
+                         $"{file}: a note touching a non-EQ field's keyword draws no mark and no result (as Word); the code stays hidden");
         TestReport.Check(e.Contains(Mark(4), StringComparison.Ordinal), $"{file}: the body note after them is numbered 4");
         var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-note-in-field") };
         using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(Path.Combine(root, "word-ruby", file), policy);
@@ -243,11 +245,40 @@ public static class RubyAndBulletFontFidelityTest
             TestReport.Check(PlainText(h).Contains("case H: last tailH", StringComparison.Ordinal) && !h.Contains("note-reference", StringComparison.Ordinal),
                              $"{file}: a note in a non-EQ field's code draws no mark; the result stays (got [{PlainText(h)}])");
             TestReport.Check(i.Contains("data-note-number=\"4\"", StringComparison.Ordinal), $"{file}: the body note after three code notes is number 4");
+            string f = blocks.FirstOrDefault(html => html.Contains("case F:", StringComparison.Ordinal)) ?? "";
+            TestReport.Check(PlainText(f).Contains("case F:  tailF", StringComparison.Ordinal) && !f.Contains("note-reference", StringComparison.Ordinal),
+                             $"{file}: a locked MERGEFIELD whose note touches its keyword shows nothing, as Word (got [{PlainText(f)}])");
             var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-" + file.Replace('.', '-')) };
             using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(Path.Combine(root, "word-ruby", file), policy);
             List<WordDocumentNoteHtml> notes = document.RenderBlocks(0, document.BlockCount).SelectMany(block => block.Notes).ToList();
             TestReport.Check(notes.Count == 4 && Enumerable.Range(0, 4).All(n => notes[n].Number == n + 1 && PlainText(notes[n].Html).Contains("note " + "FGHI"[n])),
                              $"{file}: the notes pane lists the four notes in order ({notes.Count} note(s))");
+        }
+    }
+
+    /// <summary>
+    /// test-data/word-ruby/note-in-field-keyword-v1.rtf (scripts/make-note-in-field-keyword-fixture.py) and Word 16's .docx / .doc
+    /// of it (save-note-in-field.ps1 -Doc): a note reference before the keyword or touching its end leaves the field without a type
+    /// (Word's Field.Type -1) and Word's PDFs show neither result nor mark; an empty code shows nothing either; a note after the
+    /// keyword and a space or tab keeps the result; "=" is a keyword by itself; inside an EQ's arguments the mark is drawn.
+    /// </summary>
+    private static void NoteInFieldKeyword(string root)
+    {
+        const string shown = "BEJMRS";     // Word's PDFs (all three formats): "case B: resB tailB" ... ; every other case "case X:  tailX"
+        foreach (string file in new[] { "note-in-field-keyword-v1.rtf", "note-in-field-keyword-v1.docx", "note-in-field-keyword-v1.doc" })
+        {
+            List<string> blocks = RenderAll(root, file);
+            var wrong = new List<string>();
+            foreach (char letter in "ABCDEFGHIJKLMNOQRS")
+            {
+                string block = blocks.FirstOrDefault(html => html.Contains("case " + letter + ":", StringComparison.Ordinal)) ?? "";
+                string text = PlainText(block).Trim();
+                string expected = shown.IndexOf(letter) >= 0 ? $"case {letter}: res{letter} tail{letter}" : $"case {letter}:  tail{letter}";
+                if (text != expected || block.Contains("note-reference", StringComparison.Ordinal)) wrong.Add($"[{text}]");
+            }
+            TestReport.Check(wrong.Count == 0, $"{file}: a note before or touching a field's keyword hides the field as Word does; others as Word ({string.Join(" ", wrong)})");
+            string p = blocks.FirstOrDefault(html => html.Contains("case P:", StringComparison.Ordinal)) ?? "";
+            TestReport.Check(p.Contains("data-note-number=\"12\"", StringComparison.Ordinal), $"{file}: a note inside an EQ's arguments keeps its mark (note 12)");
         }
     }
 

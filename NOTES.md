@@ -1848,10 +1848,24 @@ conversion of the sample book (212 MB, 123,183 blocks). Before -> after:
   not widen a synthesized bold. Its PDFs draw the same glyphs filled and stroked (0.8 pt at 28 pt), and Sylfaen bold, Impact
   bold and Gabriola italic get Word's sizes from the regular advances (now in --smartart's checked list). Gabriola bold is the
   exception: Word draws its advances about 1.5 % narrower than the regular face's (drawn / hmtx 0.985 against 1.001 for
-  regular) and its autofit gives 28 pt where the regular face gets 27; we give 27 (INFO, cause not known). Kannada and Telugu
+  regular) and its autofit gives 28 pt where the regular face gets 27; we give 27 (INFO, cause not known - found the same day, below). Kannada and Telugu
   sizes match Word's; Devanagari is 28 pt for Word's 27: our snake boxes are 0.2 pt wider than Word's (Word's 3-node block
   list is 2364168 EMU wide where the height allows 2366596, offset 1578 EMU from the top; process and cycle have the same few
   hundred EMU), and that word sits on the edge (6.0532 em x 28 = 169.49 pt in our 169.55 pt line, Word's line 169.35).
+  Both closed 2026-11-24 (now checked in --smartart). (a) Gabriola bold is GDI's synthesized bold: GetCharWidth32W /
+  GetTextExtentPoint32W at 4096 - 16384 px, weight 700 against 400, give every Gabriola advance x 0.9804 (= 1 / 1.02), and the same
+  for MV Boli, Javanese Text, Mongolian Baiti, Microsoft Himalaya, Microsoft Yi Baiti, Segoe UI Historic, Segoe UI Emoji and Cambria
+  Math; Sylfaen, Impact, Lucida Sans Unicode, Segoe UI Symbol, Webdings (all with an hdmx table) and Lucida Console, Ink Free (head.flags
+  bit 4 "instructions may alter advance widths" clear) keep their advances (1.0003). So WordFontMetrics narrows a synthesized bold
+  (no bold file in the family) by 1 / 1.02 when head.flags bit 4 is set and there is no hdmx table. At Word's twips GDI also adds
+  about one twip per glyph (Word's bold / regular ratio 0.984 against GDI-at-twips 0.985); not modelled, the sizes match without it.
+  LibreOffice keeps a synthesized bold's advances (LogicalFontInstance.cxx:471-479), so Word is the reference. (b) The snake's
+  scale is quantized: Word resaved the Devanagari block list in seven frames (5274310 x 3076575 / 2000000 / 4000000 / 1000000 /
+  2500000, 3000000 x 3076575, 6000000 x 3000000; test-data/smartart-layouts/snake-frame-1..6-v1.docx) and every node width is
+  floor(scale x 2048) / 2048 x the constrained width (2-column height- and width-limited, 1 column, 3 columns where 1/3.2 is a
+  step and the frame is filled exactly), within 1 EMU; DocxDiagramLayout.Snake does the same. LibreOffice's snake picks its grid
+  by an aspect-ratio heuristic and no steps (oox/source/drawingml/diagram/diagramlayoutatoms.cxx:756-905). The lin / cycle slack
+  (chevron 1545 EMU, process 4635) is another rule, not this one (0.999414 is not a 1/2048 step).
 - Charts: DocxChart draws c:chart from the cached values as SVG (bar / column clustered / stacked / percent, line, area,
   pie, doughnut, of-pie as a pie, scatter, radar, bubble, stock and surface as lines; 3-D kinds as 2-D), titles, axes,
   gridlines, legend, data labels; colours from the series / points or LibreOffice's chart style patterns
@@ -2593,6 +2607,22 @@ both .rtf files in list-overrides-v1.expected.txt), list-bullet-look-v1.fodt. Ch
   listed (i - iv). The RTF
   renderer now drops such marks when the field ends (a non-EQ code places none); .docx already drew none. (Word also leaves
   out the locked MERGEFIELD result of case F, whose name follows the note; we draw it.)
+  Word's rule, found 2026-11-24 (test-data/word-ruby/note-in-field-keyword-v1.rtf from scripts/make-note-in-field-keyword-fixture.py,
+  19 cases; save-note-in-field.ps1 -Doc saves Word's .docx, .doc and the three PDFs and lists Field.Type): a note reference before
+  the code's first token or touching its end with no space ("MERGEFIELD{note} name", "{note}MERGEFIELD", " MERGEFIELD{note}",
+  "MERGE{note}FIELD", "{note} MERGEFIELD", "EQ{note} ...", "PAGE{note}") leaves the field with Field.Type -1 (wdFieldEmpty) and
+  Word shows nothing - no result, locked or not, no mark - in .rtf, .docx and .doc alike. After the keyword and a space or tab
+  ("MERGEFIELD {note}name", "MERGEFIELD\t{note}name") the field keeps its type and its result. "=" is a keyword by itself
+  ("={note} 1+2": type 34, result shown). An empty code ({ }) is type -1 too and shows nothing, locked or not. An unknown keyword
+  (XYZFIELD) is type 3 (REF) and a locked one shows its result. Inside an EQ's arguments the mark is drawn in place (case P).
+  Implemented once for all formats in WordFieldInstruction.Parse (a note placeholder in or before the first token: no name) and
+  WordFieldEvaluator.DisplayOf("") = Hidden; the .docx renderer now puts a placeholder in the code for a w:footnoteReference /
+  w:endnoteReference there too (and swaps it for the mark in an EQ), and the .doc renderer drops unplaced code-note marks at the
+  outermost field end instead of drawing them (Word draws none). LibreOffice builds the command from the instruction text only
+  (sw/source/writerfilter/dmapper/DomainMapper_Impl.cxx:6886-6905 AppendFieldCommand, :8276 splitFieldCommand), so it keeps the
+  type and draws the result: Word is the reference. appCheck: the note-jump checks follow the clicked reference's own note (a note
+  whose reference is in a field code has no mark in the text by design) and accept a note near the end that lands as high as the
+  pane can scroll.
 - .doc (render time, no index change): sprmCPbiGrf 0x4888 bit 0 + sprmCPbiIBullet 0x6887 (4 bytes) in the LVL grpprlChpx (ww8par3.cxx:808-819,
   :839-845; writer wrtw8num.cxx:355-358) name picture N of the paragraph holding the "_PictureBullets" bookmark, counted from the bookmark start
   (ww8par.cxx:5302-5348); that paragraph's runs are read once per renderer, the id is the PICF offset as for any inline picture. Hidden (vanish)
