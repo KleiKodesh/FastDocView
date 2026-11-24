@@ -497,7 +497,7 @@ internal sealed class WordXmlSearchText
             int instructionDepth = -1;             // the open w:instrText
             var simpleFields = new List<(int depth, bool separated)>();   // open w:fldSimple elements
             bool skipped = false;                  // Skip() already moved to the next node
-            string? rubyRest = null;               // the last ruby guide's rest after a comma, fed at the start of its base
+            bool rubyGuideHasComma = false;        // the last ruby guide had a comma: Word's Find reads it as written and not its base
             int rubyBaseDepth = -1;                // the open w:rubyBase (its ")" are not drawn)
             while (skipped ? !reader.EOF : reader.Read())
             {
@@ -518,21 +518,19 @@ internal sealed class WordXmlSearchText
                         // searched before its base, as Word's Find) are not body text
                         if (reader.LocalName == "rt" && !reader.IsEmptyElement)
                         {
-                            // only its rest after a comma is drawn - at the start of the base (DocxRubyText, as DocxSearchTextScanner)
+                            // searched before its base, as Word's Find reads a phonetic guide (DocxRubyText.SearchText, as DocxSearchTextScanner)
                             var guide = (XElement)XNode.ReadFrom(reader);
                             string guideText = string.Concat(guide.Descendants().Where(e => e.Name.LocalName == "t").Select(e => e.Value));
-                            rubyRest = DocxHtml.DocxRubyText.SearchRest(guideText);
-                            // a plain guide is searched before its base, as Word's Find reads a phonetic guide
-                            if (rubyRest is null) matcher.Feed(guideText.Replace(")", "").AsSpan());
+                            matcher.Feed(DocxHtml.DocxRubyText.SearchText(guideText, out rubyGuideHasComma).AsSpan());
                             skipped = true;
                             continue;
                         }
                         if (reader.LocalName is "pPr" or "rPr" or "moveFrom" or "rt") { reader.Skip(); skipped = true; continue; }
                         if (reader.LocalName == "rubyBase")
                         {
-                            // the base as Word prints it: the guide's rest and a comma first, every ")" dropped
+                            // the base as Word prints it, every ")" dropped; after a guide with a comma Word's Find reads none of it
+                            if (rubyGuideHasComma) { rubyGuideHasComma = false; reader.Skip(); skipped = true; continue; }
                             if (!reader.IsEmptyElement) rubyBaseDepth = reader.Depth;
-                            if (rubyRest is not null) { matcher.Feed((rubyRest + ",").AsSpan()); rubyRest = null; }
                         }
                         if (fields is not null)
                         {
@@ -588,7 +586,7 @@ internal sealed class WordXmlSearchText
                         if (reader.Depth == rubyBaseDepth) rubyBaseDepth = -1;
                         if (reader.Depth == textDepth) textDepth = -1;
                         else if (reader.Depth == instructionDepth) instructionDepth = -1;
-                        else if (reader.LocalName == "p" && IsWordprocessing(reader.NamespaceURI)) { matcher.Separator(); rubyRest = null; }   // a guide's rest never outlives its paragraph
+                        else if (reader.LocalName == "p" && IsWordprocessing(reader.NamespaceURI)) { matcher.Separator(); rubyGuideHasComma = false; }   // a guide never reaches past its paragraph
                         else if (fields is not null && simpleFields.Count > 0 && reader.Depth == simpleFields[simpleFields.Count - 1].depth)
                         {
                             simpleFields.RemoveAt(simpleFields.Count - 1);

@@ -1,5 +1,5 @@
-// Live check of .doc / RTF ruby (EQ phonetic guide) and ODT bullet fonts named by style:font-name, DOM only:
-//   node playwright/rubyCheck.mjs <test-data/word-ruby/ruby-v1.doc> [.rtf] <test-data/odt-bullet-fonts/bullet-font-name-v1.odt>
+// Live check of .docx / .doc / RTF ruby (EQ phonetic guide) and ODT bullet fonts named by style:font-name, DOM only:
+//   node playwright/rubyCheck.mjs <test-data/word-ruby/ruby-v1.docx> [.doc] [.rtf] <test-data/odt-bullet-fonts/bullet-font-name-v1.odt>
 // Each ruby guide sits above its base (the guide's box ends above the base's middle; line boxes overlap) in Arial at the EQ's hps / 2 pt; each Wingdings bullet draws in Wingdings.
 import { chromium } from 'playwright'
 
@@ -47,7 +47,9 @@ for (const path of process.argv.slice(2)) {
   await page.waitForFunction(() => document.querySelectorAll('ruby').length >= 5, null, { timeout: 60_000 })
   const rubies = await page.evaluate(() => [...document.querySelectorAll('ruby')].map(r => {
     const rt = r.querySelector('rt'), base = document.createRange(); base.selectNodeContents(r.firstChild)
-    const s = getComputedStyle(rt)
+    // the guide text's own box: .docx puts the w:rt run's size on a span inside rt, .doc / RTF put hps / 2 pt on rt itself
+    const text = [...rt.querySelectorAll('*')].reverse().find(e => e.textContent.trim()) ?? rt
+    const s = getComputedStyle(text)
     const b = base.getBoundingClientRect()
     return { rtBottom: rt.getBoundingClientRect().bottom, baseMiddle: (b.top + b.bottom) / 2, size: parseFloat(s.fontSize), family: s.fontFamily }
   }))

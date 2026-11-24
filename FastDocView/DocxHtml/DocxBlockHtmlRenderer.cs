@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using System.Xml.Linq;
 using FastDocView.Docx;
@@ -847,19 +847,33 @@ public sealed class DocxBlockHtmlRenderer
                     break;
                 case "ruby":
                 {
-                    // w:ruby (phonetic guide): the base text with its guide above it - HTML ruby; the guide is shown, not searched
-                    // (search feeds the base as drawn: DocxRubyText.SearchRest, then the base without ")")
+                    // w:ruby (phonetic guide): the base text with its guide above it - HTML ruby, the guide drawn above the base
+                    // (search reads it as Word's Find: DocxRubyText.SearchText)
                     html.Append("<ruby>");
                     XElement? rubyBase = child.Element(W + "rubyBase"), rubyText = child.Element(W + "rt");
                     // brackets and commas change the text as Word prints it (DocxRubyText)
                     if (_rubyTextOriginals.Count > 256) _rubyTextOriginals.Clear();      // only the ruby being drawn is asked about: stay bounded
-                    if (rubyBase is not null && rubyText is not null) (rubyBase, rubyText) = DocxRubyText.AsWordPrints(rubyBase, rubyText, _rubyTextOriginals);
+                    XElement? guideRest = null;
+                    if (rubyBase is not null && rubyText is not null) (rubyBase, rubyText, guideRest) = DocxRubyText.AsWordPrints(rubyBase, rubyText, _rubyTextOriginals);
+                    if (guideRest is not null)
+                    {
+                        // a guide's rest after its comma, on the base line: marked so the app's search highlight reads it after the
+                        // guide, as Word's Find does (Fields.WordFieldRuby.GuideRestClass, the same markup in all three formats)
+                        html.Append("<span class=\"").Append(Fields.WordFieldRuby.GuideRestClass).Append("\">");
+                        yield return new(RenderInlineChildren(guideRest, html, formatting));
+                        html.Append("</span>");
+                    }
                     if (rubyBase is not null) yield return new(RenderInlineChildren(rubyBase, html, formatting));
                     if (rubyText is not null)
                     {
                         // w:rubyAlign as .doc / RTF's EQ jc (Fields.WordFieldRuby: the same markup for all three)
-                        string align = Fields.WordFieldRuby.AlignCss((string?)child.Element(W + "rubyPr")?.Element(W + "rubyAlign")?.Attribute(W + "val"));
-                        html.Append(align.Length > 0 ? "<rt style=\"" + align + "\">" : "<rt>");
+                        XElement? rubyProperties = child.Element(W + "rubyPr");
+                        string style = Fields.WordFieldRuby.AlignCss((string?)rubyProperties?.Element(W + "rubyAlign")?.Attribute(W + "val"));
+                        // w:hps is the guide's size (Word draws a guide run without w:sz at it - ruby-v1 guide3, 12 pt; LibreOffice
+                        // takes hps for the rt runs' height: sw/source/writerfilter/dmapper/DomainMapper.cxx:2426-2430); a run's w:sz still wins
+                        if (int.TryParse((string?)rubyProperties?.Element(W + "hps")?.Attribute(W + "val"), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int guideHalfPoints) && guideHalfPoints > 0)
+                            style = "font-size:" + (guideHalfPoints / 2m).ToString(System.Globalization.CultureInfo.InvariantCulture) + "pt;" + style;
+                        html.Append(style.Length > 0 ? "<rt style=\"" + style + "\">" : "<rt>");
                         yield return new(RenderInlineChildren(rubyText, html, formatting));
                         html.Append("</rt>");
                     }

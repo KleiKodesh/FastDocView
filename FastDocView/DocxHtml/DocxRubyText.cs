@@ -13,8 +13,8 @@ namespace FastDocView.DocxHtml;
 ///   mark prints "g" over "3,base" + the mark). Word's UI writes such a ruby with the base already replaced by the rest
 ///   (guide "g,1" over base "1" prints "1,1").
 /// LibreOffice passes the text through as written (sw/source/writerfilter/dmapper/DomainMapper.cxx:4587 SetRubyText, :3903
-/// PROP_RUBY_TEXT), so Word is the reference. Search and GetText read the base the same way (DocxSearchTextScanner and
-/// WordDocumentSearch feed <see cref="SearchRest"/> and a comma first, then the base without its ")").
+/// PROP_RUBY_TEXT), so Word is the reference. Search and GetText read what Word 16's Find reads (<see cref="SearchText"/>):
+/// the guide then the base; after a guide with a comma only the guide as written, never its base.
 /// A ruby without ")" or "," is returned as it is (no copy). Every copied w:t is mapped to its original so paragraph-end
 /// handling (trailing spaces) still sees where it sits.
 /// </summary>
@@ -22,31 +22,38 @@ public static class DocxRubyText
 {
     private static readonly XNamespace W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
-    /// <summary>The guide's rest after its first comma, without ")" - drawn and searched at the start of the base - or null.</summary>
-    public static string? SearchRest(string guideText)
+    /// <summary>
+    /// What Word 16's Find reads of a guide, fed before its base: the guide without ")". A guide with a comma
+    /// (<paramref name="hasComma"/>) is read as written - head, comma, rest ("g,3"; drawn as "g" over "3,base") - and its base
+    /// not at all: hidden-Word Find on ruby-edges-v1 and ruby-docx-commas-v1 (.docx / .doc / .rtf alike) found "g,3",
+    /// "before g,3", "g,3 after", "g,1,2" and none of "base", ",base", "3,base", "g3"; a plain guide "gb,1" and "gb,1 after".
+    /// </summary>
+    public static string SearchText(string guideText, out bool hasComma)
     {
-        int comma = guideText.IndexOf(',');
-        return comma < 0 ? null : guideText.Substring(comma + 1).Replace(")", "");
+        hasComma = guideText.IndexOf(',') >= 0;
+        return guideText.Replace(")", "");
     }
 
-    /// <summary>The base line and the guide to draw; <paramref name="originals"/> gets every copied w:t's original.</summary>
-    public static (XElement Base, XElement Guide) AsWordPrints(XElement rubyBase, XElement guide, Dictionary<XElement, XElement> originals)
+    /// <summary>
+    /// The base line and the guide to draw, and for a guide with a comma its rest (drawn first on the base line, before the
+    /// comma and the base; null otherwise); <paramref name="originals"/> gets every copied w:t's original.
+    /// </summary>
+    public static (XElement Base, XElement Guide, XElement? GuideRest) AsWordPrints(XElement rubyBase, XElement guide, Dictionary<XElement, XElement> originals)
     {
         string baseText = TextOf(rubyBase), guideText = TextOf(guide);
-        if (baseText.IndexOf(')') < 0 && guideText.IndexOfAny([')', ',']) < 0) return (rubyBase, guide);
+        if (baseText.IndexOf(')') < 0 && guideText.IndexOfAny([')', ',']) < 0) return (rubyBase, guide, null);
         XElement newBase = Keep(rubyBase, 0, int.MaxValue, originals);
         int comma = guideText.IndexOf(',');
-        if (comma < 0) return (newBase, Keep(guide, 0, int.MaxValue, originals));
+        if (comma < 0) return (newBase, Keep(guide, 0, int.MaxValue, originals), null);
         XElement head = Keep(guide, 0, comma, originals);
         XElement rest = Keep(guide, comma + 1, int.MaxValue, originals);
         // the comma after the rest is drawn in the base's run formatting (its first drawn run)
         XElement? baseRun = Shown(rubyBase).FirstOrDefault()?.Parent;
         var commaRun = new XElement(W + "r", baseRun?.Element(W + "rPr") is { } properties ? new XElement(properties) : null, new XElement(W + "t", ","));
         // detached first, so the line takes these very nodes (a parented node would be copied and lose its mapping)
-        List<XNode> restNodes = rest.Nodes().ToList(), baseNodes = newBase.Nodes().ToList();
-        rest.RemoveNodes();
+        List<XNode> baseNodes = newBase.Nodes().ToList();
         newBase.RemoveNodes();
-        return (new XElement(rubyBase.Name, restNodes, commaRun, baseNodes), head);
+        return (new XElement(rubyBase.Name, commaRun, baseNodes), head, rest);
     }
 
     private static string TextOf(XElement container) => string.Concat(Shown(container).Select(t => t.Value));

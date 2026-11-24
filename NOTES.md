@@ -3847,3 +3847,30 @@ latent styles, repeated style ids, Word 2003 files without notes, an element lef
   Word's (the last one 7-14 pt short), the cause of the larger maxima.
 - Harness: RunScenePlacement locks the walls per type (now including stacked areas in one row) and the 3-D pie; label checks re-locked
   (Line3D SerAx back within 1.5 pt of Word).
+### Ruby guide size and search marks, cycle ring, cold-open check (2026-11-24)
+
+- rubyCheck.mjs on ruby-v1.docx "failed" (guides 6 pt): not a regression. The .docx rt markup is the same since the check was
+  written (b3ea119); the check read the rt's own size, while .docx puts w:sz on a span inside it. The span was right for four
+  guides; guide3 has no w:sz and was drawn at the browser's rt default (half the base, 6 pt) where Word draws 12 pt. The .docx
+  rt now gets w:hps / 2 pt (a run's w:sz still wins; LibreOffice sets hps as the rt runs' height:
+  sw/source/writerfilter/dmapper/DomainMapper.cxx:2426-2430), and the check reads the guide text's own size.
+- Ruby search, hidden Word 16 Find (2026-11-24, ruby-edges-v1 and ruby-docx-commas-v1, .docx / .doc / .rtf alike, codes hidden):
+  a guide with a comma is read as written - "g,3", "before g,3", "g,3 after", "g,1,2" found; "base", ",base", "3,base", "g3"
+  not (the base, its note mark included, is skipped). DocxRubyText.SearchText and WordFieldRuby.ToHtml's search text follow it
+  in all three formats (before: .doc / RTF had no text for such a ruby, .docx read "3,base"). Still as drawn, not as Word: a ")"
+  inside a plain base (hand-written forms only; Word's Find stops the base at its first ")": "g0ab" found, "abc" not).
+- The guide's rest after its comma is now a span.ruby-guide-rest (WordFieldRuby.GuideRestClass) in all three formats, so the
+  app can read it. The app's highlighter (vue-frontend fast-doc-view/fastDocViewSearchHighlight.ts) lays each ruby out in
+  reading order (guide, then base - or guide, comma, rest for a comma guide, the base hidden), finds the matches with the shared
+  highlighter, then splits every mark at every tag into a first mark plus search-match-continued parts sharing data-search-part
+  (first marks numbered in reading order; setCurrentMark follows the number and makes the parts current). This also marks a
+  match over several runs in full: before, the page's parser closed the mark at the first </span>. Live:
+  vue-demo/playwright/rubySearchCheck.mjs (eq-search-text-v1 and ruby-edges-v1, three formats).
+- SmartArt cycle ring: no Word rule found. Node sizes in five Word drawings are floor(fit x 2048) / 2048 of the stated width
+  (361, 519, 468, 232) except cycle-8-nodes (242.5 / 2048 = 485 / 4096); the radius is 0.008-0.21 % larger than (w + sibSp) /
+  (2 sin(step / 2)) and the ring fills the frame to 0.005-0.06 % short. Tried: positions at the exact fit, at the stepped scale,
+  filled to the frame, LibreOffice's iterative fit (diagramlayoutatoms.cxx:10178-10190, |fit - 1| < 0.001, no steps) with stepped
+  or plain nodes and sibSp from the node or the scale, 1/4096 steps: none gives all five within an EMU. LibreOffice's fit alone
+  is further from Word on cycle-v1 (node 267 EMU) than ours (0), so cycle keeps our model and stays in the 4 pt set.
+- appCheck "text shown in under 2 s wall": 255-368 ms in four cold opens (both samples, twice) on the rig, with another
+  session's runaway `find /` using a core; the earlier failure was load, not the code.

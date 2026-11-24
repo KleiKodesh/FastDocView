@@ -27,6 +27,12 @@ public static class WordFieldRuby
     /// <summary><see cref="NoteMarkPlaceholder"/> as a string (what a reader routes for a note reference inside fields).</summary>
     public static readonly string NoteMarkPlaceholderText = NoteMarkPlaceholder.ToString();
 
+    /// <summary>
+    /// The class of the span that holds a guide's rest after its comma on the base line (all three formats): the app's search
+    /// highlight reads it right after the guide, with the comma between, as Word's Find reads such a guide (see ToHtml).
+    /// </summary>
+    public const string GuideRestClass = "ruby-guide-rest";
+
     /// <summary>The ruby HTML, or null when the code is not Word's phonetic-guide form.</summary>
     public static string? ToHtml(string equationCode) => ToHtml(equationCode, out _);
 
@@ -34,8 +40,9 @@ public static class WordFieldRuby
     /// The ruby HTML (null when the code is not Word's phonetic-guide form) and its search text: what Word 16's Find matches
     /// in it - the guide, then the base, as one run between the text around the field ("A {EQ ...(gd),base} Z" finds "A gd",
     /// "gdbase" and "base Z", not "basegd"; hidden-Word probe 2026-11-24). Word's Range.Text and its plain-text save give
-    /// nothing for any EQ; the search follows Find. A guide with a comma before its ")" (drawn split) has no search text:
-    /// Word's Find matches its parts only one by one there.
+    /// nothing for any EQ; the search follows Find. A guide with a comma before its ")" (drawn split: head over the rest, a comma
+    /// and the base) is read as written, head + "," + rest, and its base not at all (hidden Word 16 Find on ruby-edges-v1 and
+    /// ruby-docx-commas-v1, 2026-11-24: "g,3", "g,3 after", "g,1,2" found; "base", ",base", "3,base" not).
     /// </summary>
     public static string? ToHtml(string equationCode, out string? searchText)
     {
@@ -116,12 +123,12 @@ public static class WordFieldRuby
             if (guideRest.Length + baseText.Length == 0) return null;
         }
 
-        if (guideRest.Length == 0) searchText = (guide + baseText).Replace(NoteMarkPlaceholderText, "");
+        searchText = (guideRest.Length == 0 ? guide + baseText : guide + "," + guideRest).Replace(NoteMarkPlaceholderText, "");
         var font = new StringBuilder();
         if (halfPoints > 0) font.Append("font-size:").Append((halfPoints / 2m).ToString(CultureInfo.InvariantCulture)).Append("pt;");
         if (fontName.Length > 0) font.Append("font-family:'").Append(WordHtmlText.CssFontName(fontName)).Append("';");
         string style = font + AlignCss(justification);
-        string baseHtml = (guideRest.Length == 0 ? "" : font.Length > 0 ? "<span style=\"" + font + "\">" + WordHtmlText.Encode(guideRest) + "</span>" : WordHtmlText.Encode(guideRest))
+        string baseHtml = (guideRest.Length == 0 ? "" : "<span class=\"" + GuideRestClass + "\"" + (font.Length > 0 ? " style=\"" + font + "\"" : "") + ">" + WordHtmlText.Encode(guideRest) + "</span>")
                           + WordHtmlText.Encode(baseText);
         return "<ruby>" + baseHtml + "<rt" + (style.Length > 0 ? " style=\"" + style + "\"" : "") + ">"
                + WordHtmlText.Encode(guide) + "</rt></ruby>";

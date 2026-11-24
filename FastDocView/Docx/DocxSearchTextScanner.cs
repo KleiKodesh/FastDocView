@@ -108,7 +108,7 @@ internal sealed class DocxSearchTextScanner
         List<(int depth, bool separated)>? simpleFields = null;   // open w:fldSimple elements
         DocxSearchFields? fields = Fields;
         int rubyGuideStart = -1;       // where the open (skipped) w:rt's content starts
-        string? rubyRest = null;       // the last guide's rest after a comma, fed at the start of its base
+        bool rubyGuideHasComma = false; // the last guide had a comma: Word's Find reads the guide as written and not its base
         int rubyBaseDepth = -1;        // depth of the open w:rubyBase (its ")" are not drawn)
         stoppedAt = 0;
         while (position < end)
@@ -200,14 +200,13 @@ internal sealed class DocxSearchTextScanner
                     if (depth == skipDepth)
                     {
                         skipDepth = -1;
-                        // a ruby's guide closed: its rest after a comma is drawn at the start of the base (DocxRubyText)
-                        // a plain guide is searched before its base, as Word's Find reads a phonetic guide (guide + base as one
-                        // run; WordFieldRuby.ToHtml for the .doc / RTF EQ form); a guide with a comma keeps only its rest
+                        // a ruby's guide closed: searched before its base, as Word's Find reads a phonetic guide (guide + base as
+                        // one run; WordFieldRuby.ToHtml for the .doc / RTF EQ form); a guide with a comma is read as written
+                        // (head, comma, rest) and its base not at all (DocxRubyText.SearchText)
                         if (rubyGuideStart >= 0)
                         {
                             string guide = GuideText(xml.Slice(rubyGuideStart, nameStart - 2 - rubyGuideStart));
-                            rubyRest = DocxHtml.DocxRubyText.SearchRest(guide);
-                            if (rubyRest is null) matcher.Feed(guide.Replace(")", "").AsSpan());
+                            matcher.Feed(DocxHtml.DocxRubyText.SearchText(guide, out rubyGuideHasComma).AsSpan());
                             rubyGuideStart = -1;
                         }
                     }
@@ -218,7 +217,7 @@ internal sealed class DocxSearchTextScanner
                     int nameEnd = nameStart;
                     while (nameEnd < position - 1 && !IsSpace(xml[nameEnd])) nameEnd++;
                     ReadOnlySpan<byte> prefix = PrefixOf(xml.Slice(nameStart, nameEnd - nameStart), out ReadOnlySpan<byte> local);
-                    if (local.Length == 1 && local[0] == (byte)'p' && Resolve(prefix) == NamespaceKind.Wordprocessing) { matcher.Separator(); rubyRest = null; }   // a guide's rest never outlives its paragraph
+                    if (local.Length == 1 && local[0] == (byte)'p' && Resolve(prefix) == NamespaceKind.Wordprocessing) { matcher.Separator(); rubyGuideHasComma = false; }   // a guide never reaches past its paragraph
                 }
                 if (_namespaces.HasBlockDeclarations) _namespaces.Pop(depth);
                 continue;
@@ -335,9 +334,10 @@ internal sealed class DocxSearchTextScanner
                         if (!isEmpty) { skipDepth = elementDepth; rubyGuideStart = position; }
                         break;
                     case 8 when Is(local, "rubyBase") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:
-                        // the base as Word prints it (DocxRubyText): the guide's rest and a comma first, every ")" dropped
-                        if (!isEmpty) rubyBaseDepth = elementDepth;
-                        if (rubyRest is not null) { matcher.Feed((rubyRest + ",").AsSpan()); rubyRest = null; }
+                        // the base as Word prints it (DocxRubyText), every ")" dropped; after a guide with a comma Word's Find
+                        // reads none of it (note marks inside included)
+                        if (rubyGuideHasComma) { rubyGuideHasComma = false; if (!isEmpty) skipDepth = elementDepth; }
+                        else if (!isEmpty) rubyBaseDepth = elementDepth;
                         break;
                     case 8 when Is(local, "moveFrom") && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:    // a tracked move's source: hidden in Word's final view
                     case 3 when (Is(local, "pPr") || Is(local, "rPr")) && Resolve(elementPrefix) == NamespaceKind.Wordprocessing:

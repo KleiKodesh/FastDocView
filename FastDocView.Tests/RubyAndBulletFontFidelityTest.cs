@@ -50,7 +50,7 @@ public static class RubyAndBulletFontFidelityTest
             bool isRuby = block.Contains("<ruby>base" + i + "<rt") && block.Contains("guide" + i) && !block.Contains("field-equation");
             // .docx carries the guide's size and font on its runs, its alignment on w:rubyAlign; .doc / RTF all three on the EQ switches
             bool isStyled = format == ".docx"
-                ? block.Contains("<rt" + (alignCss.Length > 0 ? " style=\"" + alignCss + "\"" : "") + "><span style=\"" + (sizes[i] == "12" ? "" : "font-size:" + sizes[i] + "pt;") + "font-family:'Arial';\">guide" + i + "</span></rt>")   // 12 pt: the paragraph's size, no run size
+                ? block.Contains("<rt style=\"font-size:" + sizes[i] + "pt;" + alignCss + "\"><span style=\"" + (sizes[i] == "12" ? "" : "font-size:" + sizes[i] + "pt;") + "font-family:'Arial';\">guide" + i + "</span></rt>")   // w:hps on rt; 12 pt: the paragraph's size, no run size
                 : block.Contains("<rt style=\"font-size:" + sizes[i] + "pt;font-family:'Arial';" + alignCss + "\">guide" + i + "</rt>");
             TestReport.Check(isRuby && isStyled, $"{format}: ruby case {i}: base{i} with guide{i} above as HTML ruby ({sizes[i]} pt Arial{(aligns[i] is null ? "" : ", " + aligns[i])})");
         }
@@ -90,7 +90,7 @@ public static class RubyAndBulletFontFidelityTest
                 string block = blocks.FirstOrDefault(html => html.Contains("ruby escape " + c.Case + ":") || html.Contains("ruby comma " + c.Case + ":")) ?? "";
                 string font = "font-size:10pt;font-family:'" + c.Font + "';";
                 string[] baseParts = c.Base.Split('|');
-                string baseHtml = baseParts.Length == 2 ? "<span style=\"" + font + "\">" + Html.WordHtmlText.Encode(baseParts[0]) + "</span>" + Html.WordHtmlText.Encode(baseParts[1])
+                string baseHtml = baseParts.Length == 2 ? "<span class=\"" + Fields.WordFieldRuby.GuideRestClass + "\" style=\"" + font + "\">" + Html.WordHtmlText.Encode(baseParts[0]) + "</span>" + Html.WordHtmlText.Encode(baseParts[1])
                                                         : Html.WordHtmlText.Encode(c.Base);
                 string expected = "<ruby>" + baseHtml + "<rt style=\"" + font + "\">" + Html.WordHtmlText.Encode(c.Guide) + "</rt></ruby>";
                 TestReport.Check(block.Contains(expected), $"{group.Key}: ruby case {c.Case}: guide and base as Word's PDF draws them, {c.Font}");
@@ -179,19 +179,23 @@ public static class RubyAndBulletFontFidelityTest
                              && notes[1].Number == 2 && notes[1].Label == "2" && PlainText(notes[1].Html).Contains("note two"),
                              $"{file}: the notes inside rubies numbered 1 and 2 in order, each with its text ({notes.Count} note(s))");
         }
-        // search and GetText read the .docx base as drawn
-        string docx = Path.Combine(root, "word-ruby", "ruby-edges-v1.docx");
-        var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-ruby-edges-search") };
-        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(docx, policy);
-        foreach (string query in new[] { "abcy", "3,base", "4,basew", "end of linex" })
+        // search and GetText read a ruby as Word 16's Find does (hidden-Word probe 2026-11-24, DocxRubyText.SearchText): a plain
+        // guide then its base as drawn; a guide with a comma as written ("g,3", head + comma + rest), its base not at all
+        foreach (string file in new[] { "ruby-edges-v1.docx", "ruby-edges-v1.doc", "ruby-edges-v1.rtf" })
         {
-            WordDocumentSearchBatch hits = document.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount);
-            TestReport.Check(hits.HitBlocks.Length == 1, $"ruby-edges-v1.docx: search finds \"{query}\" as drawn ({hits.HitBlocks.Length} block(s))");
+            var policy = new WordIndexPolicy { CacheDirectory = Path.Combine(TestReport.OutputDirectory, "index-cache-ruby-edges-search-" + file.Replace('.', '-')) };
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(Path.Combine(root, "word-ruby", file), policy);
+            foreach (string query in new[] { "g2abcy", "g5end of linex", "g,3", "before g,3", "g,3 after", "g,4 after" })
+            {
+                WordDocumentSearchBatch hits = document.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount);
+                TestReport.Check(hits.HitBlocks.Length == 1, $"{file}: search finds \"{query}\" as Word's Find ({hits.HitBlocks.Length} block(s))");
+            }
+            foreach (string query in new[] { "ab)c", "3,base", ",base", "g3", "basew" })
+                TestReport.Check(document.Search(query, WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0,
+                                 $"{file}: search does not find \"{query}\" (Word's Find does not)");
+            string text = WordDocumentText.GetText(document);
+            TestReport.Check(text.Contains("g,3 after") && text.Contains("g2abcy") && !text.Contains("ab)c") && !text.Contains("3,base"), $"{file}: GetText reads the rubies as search does");
         }
-        TestReport.Check(document.Search("ab)c", WordDocumentSearchOptions.Default, 0, document.BlockCount).HitBlocks.Length == 0,
-                         "ruby-edges-v1.docx: search does not find a \")\" Word does not draw");
-        string text = WordDocumentText.GetText(document);
-        TestReport.Check(text.Contains("3,base") && text.Contains("abcy") && !text.Contains("ab)c"), "ruby-edges-v1.docx: GetText reads the bases as drawn");
     }
 
     /// <summary>
