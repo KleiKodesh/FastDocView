@@ -132,7 +132,7 @@ app.MapGet("/api/documents/{id}/sections", (string id) => UseDocument(id, docume
 app.MapGet("/api/documents/{id}/search", (string id, string query, bool matchCase, int fromBlock, int maxBlocks) => UseDocument(id, document =>
 {
     WordDocumentSearchBatch batch = document.Search(query, new WordDocumentSearchOptions { MatchCase = matchCase }, fromBlock, Math.Clamp(maxBlocks, 1, 2000));
-    return Results.Ok(new SearchBody(batch.HitBlocks, batch.HitCounts, batch.NextBlock, batch.ReachedEnd));
+    return Results.Ok(new SearchBody(batch.HitBlocks, batch.HitCounts, batch.NextBlock, batch.ReachedEnd, batch.ProvisionalBlocks));
 }));
 
 // The block a bookmark marks (in-document links, TOC entries, REF fields): an index lookup.
@@ -216,7 +216,7 @@ record FolderEntry(string Path, string FileName, long FileBytes, string Mode, bo
 record HeadingBody(int BlockIndex, int Level, string Text);
 record SectionBody(int FirstBlockIndex, int TextWidthTwips, int TopMarginTwips, int BottomMarginTwips);
 record BookmarkBody(int? BlockIndex);
-record SearchBody(int[] HitBlocks, int[] HitCounts, int NextBlock, bool ReachedEnd);
+record SearchBody(int[] HitBlocks, int[] HitCounts, int NextBlock, bool ReachedEnd, int[]? ProvisionalBlocks = null);
 record DocumentSummary(string Id, string FileName, string Path, int BlockCount, bool IsRightToLeft, string Stylesheet,
                        double OpenMilliseconds, string Mode, bool HasCachedIndex, string Reason, string ReaderType,
                        int HeadingCount, int FootnoteCount, int EndnoteCount, int KnownBlockCount, bool IsIndexComplete, string? Title);

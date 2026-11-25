@@ -754,6 +754,8 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
                 int end = Math.Min(known, wantedEnd);
                 var hits = new List<int>();
                 var counts = new List<int>();
+                var provisional = new SortedSet<int>();   // a field read the partial index (RenderBlocks' IsProvisional)
+                if (_renderer.FieldContext is { } startContext) startContext.UsedIncompleteIndex = false;
                 if (fromBlock < end)
                 {
                     _searchText ??= new DocxSearchTextScanner(_blocks.RootOpenTag);
@@ -766,7 +768,11 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
                         List<string> drawings = mode == DocxSearchTextMode.ReferenceXmlReader ? _referenceDrawingIds : _searchText!.DrawingRelationshipIds;
                         foreach (string drawing in drawings) FeedDrawing(null, drawing, matcher);
                         drawings.Clear();
-                        if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex + 1;   // REF \p reads the field's block
+                        if (_renderer.FieldContext is { } fieldContext)
+                        {
+                            if (fieldContext.UsedIncompleteIndex) { provisional.Add(blockIndex); fieldContext.UsedIncompleteIndex = false; }
+                            fieldContext.CurrentBlock = blockIndex + 1;   // REF \p reads the field's block
+                        }
                         if (matcher.Count > 0)
                         {
                             hits.Add(blockIndex);
@@ -836,7 +842,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
                         }
                     }
                 }
-                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount, provisional);
             }
             finally
             {

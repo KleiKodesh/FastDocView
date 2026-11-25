@@ -67,7 +67,7 @@ export const fastDocViewApi: FastDocViewApi = {
     return readJson<FastDocViewSection[]>(await fetch(`/api/documents/${documentId}/sections`))
   },
   async search(documentId, query, matchCase, fromBlock, maxBlocks) {
-    return readJson<{ hitBlocks: number[]; hitCounts: number[]; nextBlock: number; reachedEnd: boolean }>(await fetch(
+    return readJson<{ hitBlocks: number[]; hitCounts: number[]; nextBlock: number; reachedEnd: boolean; provisionalBlocks?: number[] }>(await fetch(
       `/api/documents/${documentId}/search?query=${encodeURIComponent(query)}&matchCase=${matchCase}&fromBlock=${fromBlock}&maxBlocks=${maxBlocks}`))
   },
   async bookmark(documentId, name) {

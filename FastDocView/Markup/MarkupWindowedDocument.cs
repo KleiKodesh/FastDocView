@@ -330,6 +330,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
                 int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
                 var hits = new List<int>();
                 var counts = new List<int>();
+                var provisional = new SortedSet<int>();   // shown text that used an end not indexed yet (RenderBlocks' IsProvisional)
                 if (fromBlock < end)
                 {
                     byte[] text = ReadText(fromBlock, end, out long textStart);
@@ -346,13 +347,14 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
                         {
                             // what the block shows (one path with the drawn HTML): hidden elements out, generated content in
                             var shown = new StringBuilder(content.Length);
-                            MarkupBlockRenderer.Render(MarkupBlockRenderer.WithStructure(_table.OpenTags(block), _table.Structure(block)), content, drawsPictures: true, _webArchiveStylesheet, NextBlockOf(block), shown, _index.ElementEnds);
+                            MarkupBlockRenderer.Render(MarkupBlockRenderer.WithStructure(_table.OpenTags(block), _table.Structure(block)), content, drawsPictures: true, _webArchiveStylesheet, NextBlockOf(block), shown, _index.ElementEnds, out bool usedUnknownEnds);
+                            if (usedUnknownEnds) provisional.Add(block);
                             matcher.FeedHtml(shown.ToString());
                         }
                         if (matcher.Count > 0) { hits.Add(block); counts.Add(matcher.Count); }
                     }
                 }
-                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: _builder is null, _index.BlockCount);
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: _builder is null, _index.BlockCount, provisional);
             }
             finally { _releasableFile?.Release(); }
         }

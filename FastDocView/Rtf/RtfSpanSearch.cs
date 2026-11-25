@@ -13,6 +13,9 @@ internal sealed class RtfSpanSearch(WordDocumentSearchMatcher matcher)
     public List<int> Hits => _hits;
     public List<int> Counts => _counts;
 
+    /// <summary>Blocks whose fields read the partial index (the rendered block's IsProvisional): searched again once it is complete.</summary>
+    public SortedSet<int> Provisional { get; } = new();
+
     /// <summary>The document block index of the span's local block 0 (set per span).</summary>
     public int SpanFirstBlock { get; set; }
 
@@ -35,7 +38,11 @@ internal sealed class RtfSpanSearch(WordDocumentSearchMatcher matcher)
     /// <summary>Span-local block <paramref name="localIndex"/> ended: its matches are counted and the matcher starts afresh.</summary>
     public void BlockEnded(int localIndex)
     {
-        if (FieldContext is not null) FieldContext.CurrentBlock = SpanFirstBlock + localIndex + 1;
+        if (FieldContext is not null)
+        {
+            if (FieldContext.UsedIncompleteIndex) { Provisional.Add(SpanFirstBlock + localIndex); FieldContext.UsedIncompleteIndex = false; }
+            FieldContext.CurrentBlock = SpanFirstBlock + localIndex + 1;
+        }
         if (matcher.Count > 0) { _hits.Add(SpanFirstBlock + localIndex); _counts.Add(matcher.Count); }
         matcher.Reset();
     }

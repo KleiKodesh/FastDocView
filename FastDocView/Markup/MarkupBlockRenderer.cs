@@ -119,6 +119,7 @@ public static class MarkupBlockRenderer
         public bool IsHidden;
         public bool IsClosed;                     // its end is in this block (explicit, or at the block's end when it does not go on)
         public int TagStart = -1, TagLength;      // its start tag in the output (deferred elements are redrawn there)
+        public int Ordinal = -1;                  // its place among the block's drawn elements (Redraw's styles are keyed by it)
         public string Tag = "";                   // the checked start tag, without the sheet's style
         public WebArchiveStylesheet.ElementStyle Style;
     }
@@ -141,7 +142,28 @@ public static class MarkupBlockRenderer
     internal static string Render(string openTags, string content, bool drawsPictures, WebArchiveStylesheet? stylesheet, NextBlock next, StringBuilder? shown,
                                   WebArchiveElementEnds? ends, out bool usedUnknownEnds)
     {
+        int shownStart = shown?.Length ?? 0;
+        string html = Render(openTags, content, drawsPictures, stylesheet, next, shown, ends, finalStyles: null, out usedUnknownEnds, out Dictionary<int, WebArchiveStylesheet.ElementStyle>? redrawn);
+        // a later-sibling rule decided after the block was read (display:none, ::before / ::after content): what is shown is read
+        // again with the styles the drawn tags got, so search and GetText see exactly what the redrawn HTML shows
+        if (shown is not null && redrawn is not null)
+        {
+            shown.Length = shownStart;
+            Render(openTags, content, drawsPictures, stylesheet, next, shown, ends, redrawn, out _, out _);
+        }
+        return html;
+    }
+
+    /// <param name="finalStyles">The styles <see cref="Redraw"/> gave deferred elements, by drawn-element ordinal: used in place of the
+    /// styles known at their start tag (the second, shown-text-only pass).</param>
+    /// <param name="redrawn">The styles <see cref="Redraw"/> changed, by drawn-element ordinal; null when none changed.</param>
+    private static string Render(string openTags, string content, bool drawsPictures, WebArchiveStylesheet? stylesheet, NextBlock next, StringBuilder? shown,
+                                 WebArchiveElementEnds? ends, Dictionary<int, WebArchiveStylesheet.ElementStyle>? finalStyles, out bool usedUnknownEnds,
+                                 out Dictionary<int, WebArchiveStylesheet.ElementStyle>? redrawn)
+    {
         usedUnknownEnds = false;
+        redrawn = null;
+        int drawnOrdinal = 0;                      // drawn elements in order: the key of finalStyles / redrawn
         if (stylesheet is { IsEmpty: true }) stylesheet = null;
         WebArchiveMatch? rootState = null;
         if (openTags.StartsWith("<" + WebArchiveMatch.RootTagName, StringComparison.Ordinal))
@@ -253,14 +275,16 @@ public static class MarkupBlockRenderer
             if (isDrawn)
             {
                 node.Tag = Sanitize(tag, name);
-                node.Style = state is null ? WebArchiveStylesheet.ElementStyle.None : stylesheet!.StyleFor(state, null);
+                node.Ordinal = drawnOrdinal++;
+                node.Style = finalStyles is not null && finalStyles.TryGetValue(node.Ordinal, out WebArchiveStylesheet.ElementStyle final) ? final
+                           : state is null ? WebArchiveStylesheet.ElementStyle.None : stylesheet!.StyleFor(state, null);
                 string? inline = AttributeValue(node.Tag, "style");
                 string? inlineDisplay = inline is null ? null : WebArchiveStylesheet.InlineDisplay(System.Net.WebUtility.HtmlDecode(inline));
                 node.IsHidden = node.Style.IsDisplayImportant ? node.Style.IsHidden : inlineDisplay is not null ? inlineDisplay.Equals("none", StringComparison.OrdinalIgnoreCase) : node.Style.IsHidden;
                 node.TagStart = html.Length;
                 html.Append(WithStyle(node.Tag, node.Style.Css));
                 node.TagLength = html.Length - node.TagStart;
-                if (node.Style.IsDeferred) (deferred ??= []).Add(node);
+                if (node.Style.IsDeferred && finalStyles is null) (deferred ??= []).Add(node);
                 if (node.IsHidden) hiddenDepth++;
                 AppendShown(node.Tag);
                 if (!isReopened && node.Style.BeforeText.Length > 0) AppendShown(System.Net.WebUtility.HtmlEncode(node.Style.BeforeText));
@@ -283,7 +307,7 @@ public static class MarkupBlockRenderer
             if (nodes[k].IsClosed && nodes[k].Style.AfterText.Length > 0) AppendShown(System.Net.WebUtility.HtmlEncode(nodes[k].Style.AfterText));
         }
         if (nodes.Count > 1) nodes[1].IsClosed = next.IsKnown && next.Depth < 0;    // body ends with the last block
-        if (deferred is not null) usedUnknownEnds = Redraw(html, deferred, stylesheet!, ends, next);
+        if (deferred is not null) usedUnknownEnds = Redraw(html, deferred, stylesheet!, ends, next, out redrawn);
         return html.ToString();
     }
 
@@ -292,16 +316,22 @@ public static class MarkupBlockRenderer
     /// (:last-child...), and the pseudo-elements on the part of the element this block shows (::before, ::first-letter and
     /// ::first-line where it starts, ::after where it ends). Returns whether an end the sheet asks for was not known (see usedUnknownEnds).
     /// </summary>
-    private static bool Redraw(StringBuilder html, List<Node> deferred, WebArchiveStylesheet stylesheet, WebArchiveElementEnds? ends, NextBlock next)
+    private static bool Redraw(StringBuilder html, List<Node> deferred, WebArchiveStylesheet stylesheet, WebArchiveElementEnds? ends, NextBlock next,
+                               out Dictionary<int, WebArchiveStylesheet.ElementStyle>? redrawn)
     {
         bool usedUnknownEnds = false;
+        redrawn = null;
         for (int k = deferred.Count - 1; k >= 0; k--)
         {
             Node node = deferred[k];
             WebArchiveStylesheet.ElementStyle style = node.Style;
             if (style.HasLaterSiblingRules)
             {
-                if (LaterFacts(node, ends) is { } facts) style = stylesheet.StyleFor(node.State!, facts);
+                if (LaterFacts(node, ends) is { } facts)
+                {
+                    style = stylesheet.StyleFor(node.State!, facts);
+                    (redrawn ??= new())[node.Ordinal] = style;
+                }
                 else usedUnknownEnds = true;
             }
             if (!node.IsClosed && !next.IsKnown && style.AfterPseudoIds.Length > 0) usedUnknownEnds = true;

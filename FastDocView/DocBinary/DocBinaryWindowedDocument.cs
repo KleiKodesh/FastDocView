@@ -649,6 +649,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                 int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
                 var hits = new List<int>();
                 var counts = new List<int>();
+                var provisional = new SortedSet<int>();   // a field read the partial index (RenderBlocks' IsProvisional)
                 DocBinarySearchCursor? cursor = null;
                 if (onePass && fromBlock < end)
                 {
@@ -661,7 +662,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                 {
                     int start, blockEnd;
                     matcher.Reset();
-                    if (_renderer.FieldContext is { } fieldContext) fieldContext.CurrentBlock = blockIndex;
+                    if (_renderer.FieldContext is { } fieldContext) { fieldContext.CurrentBlock = blockIndex; fieldContext.UsedIncompleteIndex = false; }
                     if (cursor is not null)
                     {
                         cursor.TryNext(out start, out blockEnd, out ReadOnlySpan<char> text);
@@ -682,11 +683,12 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                             else _renderer.FeedSearchText(text.Start, text.End, matcher);
                         }
                     if (matcher.Count > 0) { hits.Add(blockIndex); counts.Add(matcher.Count); }
+                    if (_renderer.FieldContext?.UsedIncompleteIndex == true) provisional.Add(blockIndex);
                 }
                 cursor?.ReleaseLargeBuffer();
                 // a cursor made over a partial index ends at its last block: not resumed while the index grows
                 _searchCursor = _builder is not null ? null : cursor ?? _searchCursor;
-                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: _builder is null, _index.BlockCount);
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), isIndexComplete: _builder is null, _index.BlockCount, provisional);
             }
             finally { _releasableFile?.Release(); }
         }

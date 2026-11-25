@@ -4183,11 +4183,39 @@ profile corners (as on rectangles).
 - Partial-index-dependent output, all on this path: .docx fields over a partial index + notes past the last read section;
   .rtf fields + the last known table row; .doc the last known block (a following row's merged cells, the table's end); .odt
   connectors glued to unknown shapes + fields; web archives later-sibling pseudo-classes + ::after (this change). .txt has
-  none. Not on it: search over a partial index (a web archive block searched before its parent's end feeds the text the sheet
-  shows then; a later-sibling display:none rule could differ - search batches are not redone).
+  none. Search over a partial index joined this path later the same day (next section).
 - Harness (--mhtml / --fidelity): css-provisional (40,000 paragraphs in one div, on demand): block 0 provisional without
   :nth-last-of-type(N), final with it after the index completes; nothing provisional on a complete index. Live:
   vue-demo/playwright/provisionalStylesCheck.mjs (400,000 paragraphs, cold sidecar open, scroll to block 200): style arrives
   after completion, the on-screen blocks are refetched, reading position kept, no console errors.
 - Cold first paint, ColdBench 400,000-paragraph archive, 5 runs x 2 rounds: 77dadc1 212 / 222 ms median, this change
   205 / 182 ms (noise).
+
+### Search over a partial index: provisional blocks searched again (2026-11-25)
+
+- WordDocumentSearchBatch.ProvisionalBlocks: the scanned blocks whose SEARCHED text used what only the final index knows -
+  the same facts that mark a rendered block provisional, read from the same code: .docx / .rtf / .doc the field context's
+  UsedIncompleteIndex (reset per block in the search loops; DocxSearchFields, RtfSpanSearch.BlockEnded, the .doc block loop),
+  .odt the computed-field pass (ComputeSearchFields: OdtFieldComputer.UsedIncompleteIndex), web archives the renderer's
+  usedUnknownEnds (the shown-text pass is the renderer itself). Empty once the index is complete (never refetched in a loop).
+  Not text-changing, so not reported: .rtf / .doc last-row-awaiting-next (borders / rowspan only), .odt connectors (geometry).
+- Host: the app's search (useFastDocViewSearch) keeps a run's provisional blocks and, when the document reports the index
+  complete (the same signal that marks provisional blocks stale - no timer), searches them again in runs of adjacent blocks
+  and replaces their counts in one step (SearchMatchIndex.withRowsRecounted: 0 drops a row); a step that arrives after
+  completion is recounted at once. The current match stays the same match, or moves to the next one when its occurrence is
+  gone. A new query or clear drops the old run's set. Notes search (SearchNotes) is not covered: a note's own fields over the
+  partial index have no per-note provisional flag yet (.docx drops its note cache on completion; a notes search run before
+  then is not redone).
+- Found on the way: web archive search ignored later-sibling outcomes even on a COMPLETE index - the shown text was written
+  with the start tag's style, Redraw fixed only the HTML (a :nth-last-of-type display:none paragraph was still found, a
+  ::before string never). MarkupBlockRenderer.Render now reads the shown text a second time with Redraw's styles (by
+  drawn-element ordinal) when Redraw changed any; only blocks with such deferred elements pay the second pass.
+- Harness (--search, --fidelity): ProvisionalSearchTest - web archive (::before + display:none on :nth-last-of-type over a
+  40,000-paragraph div, plus unaffected text), .rtf REF / .odt bookmark-ref / .docx REF to a bookmark 20,000 paragraphs on:
+  partial hits, the provisional list, and partial hits with the provisional blocks searched again = the complete index's hits
+  exactly. App vitest: useFastDocViewSearch.test.ts (recount, late step, clear), searchMatchIndex withRowsRecounted.
+- Live (vue-demo/playwright/provisionalSearchCheck.mjs, cold sidecar first opens, search typed at once): 400,000-paragraph
+  archive "Zebra" (::before on :nth-last-of-type(n+2)): count 0 while the index built, settled to 399,998 = the service's
+  count over the complete index (the hidden paragraph excluded), Enter steps one match at a time; "Quokka" (hidden) settles
+  to 0; sample .docx: 30,794 while building, settled to 52,949 = service, Enter steps with the .current mark on the right
+  occurrence; no console errors. The highlighter cannot mark ::before text (CSS, not DOM text): marks are checked on the .docx.

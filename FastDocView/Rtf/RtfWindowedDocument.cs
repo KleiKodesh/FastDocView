@@ -275,8 +275,9 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                 int end = (int)Math.Min(_index.BlockCount, (long)fromBlock + Math.Max(1, maxBlocksToScan));
                 var search = new RtfSpanSearch(matcher) { FieldContext = _fieldContext };
                 _fieldContext.CurrentBlock = fromBlock;
+                _fieldContext.UsedIncompleteIndex = false;
                 if (fromBlock < end) _table.Search(fromBlock, end, search);
-                return WordDocumentSearchBatch.Finish(search.Hits, search.Counts, Math.Max(end, fromBlock), isIndexComplete: _builder is null, _index.BlockCount);
+                return WordDocumentSearchBatch.Finish(search.Hits, search.Counts, Math.Max(end, fromBlock), isIndexComplete: _builder is null, _index.BlockCount, search.Provisional);
             }
             finally { _releasableFile?.Release(); }
         }

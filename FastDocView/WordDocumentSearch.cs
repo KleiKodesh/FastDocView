@@ -23,13 +23,24 @@ public sealed record WordDocumentSearchOptions(bool MatchCase = true)
 /// <see cref="IWordWindowedDocument.NoteReferences"/>) and the counts are each note's own. Occurrences never overlap (leftmost first, as the app's highlighter marks them). <see cref="NextBlock"/>:
 /// where the next call continues; -1 once <see cref="ReachedEnd"/> (the index is complete and every block / note was scanned).
 /// Only numbers are produced - no text is kept.
+/// <see cref="ProvisionalBlocks"/>: blocks of the scanned range (ascending, hit or not) whose searched text used something only
+/// the final index knows - the same facts that mark a rendered block provisional (<see cref="WordDocumentBlockHtml.IsProvisional"/>:
+/// a field reading the partial index, a web-archive sheet rule needing an end not indexed yet). Their counts may change: the host
+/// searches them again once the index is complete (the same refresh signal as the provisional blocks it refetches) and replaces
+/// their hits. Always empty on a complete index.
 /// </summary>
 public sealed record WordDocumentSearchBatch(int[] HitBlocks, int[] HitCounts, int NextBlock, bool ReachedEnd)
 {
-    internal static WordDocumentSearchBatch Finish(List<int> hits, List<int> counts, int scannedEnd, bool isIndexComplete, int blockCount)
+    public int[] ProvisionalBlocks { get; init; } = [];
+
+    internal static WordDocumentSearchBatch Finish(List<int> hits, List<int> counts, int scannedEnd, bool isIndexComplete, int blockCount,
+                                                   SortedSet<int>? provisional = null)
     {
         bool reachedEnd = isIndexComplete && scannedEnd >= blockCount;
-        return new WordDocumentSearchBatch(hits.ToArray(), counts.ToArray(), reachedEnd ? -1 : scannedEnd, reachedEnd);
+        return new WordDocumentSearchBatch(hits.ToArray(), counts.ToArray(), reachedEnd ? -1 : scannedEnd, reachedEnd)
+        {
+            ProvisionalBlocks = isIndexComplete || provisional is null || provisional.Count == 0 ? [] : provisional.ToArray(),
+        };
     }
 
     internal static readonly WordDocumentSearchBatch Nothing = new([], [], -1, true);

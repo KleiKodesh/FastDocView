@@ -638,6 +638,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                 var hits = new List<int>();
                 var counts = new List<int>();
                 var objectBlocks = new SortedSet<int>();   // blocks holding a draw:object: their charts' texts are searched after the scan
+                _searchProvisional = new SortedSet<int>();   // computed fields that read the partial index (RenderBlocks' IsProvisional)
                 if (fromBlock < end)
                 {
                     _searchText ??= new OdtSearchTextScanner(_blocks.RootOpenTag);
@@ -727,7 +728,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                     if (scanFrom < end) FeedRanges(scanFrom, end);
                     foreach (int blockIndex in objectBlocks) FeedChartTexts(blockIndex, matcher, hits, counts);
                 }
-                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount);
+                return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromBlock), _index is not null, _blocks.BlockCount, _searchProvisional);
             }
             finally
             {
@@ -755,6 +756,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
 
     private OdtFieldComputer? _searchFields;
     private int _searchFieldsBlock = -1;
+    private SortedSet<int>? _searchProvisional;   // the running batch's blocks whose computed fields read the partial index
     private string?[] _searchFieldTexts = [];
     private bool[] _searchParagraphHidden = [];   // by paragraph ordinal in the block (text:p / text:h in document order, the block itself 0)
 
@@ -767,6 +769,7 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
         if ((uint)blockIndex >= (uint)_blocks.BlockCount || _reader.ReadBlocks(blockIndex, 1) is not { Count: 1 } blocks) return;
         XElement block = blocks[0].element;
         _searchFields ??= new OdtFieldComputer(this);
+        _searchFields.UsedIncompleteIndex = false;
         _searchFields.BeginBlock(blockIndex, block, _blocks.FieldStateOf(blockIndex));
         try
         {
@@ -778,7 +781,11 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
                 _searchParagraphHidden = block.DescendantsAndSelf().Where(e => e.Name == OdtStyleCascade.Text + "p" || e.Name == OdtStyleCascade.Text + "h")
                                               .Select(_searchFields.IsParagraphHidden).ToArray();
         }
-        finally { _searchFields.EndBlock(); }
+        finally
+        {
+            _searchFields.EndBlock();
+            if (_searchFields.UsedIncompleteIndex) _searchProvisional?.Add(blockIndex);
+        }
     }
 
     private string? SearchFieldText(int blockIndex, int ordinal)
