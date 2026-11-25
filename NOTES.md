@@ -4132,8 +4132,8 @@ profile corners (as on rectangles).
   small as the open-tag stacks; no whole-document pass, nothing per block. Span rescans never record. The renderer looks up
   the parent's end (later siblings) and, for a spanning element, its own end (:empty). Index format 18 (pairs after the
   document CSS in the header strings).
-- While a first open is still indexing, an end not reached yet is unknown: that element is drawn from the block alone until
-  the index completes.
+- While a first open is still indexing, an end not reached yet is unknown: that element is drawn from the block alone and the
+  block is provisional (see below), drawn again once the index completes.
 - A path is used only when the renderer's tree matches the index pass's: a reopened element without its stored state, or an
   element under an open p / li / dt / dd / td / th / tr / option that the index pass ends implicitly (MarkupBlockScanner
   PopForStart; the renderer nests it), gets no path - unknown, never another element's end (review finding).
@@ -4167,3 +4167,27 @@ profile corners (as on rectangles).
   "Line3D SerAx" has English names in the .doc and Hebrew in the .docx; the charts Word saved as pictures have no twin.
 - Harness (--charts): v3 .doc / RTF laid out at the saved size and the scatter axes 0..6; 3d-rows .doc depth 60 % scene and the
   hidden series axis at Word's positions.
+
+### Provisional web-archive blocks on a first open; refreshed blocks stay on screen (2026-11-25)
+
+- MarkupBlockRenderer.Render reports usedUnknownEnds: a deferred start tag whose sheet has a later-sibling pseudo-class and no
+  known end (parent's or its own, LaterFacts null), or an ::after on an element whose end the partial index has not reached
+  (NextBlock.Unknown). MarkupWindowedDocument marks such a block provisional (WordDocumentBlockHtml.IsProvisional) only while
+  the index is still being built; on a complete index an unknown end stays unknown (a path the renderer cannot match), so it is
+  never provisional and never refetched in a loop. Same one refresh path as notes / fields / ODT connectors / RTF + .doc
+  awaiting-next rows: the page refetches provisional blocks when the scan reports the index complete (no timer).
+- App page: the refresh used to DROP provisional blocks from the cache, so a row on screen lost its content until the refetch
+  came back and the reader moved (live: 32 rows). The cache now marks them stale (FastDocViewBlockCache.markStaleWhere):
+  still drawn, missing to the next fetch, replaced in place; the scroller's update hooks hold the reader's row through the
+  height change (live: paragraph 201 at the top edge, offset -0.44 -> -1.5 px, whole-pixel scrollTop).
+- Partial-index-dependent output, all on this path: .docx fields over a partial index + notes past the last read section;
+  .rtf fields + the last known table row; .doc the last known block (a following row's merged cells, the table's end); .odt
+  connectors glued to unknown shapes + fields; web archives later-sibling pseudo-classes + ::after (this change). .txt has
+  none. Not on it: search over a partial index (a web archive block searched before its parent's end feeds the text the sheet
+  shows then; a later-sibling display:none rule could differ - search batches are not redone).
+- Harness (--mhtml / --fidelity): css-provisional (40,000 paragraphs in one div, on demand): block 0 provisional without
+  :nth-last-of-type(N), final with it after the index completes; nothing provisional on a complete index. Live:
+  vue-demo/playwright/provisionalStylesCheck.mjs (400,000 paragraphs, cold sidecar open, scroll to block 200): style arrives
+  after completion, the on-screen blocks are refetched, reading position kept, no console errors.
+- Cold first paint, ColdBench 400,000-paragraph archive, 5 runs x 2 rounds: 77dadc1 212 / 222 ms median, this change
+  205 / 182 ms (noise).

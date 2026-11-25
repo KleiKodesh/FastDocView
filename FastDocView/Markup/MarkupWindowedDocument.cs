@@ -380,11 +380,13 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
         {
             string content = DecodeBlock(text, textStart, block);
             string openTags = _table.OpenTags(block);
-            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(MarkupBlockRenderer.WithStructure(openTags, _table.Structure(block)), content, drawsPictures: true, _webArchiveStylesheet, NextBlockOf(block), shown: null, _index.ElementEnds)
+            bool usedUnknownEnds = false;
+            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(MarkupBlockRenderer.WithStructure(openTags, _table.Structure(block)), content, drawsPictures: true, _webArchiveStylesheet, NextBlockOf(block), shown: null, _index.ElementEnds, out usedUnknownEnds)
                         : _index.ToratEmet is { } toratEmet ? (block == 0 && toratEmet.HasHead ? ToratEmetFormat.RenderHeader(toratEmet, FirstTitle(_index)) : ToratEmetFormat.RenderLine(openTags, content))
                         : MarkupBlockRenderer.RenderLine(openTags, content);
             WordDocumentBlockKind kind = content.TrimStart().StartsWith("<table", StringComparison.OrdinalIgnoreCase) ? WordDocumentBlockKind.Table : WordDocumentBlockKind.Paragraph;
-            result.Add(new WordDocumentBlockHtml(block, kind, html, []));
+            // an end the sheet needs that the index has not reached yet: drawn again once the index is final (the same refresh as notes / fields)
+            result.Add(new WordDocumentBlockHtml(block, kind, html, [], IsProvisional: usedUnknownEnds && _builder is not null));
         }
         return result;
     }

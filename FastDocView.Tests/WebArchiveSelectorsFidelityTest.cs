@@ -88,6 +88,7 @@ public static class WebArchiveSelectorsFidelityTest
 
         Windowed();
         CrossBlock();
+        FirstOpenProvisional();
     }
 
     private static string CrossBlockFixture => Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-mhtml", "css-crossblock-v1.mht");
@@ -153,6 +154,56 @@ public static class WebArchiveSelectorsFidelityTest
         }
         finally
         {
+            if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true);
+        }
+    }
+
+    /// <summary>A web archive whose body is one long div: its first paragraph's later-sibling rules depend on the div's end.</summary>
+    internal static string WriteLongParentArchive(string path, int paragraphs)
+    {
+        const string Boundary = "----=_NextPart_01DB0000.00000002";
+        var body = new StringBuilder(paragraphs * 40);
+        body.Append("MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=\"").Append(Boundary).Append("\"\r\n\r\n--").Append(Boundary).Append("\r\n")
+            .Append("Content-Location: file:///C:/css-provisional.htm\r\nContent-Transfer-Encoding: 8bit\r\nContent-Type: text/html; charset=\"us-ascii\"\r\n\r\n")
+            .Append("<html>\r\n<head>\r\n<style>\r\n<!--\r\n")
+            .Append("div.long > p:nth-last-of-type(").Append(paragraphs).Append(") { color:#2E7D32; }\r\n")
+            .Append("div.long > p:last-child { font-weight:bold; }\r\n-->\r\n</style>\r\n</head>\r\n<body>\r\n<div class=long>\r\n");
+        for (int i = 1; i <= paragraphs; i++) body.Append("<p>Paragraph ").Append(i).Append("</p>\r\n");
+        body.Append("</div>\r\n</body>\r\n</html>\r\n\r\n--").Append(Boundary).Append("--\r\n");
+        File.WriteAllText(path, body.ToString(), new UTF8Encoding(false));
+        return path;
+    }
+
+    /// <summary>
+    /// A first open still indexing: a block drawn before its parent's end is recorded gets no later-sibling style and is marked
+    /// provisional; once the index is complete the same block is drawn with the style and is final (the host refetches provisional blocks).
+    /// </summary>
+    private static void FirstOpenProvisional()
+    {
+        TestReport.Step("Web archive selectors: blocks drawn before a parent's end are provisional on a first open");
+        const int Paragraphs = 40000;
+        string path = WriteLongParentArchive(Path.Combine(TestReport.OutputDirectory, "css-provisional-v1-" + Guid.NewGuid().ToString("N") + ".mht"), Paragraphs);
+        string cache = Path.Combine(TestReport.OutputDirectory, "css-provisional-cache-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, new WordIndexPolicy { ForcedMode = WordIndexMode.Sidecar, CacheDirectory = cache, IndexesOnDemand = true });
+            bool wasPartial = !document.IsIndexComplete;
+            WordDocumentBlockHtml early = document.RenderBlocks(0, 2).First(b => b.Html.Contains("Paragraph 1<"));
+            TestReport.Check(wasPartial, "css-provisional: the first open indexes on demand");
+            TestReport.Check(early.IsProvisional && !early.Html.Contains("#2E7D32"),
+                             $"css-provisional: the first paragraph drawn before the div's end is provisional, without the style ({early.IsProvisional})");
+            document.ScanAhead(int.MaxValue / 2);
+            TestReport.Check(document.IsIndexComplete, "css-provisional: the index completes");
+            WordDocumentBlockHtml again = document.RenderBlocks(early.BlockIndex, 1)[0];
+            TestReport.Check(!again.IsProvisional && again.Html.Contains("color:#2E7D32;"),
+                             $"css-provisional: drawn again after the index completes it has :nth-last-of-type({Paragraphs}) and is final");
+            WordDocumentBlockHtml last = document.RenderBlocks(document.BlockCount - 1, 1)[0];
+            TestReport.Check(!last.IsProvisional && last.Html.Contains("font-weight:bold;"), "css-provisional: the last paragraph has :last-child");
+            TestReport.Check(document.RenderBlocks(0, document.BlockCount).All(b => !b.IsProvisional), "css-provisional: no block is provisional on a complete index");
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
             if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true);
         }
     }

@@ -133,7 +133,15 @@ public static class MarkupBlockRenderer
 
     internal static string Render(string openTags, string content, bool drawsPictures, WebArchiveStylesheet? stylesheet, NextBlock next, StringBuilder? shown,
                                   WebArchiveElementEnds? ends)
+        => Render(openTags, content, drawsPictures, stylesheet, next, shown, ends, out _);
+
+    /// <param name="usedUnknownEnds">Some start tag was drawn without an end its sheet asks for (a later-sibling pseudo-class whose parent's
+    /// or own end is not recorded, an ::after on an element whose end is not known yet): on a partial index the block is provisional
+    /// (<see cref="WordDocumentBlockHtml.IsProvisional"/>) and is drawn again once the index is final.</param>
+    internal static string Render(string openTags, string content, bool drawsPictures, WebArchiveStylesheet? stylesheet, NextBlock next, StringBuilder? shown,
+                                  WebArchiveElementEnds? ends, out bool usedUnknownEnds)
     {
+        usedUnknownEnds = false;
         if (stylesheet is { IsEmpty: true }) stylesheet = null;
         WebArchiveMatch? rootState = null;
         if (openTags.StartsWith("<" + WebArchiveMatch.RootTagName, StringComparison.Ordinal))
@@ -275,22 +283,28 @@ public static class MarkupBlockRenderer
             if (nodes[k].IsClosed && nodes[k].Style.AfterText.Length > 0) AppendShown(System.Net.WebUtility.HtmlEncode(nodes[k].Style.AfterText));
         }
         if (nodes.Count > 1) nodes[1].IsClosed = next.IsKnown && next.Depth < 0;    // body ends with the last block
-        if (deferred is not null) Redraw(html, deferred, stylesheet!, ends);
+        if (deferred is not null) usedUnknownEnds = Redraw(html, deferred, stylesheet!, ends, next);
         return html.ToString();
     }
 
     /// <summary>
     /// The start tags drawn before their element's end was known, drawn again now: the later-sibling rules that hold
     /// (:last-child...), and the pseudo-elements on the part of the element this block shows (::before, ::first-letter and
-    /// ::first-line where it starts, ::after where it ends).
+    /// ::first-line where it starts, ::after where it ends). Returns whether an end the sheet asks for was not known (see usedUnknownEnds).
     /// </summary>
-    private static void Redraw(StringBuilder html, List<Node> deferred, WebArchiveStylesheet stylesheet, WebArchiveElementEnds? ends)
+    private static bool Redraw(StringBuilder html, List<Node> deferred, WebArchiveStylesheet stylesheet, WebArchiveElementEnds? ends, NextBlock next)
     {
+        bool usedUnknownEnds = false;
         for (int k = deferred.Count - 1; k >= 0; k--)
         {
             Node node = deferred[k];
             WebArchiveStylesheet.ElementStyle style = node.Style;
-            if (style.HasLaterSiblingRules && LaterFacts(node, ends) is { } facts) style = stylesheet.StyleFor(node.State!, facts);
+            if (style.HasLaterSiblingRules)
+            {
+                if (LaterFacts(node, ends) is { } facts) style = stylesheet.StyleFor(node.State!, facts);
+                else usedUnknownEnds = true;
+            }
+            if (!node.IsClosed && !next.IsKnown && style.AfterPseudoIds.Length > 0) usedUnknownEnds = true;
             string ids = string.Join(" ", new[] { node.IsReopened ? "" : style.StartPseudoIds, node.IsClosed ? style.AfterPseudoIds : "" }.Where(part => part.Length > 0));
             string tag = WithStyle(node.Tag, style.Css);
             if (ids.Length > 0)
@@ -300,6 +314,7 @@ public static class MarkupBlockRenderer
             }
             html.Remove(node.TagStart, node.TagLength).Insert(node.TagStart, tag);
         }
+        return usedUnknownEnds;
     }
 
     /// <summary>
