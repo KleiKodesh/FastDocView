@@ -2977,6 +2977,23 @@ tlch); checked by the same test.
   wider). The 3-row parenthesis in Cambria Math is 1.12 for the same reason.
 
 
+### Equations: delimiters around a matrix take Word's variant (2026-11-25)
+
+- The one case out in brackets-cambria-v1 (the 3-row brace, 1.48 x Word's width; the 3-row parenthesis 1.12) was not a
+  boundary rounding: Chromium lays a matrix row out ~1.32 em tall (the font's box; the library's `mtr` height 1.173 em is
+  only a minimum), so the 3 rows' ink read 3.26 em, and 31.7 px above the axis against 20.6 px below (the browser's baseline
+  sits high in its row). TeX's rule on that gives 3.57 em -> the 3.685 em variant. Word 16's PDF (PyMuPDF accurate glyph
+  boxes): the content is 3.02 em of ink (two line pitches of 1.18 em + the digits' 0.65 em), centred on the delimiter within
+  0.27 pt, and the delimiter is the 2.96 em variant - TeX's rule on Word's own ink: max(0.901 x 3.02, 3.02 - 0.5) = 2.72 em.
+- fastDocViewMath.ts (app) `matrixInkHeight`: when a matrix is all of a stretched operator's content, its ink height is
+  Word's - the first row's ink above its baseline + one math line (the mtr height) per row gap (more when two rows' ink would
+  meet) + the last row's ink below - centred on the axis; other content keeps the browser's ink about the axis.
+- Result (vue-demo/playwright/mathStretchCheck.mjs + scripts/compare-math-stretch.py): 30 of 30 within 15%, 29 at 1.00 (the
+  DejaVu integral over 3 levels 1.04); math-v2 geometry: the matrix's width 1.12 -> 1.06 of Word's, nothing else moves.
+  Not done: the browser's taller matrix rows themselves (matrix height 1.32 of Word's).
+- LibreOffice gives no variant reference: Math scales a brace glyph to the body's height plus a percentage
+  (starmath/source/node.cxx:1284-1293 SmBraceNode::Arrange, :1322-1323 AdaptToY), with no OpenType size variants.
+
 ### EQ field: spacing options (2026-11-23)
 - ECMA-376 Part 1 17.16.5.20: \a \vsN / \hsN add N points between rows / columns; \s \aiN / \diN add N points above / below the line.
   Drawn as CSS padding (MathML Core keeps the CSS box model): the cells of row 2+ / column 2+ get the UA padding
