@@ -1,0 +1,77 @@
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="----=_NextPart_01DB0000.00000000"
+
+This document is a Single File Web Page, also known as a Web Archive file.
+
+------=_NextPart_01DB0000.00000000
+Content-Location: file:///C:/css-selectors-v1.htm
+Content-Transfer-Encoding: 8bit
+Content-Type: text/html; charset="us-ascii"
+
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+<head>
+<meta http-equiv=Content-Type content="text/html; charset=us-ascii">
+<style>
+<!--
+p.ctl1 { color:#C00000; }
+p.MsoNormal { margin:0in; margin-bottom:8.0pt; font-size:12.0pt; font-family:"Times New Roman"; }
+p[title] { text-decoration:underline; }
+p[title="exact"] { color:#C00000; }
+p[lang|=en] { font-weight:bold; }
+p[class~=word] { font-style:italic; }
+p[data-x^=pre] { color:#0070C0; }
+p[data-x$=suf] { color:#00B050; }
+p[data-x*=mid] { letter-spacing:3pt; }
+h2 + p { color:#7030A0; }
+h2 ~ p.later { font-variant:small-caps; }
+li:last-child { color:#C00000; }
+li:nth-child(2) { font-weight:bold; }
+li:nth-child(odd) { text-decoration:underline; }
+li:only-child { color:#00B050; }
+td:first-of-type { background:#FFFF00; }
+td:last-of-type { font-weight:bold; }
+p.before::before { content:"[B] "; color:#C00000; }
+p.after::after { content:" [A]"; color:#0070C0; }
+p.letter::first-letter { font-size:200%; color:#C00000; }
+p.line::first-line { text-transform:uppercase; }
+@media print { p.media { color:#00B050; } }
+@media screen { p.media { color:#C00000; } p.screenonly { display:none; } }
+p.ctl2 { color:#0070C0; }
+@media print { p.printhide { display:none; } }
+-->
+</style>
+</head>
+<body lang=EN-US>
+<div class=WordSection1>
+<p class=MsoNormal title="any">Case attr-present: underlined.</p>
+<p class=MsoNormal title="exact">Case attr-exact: red underlined.</p>
+<p class=MsoNormal lang="en-US">Case attr-dash: bold.</p>
+<p class="MsoNormal word">Case attr-word: italic.</p>
+<p class=MsoNormal data-x="prefix">Case attr-prefix: blue.</p>
+<p class=MsoNormal data-x="the-suf">Case attr-suffix: green.</p>
+<p class=MsoNormal data-x="amidb">Case attr-substring: spaced.</p>
+<h2>Heading two</h2>
+<p class=MsoNormal>Case adjacent: purple.</p>
+<p class="MsoNormal later">Case general-sibling: small caps.</p>
+<ul>
+<li>Item one: underlined.</li>
+<li>Item two: bold.</li>
+<li>Item three: red underlined.</li>
+</ul>
+<ul><li>Only item: green underlined.</li></ul>
+<table border=1><tr><td>Cell A yellow</td><td>Cell B</td><td>Cell C bold</td></tr></table>
+<p class="MsoNormal before">Case before: prefixed.</p>
+<p class="MsoNormal after">Case after: suffixed.</p>
+<p class="MsoNormal letter">Case first-letter: big red C.</p>
+<p class="MsoNormal line">Case first-line: upper case first line.</p>
+<p class="MsoNormal media">Case media: green in print.</p>
+<p class="MsoNormal screenonly">Case screen-only: hidden on screen only.</p>
+<p class="MsoNormal printhide">Case print-hide: hidden in print.</p>
+<p class=ctl1>Control one: red.</p>
+<p class=ctl2>Control two: blue.</p>
+<p class=MsoNormal>Last paragraph.</p>
+</div>
+</body>
+</html>
+
+------=_NextPart_01DB0000.00000000--

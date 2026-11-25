@@ -16,7 +16,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | w14 3-D text (props3d / scene3d): bevel, extrusion, contour, material, lighting, camera | docx | Word 16 draws 3-D text as a lit raster picture of the run (XPS output). With Word's front camera the extrusion is hidden behind the letters and the bevel only shades their face; CSS has no lighting or bevel for text, so the plain letters in the run colour are shown. .doc / RTF do not store it | won't do |
 | w14 reflection blur, scale / skew (sx, sy, kx, ky), fade direction | docx | box-reflect mirrors a box as it is: it can fade but not blur or transform the mirror image (Word's presets blur 0.5-10 pt and keep sx 100 %, sy -100 %) | won't do |
 | Kerning | docx, doc, rtf, odt | Ignored by design (audit set); the browser's own kerning applies | won't do |
-| Web archive sheet rules with attribute or sibling selectors, :last-child, pseudo-elements, @media | mhtml | The sheet is resolved per element into inline styles by a small checked grammar; Word's own sheets do not use these | deferred |
+| Web archive sheet: :nth-last-child(), :nth-last-of-type(), :last-of-type, :only-of-type when the element's parent goes on into the next block; any later-sibling pseudo-class on an element that spans blocks; a later-sibling pseudo-class outside the selector's last compound; counter() / attr() in generated content; markup that relies on implied end tags (the renderer nests what the browser would close) | mhtml | The later siblings lie in blocks not read; :last-child / :only-child / :empty do resolve there (the next block's stack shows a later sibling) | won't do |
 | Bullet whose symbol font is set only for complex script | doc | Shows no glyph (LibreOffice also reads the Latin font) | won't do |
 | Blinking / animated text | all | Not drawn | won't do |
 
@@ -121,7 +121,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Show markup / original view toggle for tracked changes | docx, doc, rtf, odt | Only Word's final view is shown, as it prints; markup does not print | won't do (not printed) |
 | Comments | docx, doc, rtf, odt | Comments do not print (references skipped) | won't do (not printed) |
-| Equations: a host without font files falls back to tables for Cambria Math and DejaVu Math TeX Gyre; heights of single-line equations read ~0.85 of Word's PDF by the measuring method; matrix rows sit 1.04 x Word's pitch (1.226 em for Word's 1.18 in Cambria Math: Chromium's cell baseline alignment adds ~0.85 px a row) | docx, doc, rtf | Ink is read from the browser's text metrics, not Word's own layout | deferred |
+| Equations: a host without font files falls back to tables for Cambria Math and DejaVu Math TeX Gyre; heights of single-line equations read ~0.85 of Word's PDF by the measuring method; matrix rows sit 0.99 x Word's pitch (1.166 em for Word's 1.18 in Cambria Math, 1.194 for DejaVu's 1.2: the library's line height and pixel rounding) | docx, doc, rtf | Ink is read from the browser's text metrics, not Word's own layout | deferred |
 | Equations in .doc saved without equationXML (Word 2003 and older) | doc | No OMML in the file; the saved picture is shown | won't do |
 
 ## Document level
@@ -130,7 +130,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Encrypted files | docx, doc, odt | Rejected with a clear "encrypted" error (no password support) | won't do |
 | Word 6.0 / 95 drawing objects (DO records, PlcfdoaMom); Word 6 / Word 2 metafile pictures drawn (their box is shown) | doc | No OfficeArt in a Word 6 file. A metafile picture keeps its box at its size, as a WMF does in every format (a browser cannot draw one; bitmaps after the PIC are shown). No public Word 6 file with pictures or drawing objects to check against (2026-11-18: LibreOffice's and Apache POI's test data hold only the fuzz file ofz21385-1 with drawing objects and none with pictures; neither Word 16 nor LibreOffice can save Word 6/95) | deferred |
-| Word 2003 XML: embedded fonts, w:docPr note separators | docx | Not translated; separators do not change the flow view | deferred |
 | Flat OPC or Word 2003 XML in UTF-16 or a legacy code page | docx | Rejected with a clear message: Word writes both in UTF-8, and their blocks are read in place by byte offsets as UTF-8 | won't do |
 | Word 2003 XML files over 1 GB | docx | Rejected with a clear message: note ids are made from the note's block offset (an int); Word itself opens documents up to 512 MB | won't do |
 | HTML files and HTML saved as .doc | html | Deliberately out of scope (FastDocView has no HTML support) | won't do |

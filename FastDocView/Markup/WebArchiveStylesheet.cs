@@ -1,25 +1,45 @@
+using System.Globalization;
 using System.Text;
 
 namespace FastDocView.Markup;
 
 /// <summary>
-/// Word's HTML carries its styles as CSS in the head (p.MsoNormal, h1, span.MsoFootnoteReference, a:link, @font-face, @page,
-/// @list...). The sheet never reaches the page as written: it is parsed here, each selector checked against a small grammar
-/// (type, .class, #id, descendant and child combinators, the pseudo-classes that print: :link / :any-link / :first-child;
-/// a printed link counts as unvisited, so :visited rules are dropped) and each declaration against a whitelist of print properties with safe values (no url(), expression,
-/// behavior, escapes, @import or position / fixed layout). <see cref="MarkupBlockRenderer"/> then resolves the rules per element
-/// into an inline style (sheet declarations by specificity and order, the element's own style="" after them), as a browser
-/// cascades them. @-rules (fonts, pages, Word's @list definitions) and selectors outside the grammar are dropped.
+/// A web archive's head CSS (Word: p.MsoNormal, h1, span.MsoFootnoteReference, a:link, @font-face, @page, @list...; a page a
+/// browser saved: any selector). The sheet never reaches the page as written: it is parsed here, each selector checked against a
+/// grammar - type, .class, #id, attribute selectors ([a], [a=v], ~=, |=, ^=, $=, *=, with the i flag), the descendant, child
+/// ('&gt;'), adjacent ('+') and general sibling ('~') combinators, the pseudo-classes that print (:link / :any-link - a printed
+/// link is unvisited, so :visited never matches -, :root, :first-child, :last-child, :only-child, :nth-child(), :nth-last-child(),
+/// :first-of-type, :last-of-type, :only-of-type, :nth-of-type(), :nth-last-of-type(), :empty, :not() of simple selectors) and the
+/// pseudo-elements ::before / ::after (content: strings and quote keywords), ::first-letter, ::first-line - and each declaration
+/// against a whitelist of print properties with safe values (no url(), expression, behavior, escapes, @import or position / fixed
+/// layout). @media rules apply as in print (Edge's print of the archive: print / all, not screen, orientation portrait, color, the
+/// page's width and height - see <see cref="WebArchiveMedia"/>). Word's own print of an archive ignores all of these (only plain
+/// type / class / id rules; test-data/word-mhtml/css-selectors-v1.pdf), and Word's own archives never use them; a browser's
+/// archive prints as the browser prints it (css-selectors-v1-edge.pdf).
+///
+/// Resolution stays per element and windowed (<see cref="WebArchiveMatch"/>): each element's matched selector prefixes are worked
+/// out from its parent's state when it opens - descendant and child combinators from the ancestors' matches, sibling combinators
+/// and child-index pseudo-classes from the parent's state of its children so far. The index pass keeps that state for the
+/// elements open at each block start (in the block's open-tag stack, <see cref="MarkupBlockScanner"/>), so a block resolves on
+/// its own. :last-child and the other pseudo-classes that depend on later siblings resolve when the parent's children end inside
+/// the block or at its end (the next block's stack shows what stays open); <see cref="MarkupBlockRenderer"/> writes the
+/// declarations into each element's inline style (by specificity and order, the element's own style="" after them, as a browser
+/// cascades them) and marks elements with pseudo-element rules (data-wa-pe), whose declarations the document stylesheet carries
+/// (<see cref="PseudoElementCss"/>). Other @-rules (fonts, pages, Word's @list) and selectors outside the grammar are dropped.
 /// </summary>
 public sealed class WebArchiveStylesheet
 {
     private const int MaximumCssCharacters = 256 * 1024;
 
     private readonly List<Rule> _rules = [];
-    private readonly Dictionary<string, List<Rule>> _byId = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, List<Rule>> _byClass = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, List<Rule>> _byType = new(StringComparer.Ordinal);
-    private readonly List<Rule> _universal = [];
+    private readonly List<Prefix> _prefixes = [];
+    private readonly Dictionary<string, List<Prefix>> _byId = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<Prefix>> _byClass = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<Prefix>> _byType = new(StringComparer.Ordinal);
+    private readonly List<Prefix> _universal = [];
+    private readonly Dictionary<int, Rule> _ruleByFullPrefix = new();
+    private readonly HashSet<int> _descendantSources = [];   // prefixes a descendant combinator reads from an ancestor
+    private readonly HashSet<int> _siblingSources = [];      // prefixes a sibling combinator reads from an earlier sibling
 
     public static readonly WebArchiveStylesheet Empty = new();
 
@@ -28,7 +48,16 @@ public sealed class WebArchiveStylesheet
 
     public bool IsEmpty => _rules.Count == 0;
 
-    /// <summary>The sheet in its checked form (what the index stores): one rule per line, only selectors and declarations that passed.</summary>
+    /// <summary>The sheet has sibling combinators or child-index pseudo-classes: the index pass keeps the open elements' child state.</summary>
+    public bool NeedsStructure { get; private set; }
+
+    /// <summary>The sheet has rules that depend on where an element ends (pseudo-elements, later-sibling pseudo-classes): the renderer asks what the next block reopens.</summary>
+    public bool NeedsEnds { get; private set; }
+
+    /// <summary>The pseudo-element rules for the document stylesheet: <c>.word-document [data-wa-pe~="N"]::before { ... }</c>, in cascade order.</summary>
+    public string PseudoElementCss { get; private set; } = "";
+
+    /// <summary>The sheet in its checked form (what the index stores): one rule per line, only selectors and declarations that passed; matching @media rules flattened.</summary>
     public static string Normalize(string css) => Parse(css).ToCssText();
 
     public static WebArchiveStylesheet Parse(string css)
@@ -38,52 +67,96 @@ public sealed class WebArchiveStylesheet
         if (css.Length > MaximumCssCharacters) css = css.Substring(0, MaximumCssCharacters);
         string source = StripComments(css.Replace("<!--", " ").Replace("-->", " "));
         var root = new List<Declaration>();
-        int at = 0, order = 0;
-        while (at < source.Length)
+        int order = 0;
+        sheet.ParseRules(source, 0, source.Length, root, ref order, depth: 0);
+        sheet.RootCss = string.Concat(root.Select(d => d.ToCss()));
+        sheet.PseudoElementCss = string.Concat(sheet._rules.Where(r => r.Selector.PseudoElement != PseudoElement.None)
+            .OrderBy(r => r.Selector.Specificity).ThenBy(r => r.Order)
+            .Select(r => ".word-document [data-wa-pe~=\"" + r.Order.ToString(CultureInfo.InvariantCulture) + "\"]::" + PseudoElementName(r.Selector.PseudoElement)
+                         + " { " + string.Concat(r.Declarations.Select(d => d.ToCss())) + " }\n"));
+        return sheet;
+    }
+
+    private void ParseRules(string source, int at, int end, List<Declaration> root, ref int order, int depth)
+    {
+        while (at < end)
         {
-            while (at < source.Length && char.IsWhiteSpace(source[at])) at++;
-            if (at >= source.Length) break;
-            int open = source.IndexOf('{', at);
+            while (at < end && char.IsWhiteSpace(source[at])) at++;
+            if (at >= end) break;
+            int open = source.IndexOf('{', at, end - at);
             if (source[at] == '@')
             {
-                int semicolon = source.IndexOf(';', at);
-                if (open < 0 || (semicolon >= 0 && semicolon < open)) { at = semicolon < 0 ? source.Length : semicolon + 1; continue; }
-                at = MatchingBrace(source, open) + 1;
+                int semicolon = source.IndexOf(';', at, end - at);
+                if (open < 0 || (semicolon >= 0 && semicolon < open)) { at = semicolon < 0 ? end : semicolon + 1; continue; }
+                int closeAt = Math.Min(end - 1, MatchingBrace(source, open));
+                string prelude = source.Substring(at, open - at).Trim();
+                // @media: its rules apply when the query matches print (Edge's print of the archive); nested @media too
+                if (depth < 8 && prelude.StartsWith("@media", StringComparison.OrdinalIgnoreCase) && WebArchiveMedia.MatchesPrint(prelude.Substring(6)))
+                    ParseRules(source, open + 1, closeAt, root, ref order, depth + 1);
+                at = closeAt + 1;
                 continue;
             }
             if (open < 0) break;
-            int close = MatchingBrace(source, open);
+            int close = Math.Min(end - 1, MatchingBrace(source, open));
             string selectors = source.Substring(at, open - at);
             string body = source.Substring(open + 1, Math.Max(0, close - open - 1));
             at = close + 1;
             if (body.IndexOf('{') >= 0) continue;                      // a nested block: not a plain rule
-            List<Declaration> declarations = ParseDeclarations(body);
-            if (declarations.Count == 0) continue;
-            foreach (string text in selectors.Split(','))
+            List<Declaration>? plain = null, generated = null;
+            foreach (string text in SplitSelectorList(selectors))
             {
                 Selector? selector = Selector.Parse(text);
                 if (selector is null) continue;
+                List<Declaration> declarations = selector.AllowsContent ? (generated ??= ParseDeclarations(body, allowsContent: true)) : (plain ??= ParseDeclarations(body));
+                if (declarations.Count == 0) continue;
                 if (selector.IsRoot) { root.AddRange(declarations.Where(d => InheritedProperties.Contains(d.Property))); continue; }
-                sheet.Add(new Rule(selector, declarations, order++));
+                Add(new Rule(selector, declarations, order++));
             }
         }
-        sheet.RootCss = string.Concat(root.Select(d => d.ToCss()));
-        return sheet;
+    }
+
+    /// <summary>Splits a selector list on commas outside brackets and parentheses.</summary>
+    private static IEnumerable<string> SplitSelectorList(string text)
+    {
+        int start = 0, depth = 0;
+        char quote = '\0';
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (quote != '\0') { if (c == quote) quote = '\0'; continue; }
+            if (c is '"' or '\'') quote = c;
+            else if (c is '(' or '[') depth++;
+            else if (c is ')' or ']') depth = Math.Max(0, depth - 1);
+            else if (c == ',' && depth == 0) { yield return text.Substring(start, i - start); start = i + 1; }
+        }
+        yield return text.Substring(start);
     }
 
     private void Add(Rule rule)
     {
         _rules.Add(rule);
-        Compound key = rule.Selector.Compounds[rule.Selector.Compounds.Count - 1];
-        if (key.Id is not null) Bucket(_byId, key.Id).Add(rule);
-        else if (key.Classes.Count > 0) Bucket(_byClass, key.Classes[0]).Add(rule);
-        else if (key.Type is not null) Bucket(_byType, key.Type).Add(rule);
-        else _universal.Add(rule);
+        Selector selector = rule.Selector;
+        if (selector.UsesStructure) NeedsStructure = true;
+        if (selector.PseudoElement != PseudoElement.None || selector.Subject.NeedsLaterSiblings) NeedsEnds = true;
+        int first = _prefixes.Count;
+        for (int i = 0; i < selector.Compounds.Count; i++)
+        {
+            var prefix = new Prefix(first + i, selector.Compounds[i], i == 0 ? Combinator.None : selector.Combinators[i], i == 0 ? -1 : first + i - 1);
+            _prefixes.Add(prefix);
+            Compound key = prefix.Compound;
+            if (key.Id is not null) Bucket(_byId, key.Id).Add(prefix);
+            else if (key.Classes.Count > 0) Bucket(_byClass, key.Classes[0]).Add(prefix);
+            else if (key.Type is not null) Bucket(_byType, key.Type).Add(prefix);
+            else _universal.Add(prefix);
+            if (prefix.Combinator == Combinator.Descendant) _descendantSources.Add(prefix.Previous);
+            else if (prefix.Combinator is Combinator.Adjacent or Combinator.General) _siblingSources.Add(prefix.Previous);
+        }
+        _ruleByFullPrefix[first + selector.Compounds.Count - 1] = rule;
     }
 
-    private static List<Rule> Bucket(Dictionary<string, List<Rule>> buckets, string key)
+    private static List<Prefix> Bucket(Dictionary<string, List<Prefix>> buckets, string key)
     {
-        if (!buckets.TryGetValue(key, out List<Rule>? list)) buckets[key] = list = [];
+        if (!buckets.TryGetValue(key, out List<Prefix>? list)) buckets[key] = list = [];
         return list;
     }
 
@@ -96,32 +169,130 @@ public sealed class WebArchiveStylesheet
         return text.ToString();
     }
 
-    /// <summary>
-    /// The sheet's declarations for the innermost element of <paramref name="ancestors"/> (outermost first), cascaded by
-    /// specificity then source order, as one inline style text ("" when no rule matches).
-    /// </summary>
-    internal string StyleFor(IReadOnlyList<WebArchiveElement> ancestors)
+    private static string PseudoElementName(PseudoElement pseudo) => pseudo switch
     {
-        if (_rules.Count == 0 || ancestors.Count == 0) return "";
-        WebArchiveElement element = ancestors[ancestors.Count - 1];
-        List<Rule>? matched = null;
-        void Try(List<Rule>? rules)
+        PseudoElement.Before => "before", PseudoElement.After => "after", PseudoElement.FirstLetter => "first-letter", _ => "first-line",
+    };
+
+    // -- matching ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// The state of <paramref name="element"/> opening under <paramref name="parent"/> (null: the document root): the selector
+    /// prefixes it matches. Counts it as the parent's next element child (child index, type index, sibling matches).
+    /// </summary>
+    internal WebArchiveMatch Open(WebArchiveMatch? parent, WebArchiveElement element)
+    {
+        int index = parent is null ? 1 : parent.Children + 1;
+        int typeIndex = parent is null ? 1 : parent.TypeCount(element.Name) + 1;
+        var matched = new List<int>();
+        if (_prefixes.Count > 0)
         {
-            if (rules is null) return;
-            foreach (Rule rule in rules)
-                if ((matched is null || !matched.Contains(rule)) && rule.Selector.Matches(ancestors)) (matched ??= []).Add(rule);
+            void Try(List<Prefix>? candidates)
+            {
+                if (candidates is null) return;
+                foreach (Prefix prefix in candidates)
+                    if (!matched.Contains(prefix.Id) && prefix.Compound.Matches(element, index, typeIndex, parent) && Related(prefix, parent)) matched.Add(prefix.Id);
+            }
+            if (element.Id is not null && _byId.TryGetValue(element.Id, out List<Prefix>? byId)) Try(byId);
+            foreach (string name in element.Classes)
+                if (_byClass.TryGetValue(name, out List<Prefix>? byClass)) Try(byClass);
+            if (_byType.TryGetValue(element.Name, out List<Prefix>? byType)) Try(byType);
+            Try(_universal);
+            matched.Sort();
         }
-        if (element.Id is not null && _byId.TryGetValue(element.Id, out List<Rule>? byId)) Try(byId);
-        foreach (string name in element.Classes)
-            if (_byClass.TryGetValue(name, out List<Rule>? byClass)) Try(byClass);
-        if (_byType.TryGetValue(element.Name, out List<Rule>? byType)) Try(byType);
-        Try(_universal);
-        if (matched is null) return "";
+        var state = new WebArchiveMatch(matched.ToArray(), Union(parent?.AncestorOrSelf, matched, _descendantSources), parent, index, typeIndex);
+        if (parent is not null) parent.CountChild(element.Name, Filter(matched, _siblingSources));
+        return state;
+    }
+
+    private static bool Related(Prefix prefix, WebArchiveMatch? parent) => prefix.Combinator switch
+    {
+        Combinator.None => true,
+        Combinator.Child => parent is not null && Contains(parent.Matched, prefix.Previous),
+        Combinator.Descendant => parent is not null && Contains(parent.AncestorOrSelf, prefix.Previous),
+        Combinator.Adjacent => parent is not null && Contains(parent.PreviousChild, prefix.Previous),
+        _ => parent is not null && Contains(parent.EarlierChildren, prefix.Previous),
+    };
+
+    private static bool Contains(int[] sorted, int id) => Array.BinarySearch(sorted, id) >= 0;
+
+    private static int[] Filter(List<int> matched, HashSet<int> keep) => matched.Where(keep.Contains).ToArray();
+
+    private static int[] Union(int[]? inherited, List<int> matched, HashSet<int> keep)
+    {
+        if (!matched.Any(keep.Contains)) return inherited ?? [];
+        var set = new SortedSet<int>(inherited ?? []);
+        foreach (int id in matched) if (keep.Contains(id)) set.Add(id);
+        return set.ToArray();
+    }
+
+    /// <summary>What the sheet gives one element: its inline declarations, its pseudo-element rule ids, and whether it is hidden.</summary>
+    internal readonly record struct ElementStyle(string Css, string StartPseudoIds, string AfterPseudoIds, bool IsHidden, bool IsDisplayImportant,
+                                                  string BeforeText, string AfterText, bool HasLaterSiblingRules)
+    {
+        public static readonly ElementStyle None = new("", "", "", false, false, "", "", false);
+        /// <summary>Whether the element is drawn by the renderer only once its end is known (pseudo-elements, later-sibling rules).</summary>
+        public bool IsDeferred => HasLaterSiblingRules || StartPseudoIds.Length > 0 || AfterPseudoIds.Length > 0;
+    }
+
+    /// <summary>
+    /// The declarations for an element by its state, cascaded by specificity then source order, as one inline style text, plus
+    /// the pseudo-element rules it takes. A rule whose subject needs later siblings (:last-child...) applies only when
+    /// <paramref name="later"/> answers for the element (null: not known yet; the rule is left out).
+    /// </summary>
+    internal ElementStyle StyleFor(WebArchiveMatch state, WebArchiveLaterFacts? later)
+    {
+        if (_rules.Count == 0 || state.Matched.Length == 0) return ElementStyle.None;
+        List<Rule>? matched = null;
+        bool hasLaterRules = false;
+        foreach (int id in state.Matched)
+        {
+            if (!_ruleByFullPrefix.TryGetValue(id, out Rule? rule)) continue;
+            if (rule.Selector.Subject.NeedsLaterSiblings)
+            {
+                hasLaterRules = true;
+                if (later is not { } facts || !rule.Selector.Subject.MatchesLater(state, facts)) continue;
+            }
+            (matched ??= []).Add(rule);
+        }
+        if (matched is null) return ElementStyle.None with { HasLaterSiblingRules = hasLaterRules };
         matched.Sort((a, b) => a.Selector.Specificity != b.Selector.Specificity ? a.Selector.Specificity.CompareTo(b.Selector.Specificity) : a.Order.CompareTo(b.Order));
         var css = new StringBuilder();
+        var pseudo = new StringBuilder();
+        var afterPseudo = new StringBuilder();
+        string? display = null, importantDisplay = null, before = null, after = null;
         foreach (Rule rule in matched)
-            foreach (Declaration declaration in rule.Declarations) css.Append(declaration.ToCss());
-        return css.ToString();
+        {
+            if (rule.Selector.PseudoElement != PseudoElement.None)
+            {
+                StringBuilder ids = rule.Selector.PseudoElement == PseudoElement.After ? afterPseudo : pseudo;
+                if (ids.Length > 0) ids.Append(' ');
+                ids.Append(rule.Order.ToString(CultureInfo.InvariantCulture));
+                foreach (Declaration declaration in rule.Declarations)
+                    if (declaration.Property == "content" && WebArchiveGeneratedContent.TextOf(declaration.Value) is { } text)
+                    {
+                        if (rule.Selector.PseudoElement == PseudoElement.Before) before = text;
+                        else if (rule.Selector.PseudoElement == PseudoElement.After) after = text;
+                    }
+                continue;
+            }
+            foreach (Declaration declaration in rule.Declarations)
+            {
+                css.Append(declaration.ToCss());
+                if (declaration.Property == "display") { if (declaration.IsImportant) importantDisplay = declaration.Value; else display = declaration.Value; }
+            }
+        }
+        bool isHidden = string.Equals(importantDisplay ?? display, "none", StringComparison.OrdinalIgnoreCase);
+        return new ElementStyle(css.ToString(), pseudo.ToString(), afterPseudo.ToString(), isHidden, importantDisplay is not null, before ?? "", after ?? "", hasLaterRules);
+    }
+
+    /// <summary>Whether an inline style="" (checked) sets display:none (an element's own style wins over the sheet's unless !important there).</summary>
+    internal static string? InlineDisplay(string checkedInline)
+    {
+        string? display = null;
+        foreach (Declaration declaration in ParseDeclarations(checkedInline))
+            if (declaration.Property == "display") display = declaration.Value;
+        return display;
     }
 
     /// <summary>An inline style="" value with only the declarations that pass the same checks as the sheet's.</summary>
@@ -166,7 +337,7 @@ public sealed class WebArchiveStylesheet
         "table-header-group", "table-footer-group", "table-column", "table-column-group", "table-caption",
     };
 
-    private static List<Declaration> ParseDeclarations(string body)
+    private static List<Declaration> ParseDeclarations(string body, bool allowsContent = false)
     {
         var result = new List<Declaration>();
         foreach (string part in SplitDeclarations(body))
@@ -175,6 +346,12 @@ public sealed class WebArchiveStylesheet
             if (colon <= 0) continue;
             string property = part.Substring(0, colon).Trim().ToLowerInvariant();
             string value = part.Substring(colon + 1).Trim();
+            if (property == "content")
+            {
+                // generated content (::before / ::after only): strings and quote keywords, re-written safely
+                if (allowsContent && WebArchiveGeneratedContent.Parse(value) is { } generated) result.Add(new Declaration(property, generated.Css, generated.IsImportant));
+                continue;
+            }
             bool isImportant = false;
             int bang = value.LastIndexOf('!');
             if (bang >= 0)
@@ -233,36 +410,140 @@ public sealed class WebArchiveStylesheet
     private static readonly string[] UnsafeWords =
         ["url(", "image(", "image-set(", "element(", "expression", "behavior", "javascript", "vbscript", "binding", "var(", "attr(", "env(", "fixed", "/*"];
 
+
     // -- selectors --------------------------------------------------------------------------
 
     private sealed record Rule(Selector Selector, List<Declaration> Declarations, int Order);
+
+    private sealed record Prefix(int Id, Compound Compound, Combinator Combinator, int Previous);
+
+    private enum Combinator : byte { None, Descendant, Child, Adjacent, General }
+
+    internal enum PseudoElement : byte { None, Before, After, FirstLetter, FirstLine }
+
+    private enum AttributeOperator : byte { Exists, Equals, Word, DashPrefix, Prefix, Suffix, Substring }
+
+    private sealed record AttributeTest(string Name, AttributeOperator Operator, string Value, bool IgnoresCase);
+
+    /// <summary>An+B of :nth-child() and its kin.</summary>
+    private readonly record struct Nth(int A, int B)
+    {
+        public bool Matches(int position) => A == 0 ? position == B : (position - B) / A >= 0 && (position - B) % A == 0;
+        public override string ToString() => A.ToString(CultureInfo.InvariantCulture) + "n" + (B >= 0 ? "+" : "") + B.ToString(CultureInfo.InvariantCulture);
+
+        public static Nth? Parse(string text)
+        {
+            string t = new string(text.Where(c => !char.IsWhiteSpace(c)).ToArray()).ToLowerInvariant();
+            if (t == "odd") return new Nth(2, 1);
+            if (t == "even") return new Nth(2, 0);
+            int n = t.IndexOf('n');
+            if (n < 0) return int.TryParse(t, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int b0) ? new Nth(0, b0) : null;
+            string a = t.Substring(0, n), rest = t.Substring(n + 1);
+            int av = a switch { "" or "+" => 1, "-" => -1, _ => int.TryParse(a, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int parsed) ? parsed : int.MinValue };
+            if (av == int.MinValue) return null;
+            int bv = 0;
+            if (rest.Length > 0 && !int.TryParse(rest, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out bv)) return null;
+            return new Nth(av, bv);
+        }
+    }
 
     private sealed class Compound
     {
         public string? Type;                 // lower case; null = any
         public string? Id;
         public readonly List<string> Classes = [];
-        public bool IsLink, IsFirstChild;
-        public bool IsChildOfPrevious;       // '>' before this compound
+        public readonly List<AttributeTest> Attributes = [];
+        public bool IsLink, IsRoot;
+        public Nth? NthChild, NthOfType;                      // :first-child = nth-child(1), :first-of-type = nth-of-type(1)
+        public Nth? NthLastChild, NthLastOfType;              // later siblings: resolved by the renderer (WebArchiveLaterFacts)
+        public bool IsEmpty;
+        public readonly List<Compound> Not = [];
+        public readonly List<string> PseudoTexts = [];        // as written back (normalized)
 
-        public bool Matches(WebArchiveElement element)
+        public bool UsesStructure => NthChild is not null || NthOfType is not null || NeedsLaterSiblings || Not.Any(n => n.UsesStructure);
+        public bool NeedsLaterSiblings => NthLastChild is not null || NthLastOfType is not null || IsEmpty;
+        public bool IsSimpleArgument => !NeedsLaterSiblings && Not.Count == 0;
+
+        public bool Matches(WebArchiveElement element, int index, int typeIndex, WebArchiveMatch? parent)
         {
             if (Type is not null && Type != element.Name) return false;
+            if (IsRoot && element.Name != "html") return false;
             if (Id is not null && !string.Equals(Id, element.Id, StringComparison.OrdinalIgnoreCase)) return false;
             foreach (string name in Classes)
                 if (!element.Classes.Contains(name, StringComparer.OrdinalIgnoreCase)) return false;
             if (IsLink && !element.IsLink) return false;
-            if (IsFirstChild && !element.IsFirstChild) return false;
+            foreach (AttributeTest test in Attributes)
+                if (!MatchesAttribute(test, element.Attribute(test.Name))) return false;
+            if (NthChild is { } nthChild && (parent is null || !nthChild.Matches(index))) return false;
+            if (NthOfType is { } nthOfType && (parent is null || !nthOfType.Matches(typeIndex))) return false;
+            foreach (Compound not in Not)
+                if (not.Matches(element, index, typeIndex, parent)) return false;
             return true;
+        }
+
+        /// <summary>The later-sibling pseudo-classes of the subject, once the element's later siblings and content are known.</summary>
+        public bool MatchesLater(WebArchiveMatch state, WebArchiveLaterFacts facts)
+        {
+            if (NthLastChild is { } nthLastChild && !nthLastChild.Matches(facts.LaterSiblings + 1)) return false;
+            if (NthLastOfType is { } nthLastOfType && !nthLastOfType.Matches(facts.LaterSiblingsOfType + 1)) return false;
+            if (IsEmpty && !facts.IsEmpty) return false;
+            return true;
+        }
+
+        private static bool MatchesAttribute(AttributeTest test, string? value)
+        {
+            if (value is null) return false;
+            if (test.Operator == AttributeOperator.Exists) return true;
+            StringComparison comparison = test.IgnoresCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            string wanted = test.Value;
+            return test.Operator switch
+            {
+                AttributeOperator.Equals => string.Equals(value, wanted, comparison),
+                AttributeOperator.Word => wanted.Length > 0 && wanted.IndexOfAny([' ', '\t', '\n', '\r', '\f']) < 0
+                                          && value.Split([' ', '\t', '\n', '\r', '\f'], StringSplitOptions.RemoveEmptyEntries).Any(word => string.Equals(word, wanted, comparison)),
+                AttributeOperator.DashPrefix => string.Equals(value, wanted, comparison) || value.StartsWith(wanted + "-", comparison),
+                AttributeOperator.Prefix => wanted.Length > 0 && value.StartsWith(wanted, comparison),
+                AttributeOperator.Suffix => wanted.Length > 0 && value.EndsWith(wanted, comparison),
+                _ => wanted.Length > 0 && value.IndexOf(wanted, comparison) >= 0,
+            };
+        }
+
+        public string ToText(bool isFirst)
+        {
+            var text = new StringBuilder();
+            text.Append(Type ?? "");
+            if (Id is not null) text.Append('#').Append(Id);
+            foreach (string name in Classes) text.Append('.').Append(name);
+            foreach (AttributeTest test in Attributes)
+            {
+                text.Append('[').Append(test.Name);
+                if (test.Operator != AttributeOperator.Exists)
+                    text.Append(test.Operator switch
+                    {
+                        AttributeOperator.Equals => "=", AttributeOperator.Word => "~=", AttributeOperator.DashPrefix => "|=",
+                        AttributeOperator.Prefix => "^=", AttributeOperator.Suffix => "$=", _ => "*=",
+                    }).Append('"').Append(test.Value).Append('"').Append(test.IgnoresCase ? " i" : "");
+                text.Append(']');
+            }
+            foreach (string pseudo in PseudoTexts) text.Append(':').Append(pseudo);
+            if (text.Length == 0) text.Append('*');
+            return text.ToString();
         }
     }
 
     private sealed class Selector
     {
         public readonly List<Compound> Compounds = [];
+        public readonly List<Combinator> Combinators = [];     // [i]: between compound i - 1 and i ([0] unused)
         public int Specificity;
         public string Text = "";
-        public bool IsRoot => Compounds.Count == 1 && Compounds[0] is { Type: "html" or "body", Id: null, Classes.Count: 0, IsLink: false, IsFirstChild: false };
+        public PseudoElement PseudoElement;
+        public Compound Subject => Compounds[Compounds.Count - 1];
+        public bool AllowsContent => PseudoElement is PseudoElement.Before or PseudoElement.After;
+        public bool UsesStructure => Combinators.Any(c => c is Combinator.Adjacent or Combinator.General) || Compounds.Any(c => c.UsesStructure);
+        public bool IsRoot => PseudoElement == PseudoElement.None && Compounds.Count == 1
+                              && Compounds[0] is { Id: null, Classes.Count: 0, Attributes.Count: 0, IsLink: false, PseudoTexts.Count: 0 } only
+                              && (only.Type is "html" or "body" || only.IsRoot);
 
         public static Selector? Parse(string text)
         {
@@ -270,69 +551,247 @@ public sealed class WebArchiveStylesheet
             if (text.Length == 0 || text.Length > 512) return null;
             var selector = new Selector();
             int i = 0;
-            bool childNext = false;
+            Combinator pending = Combinator.None;
+            bool sawSpace = false;
             while (i < text.Length)
             {
-                while (i < text.Length && char.IsWhiteSpace(text[i])) i++;
-                if (i >= text.Length) break;
-                if (text[i] == '>') { if (childNext || selector.Compounds.Count == 0) return null; childNext = true; i++; continue; }
-                var compound = new Compound { IsChildOfPrevious = childNext };
-                childNext = false;
-                int start = i;
-                if (text[i] == '*') i++;
-                else if (IsNameCharacter(text[i])) { int s = i; while (i < text.Length && IsNameCharacter(text[i])) i++; compound.Type = text.Substring(s, i - s).ToLowerInvariant(); }
-                while (i < text.Length && !char.IsWhiteSpace(text[i]) && text[i] != '>')
+                char c = text[i];
+                if (char.IsWhiteSpace(c)) { sawSpace = true; i++; continue; }
+                if (c is '>' or '+' or '~')
                 {
-                    char kind = text[i++];
-                    int s = i;
-                    while (i < text.Length && IsNameCharacter(text[i])) i++;
-                    string name = text.Substring(s, i - s);
-                    if (name.Length == 0) return null;
-                    if (kind == '.') { compound.Classes.Add(name); selector.Specificity += 1 << 10; }
-                    else if (kind == '#') { if (compound.Id is not null) return null; compound.Id = name; selector.Specificity += 1 << 20; }
-                    else if (kind == ':')
-                    {
-                        switch (name.ToLowerInvariant())
-                        {
-                            // a printed link is unvisited (:visited never matches); hover / focus / active never print
-                            case "link": case "any-link": compound.IsLink = true; break;
-                            case "first-child": compound.IsFirstChild = true; break;
-                            default: return null;
-                        }
-                        selector.Specificity += 1 << 10;
-                    }
-                    else return null;                                   // attribute selectors, pseudo-elements, sibling combinators
+                    if (selector.Compounds.Count == 0 || pending != Combinator.None || selector.PseudoElement != PseudoElement.None) return null;
+                    pending = c == '>' ? Combinator.Child : c == '+' ? Combinator.Adjacent : Combinator.General;
+                    sawSpace = false;
+                    i++;
+                    continue;
                 }
-                if (i == start) return null;
-                if (compound.Type is not null) selector.Specificity += 1;
+                if (selector.Compounds.Count > 0)
+                {
+                    if (pending == Combinator.None && !sawSpace) return null;
+                    if (selector.PseudoElement != PseudoElement.None) return null;     // a pseudo-element ends the selector
+                }
+                Compound? compound = ParseCompound(text, ref i, selector, allowsPseudoElement: true, out int specificity);
+                if (compound is null) return null;
+                selector.Specificity += specificity;
+                selector.Combinators.Add(selector.Compounds.Count == 0 ? Combinator.None : pending == Combinator.None ? Combinator.Descendant : pending);
                 selector.Compounds.Add(compound);
+                pending = Combinator.None;
+                sawSpace = false;
             }
-            if (childNext || selector.Compounds.Count == 0 || selector.Compounds.Count > 16) return null;
-            selector.Text = string.Join(" ", selector.Compounds.Select(ToText));
+            if (pending != Combinator.None || selector.Compounds.Count == 0 || selector.Compounds.Count > 16) return null;
+            // a later-sibling pseudo-class is resolved for the element itself only (the renderer knows its later siblings)
+            for (int k = 0; k + 1 < selector.Compounds.Count; k++) if (selector.Compounds[k].NeedsLaterSiblings) return null;
+            if (selector.PseudoElement != PseudoElement.None) selector.Specificity += 1;
+            var written = new StringBuilder();
+            for (int k = 0; k < selector.Compounds.Count; k++)
+            {
+                if (k > 0) written.Append(selector.Combinators[k] switch { Combinator.Child => " > ", Combinator.Adjacent => " + ", Combinator.General => " ~ ", _ => " " });
+                written.Append(selector.Compounds[k].ToText(k == 0));
+            }
+            if (selector.PseudoElement != PseudoElement.None) written.Append("::").Append(PseudoElementName(selector.PseudoElement));
+            selector.Text = written.ToString();
             return selector;
         }
 
-        private static string ToText(Compound compound)
-            => (compound.IsChildOfPrevious ? "> " : "") + (compound.Type ?? (compound.Id is null && compound.Classes.Count == 0 && !compound.IsLink && !compound.IsFirstChild ? "*" : ""))
-               + (compound.Id is null ? "" : "#" + compound.Id) + string.Concat(compound.Classes.Select(c => "." + c))
-               + (compound.IsLink ? ":link" : "") + (compound.IsFirstChild ? ":first-child" : "");
-
-        /// <summary>Right to left over the open elements: the last compound is the element, the rest its ancestors (backtracking for descendants).</summary>
-        public bool Matches(IReadOnlyList<WebArchiveElement> ancestors)
-            => Compounds[Compounds.Count - 1].Matches(ancestors[ancestors.Count - 1])
-               && MatchFrom(Compounds.Count - 2, ancestors, ancestors.Count - 2, Compounds[Compounds.Count - 1].IsChildOfPrevious);
-
-        private bool MatchFrom(int compound, IReadOnlyList<WebArchiveElement> ancestors, int element, bool isChild)
+        /// <summary>One compound from <paramref name="i"/> (type or *, then #id .class [attr] :pseudo ::pseudo-element), or null.</summary>
+        private static Compound? ParseCompound(string text, ref int i, Selector? selector, bool allowsPseudoElement, out int specificity)
         {
-            if (compound < 0) return true;
-            for (int e = element; e >= 0; e--)
+            specificity = 0;
+            var compound = new Compound();
+            int start = i;
+            if (text[i] == '*') i++;
+            else if (IsNameCharacter(text[i]))
             {
-                if (Compounds[compound].Matches(ancestors[e]) && MatchFrom(compound - 1, ancestors, e - 1, Compounds[compound].IsChildOfPrevious)) return true;
-                if (isChild) return false;
+                int s = i;
+                while (i < text.Length && IsNameCharacter(text[i])) i++;
+                compound.Type = text.Substring(s, i - s).ToLowerInvariant();
+                specificity += 1;
             }
-            return false;
+            while (i < text.Length && !char.IsWhiteSpace(text[i]) && text[i] is not ('>' or '+' or '~' or ',' or ')'))
+            {
+                char kind = text[i++];
+                if (kind == '[')
+                {
+                    int close = text.IndexOf(']', i);
+                    if (close < 0 || ParseAttribute(text.Substring(i, close - i)) is not { } test) return null;
+                    compound.Attributes.Add(test);
+                    specificity += 1 << 10;
+                    i = close + 1;
+                    continue;
+                }
+                if (kind == ':' && i < text.Length && text[i] == ':')
+                {
+                    i++;
+                    string elementName = ReadName(text, ref i).ToLowerInvariant();
+                    if (!allowsPseudoElement || selector is null || selector.PseudoElement != PseudoElement.None || !SetPseudoElement(selector, elementName)) return null;
+                    continue;
+                }
+                string name = ReadName(text, ref i);
+                if (name.Length == 0) return null;
+                if (selector?.PseudoElement is not (null or PseudoElement.None)) return null;   // nothing after a pseudo-element
+                if (kind == '.') { compound.Classes.Add(name); specificity += 1 << 10; }
+                else if (kind == '#') { if (compound.Id is not null) return null; compound.Id = name; specificity += 1 << 20; }
+                else if (kind == ':')
+                {
+                    string lower = name.ToLowerInvariant();
+                    string? argument = null;
+                    if (i < text.Length && text[i] == '(')
+                    {
+                        int close = MatchingParenthesis(text, i);
+                        if (close < 0) return null;
+                        argument = text.Substring(i + 1, close - i - 1);
+                        i = close + 1;
+                    }
+                    // CSS 2's single-colon pseudo-elements
+                    if (argument is null && lower is "before" or "after" or "first-letter" or "first-line")
+                    {
+                        if (!allowsPseudoElement || selector is null || !SetPseudoElement(selector, lower)) return null;
+                        continue;
+                    }
+                    int pseudoSpecificity = 1 << 10;
+                    switch (lower)
+                    {
+                        // a printed link is unvisited (:visited never matches); hover / focus / active never print
+                        case "link" when argument is null: case "any-link" when argument is null: compound.IsLink = true; compound.PseudoTexts.Add("link"); break;
+                        case "root" when argument is null: compound.IsRoot = true; compound.PseudoTexts.Add("root"); break;
+                        case "first-child" when argument is null: compound.NthChild = new Nth(0, 1); compound.PseudoTexts.Add("first-child"); break;
+                        case "last-child" when argument is null: compound.NthLastChild = new Nth(0, 1); compound.PseudoTexts.Add("last-child"); break;
+                        case "only-child" when argument is null:
+                            compound.NthChild = new Nth(0, 1); compound.NthLastChild = new Nth(0, 1); compound.PseudoTexts.Add("only-child"); break;
+                        case "first-of-type" when argument is null: compound.NthOfType = new Nth(0, 1); compound.PseudoTexts.Add("first-of-type"); break;
+                        case "last-of-type" when argument is null: compound.NthLastOfType = new Nth(0, 1); compound.PseudoTexts.Add("last-of-type"); break;
+                        case "only-of-type" when argument is null:
+                            compound.NthOfType = new Nth(0, 1); compound.NthLastOfType = new Nth(0, 1); compound.PseudoTexts.Add("only-of-type"); break;
+                        case "empty" when argument is null: compound.IsEmpty = true; compound.PseudoTexts.Add("empty"); break;
+                        case "nth-child" or "nth-last-child" or "nth-of-type" or "nth-last-of-type" when argument is not null:
+                        {
+                            if (Nth.Parse(argument) is not { } nth) return null;
+                            if (lower == "nth-child") compound.NthChild = nth;
+                            else if (lower == "nth-last-child") compound.NthLastChild = nth;
+                            else if (lower == "nth-of-type") compound.NthOfType = nth;
+                            else compound.NthLastOfType = nth;
+                            compound.PseudoTexts.Add(lower + "(" + nth + ")");
+                            break;
+                        }
+                        case "not" when argument is not null:
+                        {
+                            int most = 0;
+                            var written = new List<string>();
+                            foreach (string part in SplitSelectorList(argument))
+                            {
+                                string trimmed = part.Trim();
+                                int at = 0;
+                                if (trimmed.Length == 0) return null;
+                                Compound? inner = ParseCompound(trimmed, ref at, null, allowsPseudoElement: false, out int innerSpecificity);
+                                if (inner is null || at != trimmed.Length || !inner.IsSimpleArgument) return null;
+                                compound.Not.Add(inner);
+                                written.Add(inner.ToText(true));
+                                most = Math.Max(most, innerSpecificity);
+                            }
+                            compound.PseudoTexts.Add("not(" + string.Join(", ", written) + ")");
+                            pseudoSpecificity = most;
+                            break;
+                        }
+                        default: return null;                           // :visited, :hover, :checked... never print as written
+                    }
+                    specificity += pseudoSpecificity;
+                }
+                else return null;
+            }
+            if (i == start) return null;
+            return compound;
+        }
+
+        private static bool SetPseudoElement(Selector selector, string name)
+        {
+            selector.PseudoElement = name switch
+            {
+                "before" => PseudoElement.Before, "after" => PseudoElement.After, "first-letter" => PseudoElement.FirstLetter, "first-line" => PseudoElement.FirstLine,
+                _ => PseudoElement.None,
+            };
+            return selector.PseudoElement != PseudoElement.None;
+        }
+
+        private static string ReadName(string text, ref int i)
+        {
+            int s = i;
+            while (i < text.Length && IsNameCharacter(text[i])) i++;
+            return text.Substring(s, i - s);
+        }
+
+        private static int MatchingParenthesis(string text, int open)
+        {
+            int depth = 0;
+            for (int k = open; k < text.Length; k++)
+            {
+                if (text[k] == '(') depth++;
+                else if (text[k] == ')' && --depth == 0) return k;
+            }
+            return -1;
+        }
+
+        /// <summary>The inside of [...]: name, optional operator and value (ident or quoted, no escapes), optional i / s flag.</summary>
+        private static AttributeTest? ParseAttribute(string inside)
+        {
+            string t = inside.Trim();
+            int i = 0;
+            while (i < t.Length && (IsNameCharacter(t[i]) || t[i] == ':')) i++;
+            if (i == 0) return null;
+            string name = t.Substring(0, i).ToLowerInvariant();
+            while (i < t.Length && char.IsWhiteSpace(t[i])) i++;
+            if (i == t.Length) return new AttributeTest(name, AttributeOperator.Exists, "", false);
+            AttributeOperator op;
+            if (t[i] == '=') { op = AttributeOperator.Equals; i++; }
+            else if (i + 1 < t.Length && t[i + 1] == '=')
+            {
+                op = t[i] switch { '~' => AttributeOperator.Word, '|' => AttributeOperator.DashPrefix, '^' => AttributeOperator.Prefix, '$' => AttributeOperator.Suffix, '*' => AttributeOperator.Substring, _ => (AttributeOperator)255 };
+                if (op == (AttributeOperator)255) return null;
+                i += 2;
+            }
+            else return null;
+            while (i < t.Length && char.IsWhiteSpace(t[i])) i++;
+            if (i >= t.Length) return null;
+            string value;
+            if (t[i] is '"' or '\'')
+            {
+                char quote = t[i];
+                int close = t.IndexOf(quote, i + 1);
+                if (close < 0) return null;
+                value = t.Substring(i + 1, close - i - 1);
+                i = close + 1;
+            }
+            else
+            {
+                int s = i;
+                while (i < t.Length && IsNameCharacter(t[i])) i++;
+                value = t.Substring(s, i - s);
+                if (value.Length == 0) return null;
+            }
+            if (value.IndexOfAny(['\\', '"', '\'', '<', '>', '{', '}', '\n', '\r']) >= 0) return null;   // escapes are not read; nothing unsafe is written back
+            while (i < t.Length && char.IsWhiteSpace(t[i])) i++;
+            bool ignoresCase = CaseInsensitiveAttributes.Contains(name);
+            if (i < t.Length)
+            {
+                char flag = char.ToLowerInvariant(t[i]);
+                if (flag == 'i') ignoresCase = true;
+                else if (flag == 's') ignoresCase = false;
+                else return null;
+                i++;
+                while (i < t.Length && char.IsWhiteSpace(t[i])) i++;
+                if (i != t.Length) return null;
+            }
+            return new AttributeTest(name, op, value, ignoresCase);
         }
     }
+
+    /// <summary>HTML attributes whose values selectors compare without case (HTML Living Standard 4.16.2, "case-sensitivity of selectors").</summary>
+    private static readonly HashSet<string> CaseInsensitiveAttributes = new(StringComparer.Ordinal)
+    {
+        "accept", "accept-charset", "align", "alink", "axis", "bgcolor", "charset", "checked", "clear", "codetype", "color", "compact",
+        "declare", "defer", "dir", "direction", "disabled", "enctype", "face", "frame", "hreflang", "http-equiv", "lang", "language",
+        "link", "media", "method", "multiple", "nohref", "noresize", "noshade", "nowrap", "readonly", "rel", "rev", "rules", "scope",
+        "scrolling", "selected", "shape", "target", "text", "type", "valign", "valuetype", "vlink",
+    };
 
     private static bool IsNameCharacter(char c) => c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '-' or '_' || c > 0x7F;
 
@@ -364,14 +823,388 @@ public sealed class WebArchiveStylesheet
     }
 }
 
-/// <summary>One open element as the stylesheet sees it: name (lower case), id, classes, and the facts the printing pseudo-classes need.</summary>
-internal sealed class WebArchiveElement(string name, string? id, string[] classes, bool isLink, bool isFirstChild, bool areChildrenKnown)
+/// <summary>
+/// One element's resolution state (<see cref="WebArchiveStylesheet.Open"/>): the selector prefixes it matches, those of it and its
+/// ancestors that descendant combinators read, its position among its siblings, and - as a parent - the state of its element
+/// children so far (count, count per type, the previous child's and all earlier children's matches that sibling combinators
+/// read). The index pass writes it for the elements open at a block start into the block's open-tag stack
+/// (<see cref="Serialize"/>), so a block resolves without the blocks before it.
+/// </summary>
+internal sealed class WebArchiveMatch(int[] matched, int[] ancestorOrSelf, WebArchiveMatch? parent, int index, int typeIndex)
+{
+    /// <summary>The attribute that carries the state on an open-tag stack entry (written by the index pass, never by a document).</summary>
+    public const string StateAttribute = "data-fdv-s";
+    /// <summary>The stack entry that carries the body's state (the children of body are blocks: their sibling state crosses blocks).</summary>
+    public const string RootTagName = "fdv-root";
+
+    public int[] Matched { get; } = matched;
+    public int[] AncestorOrSelf { get; private set; } = ancestorOrSelf;
+    public WebArchiveMatch? Parent { get; } = parent;
+    public int Index { get; } = index;
+    public int TypeIndex { get; } = typeIndex;
+
+    public int Children { get; private set; }
+    private Dictionary<string, int>? _typeCounts;
+    public int[] PreviousChild { get; private set; } = [];
+    public int[] EarlierChildren { get; private set; } = [];
+    /// <summary>Renderer: text or an element child seen inside (for :empty).</summary>
+    public bool HasContent;
+
+    public int TypeCount(string name) => _typeCounts is not null && _typeCounts.TryGetValue(name, out int count) ? count : 0;
+
+    public void CountChild(string name, int[] siblingMatches)
+    {
+        Children++;
+        HasContent = true;
+        _typeCounts ??= new Dictionary<string, int>(StringComparer.Ordinal);
+        _typeCounts[name] = TypeCount(name) + 1;
+        PreviousChild = siblingMatches;
+        if (siblingMatches.Length > 0) EarlierChildren = EarlierChildren.Concat(siblingMatches).Distinct().OrderBy(id => id).ToArray();
+    }
+
+    /// <summary>The state as an attribute value: "m,ids;a,ids;c,count;t,name=count,...;v,ids;e,ids;i,index,typeIndex" (digits, names, punctuation only).</summary>
+    public string Serialize()
+    {
+        var text = new StringBuilder();
+        text.Append("m,").Append(string.Join(".", Matched)).Append(";a,").Append(string.Join(".", AncestorOrSelf))
+            .Append(";c,").Append(Children).Append(";t,");
+        if (_typeCounts is not null) text.Append(string.Join(".", _typeCounts.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value)));
+        text.Append(";v,").Append(string.Join(".", PreviousChild)).Append(";e,").Append(string.Join(".", EarlierChildren))
+            .Append(";i,").Append(Index).Append('.').Append(TypeIndex);
+        return text.ToString();
+    }
+
+    /// <summary>A state read back from <see cref="Serialize"/>; null when damaged.</summary>
+    public static WebArchiveMatch? Deserialize(string text, WebArchiveMatch? parent)
+    {
+        int[] matched = [], ancestorOrSelf = [], previous = [], earlier = [];
+        int children = 0, index = 1, typeIndex = 1;
+        Dictionary<string, int>? types = null;
+        foreach (string part in text.Split(';'))
+        {
+            if (part.Length < 2 || part[1] != ',') return null;
+            string value = part.Substring(2);
+            switch (part[0])
+            {
+                case 'm': if (Ids(value) is not { } m) return null; matched = m; break;
+                case 'a': if (Ids(value) is not { } a) return null; ancestorOrSelf = a; break;
+                case 'c': if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out children)) return null; break;
+                case 'v': if (Ids(value) is not { } v) return null; previous = v; break;
+                case 'e': if (Ids(value) is not { } e) return null; earlier = e; break;
+                case 'i':
+                {
+                    string[] pair = value.Split('.');
+                    if (pair.Length != 2 || !int.TryParse(pair[0], NumberStyles.None, CultureInfo.InvariantCulture, out index) || !int.TryParse(pair[1], NumberStyles.None, CultureInfo.InvariantCulture, out typeIndex)) return null;
+                    break;
+                }
+                case 't':
+                    if (value.Length == 0) break;
+                    types = new Dictionary<string, int>(StringComparer.Ordinal);
+                    foreach (string entry in value.Split('.'))
+                    {
+                        int equals = entry.LastIndexOf('=');
+                        if (equals <= 0 || !int.TryParse(entry.Substring(equals + 1), NumberStyles.None, CultureInfo.InvariantCulture, out int count)) return null;
+                        types[entry.Substring(0, equals)] = count;
+                    }
+                    break;
+                default: return null;
+            }
+        }
+        return new WebArchiveMatch(matched, ancestorOrSelf, parent, index, typeIndex)
+            { Children = children, _typeCounts = types, PreviousChild = previous, EarlierChildren = earlier, HasContent = children > 0 };
+    }
+
+    private static int[]? Ids(string value)
+    {
+        if (value.Length == 0) return [];
+        string[] parts = value.Split('.');
+        var ids = new int[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+            if (!int.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out ids[i])) return null;
+        return ids;
+    }
+}
+
+/// <summary>What an element's later-sibling pseudo-classes need, once known: its later element siblings (all, of its type) and whether it is empty.</summary>
+internal readonly record struct WebArchiveLaterFacts(int LaterSiblings, int LaterSiblingsOfType, bool IsEmpty);
+
+/// <summary>One element as the stylesheet sees it: name (lower case), id, classes, whether it is a link, and its start tag (attribute selectors).</summary>
+internal sealed class WebArchiveElement(string name, string? id, string[] classes, bool isLink, string tag)
 {
     public string Name { get; } = name;
     public string? Id { get; } = id;
     public string[] Classes { get; } = classes;
     public bool IsLink { get; } = isLink;
-    public bool IsFirstChild { get; } = isFirstChild;
-    public bool AreChildrenKnown { get; } = areChildrenKnown;    // opened in the block's own text, not reopened from the open-tag stack
-    public int ElementChildren;                                  // element children seen so far
+    private Dictionary<string, string?>? _attributes;
+
+    /// <summary>An attribute's value as a browser reads it (entities decoded), or null when the tag has none.</summary>
+    public string? Attribute(string attributeName)
+    {
+        _attributes ??= new Dictionary<string, string?>(StringComparer.Ordinal);
+        if (!_attributes.TryGetValue(attributeName, out string? value))
+            _attributes[attributeName] = value = MarkupBlockRenderer.AttributeValue(tag, attributeName) is { } raw ? System.Net.WebUtility.HtmlDecode(raw) : null;
+        return value;
+    }
+
+    /// <summary>The element of a start tag (its name already parsed).</summary>
+    public static WebArchiveElement FromTag(string name, string tag)
+    {
+        string? Decoded(string? value) => value is null ? null : System.Net.WebUtility.HtmlDecode(value).Trim() is { Length: > 0 } decoded ? decoded : null;
+        return new WebArchiveElement(name, Decoded(MarkupBlockRenderer.AttributeValue(tag, "id")),
+            Decoded(MarkupBlockRenderer.AttributeValue(tag, "class"))?.Split([' ', (char)9, (char)10, (char)12, (char)13], StringSplitOptions.RemoveEmptyEntries) ?? [],
+            (name == "a" || name == "area") && MarkupBlockRenderer.AttributeValue(tag, "href") is not null, tag);
+    }
+}
+
+/// <summary>
+/// @media queries evaluated for print, as Edge prints a web archive (Media Queries 4): a query matches when its type is print or all
+/// (not screen / speech / tty...; "not" inverts, "only" is ignored) and each feature holds on the printed page: orientation
+/// portrait, color (8 bits), no monochrome, grid 0, the page box of Letter paper with Chromium's default margins of 1 cm
+/// (width 8.5 in - 2 cm, height 11 in - 2 cm) for width / height and their min- / max- forms, aspect-ratio from those,
+/// resolution 300 dpi. A feature this does not know makes its query false (as a browser treats an unknown feature).
+/// </summary>
+internal static class WebArchiveMedia
+{
+    private const double PageWidthPx = 8.5 * 96 - 2 * 96 / 2.54, PageHeightPx = 11 * 96 - 2 * 96 / 2.54;
+
+    public static bool MatchesPrint(string queryList)
+    {
+        string list = queryList.Trim();
+        if (list.Length == 0) return true;                               // @media { } : all
+        foreach (string query in list.Split(','))
+            if (MatchesQuery(query.Trim().ToLowerInvariant())) return true;
+        return false;
+    }
+
+    private static bool MatchesQuery(string query)
+    {
+        if (query.Length == 0) return false;
+        bool isNegated = false;
+        if (query.StartsWith("not ", StringComparison.Ordinal)) { isNegated = true; query = query.Substring(4).Trim(); }
+        else if (query.StartsWith("only ", StringComparison.Ordinal)) query = query.Substring(5).Trim();
+        string type = "all";
+        int at = 0;
+        if (query.Length > 0 && query[0] != '(')
+        {
+            while (at < query.Length && !char.IsWhiteSpace(query[at]) && query[at] != '(') at++;
+            type = query.Substring(0, at);
+            query = query.Substring(at).Trim();
+            if (query.StartsWith("and", StringComparison.Ordinal)) query = query.Substring(3).Trim();
+            else if (query.Length > 0) return false;
+        }
+        bool result = type is "all" or "print";
+        if (type is not ("all" or "print" or "screen" or "speech" or "tty" or "tv" or "projection" or "handheld" or "braille" or "embossed" or "aural")) return false;
+        foreach (string feature in SplitFeatures(query))
+        {
+            if (feature.Length == 0) return false;
+            if (Feature(feature) is not { } holds) return false;          // unknown or malformed: the query is false (not inverted)
+            result &= holds;
+        }
+        return isNegated ? !result : result;
+    }
+
+    private static IEnumerable<string> SplitFeatures(string query)
+    {
+        int i = 0;
+        while (i < query.Length)
+        {
+            while (i < query.Length && char.IsWhiteSpace(query[i])) i++;
+            if (i >= query.Length) yield break;
+            if (query[i] != '(') { yield return ""; yield break; }
+            int close = query.IndexOf(')', i);
+            if (close < 0) { yield return ""; yield break; }
+            yield return query.Substring(i + 1, close - i - 1).Trim();
+            i = close + 1;
+            while (i < query.Length && char.IsWhiteSpace(query[i])) i++;
+            if (i < query.Length)
+            {
+                if (!query.Substring(i).StartsWith("and", StringComparison.Ordinal)) { yield return ""; yield break; }
+                i += 3;
+            }
+        }
+    }
+
+    private static bool? Feature(string feature)
+    {
+        int colon = feature.IndexOf(':');
+        string name = (colon < 0 ? feature : feature.Substring(0, colon)).Trim();
+        string? value = colon < 0 ? null : feature.Substring(colon + 1).Trim();
+        switch (name)
+        {
+            case "orientation": return value is null ? true : value == "portrait" ? true : value == "landscape" ? false : null;
+            case "color": return value is null ? true : Number(value) is { } bits ? bits == 8 : null;
+            case "min-color": return Number(value) is { } minBits ? minBits <= 8 : null;
+            case "max-color": return Number(value) is { } maxBits ? maxBits >= 8 : null;
+            case "monochrome": return value is null ? false : Number(value) is { } mono ? mono == 0 : null;
+            case "min-monochrome": return Number(value) is { } minMono ? minMono <= 0 : null;
+            case "max-monochrome": return Number(value) is not null ? true : null;
+            case "grid": return value is null ? false : Number(value) is { } grid ? grid == 0 : null;
+            case "width": return value is null ? true : Length(value) is { } w ? Math.Abs(w - PageWidthPx) < 0.5 : null;
+            case "min-width": return Length(value) is { } minWidth ? PageWidthPx >= minWidth : null;
+            case "max-width": return Length(value) is { } maxWidth ? PageWidthPx <= maxWidth : null;
+            case "height": return value is null ? true : Length(value) is { } h ? Math.Abs(h - PageHeightPx) < 0.5 : null;
+            case "min-height": return Length(value) is { } minHeight ? PageHeightPx >= minHeight : null;
+            case "max-height": return Length(value) is { } maxHeight ? PageHeightPx <= maxHeight : null;
+            case "min-aspect-ratio": return Ratio(value) is { } minRatio ? PageWidthPx / PageHeightPx >= minRatio : null;
+            case "max-aspect-ratio": return Ratio(value) is { } maxRatio ? PageWidthPx / PageHeightPx <= maxRatio : null;
+            case "resolution": return value is null ? true : Resolution(value) is { } dpi ? Math.Abs(dpi - 300) < 0.5 : null;
+            case "min-resolution": return Resolution(value) is { } minDpi ? 300 >= minDpi : null;
+            case "max-resolution": return Resolution(value) is { } maxDpi ? 300 <= maxDpi : null;
+            default: return null;
+        }
+    }
+
+    private static double? Number(string? value)
+        => value is not null && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double number) ? number : null;
+
+    private static double? Length(string? value)
+    {
+        if (value is null) return null;
+        int unit = 0;
+        while (unit < value.Length && (char.IsDigit(value[unit]) || value[unit] is '.' or '-' or '+')) unit++;
+        if (!double.TryParse(value.Substring(0, unit), NumberStyles.Float, CultureInfo.InvariantCulture, out double number)) return null;
+        return value.Substring(unit).Trim() switch
+        {
+            "px" => number, "pt" => number * 96 / 72, "pc" => number * 16, "in" => number * 96, "cm" => number * 96 / 2.54, "mm" => number * 96 / 25.4,
+            "q" => number * 96 / 101.6, "em" or "rem" => number * 16, "" when number == 0 => 0, _ => null,
+        };
+    }
+
+    private static double? Ratio(string? value)
+    {
+        if (value is null) return null;
+        string[] parts = value.Split('/');
+        if (parts.Length == 1) return Number(parts[0].Trim());
+        return parts.Length == 2 && Number(parts[0].Trim()) is { } a && Number(parts[1].Trim()) is { } b && b > 0 ? a / b : null;
+    }
+
+    private static double? Resolution(string? value)
+    {
+        if (value is null) return null;
+        if (value.EndsWith("dpi", StringComparison.Ordinal)) return Number(value.Substring(0, value.Length - 3));
+        if (value.EndsWith("dpcm", StringComparison.Ordinal)) return Number(value.Substring(0, value.Length - 4)) * 2.54;
+        if (value.EndsWith("dppx", StringComparison.Ordinal)) return Number(value.Substring(0, value.Length - 4)) * 96;
+        if (value.EndsWith("x", StringComparison.Ordinal)) return Number(value.Substring(0, value.Length - 1)) * 96;
+        return null;
+    }
+}
+
+/// <summary>
+/// The content property of ::before / ::after, kept only as strings and quote keywords (open-quote, close-quote, no-open-quote,
+/// no-close-quote, none, normal): each string's CSS escapes are read and the text written back with every character outside
+/// printable ASCII (and quotes, backslashes, angle brackets) as a CSS hex escape, so nothing in it can end the value or the rule.
+/// counter(), attr(), url() and anything else drop the declaration.
+/// </summary>
+internal static class WebArchiveGeneratedContent
+{
+    public static (string Css, bool IsImportant)? Parse(string value)
+    {
+        string text = value.Trim();
+        bool isImportant = false;
+        if (text.EndsWith("!important", StringComparison.OrdinalIgnoreCase))
+        {
+            string before = text.Substring(0, text.Length - "!important".Length).TrimEnd();
+            if (!InsideString(before)) { isImportant = true; text = before; }
+        }
+        var css = new StringBuilder();
+        int i = 0;
+        int tokens = 0;
+        while (i < text.Length)
+        {
+            char c = text[i];
+            if (char.IsWhiteSpace(c)) { i++; continue; }
+            if (++tokens > 32) return null;
+            if (css.Length > 0) css.Append(' ');
+            if (c is '"' or '\'')
+            {
+                var decoded = new StringBuilder();
+                i++;
+                bool closed = false;
+                while (i < text.Length)
+                {
+                    char d = text[i];
+                    if (d == c) { closed = true; i++; break; }
+                    if (d is '\n' or '\r') return null;
+                    if (d == '\\')
+                    {
+                        i++;
+                        if (i >= text.Length) return null;
+                        int hex = 0, digits = 0;
+                        while (i < text.Length && digits < 6 && Uri.IsHexDigit(text[i])) { hex = hex * 16 + Convert.ToInt32(text[i].ToString(), 16); i++; digits++; }
+                        if (digits > 0)
+                        {
+                            if (i < text.Length && text[i] == ' ') i++;
+                            if (hex is 0 or > 0x10FFFF || hex is >= 0xD800 and <= 0xDFFF) hex = 0xFFFD;
+                            decoded.Append(char.ConvertFromUtf32(hex));
+                        }
+                        else if (text[i] is '\n' or '\r') i++;
+                        else { decoded.Append(text[i]); i++; }
+                        continue;
+                    }
+                    decoded.Append(d);
+                    i++;
+                }
+                if (!closed || decoded.Length > 1024) return null;
+                css.Append('"').Append(Escape(decoded.ToString())).Append('"');
+                continue;
+            }
+            int start = i;
+            while (i < text.Length && (char.IsLetter(text[i]) || text[i] == '-')) i++;
+            string keyword = text.Substring(start, i - start).ToLowerInvariant();
+            if (keyword is not ("open-quote" or "close-quote" or "no-open-quote" or "no-close-quote" or "none" or "normal")) return null;
+            css.Append(keyword);
+        }
+        return css.Length == 0 ? null : (css.ToString(), isImportant);
+    }
+
+    private static bool InsideString(string text)
+    {
+        char quote = '\0';
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (quote != '\0') { if (c == '\\') i++; else if (c == quote) quote = '\0'; }
+            else if (c is '"' or '\'') quote = c;
+        }
+        return quote != '\0';
+    }
+
+    private static string Escape(string text)
+    {
+        var escaped = new StringBuilder(text.Length);
+        foreach (char c in text)
+        {
+            if (c is >= ' ' and <= '~' && c is not ('"' or '\'' or '\\' or '<' or '>' or '{' or '}' or ';' or '@' or '/' or '*')) escaped.Append(c);
+            else escaped.Append('\\').Append(((int)c).ToString("X", CultureInfo.InvariantCulture)).Append(' ');
+        }
+        return escaped.ToString();
+    }
+
+    /// <summary>The text a checked content value shows (its strings; quote keywords show no searchable text), or null for none / normal.</summary>
+    public static string? TextOf(string checkedValue)
+    {
+        var text = new StringBuilder();
+        int i = 0;
+        bool any = false;
+        while (i < checkedValue.Length)
+        {
+            if (checkedValue[i] != '"') { i++; continue; }
+            any = true;
+            i++;
+            while (i < checkedValue.Length && checkedValue[i] != '"')
+            {
+                if (checkedValue[i] == '\\')
+                {
+                    int start = ++i;
+                    while (i < checkedValue.Length && Uri.IsHexDigit(checkedValue[i])) i++;
+                    text.Append(char.ConvertFromUtf32(Convert.ToInt32(checkedValue.Substring(start, i - start), 16)));
+                    if (i < checkedValue.Length && checkedValue[i] == ' ') i++;
+                    continue;
+                }
+                text.Append(checkedValue[i++]);
+            }
+            i++;
+        }
+        return any ? text.ToString() : null;
+    }
 }

@@ -136,6 +136,9 @@ public sealed class DocxDocumentParts
         return bytes.ToArray();
     }
 
+    /// <summary>The fonts embedded in the package (fontTable.xml's w:embed* parts): names and part names, read at open.</summary>
+    public DocxEmbeddedFonts EmbeddedFonts { get; }
+
     /// <summary>settings.xml w:compat options the renderer follows.</summary>
     public DocxCompatibilitySettings Compatibility { get; }
     /// <summary>theme1.xml fonts and colors with settings.xml's clrSchemeMapping / themeFontLang; always present (empty without a theme part).</summary>
@@ -173,6 +176,9 @@ public sealed class DocxDocumentParts
         RelatedParts = LoadRelatedParts(zip, PartNames.Document);
         FootnoteRelatedParts = LoadRelatedParts(zip, PartNames.Footnotes);
         EndnoteRelatedParts = LoadRelatedParts(zip, PartNames.Endnotes);
+        EmbeddedFonts = RelatedParts.Values.FirstOrDefault(p => p.Type.EndsWith("/fontTable", StringComparison.OrdinalIgnoreCase)).PartName is { } fontTable
+            ? DocxEmbeddedFonts.Read(LoadPart(zip, fontTable), LoadRelatedParts(zip, fontTable).Where(r => r.Value.Type.EndsWith("/font", StringComparison.OrdinalIgnoreCase)).ToDictionary(r => r.Key, r => r.Value.PartName))
+            : DocxEmbeddedFonts.None;
         if (package is IDocxOnDemandRelationships onDemand)
         {
             // the ids the relationship parts leave out (Word 2003 XML body hyperlinks and pictures) resolve when looked up

@@ -224,7 +224,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
         Decision = decision;
         IsRightToLeft = _styles.IsDocumentRightToLeft;
         if (_renderer.FieldContext is { } fieldContext) fieldContext.IsRightToLeftText = IsRightToLeft;
-        Stylesheet = WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
+        Stylesheet = parts.EmbeddedFonts.StylesheetRules() + WordDocumentHtmlStylesheet.Build(_styles.ResolveParagraphStyle(null).RunFormatting, IsRightToLeft);
     }
 
     /// <summary>Counts the note references found since the last call into the number lookup and the per-kind counts.</summary>
@@ -415,6 +415,16 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
     public WordDocumentPicture? ReadPicture(string pictureId)
     {
         if (pictureId is not { Length: > 2 } || pictureId[1] != ':') return null;
+        if (pictureId.StartsWith(DocxEmbeddedFonts.FontIdPrefix, StringComparison.Ordinal))
+        {
+            // an embedded font face (only a part the font table names resolves), de-obfuscated
+            lock (_readLock)
+            {
+                if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+                try { return _parts.EmbeddedFonts.Read(pictureId, _parts.ReadPartBytes); }
+                finally { _releasableFile?.Release(); }
+            }
+        }
         if (pictureId[0] == 'x')
         {
             // a picture of a diagram drawing part: only an image relationship of that part resolves

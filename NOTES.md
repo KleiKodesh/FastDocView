@@ -4053,3 +4053,50 @@ profile corners (as on rectangles).
   their baselines: one more read when a render holds a matrix. Measured (vue-demo/playwright/matrixPitchCheck.mjs):
   1.226 em (Cambria Math, Word 1.18) and 1.248 em (DejaVu, Word 1.2); math-v2 matrix height 1.03 of Word (was 1.32);
   brackets 30 of 30 still 1.00.
+
+### Web archive selectors, embedded fonts, Word 2003 XML separators, matrix pitch (2026-11-25)
+
+- Corpus pass (`--corpus ../test-data`, skipped last round): ALL PASSED, 0 crashes; every failure is a clear damaged /
+  encrypted / not-a-document error.
+- Web archive sheets (Markup/WebArchiveStylesheet.cs). Word's print ignores attribute selectors, sibling combinators,
+  structural pseudo-classes, pseudo-elements and every @media block, print included; plain class rules before and after them
+  still apply (test-data/word-mhtml/css-selectors-v1.mht printed by Word 16, make-css-selectors-fixture.ps1 ->
+  css-selectors-v1.pdf). Edge's print applies all of them (css-selectors-v1-edge.pdf, msedge --headless --print-to-pdf).
+  Word's own archives never write them, so they come from browser-saved pages: those follow Edge. LibreOffice's HTML import
+  reads CSS1 only: element, element.class, .class, #id joined by spaces, one trailing :pseudo, no attribute / sibling
+  selectors, @media or ::pseudo-elements (sw/source/filter/html/parcss1.cxx:809-958, ParseSelector).
+  Model, per element and windowed: each selector is cut into prefixes (compound + combinator); an element's matched prefixes
+  come from its parent's state when it opens - child from the parent's, descendant from ancestors' (union kept only for
+  prefixes a descendant combinator reads), adjacent / general sibling from the parent's previous child / all earlier
+  children (kept only for prefixes a sibling combinator reads), :nth-child / -of-type from the parent's child counts. The
+  index pass (MarkupBlockScanner) runs the same matcher when the sheet needs structure (sibling combinators, child-index
+  pseudo-classes) and records per block the state of body and of the open elements (BlockStructures, not interned: kept in
+  the anchors' snapshots, rebuilt by span rescans - nothing per block in the index). The renderer composes them into the
+  block's open tags (WithStructure: <fdv-root data-fdv-s> and data-fdv-s on each entry), reads them back and never writes
+  them out. Later-sibling pseudo-classes (:last-child, :only-child, :nth-last-*, :last-of-type, :empty) are resolved when the
+  parent's children end in the block, or at its end: the next block's stack depth says which open elements go on (the next
+  block's first start tag is a child of its deepest one). Pseudo-elements: the element gets data-wa-pe="rule ids" (::before
+  / ::first-letter / ::first-line only where it starts, ::after where it ends); the page stylesheet carries
+  `.word-document [data-wa-pe~="N"]::before { ... }` in cascade order; content keeps strings (escapes decoded, re-escaped)
+  and quote keywords. @media: print / all, not screen, orientation portrait, color 8, Letter less Chromium's 1 cm margins.
+  Search and GetText render the block once more with a "shown" builder (hidden subtrees out, generated text in) - one path
+  with the drawn HTML. Index format 17.
+  Cold first paint (--cold-bench, 3-5 runs, idle machine noisy): Word archives unchanged (class-styles-v1 148 -> 160 ms,
+  noise); a 27 MB browser archive with a structural sheet (css-selectors body x 20000) 179-210 -> 231-302 ms (the matcher's
+  first JIT and state per element in the first 64 KB); .docx sample 368-435 -> 320-408 ms (noise).
+- Embedded fonts (.docx; Docx/DocxEmbeddedFonts.cs): fontTable.xml w:embedRegular / Bold / Italic / BoldItalic
+  (ECMA-376 Part 1 17.8.3) by r:id with w:fontKey; the key is the GUID's hex pairs from last to first, XORed over the first
+  32 bytes (17.8.1; LibreOffice FontTable.cxx:280-293, embeddedfontsmanager.cxx:283-296). The stylesheet gets one @font-face
+  per face (local(full name) first, then url("fdv-font:o:<part>")); ReadPicture("o:<part>") serves the face de-obfuscated
+  (font/ttf). The app (useFastDocViewEmbeddedFonts) takes the rules out of the scoped sheet and registers a face with the
+  FontFace API only when local() fails, after the text is shown. Word 2003 XML carries no font data: Word 16 saving with
+  EmbedTrueTypeFonts on writes <w:embedTrueTypeFonts/> and nothing else (test-data/word2003-fonts/embedded-font-v1.xml;
+  the same document as .docx has its two Caladea odttf parts; make-embedded-font-fixture.ps1); LibreOffice's WordML import (filter/source/xslt/import/wordml/
+  wordml2ooo.xsl:72-90) reads only the font names.
+- Word 2003 XML note separators (w:docPr/w:footnotePr|endnotePr/w:footnote|endnote type separator /
+  continuation-separator): dropped like .docx separator notes (Word's notes pane shows the notes only; the flow view has no
+  page bottoms). LibreOffice ignores them too (wordml2ooo_page.xsl:64-75, commented out). A custom separator's text is
+  neither shown nor found (EmbeddedFontsAndNoteSeparatorsTest, .docx and 2003 XML).
+- Matrix row pitch (app fastDocViewMath.ts): Chromium lands a padded row ~0.85 px lower than its padding, so the first
+  shift overshot to 1.226 em; one more read takes the measured excess off each row's padding. Now 1.166 em (Cambria Math,
+  Word 1.18) and 1.194 em (DejaVu, Word 1.2); brackets 15 of 15 and 15 of 15 still within 0 % (compare-math-stretch.py).

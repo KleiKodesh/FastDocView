@@ -61,10 +61,11 @@ public static class WebArchiveSheetAndOdtScriptTest
             return all.Substring(start, at + 1 - start);
         }
         void Expect(bool condition, string what, string text) => TestReport.Check(condition, $"mhtml sheet: {what} [{Tag(text)}]");
-        Expect(Tag("Plain").Contains("style=\"margin:0cm;font-size:12.0pt;color:red;\""), "class rule inline", "Plain");
+        // body's first element child: :first-child holds across blocks (the index pass carries body's child state)
+        Expect(Tag("Plain").Contains("style=\"margin:0cm;font-size:12.0pt;color:red;letter-spacing:2px;\""), "class rule inline, body's first child", "Plain");
         Expect(Tag("Both").Contains("font-size:12.0pt;color:red;font-size:20.0pt;color:black;") && !Tag("Both").Contains("position") && !Tag("Both").Contains("top:"),
                "two classes in order, own style last, position dropped", "Both");
-        Expect(Tag("Green").EndsWith("color:red;color:green;\">", StringComparison.Ordinal), "id beats class", "Green");
+        Expect(Tag("Green").Contains("color:red;color:green;\"") && !Tag("Green").Contains("letter-spacing"), "id beats class", "Green");
         Expect(Tag("Child").Contains("font-style:italic;") && Tag("Child").Contains("letter-spacing:2px;"), "child combinator and :first-child", "Child");
         Expect(Tag("Deep").Contains("font-style:italic;text-decoration:underline;") && !Tag("Deep").Contains("letter-spacing"), "descendant, not first child", "Deep");
         Expect(Tag("Link").Contains("color:blue;") && !Tag("Link").Contains("purple"), ":link prints, :visited does not", "Link");
@@ -72,7 +73,7 @@ public static class WebArchiveSheetAndOdtScriptTest
         Expect(Tag("Huge").Contains("style=\"margin-left:-1in;padding:1cm 10in;text-indent:-1.5in;width:1920px;font-size:400pt;letter-spacing:-0.706cm;margin-right:-2cm;line-height:10;\""),
                "lengths from the sheet and the element's own style kept in bounds, calc() dropped", "Huge");
         Expect(Tag("Evil").Contains("style=\"color:navy;\"") && !Tag("Evil").Contains("url") && !Tag("Evil").Contains("javascript"), "only safe declarations", "Evil");
-        TestReport.Check(!all.Contains("orange") && !all.Contains("@") && !all.Contains("behavior") && !all.Contains("expression"), "mhtml sheet: no :hover / attribute / pseudo-element rule, nothing unsafe");
+        TestReport.Check(!all.Contains("orange") && !all.Contains("@") && !all.Contains("behavior") && !all.Contains("expression"), "mhtml sheet: no :hover rule, no attribute rule without its attribute, the pseudo-element rule only in the page stylesheet, nothing unsafe");
         TestReport.Check(document.Stylesheet.Contains(".word-document { font-family:\"David\"; }") && !document.Stylesheet.Contains("MsoNormal")
                          && !document.Stylesheet.Contains("5cm") && !document.Stylesheet.Contains("url("),
                          "mhtml sheet: the page stylesheet carries only the body's inherited declarations, never the sheet");

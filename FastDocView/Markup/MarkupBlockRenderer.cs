@@ -45,76 +45,257 @@ public static class MarkupBlockRenderer
     /// <param name="drawsPictures">A web archive: its &lt;img&gt; parts are read on request. Plain text has no parts, so an &lt;img&gt; typed in it stays the placeholder.</param>
     /// <param name="stylesheet">A web archive's head sheet (<see cref="WebArchiveStylesheet"/>): its rules are resolved per element into the element's inline style.</param>
     public static string Render(string openTags, string content, bool drawsPictures = false, WebArchiveStylesheet? stylesheet = null)
+        => Render(openTags, content, drawsPictures, stylesheet, NextBlock.Unknown, shown: null);
+
+    /// <summary>What the next block's open-tag stack says about the elements open at this block's end.</summary>
+    public readonly record struct NextBlock(int Depth)
     {
+        /// <summary>Not known yet (the index is still being built): nothing ends here.</summary>
+        public static readonly NextBlock Unknown = new(int.MinValue);
+        /// <summary>This is the last block: everything open ends here.</summary>
+        public static readonly NextBlock None = new(-1);
+        public bool IsKnown => Depth != int.MinValue;
+    }
+
+    /// <summary>
+    /// A block's open tags with the index pass's selector state (<see cref="MarkupBlockScanner.CurrentStructure"/>): body's as a
+    /// leading &lt;fdv-root&gt; entry, each open element's as an attribute right after its name. The renderer reads them back
+    /// (<see cref="Render(string, string, bool, WebArchiveStylesheet?, NextBlock, StringBuilder?)"/>) and never writes them out.
+    /// </summary>
+    public static string WithStructure(string openTags, string structure)
+    {
+        if (structure.Length == 0) return openTags;
+        string[] states = structure.Split('|');
+        var text = new StringBuilder(openTags.Length + structure.Length + 64);
+        text.Append('<').Append(WebArchiveMatch.RootTagName).Append(' ').Append(WebArchiveMatch.StateAttribute).Append("=\"").Append(states[0]).Append("\">");
+        int i = 0, entry = 1;
+        while (i < openTags.Length)
+        {
+            int end = openTags[i] == '<' ? FindTagEnd(openTags, i) : -1;
+            if (end < 0) { text.Append(openTags, i, openTags.Length - i); break; }
+            string tag = openTags.Substring(i, end + 1 - i);
+            string name = MarkupBlockScanner.ParseTag(tag).name;
+            if (entry < states.Length && states[entry].Length > 0)
+            {
+                int at = Math.Min(tag.Length - 1, 1 + name.Length);
+                tag = tag.Substring(0, at) + " " + WebArchiveMatch.StateAttribute + "=\"" + states[entry] + "\"" + tag.Substring(at);
+            }
+            text.Append(tag);
+            entry++;
+            i = end + 1;
+        }
+        return text.ToString();
+    }
+
+    /// <summary>The next block as <see cref="Render(string, string, bool, WebArchiveStylesheet?, NextBlock, StringBuilder?)"/> needs it: how many drawn elements its stack reopens.</summary>
+    public static NextBlock NextBlockFrom(string nextOpenTags)
+    {
+        int depth = 0, i = 0;
+        while (i < nextOpenTags.Length)
+        {
+            int start = nextOpenTags.IndexOf('<', i);
+            if (start < 0) break;
+            int end = FindTagEnd(nextOpenTags, start);
+            if (end < 0) break;
+            (string name, bool isEnd, _) = MarkupBlockScanner.ParseTag(nextOpenTags.Substring(start, end + 1 - start));
+            if (!isEnd && name != WebArchiveMatch.RootTagName && !DroppedTags.Contains(name) && !VoidElements.Contains(name)
+                && !DroppedWithContent.Contains(name) && !MarkupBlockScanner.RawTextElements.Contains(name)) depth++;
+            i = end + 1;
+        }
+        return new NextBlock(depth);
+    }
+
+    /// <summary>One element the renderer has open (or the synthesized html / body): its state for the sheet and where its tag was written.</summary>
+    private sealed class Node(string name, WebArchiveElement element, WebArchiveMatch? state, Node? parent, bool isOutput, bool isReopened)
+    {
+        public readonly string Name = name;
+        public readonly WebArchiveElement Element = element;
+        public readonly WebArchiveMatch? State = state;
+        public readonly Node? Parent = parent;
+        public readonly bool IsOutput = isOutput, IsReopened = isReopened;
+        public bool IsHidden;
+        public bool IsClosed;                     // its end is in this block (explicit, or at the block's end when it does not go on)
+        public int TagStart = -1, TagLength;      // its start tag in the output (deferred elements are redrawn there)
+        public string Tag = "";                   // the checked start tag, without the sheet's style
+        public WebArchiveStylesheet.ElementStyle Style;
+    }
+
+    /// <param name="next">The next block's stack depth (<see cref="NextBlock"/>): elements open at this block's end that the next block does not reopen end here.</param>
+    /// <param name="shown">Receives what the block shows, as HTML text for the search (<see cref="WordDocumentSearchMatcher.FeedHtml(string)"/>):
+    /// elements the sheet hides (display:none) left out, ::before / ::after strings put in; one path with the drawn HTML.</param>
+    public static string Render(string openTags, string content, bool drawsPictures, WebArchiveStylesheet? stylesheet, NextBlock next, StringBuilder? shown)
+    {
+        if (stylesheet is { IsEmpty: true }) stylesheet = null;
+        WebArchiveMatch? rootState = null;
+        if (openTags.StartsWith("<" + WebArchiveMatch.RootTagName, StringComparison.Ordinal))
+        {
+            int rootEnd = openTags.IndexOf('>');
+            if (stylesheet is not null && AttributeValue(openTags.Substring(0, rootEnd + 1), WebArchiveMatch.StateAttribute) is { } rootText) rootState = WebArchiveMatch.Deserialize(rootText, null);
+            openTags = openTags.Substring(rootEnd + 1);
+        }
         string text = openTags + content;
         var html = new StringBuilder(text.Length + 32);
-        var open = new List<string>();
         // the open elements as the sheet sees them, under the document's html / body (dropped from the output, still ancestors)
-        var elements = new List<WebArchiveElement>
-            { new("html", null, [], false, false, false), new("body", null, [], false, false, false) };
+        WebArchiveElement htmlElement = new("html", null, [], false, "<html>"), bodyElement = new("body", null, [], false, "<body>");
+        WebArchiveMatch? htmlState = stylesheet?.Open(null, htmlElement);
+        var nodes = new List<Node> { new("html", htmlElement, htmlState, null, false, true) };
+        nodes.Add(new Node("body", bodyElement, stylesheet is null ? null : rootState ?? stylesheet.Open(htmlState, bodyElement), nodes[0], false, true));
+        List<Node>? deferred = null;
+        int hiddenDepth = 0;                       // open elements the sheet hides (their text is not shown)
+
+        void AppendShown(string value) { if (shown is not null && hiddenDepth == 0) shown.Append(value); }
+        void Close(Node node, bool endsHere)
+        {
+            node.IsClosed = endsHere;
+            if (node.IsHidden) hiddenDepth--;
+            if (endsHere && node.Style.AfterText.Length > 0) AppendShown(System.Net.WebUtility.HtmlEncode(node.Style.AfterText));
+        }
+
         int i = 0;
         while (i < text.Length)
         {
             char c = text[i];
-            if (c != '<') { int next = text.IndexOf('<', i); if (next < 0) next = text.Length; html.Append(text, i, next - i); i = next; continue; }
+            if (c != '<')
+            {
+                int next0 = text.IndexOf('<', i); if (next0 < 0) next0 = text.Length;
+                html.Append(text, i, next0 - i);
+                if (shown is not null) AppendShown(text.Substring(i, next0 - i));
+                if (nodes[nodes.Count - 1].State is { } textParent && i >= openTags.Length) textParent.HasContent = true;
+                i = next0;
+                continue;
+            }
             char d = i + 1 < text.Length ? text[i + 1] : '\0';
             if (d == '!' && string.CompareOrdinal(text, i, "<!--", 0, 4) == 0)
             {
                 int close = text.IndexOf("-->", i + 4, Math.Min(text.Length - i - 4, MarkupBlockScanner.MaximumCommentBytes + 3), StringComparison.Ordinal);
-                if (close < 0 && text.Length - i - 4 > MarkupBlockScanner.MaximumCommentBytes) { html.Append("&lt;"); i++; continue; }   // the scanner gave up on it: text
+                if (close < 0 && text.Length - i - 4 > MarkupBlockScanner.MaximumCommentBytes) { html.Append("&lt;"); AppendShown("&lt;"); i++; continue; }   // the scanner gave up on it: text
                 i = close < 0 ? text.Length : close + 3;
                 continue;
             }
             if (d == '!' || d == '?')
             {
                 int close = text.IndexOf('>', i + 2, Math.Min(text.Length - i - 2, MarkupBlockScanner.MaximumCommentBytes + 1));
-                if (close < 0 && text.Length - i - 2 > MarkupBlockScanner.MaximumCommentBytes) { html.Append("&lt;"); i++; continue; }
+                if (close < 0 && text.Length - i - 2 > MarkupBlockScanner.MaximumCommentBytes) { html.Append("&lt;"); AppendShown("&lt;"); i++; continue; }
                 i = close < 0 ? text.Length : close + 1;
                 continue;
             }
             bool isEnd = d == '/';
             char first = isEnd ? (i + 2 < text.Length ? text[i + 2] : '\0') : d;
             int tagEnd = IsAsciiLetter(first) ? FindTagEnd(text, i) : -1;
-            if (tagEnd < 0) { html.Append("&lt;"); i++; continue; }
+            if (tagEnd < 0) { html.Append("&lt;"); AppendShown("&lt;"); i++; continue; }
+            bool isReopened = i < openTags.Length;
             string tag = text.Substring(i, tagEnd + 1 - i);
             i = tagEnd + 1;
             (string name, _, bool isSelfClosing) = MarkupBlockScanner.ParseTag(tag);
             if (isEnd)
             {
-                int at = open.LastIndexOf(name);
+                int at = -1;
+                for (int k = nodes.Count - 1; k >= 2; k--) if (nodes[k].Name == name) { at = k; break; }
                 if (at < 0) continue;
-                for (int k = open.Count - 1; k >= at; k--) html.Append("</").Append(open[k]).Append('>');
-                open.RemoveRange(at, open.Count - at);
-                elements.RemoveRange(at + 2, elements.Count - at - 2);
+                for (int k = nodes.Count - 1; k >= at; k--)
+                {
+                    if (nodes[k].IsOutput) { html.Append("</").Append(nodes[k].Name).Append('>'); AppendShown("</" + nodes[k].Name + ">"); }
+                    Close(nodes[k], endsHere: true);
+                }
+                nodes.RemoveRange(at, nodes.Count - at);
                 continue;
+            }
+            // every start tag in the body is an element child (drawn or not), as the index pass counts them
+            Node parent = nodes[nodes.Count - 1];
+            if (!isReopened && parent.State is not null) parent.State.HasContent = true;
+            WebArchiveElement? element = null;
+            WebArchiveMatch? state = null;
+            if (stylesheet is not null && name is not ("html" or "head" or "body"))
+            {
+                element = WebArchiveElement.FromTag(name, tag);
+                if (isReopened && AttributeValue(tag, WebArchiveMatch.StateAttribute) is { } stateText && WebArchiveMatch.Deserialize(stateText, parent.State) is { } stored)
+                    state = stored;                                       // the index pass's state: the element's siblings before this block
+                else state = stylesheet.Open(parent.State, element);
             }
             if (DroppedWithContent.Contains(name) || MarkupBlockScanner.RawTextElements.Contains(name))
             {
                 int close = IndexOfEndTag(text, i, name);
                 string raw = text.Substring(i, (close < 0 ? text.Length : close) - i);
-                if (!DroppedWithContent.Contains(name)) html.Append("<pre>").Append(Escape(raw)).Append("</pre>");    // textarea / xmp: show the text
+                if (!DroppedWithContent.Contains(name))
+                {
+                    html.Append("<pre>").Append(Escape(raw)).Append("</pre>");    // textarea / xmp: show the text
+                    AppendShown("<pre>" + Escape(raw) + "</pre>");
+                }
                 i = close < 0 ? text.Length : Math.Max(close, text.IndexOf('>', close) + 1);
                 continue;
             }
             // Word's web archive writes each picture twice: VML (v:imagedata) and an <img> fallback inside <![if !vml]>, which is
             // what a browser shows (it has no VML). The <img> is drawn through the picture pipeline; the VML copy is skipped.
-            WebArchiveElement parent = elements[elements.Count - 1];
-            bool isFirstChild = parent.AreChildrenKnown && parent.ElementChildren == 0;
-            parent.ElementChildren++;                                  // every start tag counts, drawn or not
             if (name == "v:imagedata") continue;
             if (name == "img") { if (drawsPictures) AppendPicture(html, tag); else html.Append(ImagePlaceholder); continue; }
-            if (DroppedTags.Contains(name)) continue;
-            var element = new WebArchiveElement(name, Decoded(AttributeValue(tag, "id")),
-                Decoded(AttributeValue(tag, "class"))?.Split(ClassSeparators, StringSplitOptions.RemoveEmptyEntries) ?? [],
-                name == "a" && AttributeValue(tag, "href") is not null, isFirstChild,
-                areChildrenKnown: i > openTags.Length);
-            elements.Add(element);
-            html.Append(WithStyle(Sanitize(tag, name), stylesheet is null ? "" : stylesheet.StyleFor(elements)));
-            if (!VoidElements.Contains(name) && !isSelfClosing) open.Add(name);
-            else elements.RemoveAt(elements.Count - 1);
+            bool isOpen = !VoidElements.Contains(name) && !isSelfClosing;
+            bool isDrawn = !DroppedTags.Contains(name);
+            var node = new Node(name, element ?? new WebArchiveElement(name, null, [], false, tag), state, parent, isDrawn, isReopened);
+            if (isDrawn)
+            {
+                node.Tag = Sanitize(tag, name);
+                node.Style = state is null ? WebArchiveStylesheet.ElementStyle.None : stylesheet!.StyleFor(state, null);
+                string? inline = AttributeValue(node.Tag, "style");
+                string? inlineDisplay = inline is null ? null : WebArchiveStylesheet.InlineDisplay(System.Net.WebUtility.HtmlDecode(inline));
+                node.IsHidden = node.Style.IsDisplayImportant ? node.Style.IsHidden : inlineDisplay is not null ? inlineDisplay.Equals("none", StringComparison.OrdinalIgnoreCase) : node.Style.IsHidden;
+                node.TagStart = html.Length;
+                html.Append(WithStyle(node.Tag, node.Style.Css));
+                node.TagLength = html.Length - node.TagStart;
+                if (node.Style.IsDeferred) (deferred ??= []).Add(node);
+                if (node.IsHidden) hiddenDepth++;
+                AppendShown(node.Tag);
+                if (!isReopened && node.Style.BeforeText.Length > 0) AppendShown(System.Net.WebUtility.HtmlEncode(node.Style.BeforeText));
+                if (node.IsHidden && !isOpen) hiddenDepth--;
+            }
+            if (isOpen) nodes.Add(node);
+            else node.IsClosed = true;
         }
-        for (int k = open.Count - 1; k >= 0; k--) html.Append("</").Append(open[k]).Append('>');
+        // the elements still open end here unless the next block reopens them (its stack holds the first ones)
+        int drawnDepth = 0;
+        for (int k = 2; k < nodes.Count; k++)
+        {
+            bool goesOn = !next.IsKnown || (next.Depth >= 0 && drawnDepth < next.Depth);
+            if (nodes[k].IsOutput) drawnDepth++;
+            nodes[k].IsClosed = !goesOn;
+        }
+        for (int k = nodes.Count - 1; k >= 2; k--)
+        {
+            if (nodes[k].IsOutput) html.Append("</").Append(nodes[k].Name).Append('>');
+            if (nodes[k].IsClosed && nodes[k].Style.AfterText.Length > 0) AppendShown(System.Net.WebUtility.HtmlEncode(nodes[k].Style.AfterText));
+        }
+        if (nodes.Count > 1) nodes[1].IsClosed = next.IsKnown && next.Depth < 0;    // body ends with the last block
+        if (deferred is not null) Redraw(html, deferred, stylesheet!);
         return html.ToString();
+    }
+
+    /// <summary>
+    /// The start tags drawn before their element's end was known, drawn again now: the later-sibling rules that hold
+    /// (:last-child...), and the pseudo-elements on the part of the element this block shows (::before, ::first-letter and
+    /// ::first-line where it starts, ::after where it ends).
+    /// </summary>
+    private static void Redraw(StringBuilder html, List<Node> deferred, WebArchiveStylesheet stylesheet)
+    {
+        for (int k = deferred.Count - 1; k >= 0; k--)
+        {
+            Node node = deferred[k];
+            WebArchiveStylesheet.ElementStyle style = node.Style;
+            if (style.HasLaterSiblingRules && LaterFacts(node) is { } facts) style = stylesheet.StyleFor(node.State!, facts);
+            string ids = string.Join(" ", new[] { node.IsReopened ? "" : style.StartPseudoIds, node.IsClosed ? style.AfterPseudoIds : "" }.Where(part => part.Length > 0));
+            string tag = WithStyle(node.Tag, style.Css);
+            if (ids.Length > 0)
+            {
+                int end = tag.EndsWith("/>", StringComparison.Ordinal) ? tag.Length - 2 : tag.Length - 1;
+                tag = tag.Substring(0, end) + " data-wa-pe=\"" + ids + "\"" + tag.Substring(end);
+            }
+            html.Remove(node.TagStart, node.TagLength).Insert(node.TagStart, tag);
+        }
+    }
+
+    /// <summary>An element's later siblings and emptiness, once both it and its parent's children end in this block; else null.</summary>
+    private static WebArchiveLaterFacts? LaterFacts(Node node)
+    {
+        if (!node.IsClosed || node.State is null || node.Parent is not { State: { } parent } parentNode || !parentNode.IsClosed) return null;
+        return new WebArchiveLaterFacts(parent.Children - node.State.Index, parent.TypeCount(node.Name) - node.State.TypeIndex, !node.State.HasContent);
     }
 
     /// <summary>The prefix of a web-archive picture id; the rest is the &lt;img&gt;'s src (see MarkupWindowedDocument.ReadPicture).</summary>
@@ -131,9 +312,6 @@ public static class MarkupBlockRenderer
         WordPictureHtml.Append(html, layout, WebArchivePicturePrefix + System.Net.WebUtility.HtmlDecode(source!.Trim()));
     }
 
-    private static readonly char[] ClassSeparators = [' ', (char)9, (char)10, (char)12, (char)13];
-
-    private static string? Decoded(string? value) => value is null ? null : System.Net.WebUtility.HtmlDecode(value).Trim() is { Length: > 0 } decoded ? decoded : null;
 
     /// <summary>
     /// The tag with one style="": the sheet's declarations for the element first, its own style after them (it wins, as in the
@@ -156,7 +334,7 @@ public static class MarkupBlockRenderer
     }
 
     /// <summary>One attribute's value in a start tag (quoted or bare, names case-insensitive), or null - the same rules as <see cref="Sanitize"/>.</summary>
-    private static string? AttributeValue(string tag, string wanted) => AttributeValue(tag, wanted, out _, out _);
+    internal static string? AttributeValue(string tag, string wanted) => AttributeValue(tag, wanted, out _, out _);
 
     /// <param name="attributeStart">Where the attribute starts (the white space before its name), <paramref name="attributeEnd"/> just after its value.</param>
     private static string? AttributeValue(string tag, string wanted, out int attributeStart, out int attributeEnd)
@@ -284,7 +462,7 @@ public static class MarkupBlockRenderer
     /// <summary>The tag as written, minus event handlers (on*) and script URLs; a link gets the reader's link markup.</summary>
     private static string Sanitize(string tag, string name)
     {
-        if (name != "a" && !HasEventAttribute(tag) && tag.IndexOf(':') < 0 && tag.IndexOf('&') < 0) return tag;      // no handler, no scheme, no entity: nothing to remove
+        if (name != "a" && !HasEventAttribute(tag) && tag.IndexOf(':') < 0 && tag.IndexOf('&') < 0 && tag.IndexOf("data-fdv-s", StringComparison.OrdinalIgnoreCase) < 0 && tag.IndexOf("data-wa-pe", StringComparison.OrdinalIgnoreCase) < 0) return tag;      // no handler, no scheme, no entity: nothing to remove
         var result = new StringBuilder(tag.Length);
         bool isAppLink = false, hasHref = false;
         result.Append('<').Append(name);
@@ -321,6 +499,7 @@ public static class MarkupBlockRenderer
             else i = valueStart;
             if (attribute.Length == 0) { i++; continue; }
             if (attribute.StartsWith("on", StringComparison.OrdinalIgnoreCase)) continue;
+            if (attribute.Equals(WebArchiveMatch.StateAttribute, StringComparison.OrdinalIgnoreCase) || attribute.Equals("data-wa-pe", StringComparison.OrdinalIgnoreCase)) continue;   // the reader's own markup, never the document's
             if (name == "a" && attribute.Equals("href", StringComparison.OrdinalIgnoreCase) && IsAppLink(value)) isAppLink = true;
             else if (UrlAttributes.Contains(attribute.ToLowerInvariant()) && !IsSafeValue(value)) continue;
             if (name == "a" && attribute.ToLowerInvariant() is "class" or "target" or "rel" or "data-app-link") continue;   // the reader's own link markup replaces them

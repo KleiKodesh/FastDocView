@@ -268,7 +268,8 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
                      + "\n.word-document .text-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1em; }"
                      + "\n.word-document .image-placeholder { color: #999; font-style: italic; }\n"
                      + (index.ToratEmet is not null ? ToratEmetFormat.Stylesheet : index.Kind == MarkupSourceKind.PlainText ? MarkupBlockRenderer.PlainTextHeadingStylesheet : "")
-                     + (_webArchiveStylesheet.RootCss.Length > 0 ? "\n.word-document { " + _webArchiveStylesheet.RootCss + " }\n" : "");
+                     + (_webArchiveStylesheet.RootCss.Length > 0 ? "\n.word-document { " + _webArchiveStylesheet.RootCss + " }\n" : "")
+                     + _webArchiveStylesheet.PseudoElementCss;
     }
 
     /// <summary>A web archive's head sheet, checked and parsed once; its rules become each element's inline style (MarkupBlockRenderer.Render).</summary>
@@ -340,7 +341,14 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
                         {
                             if (block > 0 || !_index.ToratEmet.HasHead) matcher.FeedHtml(ToratEmetFormat.WithoutMark(content));     // block 0 is the hidden metadata head
                         }
-                        else if (_index.Kind == MarkupSourceKind.PlainText) matcher.Feed(content.AsSpan()); else matcher.FeedHtml(content);
+                        else if (_index.Kind == MarkupSourceKind.PlainText) matcher.Feed(content.AsSpan());
+                        else
+                        {
+                            // what the block shows (one path with the drawn HTML): hidden elements out, generated content in
+                            var shown = new StringBuilder(content.Length);
+                            MarkupBlockRenderer.Render(MarkupBlockRenderer.WithStructure(_table.OpenTags(block), _table.Structure(block)), content, drawsPictures: true, _webArchiveStylesheet, NextBlockOf(block), shown);
+                            matcher.FeedHtml(shown.ToString());
+                        }
                         if (matcher.Count > 0) { hits.Add(block); counts.Add(matcher.Count); }
                     }
                 }
@@ -372,13 +380,25 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
         {
             string content = DecodeBlock(text, textStart, block);
             string openTags = _table.OpenTags(block);
-            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(openTags, content, drawsPictures: true, _webArchiveStylesheet)
+            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(MarkupBlockRenderer.WithStructure(openTags, _table.Structure(block)), content, drawsPictures: true, _webArchiveStylesheet, NextBlockOf(block), shown: null)
                         : _index.ToratEmet is { } toratEmet ? (block == 0 && toratEmet.HasHead ? ToratEmetFormat.RenderHeader(toratEmet, FirstTitle(_index)) : ToratEmetFormat.RenderLine(openTags, content))
                         : MarkupBlockRenderer.RenderLine(openTags, content);
             WordDocumentBlockKind kind = content.TrimStart().StartsWith("<table", StringComparison.OrdinalIgnoreCase) ? WordDocumentBlockKind.Table : WordDocumentBlockKind.Paragraph;
             result.Add(new WordDocumentBlockHtml(block, kind, html, []));
         }
         return result;
+    }
+
+    /// <summary>
+    /// What the block after <paramref name="block"/> reopens (its stack's drawn depth), for the elements that end at this block's
+    /// end: none after the last block of a complete index; not known while the index still grows past the known blocks.
+    /// Only a sheet that has rules depending on an element's end (pseudo-elements, later-sibling pseudo-classes) asks.
+    /// </summary>
+    private MarkupBlockRenderer.NextBlock NextBlockOf(int block)
+    {
+        if (!_webArchiveStylesheet.NeedsEnds) return MarkupBlockRenderer.NextBlock.Unknown;
+        if (block + 1 < _index.BlockCount) return MarkupBlockRenderer.NextBlockFrom(_table.OpenTags(block + 1));
+        return _builder is null ? MarkupBlockRenderer.NextBlock.None : MarkupBlockRenderer.NextBlock.Unknown;
     }
 
     /// <summary>The characters of one block: its bytes, without the note lines of a Torat Emet book that lie in them (the header shows those; the scanner gave them no block).</summary>

@@ -55,7 +55,7 @@ internal sealed class MarkupSpanRescan
         MarkupBlockMode mode = index.Kind == MarkupSourceKind.WebArchive ? MarkupBlockMode.Elements : MarkupBlockMode.Lines;
         Scanner = anchor.State is null
             ? MarkupBlockScanner.FromStart(mode, unitSize, bigEndian, encoding, index.Stacks, index.StackIds, index.ToratEmet)
-            : MarkupBlockScanner.ResumeSpan(mode, unitSize, bigEndian, encoding, index.Stacks, index.StackIds, anchor.State, index.ToratEmet);
+            : MarkupBlockScanner.ResumeSpan(mode, unitSize, bigEndian, encoding, index.Stacks, index.StackIds, anchor.State, index.ToratEmet, index.DocumentCss);
 
         if (index.Kind == MarkupSourceKind.WebArchive)
         {
