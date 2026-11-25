@@ -94,7 +94,7 @@ internal sealed class MarkupCompactBlockTable
     public string OpenTags(int blockIndex) => _index.Stacks[StackId(blockIndex)];
     public int StackId(int blockIndex) => ScannedThrough(blockIndex, out int local).Scanner.BlockStackIds[local];
     /// <summary>A web archive's selector state of the elements open at the block's start ("" without a sheet that needs it): from the rescan.</summary>
-    public string Structure(int blockIndex) => ScannedThrough(blockIndex, out int local).Scanner.BlockStructures[local];
+    public string Structure(int blockIndex) => ScannedThrough(blockIndex, out int local).Scanner.BlockStructures[local].Text;
 
     /// <summary>MHTML: the decoder resume point of the block's first decoded byte.</summary>
     public long Resume(int blockIndex)

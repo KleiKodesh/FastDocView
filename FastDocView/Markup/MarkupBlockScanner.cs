@@ -55,7 +55,7 @@ public sealed class MarkupBlockScanner
     /// sheet that needs it). Not interned (each block's differs): the index keeps it only at its anchors, a span rescan rebuilds
     /// the rest, so it costs no memory per block.
     /// </summary>
-    public List<string> BlockStructures { get; } = [];
+    internal List<WebArchiveStructure> BlockStructures { get; } = [];
     public List<string> Stacks { get; private set; } = [""];   // id 0 = nothing open
     /// <summary>The document-wide index of <see cref="BlockStartOffsets"/>[0] (blocks before it were handed off and removed).</summary>
     public int BlockIndexBase { get; private set; }
@@ -85,6 +85,8 @@ public sealed class MarkupBlockScanner
     // (WebArchiveMatch), written into the interned stacks so a block resolves its selectors without the blocks before it
     private WebArchiveStylesheet? _structureSheet;
     private WebArchiveMatch? _rootState;
+    private WebArchiveStructure? _lastStructure;
+    private bool _isStructureChanged;                    // an element opened or the stack changed since _lastStructure
     private int _unpushedDepth;                          // elements past MaximumStackDepth: their end tags are absorbed first
     private bool _isStackDirty;
     private int _stackId;
@@ -442,7 +444,7 @@ public sealed class MarkupBlockScanner
         {
             if (!_isInBody)
             {
-                if (name == "body") { _isInBody = true; BeginStructure(WebArchiveStylesheet.Parse(WebArchiveStylesheet.Normalize(StyleText))); StartBlock(_tagStartOffset + _lastTagByteCount); }
+                if (name == "body") { _isInBody = true; BeginStructure(WebArchiveStylesheet.ParseShared(WebArchiveStylesheet.Normalize(StyleText))); StartBlock(_tagStartOffset + _lastTagByteCount); }
                 else if (name == "style" && !isSelfClosing) { _rawName = name; _rawMatch = 0; _state = State.RawText; _isCapturingStyle = true; }
                 else if (RawTextElements.Contains(name) && !isSelfClosing) { _rawName = name; _rawMatch = 0; _state = State.RawText; }
                 return;
@@ -466,7 +468,7 @@ public sealed class MarkupBlockScanner
         if (VoidElements.Contains(name) || isSelfClosing) { OpenStructure(name, tag); return; }
         PopForStart(name);
         WebArchiveMatch? state = OpenStructure(name, tag);
-        if (_stack.Count < MaximumStackDepth) { _stack.Add((name, tag, state)); _isStackDirty = true; } else _unpushedDepth++;
+        if (_stack.Count < MaximumStackDepth) { _stack.Add((name, tag, state)); _isStackDirty = _isStructureChanged = true; } else _unpushedDepth++;
         if (RawTextElements.Contains(name)) { _rawName = name; _rawMatch = 0; _state = State.RawText; }
     }
 
@@ -485,19 +487,29 @@ public sealed class MarkupBlockScanner
         if (_structureSheet is null || _unpushedDepth > 0) return null;
         WebArchiveMatch? parent = _stack.Count > 0 ? _stack[_stack.Count - 1].state : _rootState;
         if (parent is null) return null;
-        return _structureSheet.Open(parent, WebArchiveElement.FromTag(name, tag));
+        _isStructureChanged = true;
+        return _structureSheet.Open(parent, WebArchiveElement.FromTag(name, tag), sourcesOnly: true);
     }
 
     /// <summary>
     /// The selector state of body and of each open element, joined by '|' (body first; an entry without a state is empty) - what
     /// <see cref="MarkupBlockRenderer.WithStructure"/> puts into a block's open tags. "" without a structure sheet.
     /// </summary>
-    public string CurrentStructure()
+    public string CurrentStructure() => CurrentStructureSnapshot().Text;
+
+    /// <summary>
+    /// <see cref="CurrentStructure"/> as a snapshot that later elements do not change, its text written only when asked (a span
+    /// anchor, a rendered block). The previous one is reused while no element opened and the stack did not change.
+    /// </summary>
+    private WebArchiveStructure CurrentStructureSnapshot()
     {
-        if (_structureSheet is null || _rootState is null) return "";
-        var text = new StringBuilder(_rootState.Serialize());
-        foreach ((_, _, WebArchiveMatch? state) in _stack) text.Append('|').Append(state?.Serialize() ?? "");
-        return text.ToString();
+        if (_structureSheet is null || _rootState is null) return WebArchiveStructure.Empty;
+        if (_lastStructure is not null && !_isStructureChanged) return _lastStructure;
+        var entries = new WebArchiveMatch?[_stack.Count + 1];
+        entries[0] = _rootState.Freeze();
+        for (int i = 0; i < _stack.Count; i++) entries[i + 1] = _stack[i].state?.Freeze();
+        _isStructureChanged = false;
+        return _lastStructure = new WebArchiveStructure(entries);
     }
 
     /// <summary>The implied end tags HTML applies before a start tag (a new p closes an open p, a cell closes a cell...).</summary>
@@ -508,7 +520,7 @@ public sealed class MarkupBlockScanner
         else if (name is "dt" or "dd") PopThrough(["dt", "dd"], ["dl", "table", "td", "th"]);
         else if (name is "td" or "th") PopThrough(["td", "th"], ["tr", "table"]);
         else if (name == "tr") PopThrough(["tr"], ["table", "tbody", "thead", "tfoot"]);
-        else if (name == "option" && _stack[_stack.Count - 1].name == "option") { _stack.RemoveAt(_stack.Count - 1); _isStackDirty = true; }
+        else if (name == "option" && _stack[_stack.Count - 1].name == "option") { _stack.RemoveAt(_stack.Count - 1); _isStackDirty = _isStructureChanged = true; }
         if (ClosesOpenParagraph.Contains(name) || name is "li" or "dt" or "dd") PopThrough(["p"], ParagraphScopeBoundaries);
     }
 
@@ -520,7 +532,7 @@ public sealed class MarkupBlockScanner
         for (int i = _stack.Count - 1; i >= 0; i--)
         {
             string open = _stack[i].name;
-            if (Array.IndexOf(targets, open) >= 0) { _stack.RemoveRange(i, _stack.Count - i); _isStackDirty = true; return; }
+            if (Array.IndexOf(targets, open) >= 0) { _stack.RemoveRange(i, _stack.Count - i); _isStackDirty = _isStructureChanged = true; return; }
             if (Array.IndexOf(boundaries, open) >= 0) return;
         }
     }
@@ -541,7 +553,7 @@ public sealed class MarkupBlockScanner
         {
             if (_stack[i].name != name) continue;
             _stack.RemoveRange(i, _stack.Count - i);
-            _isStackDirty = true;
+            _isStackDirty = _isStructureChanged = true;
             return;
         }
     }
@@ -624,12 +636,12 @@ public sealed class MarkupBlockScanner
         if (_toratEmetHeadEnd >= 0)
         {
             _markState = offset >= _toratEmetHeadEnd ? 1 : 0;
-            if (offset == _toratEmetHeadEnd) { _stack.Clear(); _unpushedDepth = 0; _isStackDirty = true; }   // tags the head left open do not reach the text
+            if (offset == _toratEmetHeadEnd) { _stack.Clear(); _unpushedDepth = 0; _isStackDirty = _isStructureChanged = true; }   // tags the head left open do not reach the text
         }
         BlockStartOffsets.Add(offset);
         BlockTextLengths.Add(0);
         BlockStackIds.Add(CurrentStackId());
-        BlockStructures.Add(CurrentStructure());
+        BlockStructures.Add(CurrentStructureSnapshot());
         _blockStartOffset = offset;
         _blockHasContent = false;
     }
@@ -728,7 +740,7 @@ public sealed class MarkupBlockScanner
         for (int i = 0; i < _stack.Count; i++) tagLengths[i] = _stack[i].tag.Length;
         return new MarkupScanState(BlockIndexBase + last, BlockStartOffsets[last], BlockStackIds[last], BlockTextLengths[last],
                                    liveStackId, tagLengths, _unpushedDepth, _tableDepth, _blockHasContent, _isDoubleByteTrailNext, _isAfterHeading, _isHeadingLine,
-                                   BlockStructures[last], CurrentStructure());
+                                   BlockStructures[last].Text, CurrentStructure());
     }
 
     /// <summary>A scanner that continues from <paramref name="state"/> with the index pass's interned stacks.</summary>
@@ -741,7 +753,7 @@ public sealed class MarkupBlockScanner
         if ((uint)state.LiveStackId >= (uint)stacks.Count || (uint)state.BlockStackId >= (uint)stacks.Count) throw new InvalidDataException("Markup index: anchor stack out of range.");
         string live = stacks[state.LiveStackId];
         int at = 0;
-        if (mode == MarkupBlockMode.Elements && documentCss.Length > 0) scanner.BeginStructure(WebArchiveStylesheet.Parse(documentCss));
+        if (mode == MarkupBlockMode.Elements && documentCss.Length > 0) scanner.BeginStructure(WebArchiveStylesheet.ParseShared(documentCss));
         string[]? structure = null;
         if (scanner._structureSheet is not null)
         {
@@ -775,7 +787,7 @@ public sealed class MarkupBlockScanner
         scanner.BlockStartOffsets.Add(state.BlockStart);
         scanner.BlockTextLengths.Add(state.BlockTextLength);
         scanner.BlockStackIds.Add(state.BlockStackId);
-        scanner.BlockStructures.Add(state.BlockStructure);
+        scanner.BlockStructures.Add(new WebArchiveStructure(state.BlockStructure));
         scanner._blockStartOffset = state.BlockStart;
         scanner._blockHasContent = state.BlockHasContent;
         scanner._isDoubleByteTrailNext = state.IsDoubleByteTrailNext;

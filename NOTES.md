@@ -4100,3 +4100,22 @@ profile corners (as on rectangles).
 - Matrix row pitch (app fastDocViewMath.ts): Chromium lands a padded row ~0.85 px lower than its padding, so the first
   shift overshot to 1.226 em; one more read takes the measured excess off each row's padding. Now 1.166 em (Cambria Math,
   Word 1.18) and 1.194 em (DejaVu, Word 1.2); brackets 15 of 15 and 15 of 15 still within 0 % (compare-math-stretch.py).
+
+### Web archive selector matcher: first paint back to the old time (2026-11-25)
+
+- eed80af's matcher made the 27 MB browser archive with sibling / structural rules (css-selectors body x 20000) paint in
+  231-302 ms (JIT cold) vs 179-210 before; in a warm loop the index pass's Open was ~6 us per element (open 22-25 ms vs 10-16).
+- What it cost and the fix (WebArchiveStylesheet, MarkupBlockScanner): (1) the index pass matched every prefix of every rule
+  for every element although later elements only read the prefixes a combinator looks back at - now it matches only those
+  "source" prefixes (Open sourcesOnly) and keeps the element's inputs (WebArchiveMatchContext: element, index, type index,
+  the parent's arrays as they were) to work out the full match only when the state is written out (an element open at a
+  block start: anchors, rendered blocks); (2) the selector state was serialized to text at every block start - now a frozen
+  snapshot (WebArchiveMatch.Freeze, copy-on-write type counts) written only when asked (WebArchiveStructure); (3) LINQ /
+  HashSet / Dictionary per element (Union, Filter, CountChild, type counts) replaced by sorted-array merges and small
+  arrays; (4) attributes read once per element in one pass, id / class / href only when a rule needs them, AttributeValue
+  without a string per attribute name; (5) the sheet parsed once per document (ParseShared / Normalize keep the last one),
+  not per span rescan and partial index. Output is unchanged: the serialized states equal the eager ones (review), the
+  windowed css-selectors checks (shuffled windows = continuous read) pass.
+- Measured on a loaded machine (other sessions at 50-100 % CPU, so only paired runs mean anything): warm in-process loop
+  (60 opens + first window, second half) paint min 14.4-17.4 ms vs 13.7-18.3 before eed80af (eed80af itself 24-28);
+  open min 8.9-14.0 vs 11.5-15.3. AOT ColdBench medians on quieter moments: 15-23 ms vs 11-20 before (eed80af 18-30).

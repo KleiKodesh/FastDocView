@@ -33,13 +33,13 @@ public sealed class WebArchiveStylesheet
 
     private readonly List<Rule> _rules = [];
     private readonly List<Prefix> _prefixes = [];
-    private readonly Dictionary<string, List<Prefix>> _byId = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, List<Prefix>> _byClass = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, List<Prefix>> _byType = new(StringComparer.Ordinal);
-    private readonly List<Prefix> _universal = [];
     private readonly Dictionary<int, Rule> _ruleByFullPrefix = new();
     private readonly HashSet<int> _descendantSources = [];   // prefixes a descendant combinator reads from an ancestor
     private readonly HashSet<int> _siblingSources = [];      // prefixes a sibling combinator reads from an earlier sibling
+    // the same two sets by prefix id, and the full prefixes' rules by id: the matcher's compact form, built once after parsing
+    private bool[] _isDescendantSource = [], _isSiblingSource = [];
+    private Rule?[] _ruleById = [];
+    [ThreadStatic] private static int[]? _matchScratch;
 
     public static readonly WebArchiveStylesheet Empty = new();
 
@@ -58,7 +58,32 @@ public sealed class WebArchiveStylesheet
     public string PseudoElementCss { get; private set; } = "";
 
     /// <summary>The sheet in its checked form (what the index stores): one rule per line, only selectors and declarations that passed; matching @media rules flattened.</summary>
-    public static string Normalize(string css) => Parse(css).ToCssText();
+    public static string Normalize(string css)
+    {
+        if (css.Length == 0) return "";
+        lock (CacheLock)
+            if (ReferenceEquals(_lastNormalizedSource, css) || string.Equals(_lastNormalizedSource, css, StringComparison.Ordinal)) return _lastNormalized!;
+        string normalized = Parse(css).ToCssText();
+        lock (CacheLock) { _lastNormalizedSource = css; _lastNormalized = normalized; }
+        return normalized;
+    }
+
+    // the last sheet parsed / normalized: one document's index pass, rescans and renderer ask for the same sheet many times
+    // (a sheet is never changed after parsing, so one instance serves them all)
+    private static readonly object CacheLock = new();
+    private static string? _lastNormalizedSource, _lastNormalized, _lastParsedSource;
+    private static WebArchiveStylesheet? _lastParsed;
+
+    /// <summary><see cref="Parse"/>, sharing the instance with the last caller that parsed the same text.</summary>
+    public static WebArchiveStylesheet ParseShared(string css)
+    {
+        if (css.Length == 0) return Empty;
+        lock (CacheLock)
+            if (ReferenceEquals(_lastParsedSource, css) || string.Equals(_lastParsedSource, css, StringComparison.Ordinal)) return _lastParsed!;
+        WebArchiveStylesheet sheet = Parse(css);
+        lock (CacheLock) { _lastParsedSource = css; _lastParsed = sheet; }
+        return sheet;
+    }
 
     public static WebArchiveStylesheet Parse(string css)
     {
@@ -69,6 +94,7 @@ public sealed class WebArchiveStylesheet
         var root = new List<Declaration>();
         int order = 0;
         sheet.ParseRules(source, 0, source.Length, root, ref order, depth: 0);
+        sheet.Compile();
         sheet.RootCss = string.Concat(root.Select(d => d.ToCss()));
         sheet.PseudoElementCss = string.Concat(sheet._rules.Where(r => r.Selector.PseudoElement != PseudoElement.None)
             .OrderBy(r => r.Selector.Specificity).ThenBy(r => r.Order)
@@ -143,15 +169,42 @@ public sealed class WebArchiveStylesheet
         {
             var prefix = new Prefix(first + i, selector.Compounds[i], i == 0 ? Combinator.None : selector.Combinators[i], i == 0 ? -1 : first + i - 1);
             _prefixes.Add(prefix);
-            Compound key = prefix.Compound;
-            if (key.Id is not null) Bucket(_byId, key.Id).Add(prefix);
-            else if (key.Classes.Count > 0) Bucket(_byClass, key.Classes[0]).Add(prefix);
-            else if (key.Type is not null) Bucket(_byType, key.Type).Add(prefix);
-            else _universal.Add(prefix);
             if (prefix.Combinator == Combinator.Descendant) _descendantSources.Add(prefix.Previous);
             else if (prefix.Combinator is Combinator.Adjacent or Combinator.General) _siblingSources.Add(prefix.Previous);
         }
         _ruleByFullPrefix[first + selector.Compounds.Count - 1] = rule;
+    }
+
+    /// <summary>The per-id tables the matcher reads (no hashing per element).</summary>
+    private void Compile()
+    {
+        int count = _prefixes.Count;
+        _isDescendantSource = new bool[count];
+        _isSiblingSource = new bool[count];
+        _ruleById = new Rule?[count];
+        foreach (int id in _descendantSources) _isDescendantSource[id] = true;
+        foreach (int id in _siblingSources) _isSiblingSource[id] = true;
+        foreach (KeyValuePair<int, Rule> pair in _ruleByFullPrefix) _ruleById[pair.Key] = pair.Value;
+        // a source: a prefix some combinator reads from another element (its parent, an ancestor, an earlier sibling)
+        var isSource = new bool[count];
+        foreach (Prefix prefix in _prefixes) if (prefix.Previous >= 0) isSource[prefix.Previous] = true;
+        _allBuckets = new Buckets();
+        _sourceBuckets = new Buckets();
+        foreach (Prefix prefix in _prefixes)
+        {
+            Place(_allBuckets, prefix);
+            if (isSource[prefix.Id]) Place(_sourceBuckets, prefix);
+            else _hasNonSourcePrefixes = true;
+        }
+
+        static void Place(Buckets buckets, Prefix prefix)
+        {
+            Compound key = prefix.Compound;
+            if (key.Id is not null) Bucket(buckets.ById, key.Id).Add(prefix);
+            else if (key.Classes.Count > 0) Bucket(buckets.ByClass, key.Classes[0]).Add(prefix);
+            else if (key.Type is not null) Bucket(buckets.ByType, key.Type).Add(prefix);
+            else buckets.Universal.Add(prefix);
+        }
     }
 
     private static List<Prefix> Bucket(Dictionary<string, List<Prefix>> buckets, string key)
@@ -179,52 +232,93 @@ public sealed class WebArchiveStylesheet
     /// <summary>
     /// The state of <paramref name="element"/> opening under <paramref name="parent"/> (null: the document root): the selector
     /// prefixes it matches. Counts it as the parent's next element child (child index, type index, sibling matches).
+    /// <paramref name="sourcesOnly"/> (the index pass): only the prefixes a combinator reads from another element are matched now
+    /// - all that the state of later elements needs; the element's full match is worked out from the same inputs only when its
+    /// state is written out (<see cref="WebArchiveMatch.FullMatched"/>), which is rare (elements open at a block start).
     /// </summary>
-    internal WebArchiveMatch Open(WebArchiveMatch? parent, WebArchiveElement element)
+    internal WebArchiveMatch Open(WebArchiveMatch? parent, WebArchiveElement element, bool sourcesOnly = false)
     {
         int index = parent is null ? 1 : parent.Children + 1;
         int typeIndex = parent is null ? 1 : parent.TypeCount(element.Name) + 1;
-        var matched = new List<int>();
-        if (_prefixes.Count > 0)
-        {
-            void Try(List<Prefix>? candidates)
-            {
-                if (candidates is null) return;
-                foreach (Prefix prefix in candidates)
-                    if (!matched.Contains(prefix.Id) && prefix.Compound.Matches(element, index, typeIndex, parent) && Related(prefix, parent)) matched.Add(prefix.Id);
-            }
-            if (element.Id is not null && _byId.TryGetValue(element.Id, out List<Prefix>? byId)) Try(byId);
-            foreach (string name in element.Classes)
-                if (_byClass.TryGetValue(name, out List<Prefix>? byClass)) Try(byClass);
-            if (_byType.TryGetValue(element.Name, out List<Prefix>? byType)) Try(byType);
-            Try(_universal);
-            matched.Sort();
-        }
-        var state = new WebArchiveMatch(matched.ToArray(), Union(parent?.AncestorOrSelf, matched, _descendantSources), parent, index, typeIndex);
-        if (parent is not null) parent.CountChild(element.Name, Filter(matched, _siblingSources));
+        var context = new WebArchiveMatchContext(element, index, typeIndex, parent is not null, parent?.Matched ?? [], parent?.AncestorOrSelf ?? [],
+                                                 parent?.PreviousChild ?? [], parent?.EarlierChildren ?? []);
+        int[] matched = Match(context, sourcesOnly ? _sourceBuckets : _allBuckets);
+        int[] ancestorOrSelf = Union(parent?.AncestorOrSelf, matched, _isDescendantSource);
+        var state = sourcesOnly && _hasNonSourcePrefixes
+            ? new WebArchiveMatch(matched, ancestorOrSelf, parent, index, typeIndex, this, context)
+            : new WebArchiveMatch(matched, ancestorOrSelf, parent, index, typeIndex);
+        parent?.CountChild(element.Name, Filter(matched, _isSiblingSource));
         return state;
     }
 
-    private static bool Related(Prefix prefix, WebArchiveMatch? parent) => prefix.Combinator switch
+    /// <summary>Every prefix the element matches (a deferred full match of an index-pass state).</summary>
+    internal int[] MatchAll(in WebArchiveMatchContext context) => Match(context, _allBuckets);
+
+    /// <summary>The prefix candidates by the element's id, classes, type, then the universal ones (one set of them per use).</summary>
+    private sealed class Buckets
+    {
+        public readonly Dictionary<string, List<Prefix>> ById = new(StringComparer.OrdinalIgnoreCase);
+        public readonly Dictionary<string, List<Prefix>> ByClass = new(StringComparer.OrdinalIgnoreCase);
+        public readonly Dictionary<string, List<Prefix>> ByType = new(StringComparer.Ordinal);
+        public readonly List<Prefix> Universal = [];
+        public bool IsEmpty => ById.Count == 0 && ByClass.Count == 0 && ByType.Count == 0 && Universal.Count == 0;
+    }
+
+    private Buckets _allBuckets = new(), _sourceBuckets = new();
+    private bool _hasNonSourcePrefixes;
+
+    private int[] Match(in WebArchiveMatchContext context, Buckets buckets)
+    {
+        if (buckets.IsEmpty) return [];
+        int[] scratch = _matchScratch is { } buffer && buffer.Length >= _prefixes.Count ? buffer : _matchScratch = new int[Math.Max(64, _prefixes.Count)];
+        int count = 0;
+        WebArchiveElement element = context.Element;
+        if (buckets.ById.Count > 0 && element.Id is { } elementId && buckets.ById.TryGetValue(elementId, out List<Prefix>? byId)) Try(byId, scratch, ref count, context);
+        if (buckets.ByClass.Count > 0)
+            foreach (string name in element.Classes)
+                if (buckets.ByClass.TryGetValue(name, out List<Prefix>? byClass)) Try(byClass, scratch, ref count, context);
+        if (buckets.ByType.Count > 0 && buckets.ByType.TryGetValue(element.Name, out List<Prefix>? byType)) Try(byType, scratch, ref count, context);
+        if (buckets.Universal.Count > 0) Try(buckets.Universal, scratch, ref count, context);
+        if (count == 0) return [];
+        var matched = new int[count];
+        Array.Copy(scratch, matched, count);
+        if (count > 1) Array.Sort(matched);
+        return matched;
+
+        static void Try(List<Prefix> candidates, int[] into, ref int found, in WebArchiveMatchContext context)
+        {
+            foreach (Prefix prefix in candidates)
+                if (prefix.Compound.Matches(context.Element, context.Index, context.TypeIndex, context.HasParent) && Related(prefix, context)
+                    && Array.IndexOf(into, prefix.Id, 0, found) < 0) into[found++] = prefix.Id;
+        }
+    }
+
+    private static bool Related(Prefix prefix, in WebArchiveMatchContext context) => prefix.Combinator switch
     {
         Combinator.None => true,
-        Combinator.Child => parent is not null && Contains(parent.Matched, prefix.Previous),
-        Combinator.Descendant => parent is not null && Contains(parent.AncestorOrSelf, prefix.Previous),
-        Combinator.Adjacent => parent is not null && Contains(parent.PreviousChild, prefix.Previous),
-        _ => parent is not null && Contains(parent.EarlierChildren, prefix.Previous),
+        Combinator.Child => context.HasParent && Contains(context.ParentMatched, prefix.Previous),
+        Combinator.Descendant => context.HasParent && Contains(context.ParentAncestors, prefix.Previous),
+        Combinator.Adjacent => context.HasParent && Contains(context.ParentPreviousChild, prefix.Previous),
+        _ => context.HasParent && Contains(context.ParentEarlierChildren, prefix.Previous),
     };
 
-    private static bool Contains(int[] sorted, int id) => Array.BinarySearch(sorted, id) >= 0;
+    private static bool Contains(int[] sorted, int id) => sorted.Length != 0 && Array.BinarySearch(sorted, id) >= 0;
 
-    private static int[] Filter(List<int> matched, HashSet<int> keep) => matched.Where(keep.Contains).ToArray();
-
-    private static int[] Union(int[]? inherited, List<int> matched, HashSet<int> keep)
+    /// <summary>The ids of <paramref name="matched"/> (sorted) that <paramref name="keep"/> marks, sorted; the empty array when none.</summary>
+    private static int[] Filter(int[] matched, bool[] keep)
     {
-        if (!matched.Any(keep.Contains)) return inherited ?? [];
-        var set = new SortedSet<int>(inherited ?? []);
-        foreach (int id in matched) if (keep.Contains(id)) set.Add(id);
-        return set.ToArray();
+        int count = 0;
+        foreach (int id in matched) if (keep[id]) count++;
+        if (count == 0) return [];
+        if (count == matched.Length) return matched;
+        var kept = new int[count];
+        count = 0;
+        foreach (int id in matched) if (keep[id]) kept[count++] = id;
+        return kept;
     }
+
+    /// <summary>The sorted union of <paramref name="inherited"/> and the kept ids of <paramref name="matched"/> (both sorted); shares an input when nothing is added.</summary>
+    private static int[] Union(int[]? inherited, int[] matched, bool[] keep) => WebArchiveMatch.MergeSorted(inherited ?? [], Filter(matched, keep));
 
     /// <summary>What the sheet gives one element: its inline declarations, its pseudo-element rule ids, and whether it is hidden.</summary>
     internal readonly record struct ElementStyle(string Css, string StartPseudoIds, string AfterPseudoIds, bool IsHidden, bool IsDisplayImportant,
@@ -242,12 +336,12 @@ public sealed class WebArchiveStylesheet
     /// </summary>
     internal ElementStyle StyleFor(WebArchiveMatch state, WebArchiveLaterFacts? later)
     {
-        if (_rules.Count == 0 || state.Matched.Length == 0) return ElementStyle.None;
+        if (_rules.Count == 0 || state.FullMatched.Length == 0) return ElementStyle.None;
         List<Rule>? matched = null;
         bool hasLaterRules = false;
-        foreach (int id in state.Matched)
+        foreach (int id in state.FullMatched)
         {
-            if (!_ruleByFullPrefix.TryGetValue(id, out Rule? rule)) continue;
+            if (_ruleById[id] is not { } rule) continue;
             if (rule.Selector.Subject.NeedsLaterSiblings)
             {
                 hasLaterRules = true;
@@ -464,21 +558,27 @@ public sealed class WebArchiveStylesheet
         public bool NeedsLaterSiblings => NthLastChild is not null || NthLastOfType is not null || IsEmpty;
         public bool IsSimpleArgument => !NeedsLaterSiblings && Not.Count == 0;
 
-        public bool Matches(WebArchiveElement element, int index, int typeIndex, WebArchiveMatch? parent)
+        public bool Matches(WebArchiveElement element, int index, int typeIndex, bool hasParent)
         {
             if (Type is not null && Type != element.Name) return false;
             if (IsRoot && element.Name != "html") return false;
             if (Id is not null && !string.Equals(Id, element.Id, StringComparison.OrdinalIgnoreCase)) return false;
             foreach (string name in Classes)
-                if (!element.Classes.Contains(name, StringComparer.OrdinalIgnoreCase)) return false;
+                if (!HasClass(element.Classes, name)) return false;
             if (IsLink && !element.IsLink) return false;
             foreach (AttributeTest test in Attributes)
                 if (!MatchesAttribute(test, element.Attribute(test.Name))) return false;
-            if (NthChild is { } nthChild && (parent is null || !nthChild.Matches(index))) return false;
-            if (NthOfType is { } nthOfType && (parent is null || !nthOfType.Matches(typeIndex))) return false;
+            if (NthChild is { } nthChild && (!hasParent || !nthChild.Matches(index))) return false;
+            if (NthOfType is { } nthOfType && (!hasParent || !nthOfType.Matches(typeIndex))) return false;
             foreach (Compound not in Not)
-                if (not.Matches(element, index, typeIndex, parent)) return false;
+                if (not.Matches(element, index, typeIndex, hasParent)) return false;
             return true;
+        }
+
+        private static bool HasClass(string[] classes, string name)
+        {
+            foreach (string candidate in classes) if (string.Equals(candidate, name, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
         }
 
         /// <summary>The later-sibling pseudo-classes of the subject, once the element's later siblings and content are known.</summary>
@@ -832,46 +932,172 @@ public sealed class WebArchiveStylesheet
 /// </summary>
 internal sealed class WebArchiveMatch(int[] matched, int[] ancestorOrSelf, WebArchiveMatch? parent, int index, int typeIndex)
 {
+    // an index-pass state matched for sources only (WebArchiveStylesheet.Open sourcesOnly): the sheet and inputs of its full match
+    private WebArchiveStylesheet? _deferredSheet;
+    private WebArchiveMatchContext _deferredContext;
+    private int[] _matched = matched;
+
+    public WebArchiveMatch(int[] sourceMatched, int[] ancestorOrSelf, WebArchiveMatch? parent, int index, int typeIndex, WebArchiveStylesheet sheet, WebArchiveMatchContext context)
+        : this(sourceMatched, ancestorOrSelf, parent, index, typeIndex)
+    {
+        _deferredSheet = sheet;
+        _deferredContext = context;
+    }
+
     /// <summary>The attribute that carries the state on an open-tag stack entry (written by the index pass, never by a document).</summary>
     public const string StateAttribute = "data-fdv-s";
     /// <summary>The stack entry that carries the body's state (the children of body are blocks: their sibling state crosses blocks).</summary>
     public const string RootTagName = "fdv-root";
 
-    public int[] Matched { get; } = matched;
+    /// <summary>
+    /// The prefixes the element matches; for an index-pass state only the ones combinators read (<see cref="FullMatched"/> has
+    /// all). Either way it holds every source prefix, which is all that the combinators of later elements look up.
+    /// </summary>
+    public int[] Matched => _matched;
+
+    /// <summary>Every prefix the element matches (an index-pass state works it out now, once).</summary>
+    public int[] FullMatched
+    {
+        get
+        {
+            if (_deferredSheet is { } sheet)
+            {
+                _matched = sheet.MatchAll(_deferredContext);
+                _deferredSheet = null;
+                _deferredContext = default;
+            }
+            return _matched;
+        }
+    }
     public int[] AncestorOrSelf { get; private set; } = ancestorOrSelf;
     public WebArchiveMatch? Parent { get; } = parent;
     public int Index { get; } = index;
     public int TypeIndex { get; } = typeIndex;
 
     public int Children { get; private set; }
-    private Dictionary<string, int>? _typeCounts;
+    // children per element type: parallel arrays, copied before a change once a snapshot (Freeze) shares them
+    private string[] _typeNames = [];
+    private int[] _typeCounts = [];
+    private int _typeCount;
+    private bool _isTypeShared;
     public int[] PreviousChild { get; private set; } = [];
     public int[] EarlierChildren { get; private set; } = [];
     /// <summary>Renderer: text or an element child seen inside (for :empty).</summary>
     public bool HasContent;
 
-    public int TypeCount(string name) => _typeCounts is not null && _typeCounts.TryGetValue(name, out int count) ? count : 0;
+    public int TypeCount(string name)
+    {
+        for (int i = 0; i < _typeCount; i++) if (string.Equals(_typeNames[i], name, StringComparison.Ordinal)) return _typeCounts[i];
+        return 0;
+    }
 
     public void CountChild(string name, int[] siblingMatches)
     {
         Children++;
         HasContent = true;
-        _typeCounts ??= new Dictionary<string, int>(StringComparer.Ordinal);
-        _typeCounts[name] = TypeCount(name) + 1;
+        if (_isTypeShared)
+        {
+            _typeNames = (string[])_typeNames.Clone();
+            _typeCounts = (int[])_typeCounts.Clone();
+            _isTypeShared = false;
+        }
+        int at = 0;
+        while (at < _typeCount && !string.Equals(_typeNames[at], name, StringComparison.Ordinal)) at++;
+        if (at == _typeCount)
+        {
+            if (_typeCount == _typeNames.Length)
+            {
+                Array.Resize(ref _typeNames, Math.Max(4, _typeCount * 2));
+                Array.Resize(ref _typeCounts, Math.Max(4, _typeCount * 2));
+            }
+            _typeNames[at] = name;
+            _typeCounts[at] = 0;
+            _typeCount++;
+        }
+        _typeCounts[at]++;
         PreviousChild = siblingMatches;
-        if (siblingMatches.Length > 0) EarlierChildren = EarlierChildren.Concat(siblingMatches).Distinct().OrderBy(id => id).ToArray();
+        if (siblingMatches.Length > 0) EarlierChildren = MergeSorted(EarlierChildren, siblingMatches);
+    }
+
+    /// <summary>The sorted, distinct union of two sorted id arrays; returns an input itself when the other adds nothing.</summary>
+    internal static int[] MergeSorted(int[] a, int[] b)
+    {
+        if (b.Length == 0) return a;
+        if (a.Length == 0) return b;
+        int i = 0, j = 0, count = 0;
+        while (i < a.Length || j < b.Length)
+        {
+            if (j >= b.Length || (i < a.Length && a[i] < b[j])) i++;
+            else if (i >= a.Length || b[j] < a[i]) j++;
+            else { i++; j++; }
+            count++;
+        }
+        if (count == a.Length) return a;
+        if (count == b.Length) return b;
+        var merged = new int[count];
+        i = j = count = 0;
+        while (i < a.Length || j < b.Length)
+        {
+            if (j >= b.Length || (i < a.Length && a[i] < b[j])) merged[count++] = a[i++];
+            else if (i >= a.Length || b[j] < a[i]) merged[count++] = b[j++];
+            else { merged[count++] = a[i++]; j++; }
+        }
+        return merged;
+    }
+
+    /// <summary>
+    /// A copy of the state as it is now, which later children do not change (a block start's snapshot): it shares the arrays,
+    /// which this state copies before its next change.
+    /// </summary>
+    public WebArchiveMatch Freeze()
+    {
+        _isTypeShared = true;
+        return new WebArchiveMatch(_matched, AncestorOrSelf, Parent, Index, TypeIndex)
+        {
+            _deferredSheet = _deferredSheet, _deferredContext = _deferredContext,
+            Children = Children, _typeNames = _typeNames, _typeCounts = _typeCounts, _typeCount = _typeCount, _isTypeShared = true,
+            PreviousChild = PreviousChild, EarlierChildren = EarlierChildren, HasContent = HasContent,
+        };
     }
 
     /// <summary>The state as an attribute value: "m,ids;a,ids;c,count;t,name=count,...;v,ids;e,ids;i,index,typeIndex" (digits, names, punctuation only).</summary>
     public string Serialize()
     {
-        var text = new StringBuilder();
-        text.Append("m,").Append(string.Join(".", Matched)).Append(";a,").Append(string.Join(".", AncestorOrSelf))
-            .Append(";c,").Append(Children).Append(";t,");
-        if (_typeCounts is not null) text.Append(string.Join(".", _typeCounts.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value)));
-        text.Append(";v,").Append(string.Join(".", PreviousChild)).Append(";e,").Append(string.Join(".", EarlierChildren))
-            .Append(";i,").Append(Index).Append('.').Append(TypeIndex);
+        var text = new StringBuilder(64);
+        AppendSerialized(text);
         return text.ToString();
+    }
+
+    /// <summary>Appends <see cref="Serialize"/>'s text.</summary>
+    public void AppendSerialized(StringBuilder text)
+    {
+        text.Append("m,"); AppendIds(text, FullMatched);
+        text.Append(";a,"); AppendIds(text, AncestorOrSelf);
+        text.Append(";c,").Append(Children).Append(";t,");
+        if (_typeCount > 0)
+        {
+            var order = new int[_typeCount];
+            for (int i = 0; i < order.Length; i++) order[i] = i;
+            string[] names = _typeNames;
+            Array.Sort(order, (x, y) => string.CompareOrdinal(names[x], names[y]));
+            for (int i = 0; i < order.Length; i++)
+            {
+                if (i > 0) text.Append('.');
+                text.Append(_typeNames[order[i]]).Append('=').Append(_typeCounts[order[i]]);
+            }
+        }
+        text.Append(";v,"); AppendIds(text, PreviousChild);
+        text.Append(";e,"); AppendIds(text, EarlierChildren);
+        text.Append(";i,").Append(Index).Append('.').Append(TypeIndex);
+    }
+
+    private static void AppendIds(StringBuilder text, int[] ids)
+    {
+        for (int i = 0; i < ids.Length; i++)
+        {
+            if (i > 0) text.Append('.');
+            text.Append(ids[i]);
+        }
     }
 
     /// <summary>A state read back from <see cref="Serialize"/>; null when damaged.</summary>
@@ -879,7 +1105,8 @@ internal sealed class WebArchiveMatch(int[] matched, int[] ancestorOrSelf, WebAr
     {
         int[] matched = [], ancestorOrSelf = [], previous = [], earlier = [];
         int children = 0, index = 1, typeIndex = 1;
-        Dictionary<string, int>? types = null;
+        var typeNames = new List<string>();
+        var typeCounts = new List<int>();
         foreach (string part in text.Split(';'))
         {
             if (part.Length < 2 || part[1] != ',') return null;
@@ -899,19 +1126,22 @@ internal sealed class WebArchiveMatch(int[] matched, int[] ancestorOrSelf, WebAr
                 }
                 case 't':
                     if (value.Length == 0) break;
-                    types = new Dictionary<string, int>(StringComparer.Ordinal);
                     foreach (string entry in value.Split('.'))
                     {
                         int equals = entry.LastIndexOf('=');
                         if (equals <= 0 || !int.TryParse(entry.Substring(equals + 1), NumberStyles.None, CultureInfo.InvariantCulture, out int count)) return null;
-                        types[entry.Substring(0, equals)] = count;
+                        string typeName = entry.Substring(0, equals);
+                        if (typeNames.Contains(typeName)) return null;
+                        typeNames.Add(typeName);
+                        typeCounts.Add(count);
                     }
                     break;
                 default: return null;
             }
         }
         return new WebArchiveMatch(matched, ancestorOrSelf, parent, index, typeIndex)
-            { Children = children, _typeCounts = types, PreviousChild = previous, EarlierChildren = earlier, HasContent = children > 0 };
+            { Children = children, _typeNames = typeNames.ToArray(), _typeCounts = typeCounts.ToArray(), _typeCount = typeNames.Count,
+              PreviousChild = previous, EarlierChildren = earlier, HasContent = children > 0 };
     }
 
     private static int[]? Ids(string value)
@@ -925,35 +1155,134 @@ internal sealed class WebArchiveMatch(int[] matched, int[] ancestorOrSelf, WebAr
     }
 }
 
+/// <summary>
+/// The selector state of body and of the elements open at a block start (<see cref="MarkupBlockScanner.CurrentStructure"/>):
+/// frozen states, written out as text ("|"-joined <see cref="WebArchiveMatch.Serialize"/>, body first, "" for an entry without
+/// a state) only when asked.
+/// </summary>
+internal sealed class WebArchiveStructure
+{
+    public static readonly WebArchiveStructure Empty = new("");
+    private readonly WebArchiveMatch?[]? _entries;
+    private string? _text;
+
+    public WebArchiveStructure(string text) => _text = text;
+    public WebArchiveStructure(WebArchiveMatch?[] entries) => _entries = entries;
+
+    public string Text => _text ??= Write();
+
+    private string Write()
+    {
+        var text = new StringBuilder(64 * _entries!.Length);
+        for (int i = 0; i < _entries.Length; i++)
+        {
+            if (i > 0) text.Append('|');
+            _entries[i]?.AppendSerialized(text);
+        }
+        return text.ToString();
+    }
+}
+
+/// <summary>The inputs of an element's match: the element, its position, and its parent's state as it was when the element opened.</summary>
+internal readonly record struct WebArchiveMatchContext(WebArchiveElement Element, int Index, int TypeIndex, bool HasParent, int[] ParentMatched,
+                                                      int[] ParentAncestors, int[] ParentPreviousChild, int[] ParentEarlierChildren);
+
 /// <summary>What an element's later-sibling pseudo-classes need, once known: its later element siblings (all, of its type) and whether it is empty.</summary>
 internal readonly record struct WebArchiveLaterFacts(int LaterSiblings, int LaterSiblingsOfType, bool IsEmpty);
 
 /// <summary>One element as the stylesheet sees it: name (lower case), id, classes, whether it is a link, and its start tag (attribute selectors).</summary>
-internal sealed class WebArchiveElement(string name, string? id, string[] classes, bool isLink, string tag)
+internal sealed class WebArchiveElement
 {
-    public string Name { get; } = name;
-    public string? Id { get; } = id;
-    public string[] Classes { get; } = classes;
-    public bool IsLink { get; } = isLink;
-    private Dictionary<string, string?>? _attributes;
+    private readonly string _tag;
+    private string? _id;
+    private string[]? _classes;
+    private bool? _isLink;
+    private bool _hasId;
+    private string?[]? _attributes;             // name, value, name, value... (decoded)
+
+    public WebArchiveElement(string name, string? id, string[] classes, bool isLink, string tag)
+    {
+        Name = name; _id = id; _hasId = true; _classes = classes; _isLink = isLink; _tag = tag;
+    }
+
+    /// <summary>An element read from its start tag: id, classes and link are read when first asked.</summary>
+    private WebArchiveElement(string name, string tag) { Name = name; _tag = tag; }
+
+    public string Name { get; }
+
+    public string? Id
+    {
+        get
+        {
+            if (!_hasId) { _id = Decoded(MarkupBlockRenderer.AttributeValue(_tag, "id")); _hasId = true; }
+            return _id;
+        }
+    }
+
+    public string[] Classes => _classes ??= Decoded(MarkupBlockRenderer.AttributeValue(_tag, "class"))?.Split([' ', (char)9, (char)10, (char)12, (char)13], StringSplitOptions.RemoveEmptyEntries) ?? [];
+
+    public bool IsLink => _isLink ??= (Name == "a" || Name == "area") && MarkupBlockRenderer.AttributeValue(_tag, "href") is not null;
+
+    private static string? Decoded(string? value) => value is null ? null : (value.IndexOf('&') < 0 ? value : System.Net.WebUtility.HtmlDecode(value)).Trim() is { Length: > 0 } decoded ? decoded : null;
 
     /// <summary>An attribute's value as a browser reads it (entities decoded), or null when the tag has none.</summary>
     public string? Attribute(string attributeName)
     {
-        _attributes ??= new Dictionary<string, string?>(StringComparer.Ordinal);
-        if (!_attributes.TryGetValue(attributeName, out string? value))
-            _attributes[attributeName] = value = MarkupBlockRenderer.AttributeValue(tag, attributeName) is { } raw ? System.Net.WebUtility.HtmlDecode(raw) : null;
-        return value;
+        // the tag's attributes read once, in one pass (names lower case, first occurrence wins), then looked up by name
+        _attributes ??= ReadAttributes(_tag);
+        for (int i = 0; i + 1 < _attributes.Length; i += 2)
+            if (string.Equals(_attributes[i], attributeName, StringComparison.OrdinalIgnoreCase)) return _attributes[i + 1];
+        return null;
+    }
+
+    private static string?[] ReadAttributes(string tag)
+    {
+        var pairs = new List<string?>(8);
+        int i = 1;
+        while (i < tag.Length && !char.IsWhiteSpace(tag[i]) && tag[i] != '>' && tag[i] != '/') i++;   // past the element name
+        while (i < tag.Length)
+        {
+            while (i < tag.Length && (char.IsWhiteSpace(tag[i]) || tag[i] == '/')) i++;
+            if (i >= tag.Length || tag[i] == '>') break;
+            int nameStart = i;
+            while (i < tag.Length && !char.IsWhiteSpace(tag[i]) && tag[i] != '=' && tag[i] != '>' && tag[i] != '/') i++;
+            int nameLength = i - nameStart;
+            string? value = null;
+            int afterName = i;
+            while (i < tag.Length && char.IsWhiteSpace(tag[i])) i++;
+            if (i < tag.Length && tag[i] == '=')
+            {
+                i++;
+                while (i < tag.Length && char.IsWhiteSpace(tag[i])) i++;
+                if (i < tag.Length && (tag[i] == '"' || tag[i] == '\''))
+                {
+                    char quote = tag[i];
+                    int close = tag.IndexOf(quote, i + 1);
+                    if (close < 0) close = tag.Length - 1;
+                    value = tag.Substring(i + 1, close - i - 1);
+                    i = close + 1;
+                }
+                else
+                {
+                    int start = i;
+                    while (i < tag.Length && !char.IsWhiteSpace(tag[i]) && tag[i] != '>') i++;
+                    value = tag.Substring(start, i - start);
+                }
+            }
+            else i = afterName;
+            if (nameLength == 0) { i++; continue; }
+            string name = tag.Substring(nameStart, nameLength);
+            bool isKnown = false;
+            for (int k = 0; k < pairs.Count; k += 2) if (string.Equals(pairs[k], name, StringComparison.OrdinalIgnoreCase)) { isKnown = true; break; }
+            if (isKnown) continue;
+            pairs.Add(name);
+            pairs.Add(value is null ? "" : value.IndexOf('&') < 0 ? value : System.Net.WebUtility.HtmlDecode(value));
+        }
+        return pairs.ToArray();
     }
 
     /// <summary>The element of a start tag (its name already parsed).</summary>
-    public static WebArchiveElement FromTag(string name, string tag)
-    {
-        string? Decoded(string? value) => value is null ? null : System.Net.WebUtility.HtmlDecode(value).Trim() is { Length: > 0 } decoded ? decoded : null;
-        return new WebArchiveElement(name, Decoded(MarkupBlockRenderer.AttributeValue(tag, "id")),
-            Decoded(MarkupBlockRenderer.AttributeValue(tag, "class"))?.Split([' ', (char)9, (char)10, (char)12, (char)13], StringSplitOptions.RemoveEmptyEntries) ?? [],
-            (name == "a" || name == "area") && MarkupBlockRenderer.AttributeValue(tag, "href") is not null, tag);
-    }
+    public static WebArchiveElement FromTag(string name, string tag) => new(name, tag);
 }
 
 /// <summary>

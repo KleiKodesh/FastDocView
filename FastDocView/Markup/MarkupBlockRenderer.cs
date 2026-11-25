@@ -349,8 +349,10 @@ public static class MarkupBlockRenderer
             if (i >= tag.Length || tag[i] == '>') return null;
             int nameStart = i;
             while (i < tag.Length && !char.IsWhiteSpace(tag[i]) && tag[i] != '=' && tag[i] != '>' && tag[i] != '/') i++;
-            string attribute = tag.Substring(nameStart, i - nameStart);
-            string? value = null;
+            int nameLength = i - nameStart;
+            // the name compared in place (no copy per attribute); the value is copied only for the wanted one
+            bool isWanted = nameLength == wanted.Length && string.Compare(tag, nameStart, wanted, 0, nameLength, StringComparison.OrdinalIgnoreCase) == 0;
+            int valueStart = -1, valueLength = 0;
             int afterName = i;
             while (i < tag.Length && char.IsWhiteSpace(tag[i])) i++;
             if (i < tag.Length && tag[i] == '=')
@@ -362,19 +364,19 @@ public static class MarkupBlockRenderer
                     char quote = tag[i];
                     int close = tag.IndexOf(quote, i + 1);
                     if (close < 0) close = tag.Length - 1;
-                    value = tag.Substring(i + 1, close - i - 1);
+                    valueStart = i + 1; valueLength = close - i - 1;
                     i = close + 1;
                 }
                 else
                 {
                     int start = i;
                     while (i < tag.Length && !char.IsWhiteSpace(tag[i]) && tag[i] != '>') i++;
-                    value = tag.Substring(start, i - start);
+                    valueStart = start; valueLength = i - start;
                 }
             }
             else i = afterName;
-            if (attribute.Length == 0) { i++; continue; }
-            if (attribute.Equals(wanted, StringComparison.OrdinalIgnoreCase)) { attributeStart = gapStart; attributeEnd = Math.Min(i, tag.Length - 1); return value ?? ""; }
+            if (nameLength == 0) { i++; continue; }
+            if (isWanted) { attributeStart = gapStart; attributeEnd = Math.Min(i, tag.Length - 1); return valueStart < 0 ? "" : tag.Substring(valueStart, valueLength); }
         }
         return null;
     }

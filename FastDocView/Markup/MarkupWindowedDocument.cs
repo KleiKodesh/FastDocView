@@ -263,7 +263,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
         _encoding = MarkupTextEncoding.FromCodePage(index.CodePage);
         Decision = decision;
         IsRightToLeft = index.IsRightToLeft;
-        _webArchiveStylesheet = index.DocumentCss.Length == 0 ? WebArchiveStylesheet.Empty : WebArchiveStylesheet.Parse(index.DocumentCss);
+        _webArchiveStylesheet = index.DocumentCss.Length == 0 ? WebArchiveStylesheet.Empty : WebArchiveStylesheet.ParseShared(index.DocumentCss);
         Stylesheet = WordDocumentHtmlStylesheet.Build(new WordRunFormatting(), index.IsRightToLeft)
                      + "\n.word-document .text-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1em; }"
                      + "\n.word-document .image-placeholder { color: #999; font-style: italic; }\n"
