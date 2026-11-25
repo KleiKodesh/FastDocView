@@ -296,7 +296,7 @@ internal sealed class DocxSearchTextScanner
                     else if (Is(local, "txbxContent")) { if (!isEmpty) fields.EnterTextBox(elementDepth); }
                 }
                 if (fields is not null && !fields.IsIdle && Resolve(elementPrefix) == NamespaceKind.Wordprocessing
-                    && (Is(local, "tab") && !fields.Shows("\t") || (Is(local, "br") || Is(local, "cr")) && !fields.Shows(null)))
+                    && (Is(local, "tab") && !fields.Shows("\t") || (Is(local, "br") || Is(local, "cr")) && !fields.Shows("")))
                     local = default;                                      // inside a code or a replaced result: not shown
                 switch (local.Length)
                 {

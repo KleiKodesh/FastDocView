@@ -542,7 +542,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void Equation(byte[] group, in RtfGroupState state)
     {
-        if (!_parser.IsInListText && (_parser.IsNoteInFieldInstruction || _fields.IsIdle || _fields.Shows("x".AsSpan())))   // the search sink's rules (RtfSpanSearch.Text drops note text when notes are not searched)
+        if (!_parser.IsInListText && (_parser.IsNoteInFieldInstruction || _fields.IsIdle || _fields.ResultShowsHere))   // the search sink's rules (RtfSpanSearch.Text drops note text when notes are not searched)
         {
             if (RtfOfficeMath.ToOmml(group, state.CodePage, _ => null) is { } equation) _search!.Text(WordOfficeMathHtml.SearchText(equation).AsSpan(), _parser);
         }
@@ -554,7 +554,7 @@ internal sealed class RtfRandomAccessIndexBuilder : RtfSink
 
     public override void Object(byte[] group, in RtfGroupState state)
     {
-        if (!_parser.IsInListText && (_parser.IsNoteInFieldInstruction || _fields.IsIdle || _fields.Shows("x".AsSpan())) && RtfObjectChart.Read(group) is { } found)
+        if (!_parser.IsInListText && (_parser.IsNoteInFieldInstruction || _fields.IsIdle || _fields.ResultShowsHere) && RtfObjectChart.Read(group) is { } found)
             foreach (string text in found.Chart.Texts()) { _search!.Separator(); _search.Text(text.AsSpan(), _parser); _search.Separator(); }
         Embedded(RtfEmbeddedKind.Object, state);
     }

@@ -4244,3 +4244,26 @@ profile corners (as on rectangles).
   notes searched again = the complete index's notes hits. .doc shares the code shape but has no generated sample.
 - Found on the way: an RTF REF with an empty saved result ({\fldrslt }) shows nothing even on a complete index (the
   saved result wins); the harness sample has no result group, as the body sample.
+
+### Empty saved field results print computed (2026-11-25; fixes the "found on the way" above)
+
+- Word 16 (test-data/word-fields/save-field-empty-result.ps1: hidden Word opens the hand-written field-empty-result-v1.rtf
+  and .docx from scripts/make-field-empty-result-fixture.py, lists Field.Type / Locked / Result, saves Word's .doc of each
+  BEFORE its PDF, then the PDFs): on screen (Range.Text, no update) an empty result ({\fldrslt }, w:fldChar separate
+  right before end, 0x14 0x15) and a missing one both show nothing; Word's print (PDF export) computes every unlocked
+  field, an empty or missing result alike: REF (with / without \* MERGEFORMAT, \h, \* Upper, a bare bookmark name),
+  PAGEREF, NOTEREF, STYLEREF, SEQ (counted), REF to a missing bookmark = Word's "reference source not found" error.
+  Locked fields print nothing. Same in .rtf, .docx and .doc. (Word's PDF export also recomputes a non-empty unlocked
+  result: case Q "OLD" prints BOOKTEXT; a saved result that is not empty still shows as saved here, as before.)
+  Word's RTF import drops the bookmark around a note reference, so NOTEREF there prints "bookmark not defined" (not checked).
+- WordFieldStack: a separated field whose result had no content by its end (`Field.HasResultContent`, set by Route when a
+  reader routes content - text, a tab, a picture / br as ""; a null Route() after an end is not content; a field restored
+  at a block start counts as having content) is computed at End, unless locked, private or already replaced (placeholder,
+  hidden, computed at the separator); inside another field's code its text joins that code. The SEQ value counted at the
+  separator is kept (`Field.CountedValue`). One place for all formats, so GetText and search read the same text.
+- LibreOffice: .docx / .rtf (writerfilter) make REF / PAGEREF / STYLEREF real Writer reference fields
+  (sw/source/writerfilter/dmapper/DomainMapper_Impl.cxx:8803-8880) and set a saved result only when it is not empty
+  (:9491-9496), so Writer shows the computed reference; .doc Read_F_Ref builds an SwGetRefField
+  (sw/source/filter/ww8/ww8par5.cxx:2155, :2215) that Writer computes.
+- Check: DocumentTextTest.CheckFieldEmptyResult (--search): the four files, every case, GetText = rendered text, search counts.
+- Content = text, tabs, line breaks and note marks in every reader (renderers and searches alike); a saved result that holds only a picture, an equation or a paragraph mark counts as empty in .docx / .rtf and is computed (.doc routes its paragraph mark as content). Not checked against Word.

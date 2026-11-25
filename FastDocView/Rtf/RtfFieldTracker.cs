@@ -68,6 +68,9 @@ internal sealed class RtfFieldTracker
     /// <summary>Whether text at this point shows (outside fields, or in a result that shows).</summary>
     public bool Shows(ReadOnlySpan<char> text) => _stack.Depth == 0 || _stack.Route(text.ToString()) == WordFieldTextRoute.Visible;
 
+    /// <summary>Whether a result shows here, without counting as content of the open results (an empty saved result is computed at its end).</summary>
+    public bool ResultShowsHere => _stack.Depth == 0 || _stack.Route() == WordFieldTextRoute.Visible;
+
     /// <summary>
     /// The open fields and counters as one string: per field "depth:S|I:L|-:P|-:instruction" joined by U+0001, then
     /// "C" + the counters - what a block start needs (the index stores it per block).
@@ -113,7 +116,7 @@ internal sealed class RtfFieldTracker
             _depths.Add(depth);
             if (entry[colon + 3] == 'P') _stack.Fields[_stack.Depth - 1].IsPrivateResult = true;
             _stack.AppendInstruction(entry.Substring(colon + 5));
-            if (separated) _stack.Separate();
+            if (separated) { _stack.Separate(); _stack.Fields[_stack.Depth - 1].HasResultContent = true; }   // its result began in an earlier block
             _stack.Counters = counters;
         }
     }

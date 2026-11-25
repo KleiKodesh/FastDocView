@@ -58,7 +58,7 @@ internal sealed class RtfSearchTextSink : RtfSink
     public override void Equation(byte[] group, in RtfGroupState state)
     {
         if (_parser.IsInListText || _parser.IsInFootnote) return;
-        if (!_fields.IsIdle && !_fields.Shows("x".AsSpan())) return;     // inside a code or a replaced result: not shown
+        if (!_fields.IsIdle && !_fields.ResultShowsHere) return;     // inside a code or a replaced result: not shown
         if (RtfOfficeMath.ToOmml(group, state.CodePage, _ => null) is { } equation) DocBinary.DocBinaryParagraphHtmlRenderer.FeedEquationText(equation, _matcher!);
     }
 
@@ -68,7 +68,7 @@ internal sealed class RtfSearchTextSink : RtfSink
     public override void Object(byte[] group, in RtfGroupState state)
     {
         if (_parser.IsInListText || _parser.IsInFootnote) return;
-        if (!_fields.IsIdle && !_fields.Shows("x".AsSpan())) return;
+        if (!_fields.IsIdle && !_fields.ResultShowsHere) return;
         if (RtfObjectChart.Read(group) is not { } found) return;
         foreach (string text in found.Chart.Texts()) { _matcher!.Separator(); _matcher.Feed(text.AsSpan()); _matcher.Separator(); }
     }

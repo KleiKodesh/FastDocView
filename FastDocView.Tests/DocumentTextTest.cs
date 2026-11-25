@@ -50,6 +50,7 @@ public static class DocumentTextTest
         TestReport.Check(stopped, "a cancelled token stops GetText");
         CheckWhileIndexing();
         CheckNoteInFieldKeyword(root);
+        CheckFieldEmptyResult(root);
         CheckFieldLeadingSwitch(root);
         CheckEquationSearchText(root);
         CheckRubyBaseBracket(root);
@@ -137,6 +138,45 @@ public static class DocumentTextTest
                 $"{name}: the EQ draws its own note's mark (2) and not the nested field's (1), as Word's PDF");
             foreach (string hidden in new[] { "resA", "resB", "resC", "resD", "resF", "resG", "resJ", "resK", "resL", "MERGEFORMAT" })
                 TestReport.Check(SumCounts(from => document.Search(hidden, WordDocumentSearchOptions.Default, from, 1000)) == 0, $"{name}: search finds no \"{hidden}\"");
+        }
+    }
+
+    /// <summary>
+    /// test-data/word-fields/field-empty-result-v1 (hand-written .rtf and .docx, Word's own .doc of each saved before any update;
+    /// scripts/make-field-empty-result-fixture.py, save-field-empty-result.ps1): REF / PAGEREF / NOTEREF / STYLEREF / SEQ whose
+    /// saved result is empty or missing print computed, as an unlocked field with no result does; locked ones print nothing
+    /// (Word 16 PDFs field-empty-result-v1.*.pdf). GetText, the rendered text and the search agree.
+    /// </summary>
+    private static void CheckFieldEmptyResult(string root)
+    {
+        const string notFound = FastDocView.Fields.WordFieldEvaluator.ReferenceNotFound;
+        var shown = new Dictionary<char, string>
+        {
+            ['A'] = "BOOKTEXT", ['B'] = "BOOKTEXT", ['C'] = "BOOKTEXT", ['D'] = "BOOKTEXT", ['E'] = "", ['F'] = "", ['G'] = notFound, ['H'] = notFound,
+            ['I'] = "BOOKTEXT", ['J'] = "BOOKTEXT", ['K'] = "#", ['L'] = "1", ['M'] = "Banner text", ['N'] = "1", ['O'] = "2", ['P'] = "BOOKTEXT",
+            // a saved result that is not empty stays (Word shows it on screen; its PDF export recomputes every unlocked field)
+            ['Q'] = "OLD", ['R'] = "",
+        };
+        foreach (string file in new[] { "field-empty-result-v1.rtf", "field-empty-result-v1.docx", "field-empty-result-v1.from-rtf.doc", "field-empty-result-v1.from-docx.doc" })
+        {
+            string path = Path.Combine(root, "test-data", "word-fields", file);
+            string[] body = WordDocumentText.GetText(path).Split('\n');
+            using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path);
+            List<string> rendered = document.RenderBlocks(0, document.BlockCount).Select(block => System.Net.WebUtility.HtmlDecode(Regex.Replace(block.Html, "<[^>]+>", ""))).ToList();
+            foreach (KeyValuePair<char, string> pair in shown)
+            {
+                // NOTEREF reads the note's mark: Word's RTF import loses the bookmark around the RTF note reference and prints its
+                // "bookmark not defined" error there - checked for the .docx and its .doc only
+                if (pair.Key == 'L' && file.Contains("rtf")) continue;
+                string want = $"case {pair.Key}: {pair.Value} tail{pair.Key}";
+                // a page number is a placeholder: no text
+                string wantText = pair.Key == 'K' ? "case K:  tailK" : want;
+                string? gotText = body.FirstOrDefault(line => line.StartsWith($"case {pair.Key}:", StringComparison.Ordinal));
+                string? gotRender = rendered.FirstOrDefault(line => line.StartsWith($"case {pair.Key}:", StringComparison.Ordinal));
+                TestReport.Check(gotText == wantText && gotRender == want, $"{file} case {pair.Key}: \"{Ascii(want)}\" (text \"{Ascii(gotText ?? "-")}\", shown \"{Ascii(gotRender ?? "-")}\")");
+            }
+            int bookText = SumCounts(from => document.Search("BOOKTEXT", WordDocumentSearchOptions.Default, from, 1000));
+            TestReport.Check(bookText == 1 + shown.Count(pair => pair.Value == "BOOKTEXT"), $"{file}: the search counts every computed BOOKTEXT ({bookText})");
         }
     }
 
