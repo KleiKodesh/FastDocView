@@ -1283,6 +1283,13 @@ internal sealed class RtfParser
                 return;
             case RtfWord.Font: case RtfWord.AssociatedFont:
                 if (_headerDepth >= 0 && _stack[_headerDepth].Destination == RtfDestination.FontTable) { StartFontEntry(parameter); return; }
+                if (state.CharacterClass == RtfCharacterClass.DoubleByte)
+                {
+                    // after \dbch (Word 16, test-data/rtf-east-asian): \afN names only the East Asian face; \fN names it too in a
+                    // left-to-right context and, in a right-to-left one, while the run has none, and still sets the run's slot below
+                    if (word == RtfWord.AssociatedFont) { state.EastAsianFont = (short)parameter; return; }
+                    if (!isComplexSlot || state.EastAsianFont < 0) state.EastAsianFont = (short)parameter;
+                }
                 if (word == RtfWord.Font && _level is not null && _levelDepth >= 0) _level.Font = parameter;
                 if (isComplexSlot && _level is not null && _levelDepth >= 0) _level.ComplexFont = parameter;
                 if (isComplexSlot) { state.ComplexFont = (short)parameter; state.Set(RtfStateFlags.ComplexFontSet, true); }
@@ -1365,11 +1372,17 @@ internal sealed class RtfParser
             // \charscalex N: character scale in percent, 1..600 (LibreOffice rtfdispatchvalue.cxx:195 maps it to w:w, DomainMapper.cxx:2495 limits it)
             case RtfWord.CharacterScale: state.CharacterScale = (short)(parameter is >= 1 and <= 600 ? parameter : 100); return;
             case RtfWord.CharacterSpacing: state.CharacterSpacing = (short)Math.Max(short.MinValue, Math.Min(short.MaxValue, parameter)); return;
+            case RtfWord.DoubleByteCharacters: state.CharacterClass = RtfCharacterClass.DoubleByte; return;
+            case RtfWord.LowAnsiCharacters: state.CharacterClass = RtfCharacterClass.LowAnsi; return;
+            case RtfWord.HighAnsiCharacters: state.CharacterClass = RtfCharacterClass.HighAnsi; return;
+            case RtfWord.DefaultEastAsianFont: if (_readsHeaderTables && hasParameter) _tables.DefaultEastAsianFont = parameter; return;
             case RtfWord.RightToLeftCharacters:
+                state.CharacterClass = RtfCharacterClass.None;
                 state.RunType = state.RunType == RtfRunType.LeftToRightFirst ? RtfRunType.LeftToRightThenRightToLeft : RtfRunType.RightToLeftFirst;
                 if (_tables.AnsiCodePage == 1255) state.CodePage = 1255;      // LibreOffice: \rtlch with a 1255 default encoding
                 return;
             case RtfWord.LeftToRightCharacters:
+                state.CharacterClass = RtfCharacterClass.None;
                 state.RunType = state.RunType == RtfRunType.RightToLeftFirst ? RtfRunType.RightToLeftThenLeftToRight : RtfRunType.LeftToRightFirst;
                 return;
         }

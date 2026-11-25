@@ -16,9 +16,6 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | w14 3-D text (props3d / scene3d): bevel, extrusion, contour, material, lighting, camera | docx | Word 16 draws 3-D text as a lit raster picture of the run (XPS output). With Word's front camera the extrusion is hidden behind the letters and the bevel only shades their face; CSS has no lighting or bevel for text, so the plain letters in the run colour are shown. .doc / RTF do not store it | won't do |
 | w14 reflection blur, scale / skew (sx, sy, kx, ky), fade direction | docx | box-reflect mirrors a box as it is: it can fade but not blur or transform the mirror image (Word's presets blur 0.5-10 pt and keep sx 100 %, sy -100 %) | won't do |
 | Kerning | docx, doc, rtf, odt | Ignored by design (audit set); the browser's own kerning applies | won't do |
-| eastAsianLayout (two lines in one, horizontal in vertical), fitText | docx, doc | East Asian layout; not needed for Hebrew books (the East Asian font slot itself is supported) | deferred |
-| East Asian font in a right-to-left / complex-script RTF run | rtf | Word's RTF writes no East Asian font in such a run's group; its CJK characters keep the run's font | deferred |
-| East Asian size / bold / italic variants (style:font-size-asian, -weight-asian, -style-asian) | odt | Only the Asian font is drawn; the Western / complex values apply | deferred |
 | Web archive sheet rules with attribute or sibling selectors, :last-child, pseudo-elements, @media | mhtml | The sheet is resolved per element into inline styles by a small checked grammar; Word's own sheets do not use these | deferred |
 | Bullet whose symbol font is set only for complex script | doc | Shows no glyph (LibreOffice also reads the Latin font) | won't do |
 | Blinking / animated text | all | Not drawn | won't do |
@@ -124,7 +121,7 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 |---|---|---|---|
 | Show markup / original view toggle for tracked changes | docx, doc, rtf, odt | Only Word's final view is shown, as it prints; markup does not print | won't do (not printed) |
 | Comments | docx, doc, rtf, odt | Comments do not print (references skipped) | won't do (not printed) |
-| Equations: matrix rows sit ~1.32 em apart in the browser (Chromium spaces a MathML row by the font's box) where Word puts them one math line apart (1.173 em in Cambria Math), so a matrix reads ~1.3 x Word's height (stretched delimiters around it are sized from Word's row pitch and match Word's variant in all 30 test cases); a host without font files falls back to tables for Cambria Math and DejaVu Math TeX Gyre; heights of single-line equations read ~0.85 of Word's PDF by the measuring method | docx, doc, rtf | Ink is read from the browser's text metrics, not Word's own layout | deferred |
+| Equations: a host without font files falls back to tables for Cambria Math and DejaVu Math TeX Gyre; heights of single-line equations read ~0.85 of Word's PDF by the measuring method; matrix rows sit 1.04 x Word's pitch (1.226 em for Word's 1.18 in Cambria Math: Chromium's cell baseline alignment adds ~0.85 px a row) | docx, doc, rtf | Ink is read from the browser's text metrics, not Word's own layout | deferred |
 | Equations in .doc saved without equationXML (Word 2003 and older) | doc | No OMML in the file; the saved picture is shown | won't do |
 
 ## Document level

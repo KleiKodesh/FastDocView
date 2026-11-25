@@ -48,7 +48,7 @@ internal enum RtfWord : ushort
     Plain, Bold, Italic, AssociatedBold, AssociatedItalic, Underline, UnderlineDouble, UnderlineDotted, UnderlineDashed, UnderlineWave,
     UnderlineThick, UnderlineWords, UnderlineNone, Strike, StrikeDouble, FontSize, AssociatedFontSize, ForegroundColor, BackgroundColor,
     CharacterShading, Highlight, Superscript, Subscript, NoSuperSubscript, RaisedPosition, LoweredPosition, Hidden, AllCaps, SmallCaps,
-    Outline, Shadow, Emboss, Imprint, CharacterSpacing, CharacterScale, RightToLeftCharacters, LeftToRightCharacters, LineBreakClear,
+    Outline, Shadow, Emboss, Imprint, CharacterSpacing, CharacterScale, RightToLeftCharacters, LeftToRightCharacters, DoubleByteCharacters, LowAnsiCharacters, HighAnsiCharacters, DefaultEastAsianFont, LineBreakClear,
     UnderlineColor, CharacterPatternColor, CharacterShadingPercent, CharacterShadingPattern, Language,
     EmphasisNone, EmphasisDot, EmphasisComma, EmphasisCircle, EmphasisUnderDot,
     // ── borders and paragraph shading ──
@@ -181,6 +181,7 @@ internal static class RtfControlWords
         ("nosupersub", RtfWord.NoSuperSubscript), ("up", RtfWord.RaisedPosition), ("dn", RtfWord.LoweredPosition), ("v", RtfWord.Hidden),
         ("caps", RtfWord.AllCaps), ("scaps", RtfWord.SmallCaps), ("outl", RtfWord.Outline), ("shad", RtfWord.Shadow), ("embo", RtfWord.Emboss),
         ("impr", RtfWord.Imprint), ("expndtw", RtfWord.CharacterSpacing), ("charscalex", RtfWord.CharacterScale), ("rtlch", RtfWord.RightToLeftCharacters), ("ltrch", RtfWord.LeftToRightCharacters),
+        ("dbch", RtfWord.DoubleByteCharacters), ("loch", RtfWord.LowAnsiCharacters), ("hich", RtfWord.HighAnsiCharacters), ("stshfdbch", RtfWord.DefaultEastAsianFont),
         ("lbr", RtfWord.LineBreakClear),
         ("ulc", RtfWord.UnderlineColor), ("chcfpat", RtfWord.CharacterPatternColor), ("chshdng", RtfWord.CharacterShadingPercent),
         ("chbghoriz", RtfWord.CharacterShadingPattern), ("chbgvert", RtfWord.CharacterShadingPattern), ("chbgfdiag", RtfWord.CharacterShadingPattern),

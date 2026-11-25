@@ -53,6 +53,8 @@ public sealed class RtfDocumentTables
     public Dictionary<int, ListOverride> ListOverrides { get; } = new();
     public List<ListPictureEntry> ListPictures { get; } = new();
     public int DefaultFont { get; set; } = -1;
+    /// <summary>\stshfdbchN: the document's East Asian face, which East Asian characters of a run without \dbch\afN draw in (Word 16).</summary>
+    public int DefaultEastAsianFont { get; set; } = -1;
     public int AnsiCodePage { get; set; } = 1252;
     public string FootnoteFormat { get; set; } = "decimal";
     /// <summary>Word reads an RTF without \aftnn* as lower roman endnotes (test-data/word-notes: section 1 has none, Word 16 prints i).</summary>
@@ -100,7 +102,7 @@ public sealed class RtfDocumentTables
         writer.Write(FootnoteFormat); writer.Write(EndnoteFormat); writer.Write(FootnoteStart); writer.Write(EndnoteStart);
         writer.Write((byte)FootnoteRestart); writer.Write((byte)EndnoteRestart);
         writer.Write(IsRightToLeftDocument);
-        writer.Write(IsAutoHyphenation); writer.Write(DefaultLanguage); writer.Write(DefaultTabStopTwips);
+        writer.Write(IsAutoHyphenation); writer.Write(DefaultLanguage); writer.Write(DefaultTabStopTwips); writer.Write(DefaultEastAsianFont);
         writer.Write(Fonts.Count);
         foreach (KeyValuePair<int, FontEntry> font in Fonts) { writer.Write(font.Key); writer.Write(font.Value.Name); writer.Write(font.Value.Charset); writer.Write(font.Value.CodePage); }
         writer.Write(Colors.Count);
@@ -145,6 +147,7 @@ public sealed class RtfDocumentTables
             IsAutoHyphenation = reader.ReadBoolean(),
             DefaultLanguage = reader.ReadUInt16(),
             DefaultTabStopTwips = reader.ReadInt32(),
+            DefaultEastAsianFont = reader.ReadInt32(),
         };
         int fonts = reader.ReadInt32();
         for (int i = 0; i < fonts; i++) tables.Fonts[reader.ReadInt32()] = new FontEntry { Name = reader.ReadString(), Charset = reader.ReadInt32(), CodePage = reader.ReadInt32() };

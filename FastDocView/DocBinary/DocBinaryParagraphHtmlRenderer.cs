@@ -915,7 +915,7 @@ public sealed class DocBinaryParagraphHtmlRenderer
                                string text, bool isSpecial, int runCp, DocBinaryFieldReader fieldState, string? noteLabel, uint? picture = null)
     {
         var visible = new StringBuilder(text.Length);
-        string? eastAsianFont = WordEastAsianText.SwitchFont(formatting);
+        string? eastAsianFont = WordEastAsianText.SwitchCss(formatting);
         int eastAsianSpanEnd = -1;
         string css = formatting.ToCss(paragraphBase) + WordHtmlText.RunDirectionCss(formatting.IsRightToLeft, _isParagraphRightToLeft) + BaselineShiftCss;
         void Flush()

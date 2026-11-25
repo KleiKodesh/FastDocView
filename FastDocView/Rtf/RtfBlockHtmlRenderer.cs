@@ -148,7 +148,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
 
     private static bool HasSameCharacterFormatting(in RtfGroupState a, in RtfGroupState b)
         => (a.Flags & RtfStateFlags.CharacterMask) == (b.Flags & RtfStateFlags.CharacterMask)
-           && a.Underline == b.Underline && a.Font == b.Font && a.ComplexFont == b.ComplexFont
+           && a.Underline == b.Underline && a.Font == b.Font && a.ComplexFont == b.ComplexFont && a.EastAsianFont == b.EastAsianFont
            && a.FontSize == b.FontSize && a.ComplexFontSize == b.ComplexFontSize
            && a.ForegroundColor == b.ForegroundColor && a.BackgroundColor == b.BackgroundColor && a.ShadingColor == b.ShadingColor
            && a.Highlight == b.Highlight && a.Position == b.Position && a.CharacterSpacing == b.CharacterSpacing && a.CharacterScale == b.CharacterScale
@@ -183,12 +183,12 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (_runState.DropCapLines > 0)
         {
             // the size and raised position Word gives the initial to fill its frame: the drop-cap span sizes it instead
-            runFormatting.FontSizeHalfPoints = runFormatting.ComplexScriptFontSizeHalfPoints = _documentRun.FontSizeHalfPoints;
+            runFormatting.FontSizeHalfPoints = runFormatting.ComplexScriptFontSizeHalfPoints = runFormatting.EastAsianFontSizeHalfPoints = _documentRun.FontSizeHalfPoints;
             runFormatting.PositionHalfPoints = 0;
         }
         string css = runFormatting.ToCss(_documentRun) + BaselineShiftCss
                      + WordHtmlText.RunDirectionCss(isRunRightToLeft, _runState.Has(RtfStateFlags.RightToLeftParagraph));
-        string encoded = WordHtmlText.WithWordScriptShaping(WordHtmlText.Encode(text));
+        string encoded = WordHtmlText.WithWordScriptShaping(WordEastAsianText.Encode(text, runFormatting));
         if (css.Length == 0) { WordHtmlText.AppendScaled(target, encoded, _runState.CharacterScale); return; }
         target.Append("<span style=\"").Append(css).Append("\">");
         WordHtmlText.AppendScaled(target, encoded, _runState.CharacterScale);
@@ -238,6 +238,16 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             EmphasisMarkCss = state.EmphasisMark switch { 1 or 4 => "filled dot", 2 => "filled sesame", 3 => "open circle", _ => null },
             IsEmphasisMarkBelow = state.EmphasisMark == 4,
         };
+        // East Asian characters (WordEastAsianText): the run's \dbch\af face, else the document's \stshfdbch; in a right-to-left /
+        // complex-script run too, with the Latin slot's size, bold and italic (Word 16, test-data/rtf-east-asian/rtf-east-asian-runs-v1:
+        // \fs / \b after \rtlch size and bold only the complex-script text; LibreOffice keeps them apart the same way,
+        // rtfdispatchvalue.cxx:171-187 FS / AFS -> sz or szCs by RunType)
+        int eastAsianFont = state.EastAsianFont >= 0 ? state.EastAsianFont : _tables.DefaultEastAsianFont;
+        if (eastAsianFont >= 0) run.EastAsianFontName = _tables.FontName(eastAsianFont);
+        run.EastAsianFontSizeHalfPoints = state.FontSize;
+        run.HasEastAsianBoldItalic = true;
+        run.IsBoldEastAsian = state.Has(RtfStateFlags.Bold);
+        run.IsItalicEastAsian = state.Has(RtfStateFlags.Italic);
         if (run.HighlightCssColor is null && run.ShadingHex is null) run.HighlightCssColor = HexCss(_tables.ColorHex(state.BackgroundColor));   // \chcbpat (w:shd) wins over \cb
         if (state.Underline != RtfUnderline.None)
         {

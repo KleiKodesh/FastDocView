@@ -25,6 +25,36 @@ public static class WordEastAsianText
     public static string? SwitchFont(WordRunFormatting formatting)
         => !string.IsNullOrEmpty(formatting.EastAsianFontName) && formatting.EastAsianFontName != formatting.EffectiveFontName ? formatting.EastAsianFontName : null;
 
+    /// <summary>
+    /// The CSS the run's East Asian characters switch to: the East Asian face and, for .odt, the Asian size / bold / italic
+    /// (style:font-size-asian / -weight-asian / -style-asian = CharHeightAsian / CharWeightAsian / CharPostureAsian, xmloff
+    /// txtprmap.cxx:212-223; LibreOffice draws each script portion in its own set:
+    /// sw/source/core/text/porlay.cxx:1363 SwScriptInfo::InitScriptInfo splits by script, SwFont::SetActual picks the
+    /// SwFontScript::CJK font, sw/source/core/inc/swfont.hxx). In a right-to-left / complex-script run they keep the Latin
+    /// size, bold and italic (w:sz / w:b / w:i, not w:szCs / w:bCs / w:iCs): Word 16 draws them so
+    /// (test-data/rtf-east-asian/rtf-east-asian-runs-v1.pdf, one run model for .docx, .doc and .rtf), as LibreOffice's CJK portion
+    /// uses the Asian set. The size is relative (em), so a superscript keeps its ratio. Null when nothing differs from the run.
+    /// </summary>
+    public static string? SwitchCss(WordRunFormatting formatting)
+    {
+        string? font = SwitchFont(formatting);
+        int size = formatting.EastAsianFontSizeHalfPoints > 0 ? formatting.EastAsianFontSizeHalfPoints
+                 : formatting.UsesComplexScriptProperties ? formatting.FontSizeHalfPoints : 0;
+        int runSize = formatting.EffectiveFontSizeHalfPoints;
+        bool isBold = formatting.HasEastAsianBoldItalic ? formatting.IsBoldEastAsian : formatting.IsBold;
+        bool isItalic = formatting.HasEastAsianBoldItalic ? formatting.IsItalicEastAsian : formatting.IsItalic;
+        bool isSizeSwitch = size > 0 && runSize > 0 && size != runSize;
+        bool isBoldSwitch = isBold != formatting.EffectiveIsBold;
+        bool isItalicSwitch = isItalic != formatting.EffectiveIsItalic;
+        if (font is null && !isSizeSwitch && !isBoldSwitch && !isItalicSwitch) return null;
+        var css = new StringBuilder();
+        if (font is not null) css.Append("font-family:'").Append(WordHtmlText.CssFontName(font)).Append("';");
+        if (isSizeSwitch) css.Append("font-size:").Append(((double)size / runSize).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)).Append("em;");
+        if (isBoldSwitch) css.Append(isBold ? "font-weight:bold;" : "font-weight:normal;");
+        if (isItalicSwitch) css.Append(isItalic ? "font-style:italic;" : "font-style:normal;");
+        return css.ToString().TrimEnd(';');
+    }
+
     /// <summary>Whether the code point draws in the East Asian face in this run.</summary>
     public static bool IsEastAsian(int codePoint, WordRunFormatting formatting)
         => DocxDrawingTextFonts.EastAsianScriptOf(codePoint) is not null
@@ -56,13 +86,13 @@ public static class WordEastAsianText
         return end;
     }
 
-    /// <summary>The span that opens the East Asian face.</summary>
-    public static void AppendOpen(StringBuilder html, string font) => html.Append("<span style=\"font-family:'").Append(WordHtmlText.CssFontName(font)).Append("'\">");
+    /// <summary>The span that opens the East Asian set (<see cref="SwitchCss"/>).</summary>
+    public static void AppendOpen(StringBuilder html, string switchCss) => html.Append("<span style=\"").Append(switchCss).Append("\">");
 
-    /// <summary>HTML-encoded <paramref name="text"/> with its East Asian stretches in the run's East Asian face.</summary>
+    /// <summary>HTML-encoded <paramref name="text"/> with its East Asian stretches in the run's East Asian set.</summary>
     public static string Encode(string text, WordRunFormatting formatting)
     {
-        string? font = SwitchFont(formatting);
+        string? font = SwitchCss(formatting);
         if (font is null || text.Length == 0) return WordHtmlText.Encode(text);
         var html = new StringBuilder(text.Length + 48);
         for (int start = 0; start < text.Length;)

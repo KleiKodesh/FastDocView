@@ -48,6 +48,15 @@ internal enum RtfDestination : byte
 /// </summary>
 internal enum RtfRunType : byte { None, RightToLeftFirst, RightToLeftThenLeftToRight, LeftToRightFirst, LeftToRightThenRightToLeft }
 
+/// <summary>
+/// \loch / \hich / \dbch: the characters the next font words name, until the next \rtlch / \ltrch / \plain. Only \dbch changes
+/// anything: its \af (and \f, see RtfParser) names the East Asian face (Word 16, test-data/rtf-east-asian). \loch / \hich leave
+/// the \rtlch / \ltrch slot choice as it is (Word 16: \rtlch\loch\afN still names the complex-script face). LibreOffice instead
+/// lets them replace the slot choice (RunType LOCH / HICH / DBCH, rtfdispatchflag.cxx:872-880, rtfdispatchvalue.cxx:171-187 and
+/// 739-756, rtfdocumentimpl.cxx:2255-2290) and sends both \f and \af after \dbch to w:rFonts eastAsia.
+/// </summary>
+internal enum RtfCharacterClass : byte { None, LowAnsi, HighAnsi, DoubleByte }
+
 [Flags]
 internal enum RtfStateFlags : uint
 {
@@ -159,6 +168,8 @@ internal struct RtfGroupState
     public short FrameHorizontalDistance;  // \dxfrtext / \dfrmtxtx twips: a frame's gap to the text (a drop cap's distance)
     public byte DropCapLines;              // \dropcapliN: the paragraph is a drop-cap frame dropping N lines (0 = none)
     public ushort Language;                // \langN (LCID), 0 = the document default (\deflang)
+    public short EastAsianFont;            // \dbch\afN (or \dbch\fN): the face East Asian characters draw in (-1 = the document's \stshfdbch)
+    public RtfCharacterClass CharacterClass;   // \loch / \hich / \dbch until \rtlch / \ltrch / \plain
 
     public static int Size => System.Runtime.CompilerServices.Unsafe.SizeOf<RtfGroupState>();
 
@@ -182,6 +193,7 @@ internal struct RtfGroupState
         ForegroundColor = 0; BackgroundColor = 0; ShadingColor = 0; Highlight = 0;
         Position = 0; CharacterSpacing = 0; CharacterScale = 0;
         UnderlineColor = 0; EmphasisMark = 0; CharacterPatternColor = 0; CharacterShading = 0; CharacterBorder = default; Language = 0;
+        EastAsianFont = -1; CharacterClass = RtfCharacterClass.None;
         if (BorderTarget == RtfBorderTarget.Character) BorderTarget = RtfBorderTarget.None;
         CodePage = defaultCodePage;
     }

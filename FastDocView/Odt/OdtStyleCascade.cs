@@ -33,7 +33,7 @@ public sealed class OdtStyleCascade
         "fo:font-weight", "style:font-weight-complex", "fo:font-style", "style:font-style-complex",
         "style:text-underline-style", "style:text-underline-type", "style:text-underline-width", "style:text-underline-color", "style:text-underline-mode",
         "style:text-line-through-style", "style:text-line-through-type", "fo:font-size", "style:font-size-complex",
-        "style:font-name", "style:font-name-complex", "style:font-name-asian", "fo:font-family", "style:font-family-complex", "style:font-family-asian", "fo:color", "fo:background-color",
+        "style:font-name", "style:font-name-complex", "style:font-name-asian", "style:font-size-asian", "style:font-weight-asian", "style:font-style-asian", "fo:font-family", "style:font-family-complex", "style:font-family-asian", "fo:color", "fo:background-color",
         "style:text-position", "fo:text-transform", "fo:font-variant", "fo:letter-spacing", "text:display", "style:text-outline",
         "fo:text-shadow", "style:font-relief", "fo:border", "style:text-emphasize", "style:text-scale", "fo:hyphenate", "fo:language", "fo:country",
         // the three languages a list number follows (LanguagesOf)
@@ -569,6 +569,16 @@ public sealed class OdtStyleCascade
         if (isComplexStrict && (properties.Attribute(Fo + "font-weight") is not null || properties.Attribute(Fo + "font-style") is not null)) KeepComplexApart();
         if ((string?)properties.Attribute(Fo + "font-weight") is { } weight) run.IsBold = IsBoldWeight(weight);
         if ((string?)properties.Attribute(Fo + "font-style") is { } posture) run.IsItalic = posture is "italic" or "oblique";
+        // the Asian set (xmloff txtprmap.cxx:212-223 CharHeightAsian / CharWeightAsian / CharPostureAsian): kept apart the same way
+        void KeepEastAsianApart()
+        {
+            if (run.HasEastAsianBoldItalic) return;
+            run.HasEastAsianBoldItalic = true;
+            run.IsBoldEastAsian = run.IsBold;
+            run.IsItalicEastAsian = run.IsItalic;
+        }
+        if ((string?)properties.Attribute(Style + "font-weight-asian") is { } asianWeight) { KeepEastAsianApart(); run.IsBoldEastAsian = IsBoldWeight(asianWeight); }
+        if ((string?)properties.Attribute(Style + "font-style-asian") is { } asianPosture) { KeepEastAsianApart(); run.IsItalicEastAsian = asianPosture is "italic" or "oblique"; }
         if ((string?)properties.Attribute(Style + "font-weight-complex") is { } complexWeight) { KeepComplexApart(); run.IsBoldComplexScript = IsBoldWeight(complexWeight); }
         if ((string?)properties.Attribute(Style + "font-style-complex") is { } complexPosture) { KeepComplexApart(); run.IsItalicComplexScript = complexPosture is "italic" or "oblique"; }
 
@@ -585,6 +595,8 @@ public sealed class OdtStyleCascade
         if ((string?)properties.Attribute(Fo + "font-size") is { } size) run.FontSizeHalfPoints = HalfPoints(size, run.FontSizeHalfPoints);
         if ((string?)properties.Attribute(Style + "font-size-complex") is { } complexSize)
             run.ComplexScriptFontSizeHalfPoints = HalfPoints(complexSize, run.ComplexScriptFontSizeHalfPoints > 0 ? run.ComplexScriptFontSizeHalfPoints : run.FontSizeHalfPoints);
+        if ((string?)properties.Attribute(Style + "font-size-asian") is { } asianSize)
+            run.EastAsianFontSizeHalfPoints = HalfPoints(asianSize, run.EastAsianFontSizeHalfPoints > 0 ? run.EastAsianFontSizeHalfPoints : run.FontSizeHalfPoints);
         if (FontName(properties, Style + "font-name", Fo + "font-family") is { } font) run.FontName = FontWithoutFeatures(font, out run.FontFeaturesCss);
         if (FontName(properties, Style + "font-name-complex", Style + "font-family-complex") is { } complexFont)
             run.ComplexScriptFontName = FontWithoutFeatures(complexFont, out run.ComplexScriptFontFeaturesCss);

@@ -89,6 +89,11 @@ public sealed class WordRunFormatting
     public string? ComplexScriptFontFeaturesCss;
     public bool IsComplexScript;            // .docx w:cs: complex-script properties without right-to-left direction
     public string? EastAsianFontName;       // .docx rFonts eastAsia / eastAsiaTheme, .doc sprmCRgFtc1, ODT style:font-name-asian: the face East Asian characters draw in (WordEastAsianText)
+    /// <summary>ODT style:font-size-asian / -weight-asian / -style-asian: the size (0 = the run's own) and bold / italic the
+    /// East Asian characters draw in (LibreOffice CharHeightAsian / CharWeightAsian / CharPostureAsian, applied per character
+    /// script); RTF fills them with the Latin slot. <see cref="HasEastAsianBoldItalic"/> false: they take the Latin bold / italic.</summary>
+    public int EastAsianFontSizeHalfPoints;
+    public bool HasEastAsianBoldItalic, IsBoldEastAsian, IsItalicEastAsian;
     public bool IsEastAsianHint;            // .docx w:hint="eastAsia", .doc sprmCIdctHint 1: characters shared with East Asian scripts take the East Asian face
     /// <summary>The Latin-text language as a BCP 47 tag ("en-US"): .docx w:lang val, .doc sprmCRgLid0, RTF \lang, ODT fo:language + fo:country. Used for hyphenation only.</summary>
     public string? Language;

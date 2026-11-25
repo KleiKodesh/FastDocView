@@ -4024,3 +4024,32 @@ per run cost time without accuracy. Harness: the oval check now also keeps the H
 Per preset (median / 90th): every preset within 5 / 13 (before 8-12 / 21-37 for the curved profiles). Harness:
 Shapes3DFidelityTest.OvalBevels (gradients evaluated as SVG does). Remaining: the worst points are Word's anti-aliased edge and
 profile corners (as on rectangles).
+
+### East Asian text: Asian size / bold / italic, RTF runs, East Asian layout, matrix row pitch (2026-11-25)
+
+- One path (WordEastAsianText.SwitchCss): an East Asian stretch opens one span with the East Asian face and, where they
+  differ from the run, its size (em, relative) / bold / italic. ODT fills them from style:font-size-asian / -weight-asian /
+  -style-asian (xmloff txtprmap.cxx:212-223 CharHeightAsian / CharWeightAsian / CharPostureAsian; LibreOffice draws per
+  script portion, porlay.cxx:1363). LibreOffice 25's PDF of test-data/odt-east-asian/odt-east-asian-variants-v1.odt: Han
+  20pt / 18pt / 12pt as set, fo:font-size does not reach the Asian size. While no Asian weight / posture is set in the
+  chain the Western one applies (as for the complex-script set).
+- Word 16 (hand-written RTF, test-data/rtf-east-asian, its own PDF): CJK in an \rtlch / complex-script run takes the
+  \dbch\af face, else \stshfdbch (Word's own RTF writes no East Asian font in such runs; reopened it draws SimSun), and the
+  Latin size / bold (\fs after \rtlch sizes only the complex-script text). The same model holds for .docx / .doc (w:sz,
+  not w:szCs), so SwitchCss applies the Latin size / bold / italic to East Asian characters of any right-to-left /
+  complex-script run. RTF parser: \dbch\af sets the East Asian face; \dbch\f too in a left-to-right context and, after
+  \rtlch, while none is set (Word; LibreOffice sends both to eastAsia only, rtfdispatchvalue.cxx:739-756); \loch / \hich
+  clear \dbch but do not change the \rtlch slot (Word: \rtlch\loch\af still names the complex-script face; LibreOffice
+  differs, rtfdocumentimpl.cxx:2255-2290). Word's reader carries some of this state between run groups for orders it
+  never writes (A8 drew differently after another run): only Word's own orders and stable ones are in the fixture.
+  Index format 28 (snapshot + header tables).
+- eastAsianLayout / fitText (.docx, .doc sprmCFELayout 0xCA78 / sprmCFitText 0xCA76, sprmids.hxx:366-368): Word 16 on
+  this machine (editing languages en-US, he-IL; no East Asian) prints them as plain text, glyph origins as unformatted
+  (test-data/word-east-asian-layout, also with compatibilityMode 15 and w:lang eastAsia ja-JP). Followed: nothing added.
+  LibreOffice draws two lines in one / rotated (ww8par6.cxx:3660). With East Asian editing enabled Word may lay them out;
+  not measured (that needs the user's Office language settings changed).
+- Matrix row pitch (app fastDocViewMath.ts matrixRowShifts): the library's mtr min height made Chromium place rows ~1.32 em
+  apart; the rows are now laid out without it (the pitch is kept as data-pitch-em) and padded above to Word's pitch from
+  their baselines: one more read when a render holds a matrix. Measured (vue-demo/playwright/matrixPitchCheck.mjs):
+  1.226 em (Cambria Math, Word 1.18) and 1.248 em (DejaVu, Word 1.2); math-v2 matrix height 1.03 of Word (was 1.32);
+  brackets 30 of 30 still 1.00.
