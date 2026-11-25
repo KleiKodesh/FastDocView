@@ -28,7 +28,7 @@ public sealed record MarkupSpanAnchor(MarkupScanState? State, long ScanPosition,
 public sealed class MarkupRandomAccessIndex
 {
     private const string Magic = "KHMKPIDX";
-    private const int FormatVersion = 17; // 17: the web archive sheet with attribute / sibling selectors, structural pseudo-classes, pseudo-elements and print @media; open elements carry their selector state in the stacks; 16: the web archive sheet stored checked (WebArchiveStylesheet.Normalize), resolved per element; 15: plain .txt drops blank and whitespace-only lines; 14: Torat Emet note lines (hidden from the text, carried with the head); 13: a blank line right after a Torat Emet heading is dropped in every book (anchors carry it); 12: the first title heading keeps its own text (no ForcedBookName root); 11: blank lines dropped unless PutNewLinesAsIs=1, tilde headings return when the contents would be empty; 10: (also covers 8, the path rule: an empty head, no head block) PutNewLinesAsIs=0 books drop blank lines, LastLevelIndex 0 hides tilde headings; 9: heading levels 1-4 (dollar = 1), label lines merge with the next line; 8: Torat Emet without line-1 metadata (empty head) and without a title line; 7: Torat Emet head (metadata + where it ends; heading levels from line marks); 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
+    private const int FormatVersion = 18; // 18: web archive element ends (elements that span blocks: children, per type, content) for later-sibling pseudo-classes across blocks; 17: the web archive sheet with attribute / sibling selectors, structural pseudo-classes, pseudo-elements and print @media; open elements carry their selector state in the stacks; 16: the web archive sheet stored checked (WebArchiveStylesheet.Normalize), resolved per element; 15: plain .txt drops blank and whitespace-only lines; 14: Torat Emet note lines (hidden from the text, carried with the head); 13: a blank line right after a Torat Emet heading is dropped in every book (anchors carry it); 12: the first title heading keeps its own text (no ForcedBookName root); 11: blank lines dropped unless PutNewLinesAsIs=1, tilde headings return when the contents would be empty; 10: (also covers 8, the path rule: an empty head, no head block) PutNewLinesAsIs=0 books drop blank lines, LastLevelIndex 0 hides tilde headings; 9: heading levels 1-4 (dollar = 1), label lines merge with the next line; 8: Torat Emet without line-1 metadata (empty head) and without a title line; 7: Torat Emet head (metadata + where it ends; heading levels from line marks); 6: compact (anchors + rescans, no per-block tables); 5: compact block tables; 2: .txt encoding by TextEncodingDetection (Notepad++ parity); 3: its Improved mode; 4: .html kind
     public const int AnchorSpanBytes = 64 * 1024;
     /// <summary>
     /// MHTML anchors are 4x denser: decoding plus tag-heavy HTML rescans at ~25 MB/s, so a 64 KB span cost a random block
@@ -64,6 +64,9 @@ public sealed class MarkupRandomAccessIndex
     /// ends at <see cref="TextEnd"/>, where the pass had read to, past the start of the block still being read.
     /// </summary>
     public bool IsPartial { get; init; }
+
+    /// <summary>MHTML with later-sibling rules: the ends of the elements that span blocks (a partial index shares the builder's, which still grows).</summary>
+    internal WebArchiveElementEnds ElementEnds { get; init; } = new();
 
     private Dictionary<string, int>? _stackIds;
     /// <summary>The interned stacks by text (what a span rescan's scanner shares), built on first use.</summary>
@@ -151,7 +154,7 @@ public sealed class MarkupRandomAccessIndex
         writer.Write(FirstFeedEnd);
         writer.Write(BlockCount);
         Section("header");
-        WriteStrings(writer, [DocumentCss]);
+        WriteStrings(writer, [DocumentCss, .. ElementEnds.ToPairs()]);
         Section("document CSS");
 
         var raw = new List<byte>(Anchors.Length * 24);
@@ -236,7 +239,7 @@ public sealed class MarkupRandomAccessIndex
         int blockCount = reader.ReadInt32();
         if (blockCount < 0 || textEnd < 0) throw new InvalidDataException("Text / web archive index: negative size.");
         string[] cssStrings = ReadStrings(reader);
-        if (cssStrings.Length != 1) throw new InvalidDataException("Text / web archive index: CSS damaged.");
+        if (cssStrings.Length % 2 != 1) throw new InvalidDataException("Text / web archive index: CSS damaged.");
         string css = cssStrings[0];
 
         byte[] raw = WordIndexDeflatedBlob.Read(reader);
@@ -339,7 +342,7 @@ public sealed class MarkupRandomAccessIndex
             toratEmet = new ToratEmetHead(toratEmet.HeadEndOffset, toratEmet.Metadata, notes);
         }
         return new MarkupRandomAccessIndex(kind, length, ticks, codePage, reason, transfer, textEnd, encodedEnd, rtl, css, textStart, firstFeedEnd,
-                                           blockCount, anchors, groupTotals, stacks, headings, toratEmet);
+                                           blockCount, anchors, groupTotals, stacks, headings, toratEmet) { ElementEnds = WebArchiveElementEnds.FromPairs(cssStrings, 1) };
     }
 
     /// <summary>Strings as varint UTF-8 lengths + bytes, deflated together (any character allowed).</summary>

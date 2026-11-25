@@ -87,6 +87,74 @@ public static class WebArchiveSelectorsFidelityTest
                          "css-selectors: @media queries evaluated for Edge's print (Letter, 1 cm margins)");
 
         Windowed();
+        CrossBlock();
+    }
+
+    private static string CrossBlockFixture => Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "test-data", "word-mhtml", "css-crossblock-v1.mht");
+
+    /// <summary>
+    /// Later-sibling pseudo-classes whose answer lies in blocks a window does not read (test-data/word-mhtml/css-crossblock-v1.mht, Edge print: css-crossblock-v1-edge.pdf;
+    /// hand-written; every expectation checked against that PDF): :nth-last-child / :nth-last-of-type /
+    /// :last-of-type / :only-of-type when the parent goes on into the next block, :last-child on elements that
+    /// span blocks, :only-of-type under body. The index pass records each spanning element's end; every policy and every
+    /// one-block window must draw the same.
+    /// </summary>
+    private static void CrossBlock()
+    {
+        TestReport.Step("Web archive selectors: later-sibling pseudo-classes across blocks (index-time element ends)");
+        if (!File.Exists(CrossBlockFixture)) { TestReport.Check(false, "test-data/word-mhtml/css-crossblock-v1.mht present"); return; }
+        string cache = Path.Combine(TestReport.OutputDirectory, "css-crossblock-cache-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            foreach ((string name, WordIndexPolicy policy) in new[]
+                     {
+                         ("in memory", new WordIndexPolicy { ForcedMode = WordIndexMode.InMemory, CacheDirectory = cache }),
+                         ("on demand", new WordIndexPolicy { ForcedMode = WordIndexMode.Sidecar, CacheDirectory = cache, IndexesOnDemand = true }),
+                         ("sidecar", new WordIndexPolicy { ForcedMode = WordIndexMode.Sidecar, CacheDirectory = cache }),
+                     })
+            {
+                using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(CrossBlockFixture, policy);
+                if (!document.IsIndexComplete) document.ScanAhead(int.MaxValue / 2);
+                // one block per window, from the end backwards: no window sees a later sibling's block
+                var blocks = new string[document.BlockCount];
+                for (int block = document.BlockCount - 1; block >= 0; block--) blocks[block] = document.RenderBlocks(block, 1)[0].Html;
+                string all = string.Join("\n", blocks);
+                string Tag(string text)
+                {
+                    int at = all.IndexOf(">" + text, StringComparison.Ordinal);
+                    if (at < 0) return "";
+                    int start = all.LastIndexOf('<', at);
+                    return all.Substring(start, at + 1 - start);
+                }
+                void Expect(string text, string what, params string[] wanted)
+                    => TestReport.Check(Tag(text) is { Length: > 0 } tag && wanted.All(w => w.StartsWith("!", StringComparison.Ordinal) ? !tag.Contains(w.Substring(1)) : tag.Contains(w)),
+                                        $"css-crossblock ({name}): {what} [{Tag(text)}]");
+                Expect("Item A", "no later-sibling rule on the first of four", "!color:", "!font-weight", "!text-decoration");
+                Expect("Item B", ":nth-last-of-type(3)", "text-decoration:underline;", "!color:");
+                Expect("Item C", ":nth-last-child(2) while the list goes on", "color:#112233;", "!font-weight");
+                Expect("Item D", ":last-of-type", "font-weight:bold;");
+                Expect("Lone item", ":only-of-type", "color:#00B050;", "font-weight:bold;");
+                Expect("Only para", ":only-of-type and :last-of-type while its div goes on", "color:#445566;", "font-style:italic;");
+                Expect("First of two", "not :only-of-type, not :last-of-type", "!color:", "!font-style");
+                Expect("Second of two", ":last-of-type with a heading after it", "font-style:italic;", "!color:");
+                Expect("Last paragraph", ":only-of-type under body", "color:#445566;", "font-style:italic;");
+                Expect("Inner two", ":last-of-type inside a div that spans blocks", "font-style:italic;");
+                Expect("After inner2", ":only-of-type after a spanning div", "color:#445566;", "font-style:italic;");
+                MatchCollection hollow = Regex.Matches(all, "<div[^>]*hollow[^>]*>");
+                TestReport.Check(hollow.Count >= 1 && hollow.Cast<Match>().All(m => m.Value.Contains("border-top")),
+                                 $"css-crossblock ({name}): :empty on a div in its own block ({string.Join(" ", hollow.Cast<Match>().Select(m => m.Value))})");
+                MatchCollection inner = Regex.Matches(all, "<div[^>]*class=\"?inner\"?[ >][^>]*>|<div[^>]*class=\"?inner\"?>");
+                TestReport.Check(inner.Count >= 2 && inner.Cast<Match>().All(m => m.Value.Contains("color:#AA0000;")),
+                                 $"css-crossblock ({name}): :last-child on a div that spans blocks, in every block it shows in ({inner.Count}: {string.Join(" ", inner.Cast<Match>().Select(m => m.Value))})");
+                MatchCollection inner2 = Regex.Matches(all, "<div[^>]*inner2[^>]*>");
+                TestReport.Check(inner2.Count >= 2 && inner2.Cast<Match>().All(m => !m.Value.Contains("#BB0000")),
+                                 $"css-crossblock ({name}): a spanning div with a later sibling is no :last-child ({string.Join(" ", inner2.Cast<Match>().Select(m => m.Value))})");
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true);
+        }
     }
 
     private static bool MatchesPrint(string query) => WebArchiveStylesheet.Normalize("@media " + query + " { p { color:red; } }").Contains("color:red");

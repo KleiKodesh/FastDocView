@@ -1,0 +1,66 @@
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="----=_NextPart_01DB0000.00000001"
+
+This document is a Single File Web Page, also known as a Web Archive file.
+
+------=_NextPart_01DB0000.00000001
+Content-Location: file:///C:/css-crossblock-v1.htm
+Content-Transfer-Encoding: 8bit
+Content-Type: text/html; charset="us-ascii"
+
+<html>
+<head>
+<meta http-equiv=Content-Type content="text/html; charset=us-ascii">
+<style>
+<!--
+li:nth-last-child(2) { color:#112233; }
+li:nth-last-of-type(3) { text-decoration:underline; }
+li:last-of-type { font-weight:bold; }
+li:only-of-type { color:#00B050; }
+p:only-of-type { color:#445566; }
+p:last-of-type { font-style:italic; }
+div.inner:last-child { color:#AA0000; }
+div.inner2:last-child { color:#BB0000; }
+div.hollow:empty { border-top:1pt solid #000000; }
+-->
+</style>
+</head>
+<body>
+<ul>
+<li>Item A</li>
+<li>Item B</li>
+<li>Item C</li>
+<li>Item D</li>
+</ul>
+<ol>
+<li>Lone item</li>
+</ol>
+<div class=box>
+<p>Only para</p>
+<h3>After para</h3>
+</div>
+<div class=box2>
+<p>First of two</p>
+<h3>Between</h3>
+<p>Second of two</p>
+<h3>Trailing heading</h3>
+</div>
+<div class=outer>
+<div class=inner>
+<p>Inner one</p>
+<p>Inner two</p>
+</div>
+</div>
+<div class=outer2>
+<div class=inner2>
+<p>Inner2 one</p>
+<p>Inner2 two</p>
+</div>
+<p>After inner2</p>
+</div>
+<div class=hollow></div>
+<p>Last paragraph</p>
+</body>
+</html>
+
+------=_NextPart_01DB0000.00000001--

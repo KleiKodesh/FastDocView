@@ -45,7 +45,7 @@ public static class MarkupBlockRenderer
     /// <param name="drawsPictures">A web archive: its &lt;img&gt; parts are read on request. Plain text has no parts, so an &lt;img&gt; typed in it stays the placeholder.</param>
     /// <param name="stylesheet">A web archive's head sheet (<see cref="WebArchiveStylesheet"/>): its rules are resolved per element into the element's inline style.</param>
     public static string Render(string openTags, string content, bool drawsPictures = false, WebArchiveStylesheet? stylesheet = null)
-        => Render(openTags, content, drawsPictures, stylesheet, NextBlock.Unknown, shown: null);
+        => Render(openTags, content, drawsPictures, stylesheet, NextBlock.Unknown, shown: null, ends: null);
 
     /// <summary>What the next block's open-tag stack says about the elements open at this block's end.</summary>
     public readonly record struct NextBlock(int Depth)
@@ -106,8 +106,11 @@ public static class MarkupBlockRenderer
     }
 
     /// <summary>One element the renderer has open (or the synthesized html / body): its state for the sheet and where its tag was written.</summary>
-    private sealed class Node(string name, WebArchiveElement element, WebArchiveMatch? state, Node? parent, bool isOutput, bool isReopened)
+    private sealed class Node(string name, WebArchiveElement element, WebArchiveMatch? state, Node? parent, bool isOutput, bool isReopened, string? path = null, bool isPathKnown = true)
     {
+        /// <summary>The element's path as the index pass keys its end (<see cref="WebArchiveElementEnds"/>): "" for body, null where unknown
+        /// (a reopened element without its stored state, or one the index pass's implied end tags place elsewhere): unknown, never another element's.</summary>
+        public readonly string? Path = path ?? (isPathKnown && state is not null && parent?.Path is { } parentPath ? parentPath + "/" + state.Index.ToString(System.Globalization.CultureInfo.InvariantCulture) : null);
         public readonly string Name = name;
         public readonly WebArchiveElement Element = element;
         public readonly WebArchiveMatch? State = state;
@@ -123,7 +126,13 @@ public static class MarkupBlockRenderer
     /// <param name="next">The next block's stack depth (<see cref="NextBlock"/>): elements open at this block's end that the next block does not reopen end here.</param>
     /// <param name="shown">Receives what the block shows, as HTML text for the search (<see cref="WordDocumentSearchMatcher.FeedHtml(string)"/>):
     /// elements the sheet hides (display:none) left out, ::before / ::after strings put in; one path with the drawn HTML.</param>
+    /// <param name="ends">The ends of the elements that span blocks (the index pass's): later-sibling rules of an element whose parent, or
+    /// which itself, goes on past this block; null: only what this block shows is known.</param>
     public static string Render(string openTags, string content, bool drawsPictures, WebArchiveStylesheet? stylesheet, NextBlock next, StringBuilder? shown)
+        => Render(openTags, content, drawsPictures, stylesheet, next, shown, ends: null);
+
+    internal static string Render(string openTags, string content, bool drawsPictures, WebArchiveStylesheet? stylesheet, NextBlock next, StringBuilder? shown,
+                                  WebArchiveElementEnds? ends)
     {
         if (stylesheet is { IsEmpty: true }) stylesheet = null;
         WebArchiveMatch? rootState = null;
@@ -139,7 +148,7 @@ public static class MarkupBlockRenderer
         WebArchiveElement htmlElement = new("html", null, [], false, "<html>"), bodyElement = new("body", null, [], false, "<body>");
         WebArchiveMatch? htmlState = stylesheet?.Open(null, htmlElement);
         var nodes = new List<Node> { new("html", htmlElement, htmlState, null, false, true) };
-        nodes.Add(new Node("body", bodyElement, stylesheet is null ? null : rootState ?? stylesheet.Open(htmlState, bodyElement), nodes[0], false, true));
+        nodes.Add(new Node("body", bodyElement, stylesheet is null ? null : rootState ?? stylesheet.Open(htmlState, bodyElement), nodes[0], false, true, path: ""));
         List<Node>? deferred = null;
         int hiddenDepth = 0;                       // open elements the sheet hides (their text is not shown)
 
@@ -205,12 +214,14 @@ public static class MarkupBlockRenderer
             if (!isReopened && parent.State is not null) parent.State.HasContent = true;
             WebArchiveElement? element = null;
             WebArchiveMatch? state = null;
+            bool isPathKnown = true;
+            if (ends is not null) for (int k = nodes.Count - 1; k >= 2 && isPathKnown; k--) isPathKnown = !ImpliesEnd(nodes[k].Name, name);
             if (stylesheet is not null && name is not ("html" or "head" or "body"))
             {
                 element = WebArchiveElement.FromTag(name, tag);
                 if (isReopened && AttributeValue(tag, WebArchiveMatch.StateAttribute) is { } stateText && WebArchiveMatch.Deserialize(stateText, parent.State) is { } stored)
                     state = stored;                                       // the index pass's state: the element's siblings before this block
-                else state = stylesheet.Open(parent.State, element);
+                else { state = stylesheet.Open(parent.State, element); if (isReopened) isPathKnown = false; }
             }
             if (DroppedWithContent.Contains(name) || MarkupBlockScanner.RawTextElements.Contains(name))
             {
@@ -230,7 +241,7 @@ public static class MarkupBlockRenderer
             if (name == "img") { if (drawsPictures) AppendPicture(html, tag); else html.Append(ImagePlaceholder); continue; }
             bool isOpen = !VoidElements.Contains(name) && !isSelfClosing;
             bool isDrawn = !DroppedTags.Contains(name);
-            var node = new Node(name, element ?? new WebArchiveElement(name, null, [], false, tag), state, parent, isDrawn, isReopened);
+            var node = new Node(name, element ?? new WebArchiveElement(name, null, [], false, tag), state, parent, isDrawn, isReopened, isPathKnown: isPathKnown);
             if (isDrawn)
             {
                 node.Tag = Sanitize(tag, name);
@@ -264,7 +275,7 @@ public static class MarkupBlockRenderer
             if (nodes[k].IsClosed && nodes[k].Style.AfterText.Length > 0) AppendShown(System.Net.WebUtility.HtmlEncode(nodes[k].Style.AfterText));
         }
         if (nodes.Count > 1) nodes[1].IsClosed = next.IsKnown && next.Depth < 0;    // body ends with the last block
-        if (deferred is not null) Redraw(html, deferred, stylesheet!);
+        if (deferred is not null) Redraw(html, deferred, stylesheet!, ends);
         return html.ToString();
     }
 
@@ -273,13 +284,13 @@ public static class MarkupBlockRenderer
     /// (:last-child...), and the pseudo-elements on the part of the element this block shows (::before, ::first-letter and
     /// ::first-line where it starts, ::after where it ends).
     /// </summary>
-    private static void Redraw(StringBuilder html, List<Node> deferred, WebArchiveStylesheet stylesheet)
+    private static void Redraw(StringBuilder html, List<Node> deferred, WebArchiveStylesheet stylesheet, WebArchiveElementEnds? ends)
     {
         for (int k = deferred.Count - 1; k >= 0; k--)
         {
             Node node = deferred[k];
             WebArchiveStylesheet.ElementStyle style = node.Style;
-            if (style.HasLaterSiblingRules && LaterFacts(node) is { } facts) style = stylesheet.StyleFor(node.State!, facts);
+            if (style.HasLaterSiblingRules && LaterFacts(node, ends) is { } facts) style = stylesheet.StyleFor(node.State!, facts);
             string ids = string.Join(" ", new[] { node.IsReopened ? "" : style.StartPseudoIds, node.IsClosed ? style.AfterPseudoIds : "" }.Where(part => part.Length > 0));
             string tag = WithStyle(node.Tag, style.Css);
             if (ids.Length > 0)
@@ -291,12 +302,34 @@ public static class MarkupBlockRenderer
         }
     }
 
-    /// <summary>An element's later siblings and emptiness, once both it and its parent's children end in this block; else null.</summary>
-    private static WebArchiveLaterFacts? LaterFacts(Node node)
+    /// <summary>
+    /// An element's later siblings and emptiness: from this block when both it and its parent's children end here, else from the
+    /// index pass's ends of the ones that go on past it (<see cref="WebArchiveElementEnds"/>); null when neither knows.
+    /// </summary>
+    private static WebArchiveLaterFacts? LaterFacts(Node node, WebArchiveElementEnds? ends)
     {
-        if (!node.IsClosed || node.State is null || node.Parent is not { State: { } parent } parentNode || !parentNode.IsClosed) return null;
-        return new WebArchiveLaterFacts(parent.Children - node.State.Index, parent.TypeCount(node.Name) - node.State.TypeIndex, !node.State.HasContent);
+        if (node.State is not { } state || node.Parent is not { State: { } parent } parentNode) return null;
+        int siblings, ofType;
+        if (parentNode.IsClosed) { siblings = parent.Children; ofType = parent.TypeCount(node.Name); }
+        else if (parentNode.Path is { } parentPath && ends?.Find(parentPath, node.Name) is { } parentEnd) { siblings = parentEnd.Children; ofType = parentEnd.OfType; }
+        else return null;
+        bool isEmpty;
+        // an element that spans blocks: its own end says whether it has content anywhere (this block sees only its part)
+        if ((!node.IsClosed || node.IsReopened) && node.Path is { } path && ends?.Find(path, node.Name) is { } own) isEmpty = !own.HasContent && own.Children == 0;
+        else if (node.IsClosed) isEmpty = !state.HasContent;
+        else return null;
+        return new WebArchiveLaterFacts(siblings - state.Index, ofType - state.TypeIndex, isEmpty);
     }
+
+    /// <summary>
+    /// A start tag the index pass reads as ending the open element first (MarkupBlockScanner.PopForStart: a p ends a p, li an li,
+    /// a cell a cell...), while the renderer nests it: its path would name another element.
+    /// </summary>
+    private static bool ImpliesEnd(string open, string name)
+        => (open == "p" && (name is "li" or "dt" or "dd" || MarkupBlockScanner.ClosesOpenParagraph.Contains(name)))
+           || (open == name && name is "li" or "option" or "tr")
+           || (open is "dt" or "dd" && name is "dt" or "dd")
+           || (open is "td" or "th" && name is "td" or "th" or "tr");
 
     /// <summary>The prefix of a web-archive picture id; the rest is the &lt;img&gt;'s src (see MarkupWindowedDocument.ReadPicture).</summary>
     public const string WebArchivePicturePrefix = "mh:";

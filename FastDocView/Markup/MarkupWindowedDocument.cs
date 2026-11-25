@@ -346,7 +346,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
                         {
                             // what the block shows (one path with the drawn HTML): hidden elements out, generated content in
                             var shown = new StringBuilder(content.Length);
-                            MarkupBlockRenderer.Render(MarkupBlockRenderer.WithStructure(_table.OpenTags(block), _table.Structure(block)), content, drawsPictures: true, _webArchiveStylesheet, NextBlockOf(block), shown);
+                            MarkupBlockRenderer.Render(MarkupBlockRenderer.WithStructure(_table.OpenTags(block), _table.Structure(block)), content, drawsPictures: true, _webArchiveStylesheet, NextBlockOf(block), shown, _index.ElementEnds);
                             matcher.FeedHtml(shown.ToString());
                         }
                         if (matcher.Count > 0) { hits.Add(block); counts.Add(matcher.Count); }
@@ -380,7 +380,7 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
         {
             string content = DecodeBlock(text, textStart, block);
             string openTags = _table.OpenTags(block);
-            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(MarkupBlockRenderer.WithStructure(openTags, _table.Structure(block)), content, drawsPictures: true, _webArchiveStylesheet, NextBlockOf(block), shown: null)
+            string html = _index.Kind != MarkupSourceKind.PlainText ? MarkupBlockRenderer.Render(MarkupBlockRenderer.WithStructure(openTags, _table.Structure(block)), content, drawsPictures: true, _webArchiveStylesheet, NextBlockOf(block), shown: null, _index.ElementEnds)
                         : _index.ToratEmet is { } toratEmet ? (block == 0 && toratEmet.HasHead ? ToratEmetFormat.RenderHeader(toratEmet, FirstTitle(_index)) : ToratEmetFormat.RenderLine(openTags, content))
                         : MarkupBlockRenderer.RenderLine(openTags, content);
             WordDocumentBlockKind kind = content.TrimStart().StartsWith("<table", StringComparison.OrdinalIgnoreCase) ? WordDocumentBlockKind.Table : WordDocumentBlockKind.Paragraph;

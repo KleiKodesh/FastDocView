@@ -4119,3 +4119,26 @@ profile corners (as on rectangles).
 - Measured on a loaded machine (other sessions at 50-100 % CPU, so only paired runs mean anything): warm in-process loop
   (60 opens + first window, second half) paint min 14.4-17.4 ms vs 13.7-18.3 before eed80af (eed80af itself 24-28);
   open min 8.9-14.0 vs 11.5-15.3. AOT ColdBench medians on quieter moments: 15-23 ms vs 11-20 before (eed80af 18-30).
+
+### Web archive later-sibling pseudo-classes across blocks (2026-11-25)
+
+- :nth-last-child / :nth-last-of-type / :last-of-type / :only-of-type (and :last-child, :only-child, :empty) used to resolve
+  only when the parent's children ended in the block being drawn; a parent going on into the next block, or an element that
+  itself spans blocks, left them unresolved (one-block windows drew them differently from a long read).
+- Model (MarkupBlockScanner, WebArchiveElementEnds): when the sheet has a later-sibling pseudo-class in some subject compound,
+  the index pass marks every element open at a block start as spanning blocks and, when it ends (end tag, implied end, body
+  end or end of text), records its end facts keyed by path (child index under each open ancestor from body; "" = body):
+  element children in all, per type, and whether it has content. Only spanning elements are recorded, so the table is as
+  small as the open-tag stacks; no whole-document pass, nothing per block. Span rescans never record. The renderer looks up
+  the parent's end (later siblings) and, for a spanning element, its own end (:empty). Index format 18 (pairs after the
+  document CSS in the header strings).
+- While a first open is still indexing, an end not reached yet is unknown: that element is drawn from the block alone until
+  the index completes.
+- A path is used only when the renderer's tree matches the index pass's: a reopened element without its stored state, or an
+  element under an open p / li / dt / dd / td / th / tr / option that the index pass ends implicitly (MarkupBlockScanner
+  PopForStart; the renderer nests it), gets no path - unknown, never another element's end (review finding).
+- Reference: test-data/word-mhtml/css-crossblock-v1.mht printed by Edge headless (css-crossblock-v1-edge.pdf); every
+  colour / weight / style / the :empty border in the harness matches it, in memory, on demand and sidecar, one-block windows
+  read back to front. Word's print ignores these selectors (see above), so browser archives follow Edge.
+- Cold first paint, AOT ColdBench, 27 MB structural archive (css-selectors body x 20000), 5 runs x 2 rounds, paired:
+  8506804 11 / 15 ms median, this change 13 / 14 ms (noise).

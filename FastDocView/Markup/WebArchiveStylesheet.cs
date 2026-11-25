@@ -54,6 +54,9 @@ public sealed class WebArchiveStylesheet
     /// <summary>The sheet has rules that depend on where an element ends (pseudo-elements, later-sibling pseudo-classes): the renderer asks what the next block reopens.</summary>
     public bool NeedsEnds { get; private set; }
 
+    /// <summary>Some rule's subject has a later-sibling pseudo-class (:last-child, :nth-last-*, :only-*, :empty): the index pass records the ends of elements that span blocks.</summary>
+    public bool HasLaterSiblingRules { get; private set; }
+
     /// <summary>The pseudo-element rules for the document stylesheet: <c>.word-document [data-wa-pe~="N"]::before { ... }</c>, in cascade order.</summary>
     public string PseudoElementCss { get; private set; } = "";
 
@@ -185,6 +188,7 @@ public sealed class WebArchiveStylesheet
         foreach (int id in _descendantSources) _isDescendantSource[id] = true;
         foreach (int id in _siblingSources) _isSiblingSource[id] = true;
         foreach (KeyValuePair<int, Rule> pair in _ruleByFullPrefix) _ruleById[pair.Key] = pair.Value;
+        HasLaterSiblingRules = _rules.Exists(rule => rule.Selector.Subject.NeedsLaterSiblings);
         // a source: a prefix some combinator reads from another element (its parent, an ancestor, an earlier sibling)
         var isSource = new bool[count];
         foreach (Prefix prefix in _prefixes) if (prefix.Previous >= 0) isSource[prefix.Previous] = true;
@@ -984,6 +988,8 @@ internal sealed class WebArchiveMatch(int[] matched, int[] ancestorOrSelf, WebAr
     public int[] EarlierChildren { get; private set; } = [];
     /// <summary>Renderer: text or an element child seen inside (for :empty).</summary>
     public bool HasContent;
+    /// <summary>Index pass: a block started while the element was open (its end facts are recorded, <see cref="WebArchiveElementEnds"/>).</summary>
+    public bool SpansBlocks;
 
     public int TypeCount(string name)
     {
@@ -1056,7 +1062,7 @@ internal sealed class WebArchiveMatch(int[] matched, int[] ancestorOrSelf, WebAr
         {
             _deferredSheet = _deferredSheet, _deferredContext = _deferredContext,
             Children = Children, _typeNames = _typeNames, _typeCounts = _typeCounts, _typeCount = _typeCount, _isTypeShared = true,
-            PreviousChild = PreviousChild, EarlierChildren = EarlierChildren, HasContent = HasContent,
+            PreviousChild = PreviousChild, EarlierChildren = EarlierChildren, HasContent = HasContent, SpansBlocks = SpansBlocks,
         };
     }
 
@@ -1089,6 +1095,19 @@ internal sealed class WebArchiveMatch(int[] matched, int[] ancestorOrSelf, WebAr
         text.Append(";v,"); AppendIds(text, PreviousChild);
         text.Append(";e,"); AppendIds(text, EarlierChildren);
         text.Append(";i,").Append(Index).Append('.').Append(TypeIndex);
+    }
+
+    /// <summary>What a later-sibling pseudo-class needs of the element once it has ended: "children;content;name=count.name=count" (<see cref="WebArchiveElementEnds"/>).</summary>
+    public string EndFacts()
+    {
+        var text = new StringBuilder(32);
+        text.Append(Children).Append(';').Append(HasContent ? '1' : '0').Append(';');
+        for (int i = 0; i < _typeCount; i++)
+        {
+            if (i > 0) text.Append('.');
+            text.Append(_typeNames[i]).Append('=').Append(_typeCounts[i]);
+        }
+        return text.ToString();
     }
 
     private static void AppendIds(StringBuilder text, int[] ids)
@@ -1186,6 +1205,58 @@ internal sealed class WebArchiveStructure
 /// <summary>The inputs of an element's match: the element, its position, and its parent's state as it was when the element opened.</summary>
 internal readonly record struct WebArchiveMatchContext(WebArchiveElement Element, int Index, int TypeIndex, bool HasParent, int[] ParentMatched,
                                                       int[] ParentAncestors, int[] ParentPreviousChild, int[] ParentEarlierChildren);
+
+/// <summary>
+/// The ends of the web archive elements that span blocks, recorded by the index pass when each one ends (its element children in
+/// all, per type, and whether it has any content): what a block needs for :last-child, :nth-last-*, :only-of-type, :empty...
+/// when an element's parent - or the element itself - goes on into blocks it does not read. Keyed by the element's path (its
+/// child index under each open ancestor from body: "" is body, "/2/5" the fifth element child of body's second). Grows while
+/// the index is built (a partial index shares the builder's), read under a lock.
+/// </summary>
+internal sealed class WebArchiveElementEnds
+{
+    private readonly Dictionary<string, string> _ends = new(StringComparer.Ordinal);
+
+    public int Count { get { lock (_ends) return _ends.Count; } }
+
+    public void Add(string path, string facts) { lock (_ends) _ends[path] = facts; }
+
+    /// <summary>The element's end: element children in all, whether it has content, and the count of its children of one type.</summary>
+    public (int Children, bool HasContent, int OfType)? Find(string path, string typeName)
+    {
+        string? facts;
+        lock (_ends) if (!_ends.TryGetValue(path, out facts)) return null;
+        string[] parts = facts.Split(';');
+        if (parts.Length != 3 || !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out int children)) return null;
+        int ofType = 0;
+        if (parts[2].Length > 0)
+            foreach (string entry in parts[2].Split('.'))
+            {
+                int equals = entry.LastIndexOf('=');
+                if (equals > 0 && string.CompareOrdinal(entry, 0, typeName, 0, Math.Max(equals, typeName.Length)) == 0 && equals == typeName.Length)
+                    int.TryParse(entry.Substring(equals + 1), NumberStyles.None, CultureInfo.InvariantCulture, out ofType);
+            }
+        return (children, parts[1] == "1", ofType);
+    }
+
+    /// <summary>Path, facts, path, facts... (what the index stores).</summary>
+    public string[] ToPairs()
+    {
+        lock (_ends)
+        {
+            var pairs = new List<string>(_ends.Count * 2);
+            foreach (KeyValuePair<string, string> pair in _ends.OrderBy(p => p.Key, StringComparer.Ordinal)) { pairs.Add(pair.Key); pairs.Add(pair.Value); }
+            return pairs.ToArray();
+        }
+    }
+
+    public static WebArchiveElementEnds FromPairs(IReadOnlyList<string> pairs, int start)
+    {
+        var ends = new WebArchiveElementEnds();
+        for (int i = start; i + 1 < pairs.Count; i += 2) ends._ends[pairs[i]] = pairs[i + 1];
+        return ends;
+    }
+}
 
 /// <summary>What an element's later-sibling pseudo-classes need, once known: its later element siblings (all, of its type) and whether it is empty.</summary>
 internal readonly record struct WebArchiveLaterFacts(int LaterSiblings, int LaterSiblingsOfType, bool IsEmpty);
