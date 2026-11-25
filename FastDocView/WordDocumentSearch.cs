@@ -23,7 +23,7 @@ public sealed record WordDocumentSearchOptions(bool MatchCase = true)
 /// <see cref="IWordWindowedDocument.NoteReferences"/>) and the counts are each note's own. Occurrences never overlap (leftmost first, as the app's highlighter marks them). <see cref="NextBlock"/>:
 /// where the next call continues; -1 once <see cref="ReachedEnd"/> (the index is complete and every block / note was scanned).
 /// Only numbers are produced - no text is kept.
-/// <see cref="ProvisionalBlocks"/>: blocks of the scanned range (ascending, hit or not) whose searched text used something only
+/// <see cref="ProvisionalBlocks"/>: blocks (for <see cref="IWordWindowedDocument.SearchNotes"/>: notes, <see cref="WordDocumentNoteHtml.IsProvisional"/>) of the scanned range (ascending, hit or not) whose searched text used something only
 /// the final index knows - the same facts that mark a rendered block provisional (<see cref="WordDocumentBlockHtml.IsProvisional"/>:
 /// a field reading the partial index, a web-archive sheet rule needing an end not indexed yet). Their counts may change: the host
 /// searches them again once the index is complete (the same refresh signal as the provisional blocks it refetches) and replaces
@@ -353,6 +353,7 @@ internal static class WordDocumentNoteSearch
         int end = (int)Math.Min(known, (long)fromNote + Math.Max(1, maxNotesToScan));
         var hits = new List<int>();
         var counts = new List<int>();
+        var provisional = new SortedSet<int>();    // notes drawn with what only the final index knows: searched again by the host
         for (int first = fromNote; first < end; first += NotesPerRender)
         {
             IReadOnlyList<WordDocumentNoteHtml> notes = document.RenderNotesForDisplay(first, Math.Min(NotesPerRender, end - first));
@@ -361,10 +362,11 @@ internal static class WordDocumentNoteSearch
                 matcher.Reset();
                 matcher.FeedHtml(notes[i].Html, separatesParagraphs: true);
                 if (matcher.Count > 0) { hits.Add(first + i); counts.Add(matcher.Count); }
+                if (notes[i].IsProvisional) provisional.Add(first + i);
             }
             if (notes.Count == 0) break;
         }
-        return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromNote), isIndexComplete, known);
+        return WordDocumentSearchBatch.Finish(hits, counts, Math.Max(end, fromNote), isIndexComplete, known, provisional);
     }
 }
 

@@ -70,6 +70,10 @@ export const fastDocViewApi: FastDocViewApi = {
     return readJson<{ hitBlocks: number[]; hitCounts: number[]; nextBlock: number; reachedEnd: boolean; provisionalBlocks?: number[] }>(await fetch(
       `/api/documents/${documentId}/search?query=${encodeURIComponent(query)}&matchCase=${matchCase}&fromBlock=${fromBlock}&maxBlocks=${maxBlocks}`))
   },
+  async searchNotes(documentId, query, matchCase, fromNote, maxNotes) {
+    return readJson<{ hitBlocks: number[]; hitCounts: number[]; nextBlock: number; reachedEnd: boolean; provisionalBlocks?: number[] }>(await fetch(
+      `/api/documents/${documentId}/search-notes?query=${encodeURIComponent(query)}&matchCase=${matchCase}&fromNote=${fromNote}&maxNotes=${maxNotes}`))
+  },
   async bookmark(documentId, name) {
     const reply = await readJson<{ blockIndex: number | null }>(await fetch(`/api/documents/${documentId}/bookmark?name=${encodeURIComponent(name)}`))
     return reply.blockIndex

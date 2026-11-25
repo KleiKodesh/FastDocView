@@ -308,6 +308,7 @@ not indexed yet shows nothing and the block is fetched again once the index is c
 | First open shows text from the partial index | yes | yes | yes | yes | yes | yes |
 | In-document search (byte-level; fields, notes, hidden text aware) | yes | yes | yes | yes | yes | yes |
 | Search during the first open: blocks whose text needs the final index (fields reading it, later-sibling sheet rules) are reported provisional and searched again once it completes - the counts settle to the final text | yes | yes | yes | yes | n.a. | yes |
+| Notes during the first open: a footnote / endnote whose text needs the final index (a field reading it, a numbering format stored at a section's end) is marked provisional on its own; the notes pane draws it again and the notes search searches it again once the index completes | yes | yes | yes | yes | n.a. | n.a. |
 | Plain-text API, C# only: `WordDocumentText.GetText` / `GetNotes` / `GetTextWithNotes` (exactly the search's text; footnotes and endnotes as one list; cancellable) | yes | yes | yes | yes | yes | yes |
 | Dark theme (colour rewrite incl. shapes, text boxes, charts, SmartArt; pictures unchanged) | yes | yes | yes | yes | yes | yes |
 | Clear errors: encrypted, corrupt, online-only, not found, unsupported, access denied | yes | yes | yes | yes | yes | yes |

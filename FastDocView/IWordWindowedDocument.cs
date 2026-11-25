@@ -30,8 +30,13 @@ public enum WordDocumentNoteKind : byte
 /// A footnote or endnote body. <see cref="Label"/> is what the reference shows ("3", "iv", or a
 /// custom mark); <see cref="Number"/> is its position among the auto-numbered notes of its kind
 /// (0 for a custom mark). References in block HTML carry data-note-kind / data-note-number.
+/// <see cref="IsProvisional"/>: drawn while the index was still building with something only the final index knows (a field
+/// reading a bookmark / heading / note not reached yet, a numbering format stored at a section's end not reached yet) - the
+/// same facts that make a block provisional. The host fetches the note again, and searches it again
+/// (<see cref="WordDocumentSearchBatch.ProvisionalBlocks"/> of <see cref="IWordWindowedDocument.SearchNotes"/>), once the
+/// index is complete. Always false on a complete index.
 /// </summary>
-public sealed record WordDocumentNoteHtml(WordDocumentNoteKind Kind, int Number, string Label, string Html);
+public sealed record WordDocumentNoteHtml(WordDocumentNoteKind Kind, int Number, string Label, string Html, bool IsProvisional = false);
 
 /// <summary>
 /// A Word document opened for random access. Implemented by <see cref="Docx.DocxWindowedDocument"/>

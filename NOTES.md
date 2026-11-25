@@ -4219,3 +4219,28 @@ profile corners (as on rectangles).
   count over the complete index (the hidden paragraph excluded), Enter steps one match at a time; "Quokka" (hidden) settles
   to 0; sample .docx: 30,794 while building, settled to 52,949 = service, Enter steps with the .current mark on the right
   occurrence; no console errors. The highlighter cannot mark ::before text (CSS, not DOM text): marks are checked on the .docx.
+
+### Notes over a partial index: provisional per note, searched again (2026-11-25)
+
+- WordDocumentNoteHtml.IsProvisional: a note drawn while the index builds with what only the final index knows. Read from
+  the same flags as blocks, per note: .docx the field context's UsedIncompleteIndex around the note's render plus the
+  unknown-section note label (_usedUnknownNoteSection; a section's footnotePr / endnotePr come at its end), the flag kept
+  with the cached note HTML (the cache is dropped on completion); .doc the field context around RenderNote; .rtf the field
+  context from FootnoteStart to the note's end; .odt OdtFieldComputer.UsedIncompleteIndex around the note body. Each saves
+  the block's flag, clears it for the note and merges it back, so the block's IsProvisional still covers its notes.
+  .txt (Torat Emet header notes are header lines, not notes) and web archives have no notes.
+- One path for the notes search: WordDocumentNoteSearch reads the notes pane's own rendering (RenderNotesForDisplay), so a
+  provisional note names itself in WordDocumentSearchBatch.ProvisionalBlocks (note indexes) - no second flag source.
+  Empty once the index is complete.
+- App: FastDocViewNote.provisional (service FastDocViewOpenDocuments.Notes / blocks' notes; searchNotes forwards
+  ProvisionalBlocks). The notes pane (useFastDocViewNotes) marks provisional notes stale on the same index-complete signal
+  as the text's blocks (and after a fetch that lands after completion), bumps refetchVersion (the pane's rowSourceVersion):
+  still drawn, fetched again in place. The notes search gets isIndexComplete like the text search, so useFastDocViewSearch
+  recounts its provisional notes exactly as it recounts blocks. Dev server: /api/documents/{id}/search-notes; the demo API
+  had no searchNotes (the notes search failed in the demo) - added.
+- Harness (--search, --fidelity): ProvisionalSearchTest.RunNotes - .rtf / .odt / .docx, a plain note and a note whose REF
+  reads a bookmark 20,000 paragraphs on: the pane draws only the REF note provisional, the notes batch names exactly it,
+  the note re-rendered on the complete index is final and shows the bookmark's text, and partial hits with the provisional
+  notes searched again = the complete index's notes hits. .doc shares the code shape but has no generated sample.
+- Found on the way: an RTF REF with an empty saved result ({\fldrslt }) shows nothing even on a complete index (the
+  saved result wins); the harness sample has no result group, as the body sample.

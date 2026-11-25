@@ -50,6 +50,31 @@ internal static class ProvisionalSearchTest
             files.Add(docx);
             WriteDocx(docx);
             RunOne(".docx REF to a late bookmark", docx, onDemand, "Target", partialShouldHit: false, finalShouldHit: true);
+
+            // notes: a footnote whose REF reads a bookmark 20,000 paragraphs on (the notes search and the notes pane, per note)
+            string rtfNotes = Path.Combine(directory, "provisional-notes-v1-" + Guid.NewGuid().ToString("N") + ".rtf");
+            files.Add(rtfNotes);
+            var rtfNoteBody = new StringBuilder(@"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}\pard Plain{\super\chftn}{\footnote\pard{\super\chftn} Plain note.}\par" + "\r\n");
+            rtfNoteBody.Append(@"\pard Early{\super\chftn}{\footnote\pard{\super\chftn} See {\field{\*\fldinst REF late }} end.}\par" + "\r\n");
+            for (int i = 0; i < 20_000; i++) rtfNoteBody.Append(@"\pard Filler paragraph ").Append(i).Append(@".\par").Append("\r\n");
+            rtfNoteBody.Append(@"\pard {\*\bkmkstart late}Target words{\*\bkmkend late} here.\par}");
+            File.WriteAllText(rtfNotes, rtfNoteBody.ToString(), Encoding.ASCII);
+            RunNotes(".rtf note REF to a late bookmark", rtfNotes, onDemand, "Target");
+
+            string odtNotes = Path.Combine(directory, "provisional-notes-v1-" + Guid.NewGuid().ToString("N") + ".fodt");
+            files.Add(odtNotes);
+            var odfNotes = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" office:version=\"1.3\" office:mimetype=\"application/vnd.oasis.opendocument.text\"><office:body><office:text>\n");
+            odfNotes.Append("<text:p>Plain<text:note text:id=\"n1\" text:note-class=\"footnote\"><text:note-citation>1</text:note-citation><text:note-body><text:p>Plain note.</text:p></text:note-body></text:note></text:p>\n");
+            odfNotes.Append("<text:p>Early<text:note text:id=\"n2\" text:note-class=\"footnote\"><text:note-citation>2</text:note-citation><text:note-body><text:p>See <text:bookmark-ref text:reference-format=\"text\" text:ref-name=\"late\">old</text:bookmark-ref> end.</text:p></text:note-body></text:note></text:p>\n");
+            for (int i = 0; i < 20_000; i++) odfNotes.Append("<text:p>Filler paragraph ").Append(i).Append(".</text:p>\n");
+            odfNotes.Append("<text:p><text:bookmark-start text:name=\"late\"/>Target words<text:bookmark-end text:name=\"late\"/></text:p>\n</office:text></office:body></office:document>");
+            File.WriteAllText(odtNotes, odfNotes.ToString(), new UTF8Encoding(false));
+            RunNotes(".odt note bookmark-ref to a late bookmark", odtNotes, onDemand, "Target");
+
+            string docxNotes = Path.Combine(directory, "provisional-notes-v1-" + Guid.NewGuid().ToString("N") + ".docx");
+            files.Add(docxNotes);
+            WriteDocx(docxNotes, withNotes: true);
+            RunNotes(".docx note REF to a late bookmark", docxNotes, onDemand, "Target");
         }
         finally
         {
@@ -99,6 +124,53 @@ internal static class ProvisionalSearchTest
         TestReport.Check(patched == expected, $"{name}: partial hits with the provisional blocks searched again = the complete index's hits exactly ([{patched}] vs [{expected}])");
     }
 
+    /// <summary>
+    /// The notes search and the notes pane over a partial index, per note: the note whose REF reads a bookmark not reached yet
+    /// is drawn provisionally (<see cref="WordDocumentNoteHtml.IsProvisional"/>) and named by the notes batch; the plain note is
+    /// not. Once the index is complete the note renders final, and the partial hits with the provisional notes searched again
+    /// equal the complete index's notes hits exactly.
+    /// </summary>
+    private static void RunNotes(string name, string path, WordIndexPolicy policy, string query)
+    {
+        string indexPath = policy.IndexPathFor(path);
+        if (File.Exists(indexPath)) File.Delete(indexPath);
+        var options = new WordDocumentSearchOptions();
+        using IWordWindowedDocument document = WordWindowedDocumentOpener.Open(path, policy);
+        document.RenderBlocks(0, PartialBlocks);   // the reader's first window: its notes become known
+        TestReport.Check(!document.IsIndexComplete, $"{name}: the first open indexes on demand");
+        int known = document.NoteReferences.Count;
+        TestReport.Check(known == 2, $"{name}: both notes are known from the first window ({known})");
+        IReadOnlyList<WordDocumentNoteHtml> drawn = document.RenderNotesForDisplay(0, known);
+        TestReport.Check(drawn.Count == 2 && !drawn[0].IsProvisional && drawn[1].IsProvisional,
+                         $"{name}: the notes pane draws the REF note provisionally, the plain note final ([{string.Join(",", drawn.Select(n => n.IsProvisional))}])");
+        WordDocumentSearchBatch partial = document.SearchNotes(query, options, 0, known);
+        TestReport.Check(!document.IsIndexComplete, $"{name}: the index is still building after the partial notes search");
+        TestReport.Check(partial.HitBlocks.Length == 0, $"{name}: over the partial index '{query}' is not found in the notes (hits [{string.Join(",", partial.HitBlocks)}])");
+        TestReport.Check(partial.ProvisionalBlocks.SequenceEqual(new[] { 1 }), $"{name}: the notes batch names exactly the provisional note ([{Head(partial.ProvisionalBlocks)}])");
+        var counts = new SortedDictionary<int, int>();
+        for (int i = 0; i < partial.HitBlocks.Length; i++) counts[partial.HitBlocks[i]] = partial.HitCounts[i];
+
+        while (!document.IsIndexComplete) document.ScanAhead(5_000);
+        IReadOnlyList<WordDocumentNoteHtml> refreshed = document.RenderNotesForDisplay(1, 1);
+        TestReport.Check(refreshed.Count == 1 && !refreshed[0].IsProvisional && refreshed[0].Html.Contains("Target"),
+                         $"{name}: fetched again on the complete index the note is final and shows the bookmark's text ({(refreshed.Count == 1 ? System.Text.RegularExpressions.Regex.Replace(refreshed[0].Html, "<[^>]+>", "") : "-")})");
+        bool anyStillProvisional = false;
+        foreach (int note in partial.ProvisionalBlocks)
+        {
+            WordDocumentSearchBatch again = document.SearchNotes(query, options, note, 1);
+            anyStillProvisional |= again.ProvisionalBlocks.Length > 0;
+            counts.Remove(note);
+            if (again.HitBlocks.Length == 1 && again.HitBlocks[0] == note) counts[note] = again.HitCounts[0];
+        }
+        TestReport.Check(!anyStillProvisional, $"{name}: no note is provisional when searched again on the complete index");
+        WordDocumentSearchBatch final = document.SearchNotes(query, options, 0, int.MaxValue);
+        TestReport.Check(final.ProvisionalBlocks.Length == 0 && final.ReachedEnd, $"{name}: a notes batch over the complete index has no provisional notes");
+        string patched = string.Join(" ", counts.Select(pair => $"{pair.Key}:{pair.Value}"));
+        string expected = string.Join(" ", final.HitBlocks.Select((note, i) => $"{note}:{final.HitCounts[i]}"));
+        TestReport.Check(expected.Length > 0 && patched == expected,
+                         $"{name}: partial notes hits with the provisional notes searched again = the complete index's notes hits exactly ([{patched}] vs [{expected}])");
+    }
+
     private static string Head(int[] blocks) => string.Join(",", blocks.Take(8)) + (blocks.Length > 8 ? $",... ({blocks.Length})" : "");
 
     /// <summary>One long div: its first paragraph gets generated text and its second is hidden by rules that need the div's end.</summary>
@@ -117,11 +189,16 @@ internal static class ProvisionalSearchTest
         return path;
     }
 
-    private static void WriteDocx(string path)
+    private static void WriteDocx(string path, bool withNotes = false)
     {
         const string W = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
         var body = new StringBuilder();
-        body.Append("<w:p><w:r><w:t xml:space=\"preserve\">Early </w:t></w:r><w:fldSimple w:instr=\" REF late \"/><w:r><w:t xml:space=\"preserve\"> end.</w:t></w:r></w:p>");
+        if (withNotes)
+            body.Append("<w:p><w:r><w:t>Plain</w:t></w:r><w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:footnoteReference w:id=\"1\"/></w:r></w:p>")
+                .Append("<w:p><w:r><w:t>Early</w:t></w:r><w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:footnoteReference w:id=\"2\"/></w:r></w:p>")
+                .Append("<w:p><w:pPr><w:sectPr/></w:pPr></w:p>");   // the notes' section ends early: their numbering is known (the REF alone is provisional)
+        else
+            body.Append("<w:p><w:r><w:t xml:space=\"preserve\">Early </w:t></w:r><w:fldSimple w:instr=\" REF late \"/><w:r><w:t xml:space=\"preserve\"> end.</w:t></w:r></w:p>");
         for (int i = 0; i < 20_000; i++) body.Append("<w:p><w:r><w:t>Filler paragraph ").Append(i).Append(".</w:t></w:r></w:p>");
         body.Append("<w:p><w:bookmarkStart w:id=\"1\" w:name=\"late\"/><w:r><w:t>Target words</w:t></w:r><w:bookmarkEnd w:id=\"1\"/></w:p>");
         body.Append("<w:sectPr/>");
@@ -132,6 +209,19 @@ internal static class ProvisionalSearchTest
             ["_rels/.rels"] = $"<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"{Rel}officeDocument\" Target=\"word/document.xml\"/></Relationships>",
             ["word/document.xml"] = $"<w:document {W}><w:body>{body}</w:body></w:document>",
         };
+        if (withNotes)
+        {
+            parts["[Content_Types].xml"] = parts["[Content_Types].xml"].Replace("</Types>",
+                "<Override PartName=\"/word/footnotes.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml\"/></Types>");
+            parts["word/_rels/document.xml.rels"] = $"<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId9\" Type=\"{Rel}footnotes\" Target=\"footnotes.xml\"/></Relationships>";
+            const string Mark = "<w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:footnoteRef/></w:r>";
+            parts["word/footnotes.xml"] = $"<w:footnotes {W}>"
+                + "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>"
+                + "<w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>"
+                + $"<w:footnote w:id=\"1\"><w:p>{Mark}<w:r><w:t xml:space=\"preserve\"> Plain note.</w:t></w:r></w:p></w:footnote>"
+                + $"<w:footnote w:id=\"2\"><w:p>{Mark}<w:r><w:t xml:space=\"preserve\"> See </w:t></w:r><w:fldSimple w:instr=\" REF late \"/><w:r><w:t xml:space=\"preserve\"> end.</w:t></w:r></w:p></w:footnote>"
+                + "</w:footnotes>";
+        }
         using ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create);
         foreach (var part in parts)
             using (var writer = new StreamWriter(zip.CreateEntry(part.Key).Open())) writer.Write(part.Value);

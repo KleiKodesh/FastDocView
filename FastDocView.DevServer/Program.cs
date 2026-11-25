@@ -135,6 +135,13 @@ app.MapGet("/api/documents/{id}/search", (string id, string query, bool matchCas
     return Results.Ok(new SearchBody(batch.HitBlocks, batch.HitCounts, batch.NextBlock, batch.ReachedEnd, batch.ProvisionalBlocks));
 }));
 
+// The notes search, one batch: hit note indexes (body order, the notes pane's rows) + counts; provisional notes searched again by the page.
+app.MapGet("/api/documents/{id}/search-notes", (string id, string query, bool matchCase, int fromNote, int maxNotes) => UseDocument(id, document =>
+{
+    WordDocumentSearchBatch batch = document.SearchNotes(query, new WordDocumentSearchOptions { MatchCase = matchCase }, fromNote, Math.Clamp(maxNotes, 1, 2000));
+    return Results.Ok(new SearchBody(batch.HitBlocks, batch.HitCounts, batch.NextBlock, batch.ReachedEnd, batch.ProvisionalBlocks));
+}));
+
 // The block a bookmark marks (in-document links, TOC entries, REF fields): an index lookup.
 app.MapGet("/api/documents/{id}/bookmark", (string id, string name) => UseDocument(id, document =>
     Results.Ok(new BookmarkBody(document.FindBookmark(name)))));
@@ -162,7 +169,7 @@ app.MapGet("/api/documents/{id}/blocks", (string id, int first, int count, HttpR
     response.Headers["X-Known-Block-Count"] = document.KnownBlockCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
     response.Headers["X-Index-Complete"] = document.IsIndexComplete ? "true" : "false";
     return Results.Ok(blocks.Select(b => new BlockBody(b.BlockIndex, (int)b.Kind, b.Html,
-        b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList(), b.IsProvisional)).ToList());
+        b.Notes.Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html, n.IsProvisional ? true : null)).ToList(), b.IsProvisional)).ToList());
 }));
 
 // One picture of a rendered block, by the id its <img data-word-picture> carries (the app service's GET
@@ -173,7 +180,7 @@ app.MapGet("/api/documents/{id}/pictures", (string id, string pictureId) => UseD
 // The notes pane's own windows: notes [first, first + count) of note-references (body order), each read on its own.
 app.MapGet("/api/documents/{id}/notes", (string id, int first, int count) => UseDocument(id, document =>
     Results.Ok(document.RenderNotesForDisplay(first, Math.Min(count, 500))
-        .Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html)).ToList())));
+        .Select(n => new NoteBody(n.Kind == WordDocumentNoteKind.Footnote ? "footnote" : "endnote", n.Number, n.Label, n.Html, n.IsProvisional ? true : null)).ToList())));
 
 // A first open keeps building its index: the demo calls this until it is complete. Each call indexes up to `blocks` more
 // blocks within the app service's time budget (renders and sends nothing), so a block fetch never waits long for the lock.
@@ -220,7 +227,7 @@ record SearchBody(int[] HitBlocks, int[] HitCounts, int NextBlock, bool ReachedE
 record DocumentSummary(string Id, string FileName, string Path, int BlockCount, bool IsRightToLeft, string Stylesheet,
                        double OpenMilliseconds, string Mode, bool HasCachedIndex, string Reason, string ReaderType,
                        int HeadingCount, int FootnoteCount, int EndnoteCount, int KnownBlockCount, bool IsIndexComplete, string? Title);
-record NoteBody(string Kind, int Number, string Label, string Html);
+record NoteBody(string Kind, int Number, string Label, string Html, bool? Provisional = null);
 record NoteReferenceBody(string Kind, int Number, int BlockIndex);
 record ScanBody(int KnownBlockCount, bool IsIndexComplete, int FootnoteCount, int EndnoteCount);
 record BlockBody(int Index, int Kind, string Html, List<NoteBody> Notes, bool Provisional);

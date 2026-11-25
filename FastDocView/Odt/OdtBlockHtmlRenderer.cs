@@ -871,6 +871,9 @@ public sealed partial class OdtBlockHtmlRenderer
         // the body, rendered on its own (draft view: notes pane), never inline
         string? savedLabel = _listLabel; int savedLevel = _listLevel; string? savedPrevious = _previousStyleKey;
         _listLabel = null; _listLevel = -1; _previousStyleKey = null;
+        // the note's own provisional flag (its computed fields over the partial index); the block's is merged back after it
+        bool blockUsedIncompleteIndex = Fields?.UsedIncompleteIndex == true;
+        if (Fields is not null) Fields.UsedIncompleteIndex = false;
         var body = new StringBuilder(256);
         bool isFirst = true;
         foreach (XElement child in note.Element(TextNs + "note-body")?.Elements() ?? [])
@@ -888,7 +891,9 @@ public sealed partial class OdtBlockHtmlRenderer
             }
         }
         _listLabel = savedLabel; _listLevel = savedLevel; _previousStyleKey = savedPrevious;
-        _renderedNotes.Add(new WordDocumentNoteHtml(kind, number, label, body.ToString()));
+        bool isProvisional = Fields?.UsedIncompleteIndex == true;
+        if (Fields is not null) Fields.UsedIncompleteIndex = blockUsedIncompleteIndex || isProvisional;
+        _renderedNotes.Add(new WordDocumentNoteHtml(kind, number, label, body.ToString(), isProvisional));
     }
 
     /// <summary>A list inside a table cell or a note: not flattened by the index; items get a bullet / their order number.</summary>

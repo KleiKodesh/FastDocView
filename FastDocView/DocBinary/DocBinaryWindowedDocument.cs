@@ -774,11 +774,25 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
         var notes = new List<WordDocumentNoteHtml>(references.Length);
         foreach (DocBinaryNoteReferences.NoteReference reference in references)
         {
-            string label = _notes.Label(reference);
-            notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label,
-                                               _renderer.RenderNote(reference.TextStartCp, reference.TextEndCp, label)));
+            notes.Add(RenderNote(reference));
         }
         return notes;
+    }
+
+    /// <summary>
+    /// One note as the notes pane shows it; provisional (<see cref="WordDocumentNoteHtml.IsProvisional"/>) when its own fields
+    /// read the partial index - that flag merged back into the block's.
+    /// </summary>
+    private WordDocumentNoteHtml RenderNote(DocBinaryNoteReferences.NoteReference reference)
+    {
+        string label = _notes.Label(reference);
+        Fields.WordFieldContext? context = _renderer.FieldContext;
+        bool outer = context?.UsedIncompleteIndex == true;
+        if (context is not null) context.UsedIncompleteIndex = false;
+        string html = _renderer.RenderNote(reference.TextStartCp, reference.TextEndCp, label);
+        bool isProvisional = context?.UsedIncompleteIndex == true;
+        if (context is not null) context.UsedIncompleteIndex = outer || isProvisional;
+        return new WordDocumentNoteHtml(reference.Kind, reference.Number, label, html, isProvisional);
     }
 
     /// <summary>Notes [firstNoteIndex, +count) in body order, each rendered from its own text range only.</summary>
@@ -795,9 +809,7 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
                 var notes = new List<WordDocumentNoteHtml>(end - first);
                 for (int i = first; i < end; i++)
                 {
-                    DocBinaryNoteReferences.NoteReference reference = references[i];
-                    string label = _notes.Label(reference);
-                    notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, _renderer.RenderNote(reference.TextStartCp, reference.TextEndCp, label)));
+                    notes.Add(RenderNote(references[i]));
                 }
                 return notes;
             }

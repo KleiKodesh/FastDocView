@@ -1183,7 +1183,12 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
     {
         FlushRun();
         _flow = new Flow();
+        // the note's own provisional flag: the block's so far is kept aside and merged back at the note's end
+        _blockUsedIncompleteIndex = _fieldContext?.UsedIncompleteIndex == true;
+        if (_fieldContext is not null) _fieldContext.UsedIncompleteIndex = false;
     }
+
+    private bool _blockUsedIncompleteIndex;
 
     public override void FootnoteMark(in RtfGroupState state)
     {
@@ -1202,6 +1207,9 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         if (_flow.HasInline) EmitParagraph(_parser.Current, isSectionEnd: false);
         string body = _flow.Output.ToString();
         _flow = _bodyFlow;
+        // provisional when its own fields read the partial index (WordDocumentNoteHtml.IsProvisional); the block's flag includes it
+        bool isProvisional = _fieldContext?.UsedIncompleteIndex == true;
+        if (_fieldContext is not null) _fieldContext.UsedIncompleteIndex = _blockUsedIncompleteIndex || isProvisional;
         RtfNoteReference? reference = _nextNote < _blockNotes.Length ? _blockNotes[_nextNote++] : null;
         WordDocumentNoteKind kind = reference?.Kind ?? (isEndnote ? WordDocumentNoteKind.Endnote : WordDocumentNoteKind.Footnote);
         int number = reference?.Number ?? 0;
@@ -1216,6 +1224,6 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
             _flow.Inline.Append(mark);
             _flow.HasInline = true;
         }
-        _renderedNotes?.Add(new WordDocumentNoteHtml(kind, number, label, body));
+        _renderedNotes?.Add(new WordDocumentNoteHtml(kind, number, label, body, isProvisional));
     }
 }

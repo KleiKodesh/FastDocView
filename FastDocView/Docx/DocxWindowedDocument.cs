@@ -34,7 +34,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
     private WordDocumentBlockRenderGuard? _blockRenderGuardField;
     private WordDocumentBlockRenderGuard _blockRenderGuard => _blockRenderGuardField ??= new WordDocumentBlockRenderGuard(FilePath);
     private readonly object _readLock = new();          // one package stream is shared by the block and note readers (and the on-demand scan)
-    private readonly Dictionary<(WordDocumentNoteKind kind, int id), string> _noteHtmlCache = new();
+    private readonly Dictionary<(WordDocumentNoteKind kind, int id), (string html, bool isProvisional)> _noteHtmlCache = new();
     private long _noteHtmlCacheCharacters;
     private const long NoteHtmlCacheCharacterLimit = 2_000_000;   // bounded: a few MB of rendered notes, never the part
     private readonly Dictionary<(WordDocumentNoteKind kind, int id), DocxNoteReference> _noteNumbers = new();
@@ -358,8 +358,7 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
                 for (int i = first; i < end; i++)
                 {
                     DocxNoteReference reference = references[i];
-                    string label = NoteLabel(reference);
-                    notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, RenderNoteBody(reference, label)));
+                    notes.Add(RenderNote(reference));
                 }
                 return notes;
             }
@@ -373,24 +372,39 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
         ReadOnlySpan<DocxNoteReference> references = _blocks.NoteReferencesInBlocks(blockIndex, blockIndex);
         if (references.IsEmpty) return [];
         var notes = new List<WordDocumentNoteHtml>(references.Length);
-        foreach (DocxNoteReference reference in references)
-        {
-            string label = NoteLabel(reference);
-            notes.Add(new WordDocumentNoteHtml(reference.Kind, reference.Number, label, RenderNoteBody(reference, label)));
-        }
+        foreach (DocxNoteReference reference in references) notes.Add(RenderNote(reference));
         return notes;
     }
 
-    /// <summary>One note read on demand from its part (never the whole part), rendered, kept in a size-bounded cache.</summary>
-    private string RenderNoteBody(DocxNoteReference reference, string label)
+    /// <summary>
+    /// One note as the notes pane shows it. Provisional (<see cref="WordDocumentNoteHtml.IsProvisional"/>) when its label or
+    /// its fields read what the partial index does not know yet: the note's own flags, merged back into the block's.
+    /// </summary>
+    private WordDocumentNoteHtml RenderNote(DocxNoteReference reference)
     {
-        if (_noteHtmlCache.TryGetValue((reference.Kind, reference.NoteId), out string? cached)) return cached;
+        bool outerSection = _usedUnknownNoteSection, outerFields = _renderer.FieldContext?.UsedIncompleteIndex == true;
+        _usedUnknownNoteSection = false;
+        if (_renderer.FieldContext is { } context) context.UsedIncompleteIndex = false;
+        string label = NoteLabel(reference);
+        (string html, bool bodyProvisional) = RenderNoteBody(reference, label);
+        bool isProvisional = _usedUnknownNoteSection || bodyProvisional;
+        _usedUnknownNoteSection = outerSection || _usedUnknownNoteSection;
+        if (_renderer.FieldContext is { } after) after.UsedIncompleteIndex = outerFields || after.UsedIncompleteIndex || bodyProvisional;
+        return new WordDocumentNoteHtml(reference.Kind, reference.Number, label, html, isProvisional);
+    }
+
+    /// <summary>One note read on demand from its part (never the whole part), rendered, kept in a size-bounded cache with its provisional flag
+    /// (a cached body drawn over the partial index stays provisional; the cache is dropped once the index completes).</summary>
+    private (string html, bool isProvisional) RenderNoteBody(DocxNoteReference reference, string label)
+    {
+        if (_noteHtmlCache.TryGetValue((reference.Kind, reference.NoteId), out (string html, bool isProvisional) cached)) return cached;
         XElement? body = _noteReader.Read(reference.Kind, reference.NoteId);
         string html = body is null ? "" : _renderer.RenderNote(body, reference.Kind, label);
+        bool isProvisional = _renderer.FieldContext?.UsedIncompleteIndex == true;
         if (_noteHtmlCacheCharacters + html.Length > NoteHtmlCacheCharacterLimit) { _noteHtmlCache.Clear(); _noteHtmlCacheCharacters = 0; }
-        _noteHtmlCache[(reference.Kind, reference.NoteId)] = html;
+        _noteHtmlCache[(reference.Kind, reference.NoteId)] = (html, isProvisional);
         _noteHtmlCacheCharacters += html.Length;
-        return html;
+        return (html, isProvisional);
     }
 
     /// <summary>
