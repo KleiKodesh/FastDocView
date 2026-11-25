@@ -114,6 +114,14 @@ internal sealed partial class DocxChart
     private XElement? _floorProperties, _backWallProperties, _sideWallProperties;
     private readonly DocxTheme? _theme;
 
+    /// <summary>
+    /// The chart's own size in points when its source keeps one apart from the box it is shown in: a BIFF8 chart object's CHCHART
+    /// rectangle ([MS-XLS] 2.4.43 Chart: dx, dy as 16.16 fixed point), which is the size Word gives the same chart in a .docx
+    /// (word-charts-binary-v3: 415.49 x 242.24 pt vs the .docx extent 415.30 x 242.25), while the .doc / RTF object box is about
+    /// 1 pt larger (objw / objh 416.25 x 243.45). LibreOffice reads the rectangle (sc/source/filter/excel/xichart.cxx:3876-3880)
+    /// but lays the chart out in the object's box (:4245); Word is the reference here.
+    /// </summary>
+    internal (double Width, double Height)? SavedSize { get; set; }
     private DocxChart(DocxTheme? theme) => _theme = theme;
 
     /// <summary>The chart of a chart part (namespace-free c:chartSpace); null when it has no c:chart.</summary>
@@ -534,9 +542,16 @@ internal sealed partial class DocxChart
     public string Svg(double width, double height)
     {
         width = Math.Max(width, 1); height = Math.Max(height, 1);
+        double frameWidth = width, frameHeight = height, offsetX = 0, offsetY = 0;
+        // a chart object's own size (BIFF8 CHCHART) inside its slightly larger object box: laid out at its own size, centred, unscaled
+        if (SavedSize is { } saved && saved.Width > 0 && saved.Height > 0 && Math.Abs(saved.Width - width) <= 0.02 * width && Math.Abs(saved.Height - height) <= 0.02 * height)
+        {
+            offsetX = (width - saved.Width) / 2; offsetY = (height - saved.Height) / 2;
+            width = saved.Width; height = saved.Height;
+        }
         var svg = new StringBuilder();
-        svg.Append("<svg class=\"word-chart\" aria-hidden=\"true\" viewBox=\"0 0 ").Append(N(width)).Append(' ').Append(N(height)).Append("\" width=\"").Append(N(width))
-           .Append("pt\" height=\"").Append(N(height)).Append("pt\" style=\"position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden\" font-family=\"Calibri, sans-serif\">");
+        svg.Append("<svg class=\"word-chart\" aria-hidden=\"true\" viewBox=\"").Append(N(offsetX == 0 ? 0 : -offsetX)).Append(' ').Append(N(offsetY == 0 ? 0 : -offsetY)).Append(' ').Append(N(frameWidth)).Append(' ').Append(N(frameHeight)).Append("\" width=\"").Append(N(frameWidth))
+           .Append("pt\" height=\"").Append(N(frameHeight)).Append("pt\" style=\"position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden\" font-family=\"Calibri, sans-serif\">");
         // chart area: spChartSpaceFill bg1 for styles 1-32, lt1 33-40, dk1 41-48
         string chartFill = PropertiesFill(_chartSpaceProperties, DocxDrawingColor.Css(new XElement("c", new XElement("schemeClr", new XAttribute("val", _style >= 41 ? "dk1" : _style >= 33 ? "lt1" : "bg1"))), _theme) ?? "#FFFFFF") ?? "none";
         string? chartLine = _chartSpaceProperties?.Element("ln") is { } chartLn && chartLn.Element("noFill") is null && chartLn.Element("solidFill") is { } chartLineFill ? DocxDrawingColor.Css(chartLineFill, _theme) : null;

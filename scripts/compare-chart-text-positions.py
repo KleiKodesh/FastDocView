@@ -37,7 +37,7 @@ for title in titles:
     title_svg = next(t for t in texts if t[0] == title)
     page = ref[0]
     # only the spans inside this chart's own box (the SVG height below the title's baseline, its width around the title)
-    box = re.search(r'viewBox="0 0 ([0-9.]+) ([0-9.]+)"', svg)
+    box = re.search(r'viewBox="[-0-9.]+ [-0-9.]+ ([0-9.]+) ([0-9.]+)"', svg)
     width, height = (float(box.group(1)), float(box.group(2))) if box else (600.0, 300.0)
     near = [s for s in spans if s[0] == page and -title_svg[2] - 2 <= s[5] - ref[5] <= height - title_svg[2] + 2
             and abs(s[3] - ref[3]) <= width / 2 + 2]

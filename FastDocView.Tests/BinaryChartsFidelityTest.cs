@@ -58,6 +58,11 @@ public static class BinaryChartsFidelityTest
             TestReport.Check(Regex.IsMatch(column, "fill=\"#0000FF\"[^>]*>5[.]0<") && Regex.IsMatch(column, "fill=\"#00B050\"[^>]*>North<"), extension + ": axis label and legend text colours (the legend's 00B050, saved as its nearest palette colour 339966 in both the RGB and the index, read exactly from its TextPropsStream)");
             string scatter = Block("Scatter Chart");
             TestReport.Check(Regex.Matches(scatter, "word-chart-error-bar").Count == 8, extension + ": x (custom) and y (fixed) error bars, one per point each (" + Regex.Matches(scatter, "word-chart-error-bar").Count + ")");
+            // the chart's own size (CHCHART 415.49 x 242.24 pt, as Word's .docx extent) centred in the ~1 pt larger object box, unscaled
+            TestReport.Check(Regex.IsMatch(column, "viewBox=\"-0[.]3[0-9]* -0[.][56][0-9]* 416[.][0-9]+ 243[.][0-9]+\""), extension + ": laid out at the chart's own saved size, centred in its object box");
+            // text x values kept as text (points 1..n) and the custom x error amounts (0.2..0.8, the category cache's error column): x axis 0..6 as Word's
+            var scatterTexts = Regex.Matches(scatter, "<text[^>]*>([^<]*)</text>").Cast<Match>().Select(m => m.Groups[1].Value).ToList();
+            TestReport.Check(scatterTexts.Count(t => t == "6") == 2 && !scatterTexts.Contains("0.2"), extension + ": scatter over text x values scaled 0..6 on both axes, as Word draws it");
         }
     }
 
@@ -191,6 +196,17 @@ public static class BinaryChartsFidelityTest
             // (Word saves the line charts as pictures; its .doc keeps the workbook's own values, all positive)
             TestReport.Check(ChartTexts(doc, "Col CrossAt").Any(t => t.Text == "3" && t.Anchor == "end" && Math.Abs(t.X + 8.3) <= 4) && Near(ChartTexts(doc, "Bar CrossAt"), "2", null, 18.7, 1.5),
                              ".doc (BIFF8 CHVALUERANGE / CHLABELRANGE crossings): value axis at category 3, horizontal bars' value labels at the top");
+        }
+        string rowsDoc = Path.Combine(folder, "word-charts-3d-rows-v1.doc");
+        if (File.Exists(rowsDoc))
+        {
+            // the BIFF8 scenes as the .docx draws them: depth 60 % (CHCHART3D pcDepth -> c:depthPercent) and the hidden series axis
+            // (its line format without SHOWAXIS -> c:delete 1), so no room is kept for series names
+            List<string> doc = Render(rowsDoc);
+            var docFlat = ChartTexts(doc, "Area3D Flat");
+            TestReport.Check(Near(docFlat, "Q1", -186.0, 178.7, 2) && Near(docFlat, "Q4", 161.7, 178.7, 2), ".doc: right-angled 3-D area, depth 60 %: Word's scene");
+            var docRight = ChartTexts(doc, "Area3D Right");
+            TestReport.Check(Near(docRight, "Q1", -186.2, 186.4, 2) && Near(docRight, "Q4", 112.0, 186.4, 2), ".doc: hidden series axis keeps no room for series names");
         }
         // scatter / bubble: the y axis at an x value (x 0 for autoZero), at the right for max; bubbles widen both axes (Word: -4..7, -8..8)
         string scatterPath = Path.Combine(folder, "word-charts-scatter-crosses-v1.docx");

@@ -4142,3 +4142,28 @@ profile corners (as on rectangles).
   read back to front. Word's print ignores these selectors (see above), so browser archives follow Edge.
 - Cold first paint, AOT ColdBench, 27 MB structural archive (css-selectors body x 20000), 5 runs x 2 rounds, paired:
   8506804 11 / 15 ms median, this change 13 / 14 ms (noise).
+
+### Charts in .doc / RTF: the chart's own size, 3-D depth, hidden series axis (2026-11-25)
+
+- Size: a BIFF8 chart keeps its own rectangle in CHCHART ([MS-XLS] 2.4.43, 16.16 fixed point; word-charts-binary-v3 415.49 x
+  242.24 pt), the size Word gives the same chart in its .docx (extent 415.30 x 242.25), while the .doc / RTF object box (objw /
+  objh, preview picture) is about 1 pt larger. LibreOffice reads the rectangle (sc/source/filter/excel/xichart.cxx:3876-3880) but
+  lays the chart out in the object box (:4245); Word is the reference: the chart is laid out at its own size, centred in the box,
+  unscaled (only when the two are within 2 %).
+- 3-D depth: CHCHART3D pcDepth (offset 8, after pcHeight; xichart.cxx:2433-2442 reads it as mnRelDepth and does not use it) is
+  c:depthPercent (3d-rows "Area3D Flat": 60, as in the .docx).
+- Hidden axes: an axis whose own line format (CHAXISLINE 0 + CHLINEFORMAT) lacks EXC_CHLINEFORMAT_SHOWAXIS 0x0004 is hidden with
+  its labels (xlchart.hxx:266, xichart.cxx:3341 EXC_CHPROP_SHOW) -> c:delete 1. Word writes its deep 3-D charts' series axis so
+  (the .docx has serAx delete 1); without it the renderer kept room for series names and narrowed the plot. This was the 3d-rows x
+  regression of the size change (0.42 -> 0.91): the size fix moved every label but the scenes were still the wrong scenes.
+- Scatter charts over text x values pass them as text (c:xVal c:strRef, points 1..n), and custom x error amounts come from the
+  error series' column of the category cache (Word leaves the value link empty; its .docx has c:plus 0.2 0.4 0.6 0.8).
+- Measured (scripts/compare-chart-text-positions.py vs Word's PDFs of the .docx twins; median x / y pt, before -> after; mean |x|):
+  binary-v3 .doc 1.39 / 1.12 -> 1.03 / 0.34 (RTF the same; mean 5.66 -> 1.64), 3d-rows .doc 0.42 / 1.33 -> 0.24 / 0.52 (mean
+  6.39 -> 0.88), right-angled 0.26 / 1.10 -> 0.29 / 0.34 (mean 2.32 -> 0.98; 42 texts closer, 21 up to 0.4 pt further, now the
+  .docx's own positions), seraxis 0.86 / 1.17 -> 0.91 / 0.47 (mean 1.99 -> 1.87), theme-text 1.39 / 1.14 -> 0.93 / 0.50. Every
+  .doc / RTF text now sits where the .docx twin puts it (within 0.25 pt) except where the files' data differ: Word's .doc of
+  word-charts-crosses-v1 / scatter-crosses-v1 keeps the workbook's positive values (the .docx has negatives) and 3d-rows
+  "Line3D SerAx" has English names in the .doc and Hebrew in the .docx; the charts Word saved as pictures have no twin.
+- Harness (--charts): v3 .doc / RTF laid out at the saved size and the scatter axes 0..6; 3d-rows .doc depth 60 % scene and the
+  hidden series axis at Word's positions.

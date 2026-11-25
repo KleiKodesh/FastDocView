@@ -104,6 +104,7 @@ internal static class ExcelBinaryChart
         public int Type;
         public double? Min, Max, Major;
         public bool Gridlines, NoTickMarks, NoLabels;
+        public bool Hidden;                                        // the axis line's CHLINEFORMAT without EXC_CHLINEFORMAT_SHOWAXIS: c:delete 1
         public double? LabelSize;
         public string? Title;
         public double? TitleSize;
@@ -143,12 +144,13 @@ internal static class ExcelBinaryChart
         var texts = new List<TextData>();
         string kind = "";
         bool horizontal = false, stacked = false, percent = false, is3D = false, real3D = false, varyColors = false, deep3D = false;
-        double gap = 150, overlap = 0, hole = 0, rotation = 0, elevation = 15, rotY = 20, eyeDistance = 30;
+        double gap = 150, overlap = 0, hole = 0, rotation = 0, elevation = 15, rotY = 20, eyeDistance = 30, depthPercent = 100;
         string? legendPosition = null;
         (double X, double Y)? legendAt = null;
         double? legendSize = null;
         TextData? legendText = null;
         (double X, double Y, double W, double H)? plotRect = null;     // the axes set's CHFRAMEPOS (chart units / 4000)
+        (double Width, double Height)? chartSize = null;               // CHCHART: the chart's own size in points
         var formats = new Dictionary<int, string>();
         var palette = new List<string>();                          // PALETTE (0x0092): the workbook's colours 8.. (xistyle.cxx:169-190)
         string? language = null;                                  // the first lang="..." of the Office 2007+ DrawingML kept in CrtMlFrt records
@@ -157,6 +159,7 @@ internal static class ExcelBinaryChart
         var categories = new Dictionary<int, string>();
         var bubbles = new Dictionary<(int Point, int Series), double>();
         var xNumbers = new Dictionary<int, double>();
+        var otherCategoryNumbers = new Dictionary<(int Point, int Series), double>();   // category-cache numbers in a trend / error series' column
 
         // the object each BEGIN opens: what a following format / font / string record belongs to
         var stack = new Stack<object?>();
@@ -268,6 +271,12 @@ internal static class ExcelBinaryChart
                     last = null;
                     continue;
                 case ChChart:
+                    // the chart's own rectangle in points, 16.16 fixed point (x, y, dx, dy; [MS-XLS] 2.4.43; xichart.cxx:3876-3880)
+                    if (length >= 16 && chartSize is null)
+                    {
+                        double dx = BitConverter.ToInt32(body, 8) / 65536.0, dy = BitConverter.ToInt32(body, 12) / 65536.0;
+                        if (dx > 0 && dy > 0 && dx < 10000 && dy < 10000) chartSize = (dx, dy);
+                    }
                     last = "chart";
                     continue;
                 case ChSeries:
@@ -309,6 +318,9 @@ internal static class ExcelBinaryChart
                         else if (!automatic) formatSeries.Line = ColorOf(body, 0, length >= 12 ? BitConverter.ToUInt16(body, 10) : -1);
                     }
                     else if (current is AxisData lined && axisLine == 1) lined.Gridlines = pattern != 5;
+                    // the axis line itself without EXC_CHLINEFORMAT_SHOWAXIS (0x0004): the whole axis is hidden, labels too (xlchart.hxx:266,
+                    // xichart.cxx:3341 EXC_CHPROP_SHOW) - Word's deep 3-D charts keep their series axis so, the .docx has c:delete 1
+                    else if (current is AxisData shown && axisLine == 0 && (BitConverter.ToUInt16(body, 8) & 4) == 0) shown.Hidden = true;
                     continue;
                 }
                 case ChEscherFormat when current is "dataformat" && formatSeries is not null:
@@ -358,6 +370,7 @@ internal static class ExcelBinaryChart
                     rotY = BitConverter.ToUInt16(body, 0);
                     elevation = BitConverter.ToInt16(body, 2);
                     eyeDistance = BitConverter.ToUInt16(body, 4);
+                    depthPercent = BitConverter.ToUInt16(body, 8);   // pcDepth after pcHeight ([MS-XLS] 2.4.47 Chart3d; xichart.cxx:2433-2442 mnRelDepth)
                     real3D = (BitConverter.ToUInt16(body, 12) & 1) != 0;
                     // EXC_CHCHART3D_CLUSTER (0x0002) clear: one depth row per series and a series (Z) axis (xlchart.hxx:538;
                     // xichart.hxx:1013 Is3dDeepChart, xichart.cxx:2882 Z stacking, :3596 the Z axis)
@@ -441,6 +454,7 @@ internal static class ExcelBinaryChart
                     // categories / x values: only a drawn series' column - a trend line or error bar series has its own column in the
                     // cache too (Word's v3: the custom x error amounts), which is not the chart's categories
                     else if (cacheKind == 2 && IsDrawnSeriesColumn(column)) { if (!categories.ContainsKey(row)) categories[row] = value.ToString("R", CultureInfo.InvariantCulture); if (!xNumbers.ContainsKey(row)) xNumbers[row] = value; }
+                    else if (cacheKind == 2) otherCategoryNumbers[(row, column)] = value;
                     else if (cacheKind == 3) bubbles[(row, column)] = value;
                     continue;
                 }
@@ -525,10 +539,18 @@ internal static class ExcelBinaryChart
         foreach (AxisData plain in axes.Where(a => !a.ExactLabelColor))
             if (plain.RecordLabelColor is not null && axes.FirstOrDefault(a => a.ExactLabelColor && a.RecordLabelColor == plain.RecordLabelColor) is { } exactSibling) plain.LabelColor = exactSibling.LabelColor;
         if (series.Count == 0 || kind.Length == 0) return null;
-        // custom error amounts: the error bar series' own cached values (their column of the value cache)
+        // custom error amounts: the error bar series' own cached values - their column of the value cache, or (Word's x error bars,
+        // word-charts-binary-v3: the Word-made .docx of the same chart has c:plus 0.2 0.4 0.6 0.8) of the category cache. LibreOffice
+        // reads the error series' value link (sc/source/filter/excel/xichart.cxx:1708-1714, 1948) through its formula, which Word
+        // leaves empty here; the cache is what Word keeps.
         for (int s = 0; s < series.Count; s++)
             if (series[s].ErrorBar is { } custom && custom[1] == 4)
-                series[s].CustomValues = Enumerable.Range(0, MaxPointOf(values)).Select(p => values.TryGetValue((p, s), out double v) ? (double?)v : null).ToList();
+            {
+                int column = s;
+                Dictionary<(int Point, int Series), double> source = values.Keys.Any(k => k.Series == column) ? values : otherCategoryNumbers;
+                int count = source.Keys.Where(k => k.Series == column).Select(k => k.Point + 1).DefaultIfEmpty(0).Max();
+                series[s].CustomValues = Enumerable.Range(0, count).Select(p => source.TryGetValue((p, column), out double v) ? (double?)v : null).ToList();
+            }
 
         foreach (TextData text in texts)
             if (text.Link is 2 or 3 && text.Text is not null && axes.FirstOrDefault(a => a.Type == (text.Link == 2 ? 1 : 0)) is { } titled)
@@ -540,7 +562,9 @@ internal static class ExcelBinaryChart
         // the chart's text widths: the title's font when there is a title (Office 2007+ writes the theme font there - Calibri -
         // while the axis FONT records fall back to Arial), else the axis labels' font
         string? typeface = title?.Typeface is { Length: > 0 } titleFont ? titleFont : labelTypeface;
-        return DocxChart.Read(ChartSpace(), null);
+        DocxChart? read = DocxChart.Read(ChartSpace(), null);
+        if (read is not null) read.SavedSize = chartSize;
+        return read;
 
         XElement ChartSpace()
         {
@@ -600,11 +624,24 @@ internal static class ExcelBinaryChart
                     if (values.TryGetValue((p, s), out double v)) cells.Add(new XElement("pt", new XAttribute("idx", p), new XElement("v", v.ToString("R", CultureInfo.InvariantCulture))));
                 if (kind is "scatter" or "bubble")
                 {
-                    var x = new XElement("numCache", new XElement("ptCount", Val(pointCount)));
-                    // text x values (no numbers in the category cache): none, so the points are 1..n as Word shows them
-                    for (int p = 0; p < pointCount && xNumbers.Count > 0; p++)
-                        x.Add(new XElement("pt", new XAttribute("idx", p), new XElement("v", (xNumbers.TryGetValue(p, out double xv) ? xv : p + 1).ToString("R", CultureInfo.InvariantCulture))));
-                    element.Add(new XElement("xVal", new XElement("numRef", x)), new XElement("yVal", new XElement("numRef", cells)));
+                    XElement xValues;
+                    if (xNumbers.Count == 0 && categories.Count > 0)
+                    {
+                        // text x values: as text, the way Word's .docx of the same chart keeps them (c:xVal c:strRef), so the points
+                        // are 1..n and the axis is scaled as Word scales it
+                        var names = new XElement("strCache", new XElement("ptCount", Val(pointCount)));
+                        for (int p = 0; p < pointCount; p++)
+                            if (categories.TryGetValue(p, out string? name)) names.Add(new XElement("pt", new XAttribute("idx", p), new XElement("v", name)));
+                        xValues = new XElement("strRef", names);
+                    }
+                    else
+                    {
+                        var x = new XElement("numCache", new XElement("ptCount", Val(pointCount)));
+                        for (int p = 0; p < pointCount && xNumbers.Count > 0; p++)
+                            x.Add(new XElement("pt", new XAttribute("idx", p), new XElement("v", (xNumbers.TryGetValue(p, out double xv) ? xv : p + 1).ToString("R", CultureInfo.InvariantCulture))));
+                        xValues = new XElement("numRef", x);
+                    }
+                    element.Add(new XElement("xVal", xValues), new XElement("yVal", new XElement("numRef", cells)));
                     if (kind == "bubble")
                     {
                         var sizes = new XElement("numCache", new XElement("ptCount", Val(pointCount)));
@@ -655,6 +692,8 @@ internal static class ExcelBinaryChart
             if (is3D)
             {
                 var view = new XElement("view3D", new XElement("rotX", Val(N(elevation))), new XElement("rotY", Val(N(rotY))));
+                // the depth as a percent of the width: c:depthPercent, which Word writes from the same value (word-charts-3d-rows-v1 "Area3D Flat": 60)
+                if (depthPercent is >= 20 and <= 2000) view.Add(new XElement("depthPercent", Val(N(depthPercent))));
                 // CHCHART3D's eye distance is c:perspective as is: Word 16 saves a .docx chart's perspective 30 as 30 (its .doc / .rtf of
                 // word-charts-seraxis-v1) and draws both alike. LibreOffice reads it as its own 0..100 perspective (xichart.cxx:2465),
                 // which oox halves from c:perspective - twice Word's angle, so Word is the reference.
@@ -728,7 +767,7 @@ internal static class ExcelBinaryChart
             var scaling = new XElement("scaling");
             if (axis?.Max is { } max) scaling.Add(new XElement("max", Val(N(max))));
             if (axis?.Min is { } min) scaling.Add(new XElement("min", Val(N(min))));
-            var element = new XElement(name, new XElement("axId", Val(id)), scaling, new XElement("delete", Val(axis is null ? "1" : "0")),
+            var element = new XElement(name, new XElement("axId", Val(id)), scaling, new XElement("delete", Val(axis is null || axis.Hidden ? "1" : "0")),
                                        new XElement("axPos", Val(position)));
             if (axis?.Gridlines == true) element.Add(new XElement("majorGridlines"));
             if (axis?.Title is { } axisTitle) element.Add(new XElement("title", RichText(axisTitle, axis.TitleSize)));
