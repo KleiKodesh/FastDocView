@@ -144,26 +144,24 @@ as "won't do (not printed)" in docs/UNSUPPORTED-FEATURES.md, and don't build the
   - LibreOffice: every `soffice` start (command line, UNO or Python) sets
     `SAL_DISABLE_PRINTERLIST=1` and `SAL_DISABLE_DEFAULTPRINTER=1` and runs with
     `--headless --invisible --norestore --nologo` and a private `-env:UserInstallation` profile.
-- **QA before each commit** (user, 2026-10-28): before every commit run the harness
-  (`dotnet run -c Release -- --real samples/…doc samples/…docx --audit <both>`), and when the
-  change touches rendering or the demo, the Playwright checks against the live rig. Then have a
-  fresh subagent review the staged diff for correctness (not style) and fix what it finds. A
-  commit that was not QA'd is not pushed.
-- **Work in parallel where pieces are independent** (user, 2026-10-28): separate formats,
-  speed vs coverage, research vs implementation go to parallel subagents with narrow briefs;
-  only sequential, shared-file work stays in the main thread. **At most 3 agents at a time**
-  in a session (user, 2026-10-28: 2; raised to 3 on 2026-10-29) — the machine must stay usable; queue the rest. Agents work
-  in their own worktree under `C:\Users\Public\Documents\KleiKodeshProject-work\<topic>` (outside every repo; removed once merged) (branch `work/<topic>`),
-  commit there, never push or merge; the main thread merges after QA.
-- **Commit as you go** (user, 2026-10-28): small commits after each verified step (a feature,
-  a fix, a measured speed-up), not one big commit at the end — each QA'd per the rule above.
+- **Tests are proportional and fast** (user, 2026-11-26 - replaces the heavier 2026-10-28 rules):
+  work must never be "2 minutes of work, then 20 of tests, 20 of branching, 20 of merging".
+  - A small change gets one targeted check of what it touched (seconds to a couple of minutes):
+    the affected format / function on one or two samples, or the one relevant harness mode.
+  - The full harness (`--real … --audit`), corpus / `test-data` sweeps, speed numbers and the
+    Playwright rig run only when the change touches a core reader or renderer, or the user asks.
+    Long runs go to GitHub Actions, not the local PC.
+- **QA before each commit**: a fresh subagent reviews the staged diff for correctness (not
+  style), short and scoped to the change; fix what it finds, then commit.
+- **No branch ceremony** (user, 2026-11-26): work on master in the main checkout and commit
+  your own files. A separate worktree/branch only when the user asks or the work would clash
+  with uncommitted edits in the same files. Agents: one at a time unless the user asks for more.
+- **Commit as you go** (user, 2026-10-28): small commits after each step (a feature, a fix,
+  a speed-up), not one big commit at the end — each QA'd per the rule above.
 - **No speed hacks — no threading to hide slowness** (user, 2026-10-28): if something is slow,
   the implementation is bad; fix the algorithm / data structure / allocations. No extra threads,
   producer–consumer pipelines or parallel loops to mask a slow pass. (A two-thread inflate/scan
   hand-off was tried and reverted for this reason.)
-- **Test runs take a few minutes at most** (user, 2026-10-28): iterate and QA on samples — the files
-  relevant to the change plus a fixed-seed random sample (~300) of `test-data/` / real files. Never
-  block on full-corpus runs.
 - **Book view is NEVER FastDocView** (user, 2026-10-28): the app's book view (library books) and the
   FastDocView page (local document files) are different things — own feature folder, route, stores and
   names. FastDocView only borrows the book view's design and the shared components (WindowedScroller,
@@ -177,4 +175,4 @@ as "won't do (not printed)" in docs/UNSUPPORTED-FEATURES.md, and don't build the
 - **A failed build stops the commit**: never chain `build | grep … && git commit` — grep
   succeeds even when the build fails. Check the build's exit status, both targets (net48 + net10).
 - Commits: author KleiKodesh, **no Co-Authored-By trailer**; push freely to this repo.
-- Don't build or verify unless asked; when asked, run the harness and the Playwright checks.
+- Heavy verification (full harness, Playwright rig) only per "Tests are proportional and fast" above.
