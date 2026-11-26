@@ -357,3 +357,18 @@ not indexed yet shows nothing and the block is fetched again once the index is c
    (sprm 50), each right-to-left run's 8-bit text decoded in its ftcBi font's code page (else lidBi's). Line spacing (sprm 20:
    dyaLine in twips, positive at least, negative exactly). Pictures as for Word 6 (4). Checked on fixtures built from
    word2.doc (OldWordFormattingTest): no public Hebrew Word 2 file exists and Word 16 opens no Word 2 file here.
+
+## Document properties (IWordWindowedDocument.ReadProperties, 2026-11-26)
+
+Read only when asked, from the small property part (never the body). Absent = not stored by the file.
+
+| Property | docx / Flat OPC | doc | rtf | odt/fodt | txt | mhtml |
+|---|---|---|---|---|---|---|
+| Title, subject, author, last modified by, keywords, comments | yes | yes | yes | yes (author = initial-creator, last = dc:creator) | n.a. | no |
+| Category, company, manager | yes | yes | yes | n.a. (not in ODF) | n.a. | no |
+| Status (contentStatus) | yes | yes | n.a. | n.a. | n.a. | no |
+| Created, modified, last printed | yes | yes | yes (wall-clock time) | yes | n.a. | no |
+| Pages, words, characters, characters with spaces | yes | yes | yes | yes | n.a. | no |
+| Lines, paragraphs | yes | yes | n.a. | yes (row-count, paragraph-count) | n.a. | no |
+| Total editing time, revision | yes | yes | yes | yes (editing-duration, editing-cycles) | n.a. | no |
+| Application, template | yes | yes | n.a. | yes (generator, meta:template) | n.a. | no |

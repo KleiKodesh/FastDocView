@@ -97,6 +97,7 @@ for (int i = 0; i < args.Length; i++)
         case "--math": OfficeMathFidelityTest.Run(); skipSynthetic = true; break;   // only the equation checks (seconds)   // only the Word field checks (seconds)
         case "--charts": OdtChartsFidelityTest.Run(); BinaryChartsFidelityTest.Run(); BinaryChartsFidelityTest.RunLineChart(); BinaryChartsFidelityTest.RunTrendNames(); BinaryChartsFidelityTest.RunTrendNamesEnglish(); BinaryChartsFidelityTest.RunTrendLabelDefaults(); BinaryChartsFidelityTest.RunCrossingsAndRows(); BinaryChartsFidelityTest.RunSeriesAxes(); BinaryChartsFidelityTest.RunScenePlacement(); BinaryChartsFidelityTest.RunObjectPreviews(); skipSynthetic = true; break;   // only the chart checks (seconds); writes TestOutput/charts-*.html
         case "--chart-html": BinaryChartsFidelityTest.WriteHtml(args[i + 1], args[i + 2]); return 0;   // a document's blocks as HTML (chart layout comparisons)
+        case "--properties": { var files = new List<string>(); while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) files.Add(args[++i]); DocumentPropertiesTest.Run(files, 50); skipSynthetic = true; break; }   // document properties: Word-saved trio + given files + 50 test-data files
         case "--fields": WordFieldsFidelityTest.Run(); WordFieldsOtherFormatsTest.Run(); OdtFieldsFidelityTest.Run(); EquationLayoutFidelityTest.Run(); skipSynthetic = true; break;   // only the Word field checks (seconds)
         case "--tab-stops": TabStopsFidelityTest.Run(); skipSynthetic = true; break;
         case "--drop-caps": DropCapsAndHyphenationFidelityTest.Run(); skipSynthetic = true; break;
@@ -216,6 +217,7 @@ if (!skipSynthetic)
     LineSpacingTest.Run();
     MalformedXmlRecoveryTest.Run();
     WordXmlFormatsTest.Run();
+    DocumentPropertiesTest.Run([], 0);
     EmbeddedFontsAndNoteSeparatorsTest.Run();
     OdtMalformedRecoveryTest.Run();
     CompactIndexTest.RunEliasFano();

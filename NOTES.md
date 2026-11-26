@@ -4244,3 +4244,48 @@ profile corners (as on rectangles).
   notes searched again = the complete index's notes hits. .doc shares the code shape but has no generated sample.
 - Found on the way: an RTF REF with an empty saved result ({\fldrslt }) shows nothing even on a complete index (the
   saved result wins); the harness sample has no result group, as the body sample.
+
+### Empty saved field results print computed (2026-11-25; fixes the "found on the way" above)
+
+- Word 16 (test-data/word-fields/save-field-empty-result.ps1: hidden Word opens the hand-written field-empty-result-v1.rtf
+  and .docx from scripts/make-field-empty-result-fixture.py, lists Field.Type / Locked / Result, saves Word's .doc of each
+  BEFORE its PDF, then the PDFs): on screen (Range.Text, no update) an empty result ({\fldrslt }, w:fldChar separate
+  right before end, 0x14 0x15) and a missing one both show nothing; Word's print (PDF export) computes every unlocked
+  field, an empty or missing result alike: REF (with / without \* MERGEFORMAT, \h, \* Upper, a bare bookmark name),
+  PAGEREF, NOTEREF, STYLEREF, SEQ (counted), REF to a missing bookmark = Word's "reference source not found" error.
+  Locked fields print nothing. Same in .rtf, .docx and .doc. (Word's PDF export also recomputes a non-empty unlocked
+  result: case Q "OLD" prints BOOKTEXT; a saved result that is not empty still shows as saved here, as before.)
+  Word's RTF import drops the bookmark around a note reference, so NOTEREF there prints "bookmark not defined" (not checked).
+- WordFieldStack: a separated field whose result had no content by its end (`Field.HasResultContent`, set by Route when a
+  reader routes content - text, a tab, a picture / br as ""; a null Route() after an end is not content; a field restored
+  at a block start counts as having content) is computed at End, unless locked, private or already replaced (placeholder,
+  hidden, computed at the separator); inside another field's code its text joins that code. The SEQ value counted at the
+  separator is kept (`Field.CountedValue`). One place for all formats, so GetText and search read the same text.
+- LibreOffice: .docx / .rtf (writerfilter) make REF / PAGEREF / STYLEREF real Writer reference fields
+  (sw/source/writerfilter/dmapper/DomainMapper_Impl.cxx:8803-8880) and set a saved result only when it is not empty
+  (:9491-9496), so Writer shows the computed reference; .doc Read_F_Ref builds an SwGetRefField
+  (sw/source/filter/ww8/ww8par5.cxx:2155, :2215) that Writer computes.
+- Check: DocumentTextTest.CheckFieldEmptyResult (--search): the four files, every case, GetText = rendered text, search counts.
+- Content = text, tabs, line breaks and note marks in every reader (renderers and searches alike); a saved result that holds only a picture, an equation or a paragraph mark counts as empty in .docx / .rtf and is computed (.doc routes its paragraph mark as content). Not checked against Word.
+
+## Document properties (2026-11-26)
+
+`IWordWindowedDocument.ReadProperties()` returns a format-neutral `WordDocumentProperties` (title ... template, created /
+modified / last printed, pages / words / characters / with spaces / lines / paragraphs, editing minutes) - read when the
+host asks (the app's details dialog), from the small property part only; first paint is untouched.
+
+- .docx / Flat OPC: docProps/core.xml + app.xml (`DocxDocumentProperties`), mapping as LibreOffice
+  oox/source/docprop/docprophandler.cxx:224-243 (Characters = non-whitespace, CharactersWithSpaces = all) and 437-530.
+- .doc: SummaryInformation PIDSI 0x02-0x10, 0x12 ([MS-OLEPS] 2.25.1) and DocumentSummaryInformation PIDDSI 0x02, 0x05,
+  0x06, 0x0E, 0x0F, 0x11, 0x1B ([MS-OSHARED] PIDDSI table), both checked on learn.microsoft.com 2026-11-26; LibreOffice
+  sfx2/source/doc/docinf.cxx:60-135, 182-186 reads the texts / dates / edit time only (not the counts).
+- .rtf: the {\info} scan of RtfFieldProperties plus \nofpages / \nofcharsws. The RTF 1.5 spec (and LibreOffice
+  rtfdispatchvalue.cxx:1465-1496) call \nofchars "with spaces" and \nofcharsws "without"; every Word-saved RTF in
+  test-data has \nofcharsws > \nofchars and fields-v1.rtf matches fields-v1.docx's CharactersWithSpaces - Word wins:
+  \nofchars = without spaces, \nofcharsws = with.
+- .odt / .fodt: OdtDocumentMeta (already read at open) - ODF 1.3 part 3 4.3.2.6-4.3.2.18, row-count = lines (19.334);
+  LibreOffice SfxDocumentMetaData.cxx:363-440.
+- Dates: UTC when the file names a zone / FILETIME, wall-clock otherwise (RTF, zone-less ODF).
+- Check: `--properties [files]` (DocumentPropertiesTest): fields-v1 .docx / .doc / .rtf agree; both samples read in
+  0.7 ms (.doc) / 3.0 ms (.docx); 50 fixed-seed test-data files, 0 crashes, slowest 59 ms. Unverified: .odt / Flat OPC
+  values against Word's dialog; the .doc revision ("1") differs from the .docx save ("2") as Word stored it.

@@ -156,6 +156,14 @@ public interface IWordWindowedDocument : IDisposable
     /// show. Ids are opaque and only valid for this open document.
     /// </summary>
     WordDocumentPicture? ReadPicture(string pictureId);
+
+    /// <summary>
+    /// The properties the file stores about itself (<see cref="WordDocumentProperties"/>: title, author, dates, saved
+    /// statistics) - read when asked, from the format's small property part only (docProps/core.xml + app.xml, the .doc
+    /// property set streams, meta.xml / office:meta, the RTF header's info group), never from the body. A format that
+    /// stores none returns <see cref="WordDocumentProperties.None"/>.
+    /// </summary>
+    WordDocumentProperties ReadProperties();
 }
 
 /// <summary>A picture's bytes and media type (image/png, image/jpeg ...), as the host serves them.</summary>

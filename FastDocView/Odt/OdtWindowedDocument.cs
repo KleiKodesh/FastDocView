@@ -811,6 +811,10 @@ public sealed class OdtWindowedDocument : IWordWindowedDocument, IWordDocumentSe
     int IOdtFieldLookups.ListLevelOf(int blockIndex) => _blocks.ListLevelOf(blockIndex);
     IReadOnlyList<WordDocumentHeading> IOdtFieldLookups.KnownHeadings => _builder is { } builder ? builder.KnownHeadings : _index!.Headings;
     IReadOnlyList<OdtNoteReference> IOdtFieldLookups.NotesIn(int blockIndex) => _blocks.NoteReferencesInBlocks(blockIndex, blockIndex).ToArray();
+    /// <inheritdoc/>
+    /// <remarks>meta.xml (a package) or the office:meta before a .fodt's body, already read at open: no file access.</remarks>
+    public WordDocumentProperties ReadProperties() => _meta.Document;
+
     OdtDocumentMeta IOdtFieldLookups.Meta => _meta;
     OdtStyleCascade IOdtFieldLookups.Styles => _styles;
     OdtListStyle? IOdtFieldLookups.ListStyleNamed(string name) => _blocks.ListStyleNamed(name);

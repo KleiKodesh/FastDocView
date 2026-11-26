@@ -136,3 +136,9 @@ ignored-by-design set is printed with reasons); `--corpus ../test-data` checks t
 | Malformed XML recovery before office:text in a .fodt | fodt | The file's first fatal error comes before the body, so nothing is left to keep: a clear "not well-formed" error, as LibreOffice's parser stops there too | won't do |
 | Exact Word layout metrics | all | Flow view on purpose | won't do |
 | Loading a whole document at once | all | Breaks the windowed paradigm | won't do |
+
+## Document properties (2026-11-26)
+
+- Word 2003 XML (o:DocumentProperties): not read - its translated package carries no docProps parts yet.
+- Web archives: the HTML head's title / meta tags are not read.
+- Custom (user-defined) properties are not listed in the properties model (fields still read them).

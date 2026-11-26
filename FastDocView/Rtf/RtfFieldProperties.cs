@@ -22,6 +22,41 @@ internal sealed class RtfFieldProperties
     public DateTime? Date(string name) => _dates.TryGetValue(name, out DateTime value) ? value : null;
     public string? Variable(string name) => _variables.TryGetValue(name, out string? value) ? value : null;
 
+    private int? _pages, _charactersWithSpaces;
+
+    /// <summary>
+    /// The properties dialog's values (<see cref="WordDocumentProperties"/>) from the same {\info} group (RTF 1.5 spec,
+    /// "Information Group"). \version = the revision number, \edmins = total editing minutes, \nofpages / \nofwords. The
+    /// character counts: the RTF 1.5 spec's table gives \nofchars = with spaces, \nofcharsws = without, and LibreOffice
+    /// follows it (rtfdispatchvalue.cxx NOFCHARS = CharacterCount, NOFCHARSWS = NonWhitespaceCharacterCount; it also
+    /// stores 99 for \nofpages); Word-saved files show the opposite (\nofcharsws is the larger count, as Word's own
+    /// .docx CharactersWithSpaces), and Word's files decide - NOTES.md "Document properties". The RTF header has no
+    /// application or template property Word reads back.
+    /// </summary>
+    public WordDocumentProperties Document => new()
+    {
+        Title = WordDocumentProperties.Text(Property("TITLE")),
+        Subject = WordDocumentProperties.Text(Property("SUBJECT")),
+        Author = WordDocumentProperties.Text(Property("AUTHOR")),
+        Manager = WordDocumentProperties.Text(Property("MANAGER")),
+        Company = WordDocumentProperties.Text(Property("COMPANY")),
+        LastModifiedBy = WordDocumentProperties.Text(Property("LASTSAVEDBY")),
+        Category = WordDocumentProperties.Text(Property("CATEGORY")),
+        Keywords = WordDocumentProperties.Text(Property("KEYWORDS")),
+        Comments = WordDocumentProperties.Text(Property("COMMENTS")),
+        Revision = WordDocumentProperties.Text(Property("REVNUM")),
+        TotalEditingMinutes = NonNegative(Property("EDITTIME")),
+        Words = NonNegative(Property("NUMWORDS")),
+        Characters = NonNegative(Property("NUMCHARS")),
+        CharactersWithSpaces = _charactersWithSpaces is >= 0 ? _charactersWithSpaces : null,
+        Pages = _pages is >= 0 ? _pages : null,
+        Created = Date("CREATEDATE"),
+        Modified = Date("SAVEDATE"),
+        LastPrinted = Date("PRINTDATE"),
+    };
+
+    private static int? NonNegative(string? value) => int.TryParse(value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int number) && number >= 0 ? number : null;
+
     public RtfFieldProperties(Stream file)
     {
         file.Position = 0;
@@ -135,6 +170,8 @@ internal sealed class RtfFieldProperties
                     case "edmins": _properties["EDITTIME"] = parameter.ToString(CultureInfo.InvariantCulture); break;
                     case "nofwords": _properties["NUMWORDS"] = parameter.ToString(CultureInfo.InvariantCulture); break;
                     case "nofchars": _properties["NUMCHARS"] = parameter.ToString(CultureInfo.InvariantCulture); break;
+                    case "nofpages" when hasParameter: _pages = parameter; break;
+                    case "nofcharsws" when hasParameter: _charactersWithSpaces = parameter; break;
                     // the body has begun: the header (and its info group) is over
                     case "par" or "pard" or "sectd" or "plain" when depth == 1: return;
                     case "bin" when hasParameter: reader.Seek(parameter, SeekOrigin.Current); break;

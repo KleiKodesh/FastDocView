@@ -95,6 +95,10 @@ public sealed class MarkupWindowedDocument : IWordWindowedDocument, IWordDocumen
     public int BlockCount => KnownBlockCount;
     public bool IsIndexComplete { get { lock (_readLock) return _builder is null; } }
     public int KnownBlockCount { get { lock (_readLock) return _builder?.KnownBlockCount ?? _indexField.BlockCount; } }
+    /// <inheritdoc/>
+    /// <remarks>Plain text and web archives store no document properties Word reads (a web archive's HTML head is not read).</remarks>
+    public WordDocumentProperties ReadProperties() => WordDocumentProperties.None;
+
     public bool HasSourceChanged => _releasableFile?.HasSourceChanged ?? false;
     public bool IsRightToLeft { get; }                     // fixed at open (an on-demand open: from the first 64 KB of text)
     public string Stylesheet { get; }

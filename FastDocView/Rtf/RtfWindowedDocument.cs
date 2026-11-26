@@ -515,6 +515,23 @@ public sealed class RtfWindowedDocument : IWordWindowedDocument, IWordDocumentSe
 
     /// <inheritdoc/>
     /// <remarks>Id "block:ordinal": that block is parsed again (one block's bytes) keeping only that picture's data.</remarks>
+    /// <inheritdoc/>
+    /// <remarks>The header's {\info} group: a forward scan of the file's start that stops at the body's first paragraph.</remarks>
+    public WordDocumentProperties ReadProperties()
+    {
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            long position = _file.Position;
+            try { return new RtfFieldProperties(_file).Document; }
+            finally
+            {
+                _file.Position = position;
+                _releasableFile?.Release();
+            }
+        }
+    }
+
     /// <summary>A block's list label as fields read it: a picture bullet reads as a bullet (as .docx does).</summary>
     private string? FieldListLabelOf(int block) => LookupTable.ListLabelOf(block) is { } label && Html.WordListLabelHtml.PictureOf(label) is not null ? "•" : LookupTable.ListLabelOf(block);
 

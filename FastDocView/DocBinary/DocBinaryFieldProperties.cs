@@ -17,12 +17,24 @@ internal sealed class DocBinaryFieldProperties
     private readonly Dictionary<string, string> _properties = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _dates = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// The properties dialog's values (<see cref="WordDocumentProperties"/>) from the same two streams: the summary set's
+    /// PIDSI_* ([MS-OLEPS] 2.25.1 SummaryInformation: 0x0E page count, 0x0F word count, 0x10 character count, VT_I4; 0x12
+    /// application name, VT_LPSTR) and the document summary set's PIDDSI_* ([MS-OSHARED] 2.3.3.2.1.1: 0x05 line count, 0x06
+    /// paragraph count, 0x11 characters with spaces, VT_I4; 0x1B content status, a string). LibreOffice reads only the texts,
+    /// dates and edit time of these sets (sfx2/source/doc/docinf.cxx LoadOlePropertySet), not the counts.
+    /// </summary>
+    public WordDocumentProperties Document { get; } = WordDocumentProperties.None;
+
     public DocBinaryFieldProperties(Func<string, byte[]?> readStream)
     {
+        var summaryValues = new Dictionary<uint, object>();
+        var documentSummaryValues = new Dictionary<uint, object>();
         if (readStream("\u0005SummaryInformation") is { } summary)
             foreach (var section in Sections(summary).Take(1))
                 foreach ((uint id, object value) in section.properties)
                 {
+                    summaryValues[id] = value;
                     string? name = id switch
                     {
                         2 => "TITLE", 3 => "SUBJECT", 4 => "AUTHOR", 5 => "KEYWORDS", 6 => "COMMENTS", 7 => "TEMPLATE", 8 => "LASTSAVEDBY",
@@ -40,6 +52,7 @@ internal sealed class DocBinaryFieldProperties
             if (sections.Count > 0)
                 foreach ((uint id, object value) in sections[0].properties)
                 {
+                    documentSummaryValues[id] = value;
                     string? name = id switch { 2 => "CATEGORY", 14 => "MANAGER", 15 => "COMPANY", _ => null };
                     if (name is not null && value is string text) _properties[name] = text;
                 }
@@ -49,6 +62,29 @@ internal sealed class DocBinaryFieldProperties
                         _properties[name] = value is long time ? DateTime.FromFileTimeUtc(time).ToLocalTime().ToString(System.Globalization.CultureInfo.InvariantCulture)
                                                                : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)!;
         }
+        if (summaryValues.Count > 0 || documentSummaryValues.Count > 0)
+            Document = DocumentProperties(summaryValues, documentSummaryValues);
+    }
+
+    private static WordDocumentProperties DocumentProperties(Dictionary<uint, object> summary, Dictionary<uint, object> documentSummary)
+    {
+        string? Text(Dictionary<uint, object> set, uint id) => set.TryGetValue(id, out object? value) && value is string text ? WordDocumentProperties.Text(text) : null;
+        int? Count(Dictionary<uint, object> set, uint id) => set.TryGetValue(id, out object? value) && value is int count && count >= 0 ? count : null;
+        DateTime? Moment(uint id) => summary.TryGetValue(id, out object? value) && value is long fileTime && fileTime > 0 ? DateTime.FromFileTimeUtc(fileTime) : null;
+        // PIDSI_EDITTIME: a VT_FILETIME holding a duration in 100 ns ticks ([MS-OLEPS] 2.25.1); docinf.cxx subtracts the
+        // 1601 epoch from the converted date - the same value
+        int? editMinutes = summary.TryGetValue(10, out object? edit) && edit is long ticks && ticks > 0 && ticks / TimeSpan.TicksPerMinute <= int.MaxValue
+            ? (int)(ticks / TimeSpan.TicksPerMinute) : null;
+        return new WordDocumentProperties
+        {
+            Title = Text(summary, 2), Subject = Text(summary, 3), Author = Text(summary, 4), Keywords = Text(summary, 5),
+            Comments = Text(summary, 6), Template = Text(summary, 7), LastModifiedBy = Text(summary, 8), Revision = Text(summary, 9),
+            TotalEditingMinutes = editMinutes, LastPrinted = Moment(11), Created = Moment(12), Modified = Moment(13),
+            Pages = Count(summary, 14), Words = Count(summary, 15), Characters = Count(summary, 16), Application = Text(summary, 18),
+            Category = Text(documentSummary, 2), Lines = Count(documentSummary, 5), Paragraphs = Count(documentSummary, 6),
+            Manager = Text(documentSummary, 14), Company = Text(documentSummary, 15), CharactersWithSpaces = Count(documentSummary, 0x11),
+            ContentStatus = Text(documentSummary, 0x1B),
+        };
     }
 
     public string? Property(string name) => _properties.TryGetValue(name, out string? value) ? value : null;

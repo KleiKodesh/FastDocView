@@ -465,6 +465,19 @@ public sealed class DocxWindowedDocument : IWordWindowedDocument, IWordDocumentS
         }
     }
 
+    /// <inheritdoc/>
+    /// <remarks>docProps/core.xml and docProps/app.xml only, on a short shared open (a Flat OPC file's virtual package carries
+    /// them too; a Word 2003 XML file's translated package has none).</remarks>
+    public WordDocumentProperties ReadProperties()
+    {
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try { return DocxDocumentProperties.Read(_parts.ReadPartXml); }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
     // ── drawing text for search: what a SmartArt drawing or chart shows, fed after its block's own text ──
 
     private readonly List<string> _referenceDrawingIds = new();

@@ -605,6 +605,18 @@ public sealed class DocBinaryWindowedDocument : IWordWindowedDocument, IWordDocu
         }
     }
 
+    /// <inheritdoc/>
+    /// <remarks>The compound file's two property set streams only (a Word 1.x / 2.0 file has none).</remarks>
+    public WordDocumentProperties ReadProperties()
+    {
+        lock (_readLock)
+        {
+            if (_releasableFile is not null && _releasableFile.HasSourceChanged) throw new WordDocumentSourceChangedException(FilePath);
+            try { return new DocBinaryFieldProperties(ReadPropertyStream).Document; }
+            finally { _releasableFile?.Release(); }
+        }
+    }
+
     /// <summary>The header / footer shapes (read only when asked: the paged view; the flow view shows no headers).</summary>
     internal DocBinaryFloatingPictures? HeaderDrawings { get; private set; }
 
