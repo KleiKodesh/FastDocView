@@ -803,7 +803,7 @@ public sealed class DocxBlockHtmlRenderer
             // inside a field's code (a nested field's result there is part of the code) or a result replaced by a placeholder /
             // computed text: nothing shows
             if (_fields.Depth > 0 && childName is not ("fldChar" or "instrText" or "rPr" or "AlternateContent")
-                && _fields.Route(childName is "t" ? child.Value : childName is "tab" or "ptab" ? "\t" : IsNoteReference(childName) ? NoteMarkPlaceholderText : null) is var route
+                && _fields.Route(childName is "t" ? child.Value : childName is "tab" or "ptab" ? "\t" : IsNoteReference(childName) ? NoteMarkPlaceholderText : childName is "br" or "cr" ? "" : null) is var route
                 && route != Fields.WordFieldTextRoute.Visible)
             {
                 // a note reference in a field's code: a placeholder in the code (the keyword rule and an EQ's drawn mark need its place)

@@ -198,8 +198,8 @@ N2. The citation text LibreOffice wrote is shown; without one, num-format, start
 
 ## Fields
 
-One engine (`Fields/`) for docx, doc and rtf. A cached result shows once; a field with no result, a dirty unlocked one and
-the fields Word draws from their code are computed. Computed: SEQ, REF (\n \r \w \h), NOTEREF, STYLEREF (block-relative),
+One engine (`Fields/`) for docx, doc and rtf. A cached result shows once; a field with no result or an empty one (as Word prints
+it; a locked one stays empty), a dirty unlocked one and the fields Word draws from their code are computed. Computed: SEQ, REF (\n \r \w \h), NOTEREF, STYLEREF (block-relative),
 TOC (from the index's headings), INDEX / TOA, LISTNUM, AUTONUM*, = formulas, IF, COMPARE, date / time and document
 properties, SYMBOL, EQ (as MathML Core), MACROBUTTON, GOTOBUTTON, HYPERLINK, form fields (text, check box, drop-down),
 ADVANCE, and the `\*` number / case switches. Page placeholders: PAGE, PAGEREF (\h still links), NUMPAGES, SECTION,

@@ -28,7 +28,7 @@ public sealed class WordFieldStack
         public bool IsSeparated;
         public bool IsDirty;
         public bool IsLocked;
-        /// <summary>The result is private data, not for display (.doc FLD fPrivateResult 0x20, RTF ldpriv): it never shows.</summary>
+        /// <summary>The result is private data, not for display (.doc FLD fPrivateResult 0x20, RTF \fldpriv): it never shows.</summary>
         public bool IsPrivateResult;
         public WordFormFieldState? Form;
         /// <summary>The cached result is not shown (placeholder, hidden, recomputed, or inside another field's code).</summary>
@@ -36,6 +36,10 @@ public sealed class WordFieldStack
         /// <summary>The result belongs to an enclosing field's instruction.</summary>
         public bool IsInsideInstruction;
         public bool IsCounted;
+        /// <summary>Something was met in the cached result (text, a tab, a picture ...): Word's saved result is not empty.</summary>
+        public bool HasResultContent;
+        /// <summary>The counter value counted at the separator, for a result computed at the end.</summary>
+        public int? CountedValue;
         public string? LinkTag;
         public WordFieldInstruction? Parsed;
     }
@@ -87,6 +91,8 @@ public sealed class WordFieldStack
     private void SeparateRestored(Field field)
     {
         field.IsSeparated = true;
+        // its result began in an earlier block: a result that crosses a block holds at least that block's paragraph mark
+        field.HasResultContent = true;
         field.Parsed = WordFieldInstruction.Parse(field.Instruction.ToString());
         field.IsInsideInstruction = IsInsideInstruction(_fields.Count - 1);
         if (field.IsInsideInstruction) { field.SuppressesResult = field.Parsed.Name == WordFieldInstruction.NoTypeName; return; }
@@ -118,6 +124,8 @@ public sealed class WordFieldStack
             // the result of a field with no type inside another field's code adds nothing to that code (Word 16:
             // field-leading-switch-v1 case I, "EQ \o({MERGEFIELD{note} n},b)" draws only "b")
             if (_fields[i] is { IsInsideInstruction: true, SuppressesResult: true }) return WordFieldTextRoute.Suppressed;
+            // content in this result (a null text: a reader asking for the enclosing fields after an end, not content)
+            if (text is not null) _fields[i].HasResultContent = true;
         }
         foreach (Field field in _fields) if (field.SuppressesResult) return WordFieldTextRoute.Suppressed;
         return WordFieldTextRoute.Visible;
@@ -173,6 +181,15 @@ public sealed class WordFieldStack
             output = Finish(field, hasResult: false);
             linkTag = field.LinkTag;
         }
+        else if (!field.HasResultContent && IsComputedWhenEmpty(field))
+        {
+            // an empty saved result ({\fldrslt }, separate right before end, 0x14 0x15): Word's print computes the field as if it
+            // had none (Word 16 PDF export of test-data/word-fields/field-empty-result-v1 .rtf / .docx / .doc); a locked one stays empty
+            output = WordFieldEvaluator.Compute(field.Parsed!, Context, field.CountedValue, field.Form);
+            if (field.IsInsideInstruction && output is not { Text: { }, Html: null }) output = WordFieldOutput.None;
+            else if (field.IsInsideInstruction) output = new(output.Text, null, true);
+            linkTag = field.LinkTag;
+        }
         _fields.RemoveAt(_fields.Count - 1);
         // a computed result inside another field's code is part of that code
         if (field.IsInsideInstruction)
@@ -182,6 +199,11 @@ public sealed class WordFieldStack
         }
         return output;
     }
+
+    /// <summary>A separated field whose result is still empty at its end is computed: not locked, not private, not already replaced (placeholder, hidden, computed at the separator).</summary>
+    private static bool IsComputedWhenEmpty(Field field)
+        => !field.IsLocked && !field.IsPrivateResult && field.Parsed is { } parsed
+           && (field.IsInsideInstruction ? parsed.Name != WordFieldInstruction.NoTypeName : !field.SuppressesResult && WordFieldEvaluator.DisplayOf(parsed.Name) == WordFieldDisplay.Result);
 
     /// <summary>Whether output of the innermost field (its placeholder / computed result) shows: no field around it is in its code or replaces its result.</summary>
     public bool OutputShows
@@ -204,6 +226,7 @@ public sealed class WordFieldStack
         // a counted field inside another field's code is part of that code, not counted (as the index passes count)
         int? counted = null;
         if (Counters is not null && !field.IsInsideInstruction && WordFieldEvaluator.IsCounted(instruction.Name)) counted = WordFieldEvaluator.Count(instruction, Counters);
+        field.CountedValue = counted;
         if (field.IsInsideInstruction)
         {
             if (instruction.Name == WordFieldInstruction.NoTypeName) { field.SuppressesResult = true; return WordFieldOutput.None; }
@@ -212,7 +235,7 @@ public sealed class WordFieldStack
             return WordFieldOutput.None;
         }
         field.LinkTag = LinkTagOf?.Invoke(code);
-        // a private result is not for display (Word marks form fields so: RTF {ieldldpriv{\*ldinst FORMCHECKBOX ...}}); a field
+        // a private result is not for display (Word marks form fields so: RTF {\field\fldpriv{\*\fldinst FORMCHECKBOX ...}}); a field
         // drawn from its code still draws
         if (field.IsPrivateResult)
         {

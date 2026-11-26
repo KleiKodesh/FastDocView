@@ -879,7 +879,7 @@ internal sealed class RtfBlockHtmlRenderer : RtfSink
         AppendFieldOutput(output, link, own);
         if (_instructionNoteStarts.Count >= _fields.Depth) _instructionNoteStarts[_fields.Depth - 1] = int.MaxValue;
         if (_listTextTarget is not null || _flow.OpenLink is not null || _fields.Innermost is not { SuppressesResult: false, IsInsideInstruction: false, LinkTag: { } tag }) return;
-        if (!_fields.Shows(default)) return;
+        if (!_fields.ResultShowsHere) return;
         FlushRun();
         _flow.Inline.Append(tag);
         _flow.OpenLink = tag;
